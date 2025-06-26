@@ -1,0 +1,42 @@
+.piece-row {
+  display: grid;
+  /* Create 5 columns: 4 for inputs, 1 for the button */
+  grid-template-columns: repeat(4, 1fr) auto;
+  gap: 1em;
+  align-items: center;
+  margin-bottom: 1em;
+}
+
+.piece-input {
+  width: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  font-size: 1em;
+  font-family: 'Poppins', sans-serif;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.piece-input:focus {
+  outline: none;
+  border-color: #002D62; /* EFM Corporate Blue */
+  box-shadow: 0 0 0 3px rgba(0, 45, 98, 0.25);
+}
+
+.btn-remove {
+  background-color: #D42E28; /* EFM Corporate Red */
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.8em;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: transform 0.1s, background-color 0.2s;
+}
+
+.btn-remove:hover {
+  transform: translateY(-2px);
+  background-color: #a32420; /* Darker red on hover */
+}
