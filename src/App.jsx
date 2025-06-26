@@ -1,13 +1,37 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react'; 
 import './App.css';
 import PieceRow from './components/PieceRow.jsx';
+import { loadRateData } from './api.js';
 
 function App() {
-  const [pieces, setPieces] = useState([
-    // The first piece now has all the data fields
-    { id: 1, weight: '', length: '', width: '', height: '' }
-  ]);
+const [pieces, setPieces] = useState([
+  { id: 1, weight: '', length: '', width: '', height: '' }
+]);
 
+const [freightRates, setFreightRates] = useState({});
+const [locations, setLocations] = useState([]);
+const [origin, setOrigin] = useState('');
+const [destination, setDestination] = useState('');
+
+  useEffect(() => {
+    async function getRates() {
+      console.log("Fetching rate data...");
+      const { freightRates, locations } = await loadRateData();
+      setFreightRates(freightRates);
+      setLocations(locations);
+
+      if (locations.length > 0) {
+        setOrigin(locations[0]);
+        setDestination(locations[1] || locations[0]);
+      }
+
+      console.log("Rate data loaded successfully!");
+    }
+
+    getRates();
+  }, []);
+
+  
   function addPiece() {
     // New pieces should also be created with the full structure
     const newPiece = {
@@ -55,35 +79,68 @@ pieces.forEach(p => {
 // Round up to the nearest whole number
 const finalChargeableWeight = Math.ceil(totalChargeableWeight);
 
-  return (
-    <div className="container">
-      <h1>Project RateEngine</h1>
-      <h2>Shipment Details</h2>
+return (
+  <div className="container">
+    <h1>Project RateEngine</h1>
 
-<div className="pieces-container">
-  {pieces.map(piece => (
-    <PieceRow
-      key={piece.id}
-      piece={piece} // Pass the entire piece object
-      onRemove={removePiece}
-      onChange={handlePieceChange} // Pass the change handler
-    />
-  ))}
-</div>
+    {/* --- ROUTING SECTION --- */}
+    <div className="form-section">
+      <h2>Routing</h2>
+      <div className="form-group">
+        <label htmlFor="origin">Origin</label>
+        <select
+          id="origin"
+          name="origin"
+          value={origin}
+          onChange={e => setOrigin(e.target.value)}
+        >
+          {locations.map(loc => (
+            <option key={loc} value={loc}>{loc}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="form-group">
+        <label htmlFor="destination">Destination</label>
+        <select
+          id="destination"
+          name="destination"
+          value={destination}
+          onChange={e => setDestination(e.target.value)}
+        >
+          {locations.map(loc => (
+            <option key={loc} value={loc}>{loc}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+
+    {/* --- SHIPMENT DETAILS SECTION --- */}
+    <div className="form-section">
+      <h2>Shipment Details</h2>
+      <div className="pieces-container">
+        {pieces.map(piece => (
+          <PieceRow
+            key={piece.id}
+            piece={piece}
+            onRemove={removePiece}
+            onChange={handlePieceChange}
+          />
+        ))}
+      </div>
+
       <button type="button" className="btn-add" onClick={addPiece}>
         + Add Piece
       </button>
+    </div>
 
     {/* --- DISPLAY THE CALCULATION --- */}
     <div className="chargeable-weight-display">
       <h2>Total Chargeable Weight</h2>
-      <p>
-        <strong>{finalChargeableWeight}</strong> kg
-      </p>
+      <p><strong>{finalChargeableWeight}</strong> kg</p>
     </div>
-        
-    </div>
-  );
+  </div>
+);
 }
 
 export default App;
