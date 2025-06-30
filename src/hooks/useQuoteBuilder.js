@@ -74,11 +74,14 @@ export function useQuoteBuilder(targetCurrency) {
         }
       }
     }
-    getRates();
+    // Only fetch if loading is true (initial state or after reset)
+    if (state.loading) {
+      getRates();
+    }
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [state.loading]); // Depend on state.loading
 
   const setField = (field, value) => {
     dispatch({ type: 'SET_FIELD', field, value });
