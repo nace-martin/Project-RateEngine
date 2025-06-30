@@ -42,8 +42,8 @@ function reducer(state, action) {
           state.freightRates
         );
         return { ...state, quote: newQuote, error: null };
-      } catch (err) {
-        return { ...state, error: err.message, quote: null };
+      } catch (_err) {
+        return { ...state, error: _err.message, quote: null };
       }
     case 'CLEAR_ERROR':
       return { ...state, error: null };
@@ -68,7 +68,7 @@ export function useQuoteBuilder(targetCurrency) {
         if (isMounted) {
           dispatch({ type: 'FETCH_SUCCESS', payload: { freightRates, locations } });
         }
-      } catch (err) {
+      } catch (err) { // eslint-disable-line no-unused-vars
         if (isMounted) {
           dispatch({ type: 'FETCH_ERROR', payload: 'Failed to load rate data.' });
         }

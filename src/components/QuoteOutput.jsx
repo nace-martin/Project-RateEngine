@@ -1,5 +1,4 @@
 import React from 'react';
-import './QuoteOutput.css';
 
 function QuoteOutput({ quote }) {
   if (!quote) {
@@ -11,35 +10,35 @@ function QuoteOutput({ quote }) {
   }
 
   return (
-    <div className="quote-output">
-      <h2>Quote Details</h2>
-      <div className="quote-summary">
-        <p><strong>Origin:</strong> {quote.origin}</p>
-        <p><strong>Destination:</strong> {quote.destination}</p>
-        <p><strong>Chargeable Weight:</strong> {quote.chargeableWeight} kg</p>
-        <p><strong>Generated At:</strong> {new Date(quote.generatedAt).toLocaleString()}</p>
+    <div className="bg-white p-4 rounded-2xl shadow-soft border border-cool-gray mt-5">
+      <h2 className="text-efm-blue text-2xl font-semibold mb-4 pb-2 border-b border-cool-gray text-center">Quote Details</h2>
+      <div className="mb-4 text-mid-gray">
+        <p className="mb-2"><strong>Origin:</strong> {quote.origin}</p>
+        <p className="mb-2"><strong>Destination:</strong> {quote.destination}</p>
+        <p className="mb-2"><strong>Chargeable Weight:</strong> {quote.chargeableWeight} kg</p>
+        <p className="mb-2"><strong>Generated At:</strong> {new Date(quote.generatedAt).toLocaleString()}</p>
       </div>
-      <h3>Line Items</h3>
-      <table>
+      <h3 className="text-efm-blue text-xl font-semibold mb-3 pb-2 border-b border-cool-gray">Line Items</h3>
+      <table className="w-full border-collapse mb-4">
         <thead>
-          <tr>
-            <th>Description</th>
-            <th>Cost</th>
+          <tr className="bg-cool-gray">
+            <th className="border border-cool-gray p-2 text-left text-dark-charcoal">Description</th>
+            <th className="border border-cool-gray p-2 text-left text-dark-charcoal">Cost</th>
           </tr>
         </thead>
         <tbody>
           {quote.lineItems.map((item, index) => (
-            <tr key={index}>
-              <td>{item.name}</td>
-              <td>${(item.cost || 0).toFixed(2)}</td>
+            <tr key={index} className={`${index % 2 === 0 ? 'bg-light-gray' : 'bg-white'}`}>
+              <td className="border border-cool-gray p-2 text-dark-charcoal">{item.name}</td>
+              <td className="border border-cool-gray p-2 text-dark-charcoal">${(item.cost || 0).toFixed(2)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="quote-totals">
-        <p><strong>Subtotal:</strong> ${(quote.subTotal || 0).toFixed(2)}</p>
-        <p><strong>GST:</strong> ${(quote.gst || 0).toFixed(2)}</p>
-        <p><strong>Grand Total:</strong> ${(quote.grandTotal || 0).toFixed(2)}</p>
+      <div className="border-t border-cool-gray pt-4">
+        <p className="text-lg font-bold flex justify-between mb-2"><strong>Subtotal:</strong> <span className="text-dark-charcoal">${(quote.subTotal || 0).toFixed(2)}</span></p>
+        <p className="text-lg font-bold flex justify-between mb-2"><strong>GST:</strong> <span className="text-dark-charcoal">${(quote.gst || 0).toFixed(2)}</span></p>
+        <p className="text-xl font-bold flex justify-between text-efm-blue"><strong>Grand Total:</strong> <span className="text-efm-blue">${(quote.grandTotal || 0).toFixed(2)}</span></p>
       </div>
     </div>
   );

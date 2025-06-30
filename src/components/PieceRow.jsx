@@ -1,5 +1,3 @@
-import './PieceRow.css';
-
 // 1. Receive the new props: `piece` and `onChange`
 function PieceRow({ piece, onRemove, onChange }) {
 
@@ -10,19 +8,19 @@ function PieceRow({ piece, onRemove, onChange }) {
   };
 
   return (
-    <div className="piece-row">
+    <div className="grid grid-cols-5 gap-2 items-center">
       <input
         type="number"
-        name="weight" // The 'name' attribute is crucial now
-        className="piece-input"
+        name="weight"
+        className="w-full p-2 border border-cool-gray rounded-md bg-light-gray text-dark-charcoal focus:outline-none focus:border-efm-blue"
         placeholder="Wt (kg)"
-        value={piece.weight} // 2. Value is controlled by the prop
-        onChange={handleInputChange} // 3. onChange calls our handler
+        value={piece.weight}
+        onChange={handleInputChange}
       />
       <input
         type="number"
         name="length"
-        className="piece-input"
+        className="w-full p-2 border border-cool-gray rounded-md bg-light-gray text-dark-charcoal focus:outline-none focus:border-efm-blue"
         placeholder="L (cm)"
         value={piece.length}
         onChange={handleInputChange}
@@ -30,7 +28,7 @@ function PieceRow({ piece, onRemove, onChange }) {
       <input
         type="number"
         name="width"
-        className="piece-input"
+        className="w-full p-2 border border-cool-gray rounded-md bg-light-gray text-dark-charcoal focus:outline-none focus:border-efm-blue"
         placeholder="W (cm)"
         value={piece.width}
         onChange={handleInputChange}
@@ -38,12 +36,12 @@ function PieceRow({ piece, onRemove, onChange }) {
       <input
         type="number"
         name="height"
-        className="piece-input"
+        className="w-full p-2 border border-cool-gray rounded-md bg-light-gray text-dark-charcoal focus:outline-none focus:border-efm-blue"
         placeholder="H (cm)"
         value={piece.height}
         onChange={handleInputChange}
       />
-      <button type="button" className="btn-remove" onClick={() => onRemove(piece.id)}>
+      <button type="button" className="bg-error text-white px-3 py-2 rounded-xl font-bold text-sm hover:bg-red-700" onClick={() => onRemove(piece.id)}>
         X
       </button>
     </div>

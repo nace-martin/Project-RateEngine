@@ -86,32 +86,25 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
     } else if (charge.type === 'per_shipment') {
       chargeCostPGK = charge.rate;
     } else if (charge.type === 'Percentage_Of_PUD' && charge.dependsOn) {
-      // Find the cost of the PUD fee it depends on
-      // This assumes the depended-on charge has already been processed or its raw cost can be calculated
-      // For simplicity, let's assume PUD Fee is always processed before a charge depending on it,
-      // or we can pre-calculate PUD cost if needed.
-      // To make this robust, we might need to process charges in a specific order or do multiple passes.
-      // Current config has 'PUD Fee' before 'PUD Fuel Surcharge', so this should work.
       const dependedOnChargeConfig = ancillaryCharges.find(c => c.name === charge.dependsOn);
       if (dependedOnChargeConfig) {
-        // Calculate the depended-on charge's cost first (in PGK)
         let dependedOnCostPGK = 0;
         if (dependedOnChargeConfig.type === 'per_kg') {
           dependedOnCostPGK = chargeableWeight * dependedOnChargeConfig.rate;
         } else if (dependedOnChargeConfig.type === 'per_shipment') {
           dependedOnCostPGK = dependedOnChargeConfig.rate;
         }
-        // (Add min logic here later for dependedOnCostPGK if PUD Fee has a min)
-
-        // Store it for reference if not already stored (though not strictly needed for this calculation)
         if (!calculatedAncillaryCosts[charge.dependsOn]) {
             calculatedAncillaryCosts[charge.dependsOn] = dependedOnCostPGK;
         }
-        chargeCostPGK = dependedOnCostPGK * charge.rate; // Percentage of the calculated PUD fee
+        chargeCostPGK = dependedOnCostPGK * charge.rate;
       }
     }
 
-    // (Minimum charge logic will be added here in the next step)
+    // Apply minimum charge if defined
+    if (charge.min && chargeCostPGK < charge.min) {
+      chargeCostPGK = charge.min;
+    }
 
     // Store the calculated cost in PGK before conversion for dependency lookup
     calculatedAncillaryCosts[charge.name] = chargeCostPGK;
