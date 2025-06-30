@@ -137,6 +137,6 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
     gst,
     grandTotal,
     currency: targetCurrency,
-    fxRateNote: fromCurrency === toCurrency ? 'All charges in native currency.' : `Rates converted from ${fromCurrency} to ${targetCurrency} using USD as a base.`
+    fxRateNote: rateCurrency === targetCurrency ? 'All charges in native currency.' : `Rates converted from ${rateCurrency} to ${targetCurrency} using USD as a base.`
   };
 }

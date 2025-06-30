@@ -1,0 +1,5 @@
+fix(ui): Correct syntax error in QuoteBuilder component
+
+This commit resolves a syntax error in the `QuoteBuilder.jsx` file that was introduced accidentally in a previous commit. The error, `Unexpected token, expected ","`, was caused by extraneous text (`fromCurrency is not defined`) being inserted into a variable name (`selectedCustomer`).
+
+This fix removes the erroneous text, restoring the component's functionality.

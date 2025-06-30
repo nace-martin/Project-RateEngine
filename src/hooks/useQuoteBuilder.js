@@ -36,7 +36,7 @@ function reducer(state, action) {
             origin: state.origin,
             destination: state.destination,
             pieces: state.pieces,
-            rateCurrency: 'PGK', // Assuming PGK as the rate currency
+            rateCurrency: action.payload.rateCurrency, // Pass the rate currency
             targetCurrency: action.payload.targetCurrency, // Use the customer's currency
           },
           state.freightRates
@@ -80,7 +80,7 @@ export function useQuoteBuilder(targetCurrency) {
   };
 
   const generateQuote = () => {
-    dispatch({ type: 'GENERATE_QUOTE', payload: { targetCurrency } });
+    dispatch({ type: 'GENERATE_QUOTE', payload: { targetCurrency, rateCurrency: 'PGK' } });
   };
 
   const clearError = () => {
