@@ -1,7 +1,7 @@
 // api.js
 // This file handles all communication with external APIs.
 
-import { API_URL } from './config.js';
+import { API_URL } from '../config/config.js';
 
 export async function loadRateData() {
     try {

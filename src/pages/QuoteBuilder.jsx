@@ -1,10 +1,13 @@
 import '../App.css';
+import { useState } from 'react';
 import ShipmentDetails from '../components/ShipmentDetails.jsx';
 import QuoteOutput from '../components/QuoteOutput.jsx';
 import { useQuoteBuilder } from '../hooks/useQuoteBuilder';
-import { fxRates } from '../config/fxRates.js';
+import { customers } from '../config/customers.js';
 
 function QuoteBuilder() {
+  const [selectedCustomer, setSelectedCustomer] = useState(customers[0]);
+
   const {
     origin,
     destination,
@@ -12,17 +15,21 @@ function QuoteBuilder() {
     error,
     loading,
     locations,
-    currency,
     pieces,
     setField,
     generateQuote,
     clearError,
     setPieces,
-  } = useQuoteBuilder();
+  } = useQuoteBuilder(selectedCustomer.billingCurrency); // Pass currency to the hook
 
   const handleGenerateQuote = () => {
     clearError();
     generateQuote();
+  };
+
+  const handleCustomerChange = (e) => {
+    const customer = customers.find((c) => c.id === e.target.value);
+    setSelectedCustomer(customer);
   };
 
   if (loading) {
@@ -39,6 +46,25 @@ function QuoteBuilder() {
           <button onClick={clearError}>X</button>
         </div>
       )}
+
+      <div className="form-section">
+        <h2>Customer</h2>
+        <div className="form-group">
+          <label htmlFor="customer">Customer</label>
+          <select
+            id="customer"
+            name="customer"
+            value={selectedCustomer.id}
+            onChange={handleCustomerChange}
+          >
+            {customers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.name} ({customer.billingCurrency})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
       <div className="form-section">
         <h2>Routing</h2>
@@ -74,21 +100,7 @@ function QuoteBuilder() {
             ))}
           </select>
         </div>
-        <div className="form-group">
-          <label htmlFor="currency">Currency</label>
-          <select
-            id="currency"
-            name="currency"
-            value={currency}
-            onChange={(e) => setField('currency', e.target.value)}
-          >
-            {Object.keys(fxRates).map((currencyCode) => (
-              <option key={currencyCode} value={currencyCode}>
-                {currencyCode}
-              </option>
-            ))}
-          </select>
-        </div>
+        
       </div>
 
       <ShipmentDetails pieces={pieces} setPieces={setPieces} />

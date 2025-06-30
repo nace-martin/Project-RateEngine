@@ -1,5 +1,5 @@
 import { ancillaryCharges } from '../config/config.js';
-import { baseCurrency, fxRates } from '../config/fxRates.js';
+import { fxRates } from '../config/fxRates.js';
 
 /**
  * Converts a given amount from a source currency to a target currency
@@ -10,6 +10,10 @@ import { baseCurrency, fxRates } from '../config/fxRates.js';
  * @returns {number} The converted amount.
  */
 function convertCurrency(amount, fromCurrency, toCurrency) {
+  if (!fxRates[fromCurrency] || !fxRates[toCurrency]) {
+    throw new Error(`Invalid currency code provided. Conversion from ${fromCurrency} to ${toCurrency} is not possible.`);
+  }
+
   // If currencies are the same, no conversion needed
   if (fromCurrency === toCurrency) {
     return amount;
@@ -26,10 +30,17 @@ function convertCurrency(amount, fromCurrency, toCurrency) {
 
 
 function calculateChargeableWeight(pieces) {
-  // ... this function remains unchanged ...
-  const totalWeight = pieces.reduce((sum, piece) => sum + piece.weight, 0);
-  const totalVolume = pieces.reduce((sum, piece) => sum + (piece.length * piece.width * piece.height) / 1000000, 0);
-  const volumetricWeight = totalVolume * 167;
+  // Ensure all piece dimensions are numbers before calculation
+  const totalWeight = pieces.reduce((sum, piece) => sum + Number(piece.weight || 0), 0);
+  const totalVolume = pieces.reduce((sum, piece) => {
+    const length = Number(piece.length || 0);
+    const width = Number(piece.width || 0);
+    const height = Number(piece.height || 0);
+    return sum + (length * width * height) / 1000000; // Convert cm3 to m3
+  }, 0);
+
+  const volumetricWeight = totalVolume * 167; // IATA standard
+
   return Math.max(totalWeight, volumetricWeight);
 }
 
@@ -64,24 +75,56 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
   });
 
   // Ancillary charges calculation
+  // Store calculated ancillary costs temporarily to handle dependencies
+  const calculatedAncillaryCosts = {};
+
   ancillaryCharges.forEach(charge => {
-    let chargeCost = 0;
+    let chargeCostPGK = 0; // All ancillary rates are in PGK as per current config
+
     if (charge.type === 'per_kg') {
-      chargeCost = chargeableWeight * charge.rate;
+      chargeCostPGK = chargeableWeight * charge.rate;
     } else if (charge.type === 'per_shipment') {
-      chargeCost = charge.rate;
+      chargeCostPGK = charge.rate;
+    } else if (charge.type === 'Percentage_Of_PUD' && charge.dependsOn) {
+      // Find the cost of the PUD fee it depends on
+      // This assumes the depended-on charge has already been processed or its raw cost can be calculated
+      // For simplicity, let's assume PUD Fee is always processed before a charge depending on it,
+      // or we can pre-calculate PUD cost if needed.
+      // To make this robust, we might need to process charges in a specific order or do multiple passes.
+      // Current config has 'PUD Fee' before 'PUD Fuel Surcharge', so this should work.
+      const dependedOnChargeConfig = ancillaryCharges.find(c => c.name === charge.dependsOn);
+      if (dependedOnChargeConfig) {
+        // Calculate the depended-on charge's cost first (in PGK)
+        let dependedOnCostPGK = 0;
+        if (dependedOnChargeConfig.type === 'per_kg') {
+          dependedOnCostPGK = chargeableWeight * dependedOnChargeConfig.rate;
+        } else if (dependedOnChargeConfig.type === 'per_shipment') {
+          dependedOnCostPGK = dependedOnChargeConfig.rate;
+        }
+        // (Add min logic here later for dependedOnCostPGK if PUD Fee has a min)
+
+        // Store it for reference if not already stored (though not strictly needed for this calculation)
+        if (!calculatedAncillaryCosts[charge.dependsOn]) {
+            calculatedAncillaryCosts[charge.dependsOn] = dependedOnCostPGK;
+        }
+        chargeCostPGK = dependedOnCostPGK * charge.rate; // Percentage of the calculated PUD fee
+      }
     }
 
-    // Ancillary charges are usually in the local currency (PGK), so we convert from PGK
+    // (Minimum charge logic will be added here in the next step)
+
+    // Store the calculated cost in PGK before conversion for dependency lookup
+    calculatedAncillaryCosts[charge.name] = chargeCostPGK;
+
     lineItems.push({
       name: charge.name,
-      cost: convertCurrency(chargeCost, 'PGK', targetCurrency),
+      cost: convertCurrency(chargeCostPGK, 'PGK', targetCurrency), // Convert final cost to target currency
     });
   });
 
-  const subtotal = lineItems.reduce((sum, item) => sum + item.cost, 0);
-  const gst = subtotal * 0.10; // 10% GST
-  const grandTotal = subtotal + gst;
+  const subTotal = lineItems.reduce((sum, item) => sum + item.cost, 0);
+  const gst = subTotal * 0.10; // 10% GST
+  const grandTotal = subTotal + gst;
 
   // The final quote object, now with currency details
   return {
@@ -90,10 +133,10 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
     chargeableWeight: chargeableWeight,
     generatedAt: new Date().toLocaleString('en-AU'),
     lineItems,
-    subtotal: subtotal,
-    gst: gst,
-    grandTotal: grandTotal,
-    currency: targetCurrency, // Add the final currency to the quote object
-    fxRateNote: `Rates converted to ${targetCurrency} using USD as a base.`
+    subTotal,
+    gst,
+    grandTotal,
+    currency: targetCurrency,
+    fxRateNote: fromCurrency === toCurrency ? 'All charges in native currency.' : `Rates converted from ${fromCurrency} to ${targetCurrency} using USD as a base.`
   };
 }

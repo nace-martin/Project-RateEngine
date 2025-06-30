@@ -11,7 +11,6 @@ const initialState = {
   chargeableWeight: 0,
   error: null,
   loading: true,
-  currency: 'USD',
   pieces: [{ id: 1, weight: '', length: '', width: '', height: '' }],
 };
 
@@ -37,8 +36,8 @@ function reducer(state, action) {
             origin: state.origin,
             destination: state.destination,
             pieces: state.pieces,
-            rateCurrency: 'PGK', // Assuming PGK as the rate currency based on the provided QuoteLogicEngine.js
-            targetCurrency: state.currency,
+            rateCurrency: 'PGK', // Assuming PGK as the rate currency
+            targetCurrency: action.payload.targetCurrency, // Use the customer's currency
           },
           state.freightRates
         );
@@ -53,7 +52,7 @@ function reducer(state, action) {
   }
 }
 
-export function useQuoteBuilder() {
+export function useQuoteBuilder(targetCurrency) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   useEffect(() => {
@@ -81,7 +80,7 @@ export function useQuoteBuilder() {
   };
 
   const generateQuote = () => {
-    dispatch({ type: 'GENERATE_QUOTE' });
+    dispatch({ type: 'GENERATE_QUOTE', payload: { targetCurrency } });
   };
 
   const clearError = () => {
