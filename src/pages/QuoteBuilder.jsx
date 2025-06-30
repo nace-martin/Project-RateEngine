@@ -1,4 +1,4 @@
-import '../App.css';
+import './QuoteBuilder.css';
 import { useState } from 'react';
 import ShipmentDetails from '../components/ShipmentDetails.jsx';
 import QuoteOutput from '../components/QuoteOutput.jsx';
@@ -20,11 +20,17 @@ function QuoteBuilder() {
     generateQuote,
     clearError,
     setPieces,
+    resetQuote,
   } = useQuoteBuilder(selectedCustomer.billingCurrency); // Pass currency to the hook
 
   const handleGenerateQuote = () => {
     clearError();
     generateQuote();
+  };
+
+  const handleResetQuote = () => {
+    resetQuote();
+    setSelectedCustomer(customers[0]); // Reset customer selection as well
   };
 
   const handleCustomerChange = (e) => {
@@ -113,6 +119,13 @@ function QuoteBuilder() {
           disabled={!origin || !destination}
         >
           Generate Quote
+        </button>
+        <button
+          type="button"
+          className="btn-reset"
+          onClick={handleResetQuote}
+        >
+          Reset
         </button>
       </div>
 

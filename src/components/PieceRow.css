@@ -1,42 +1,44 @@
+/* src/components/PieceRow.css */
+
 .piece-row {
   display: grid;
-  /* Create 5 columns: 4 for inputs, 1 for the button */
-  grid-template-columns: repeat(4, 1fr) auto;
-  gap: 1em;
+  grid-template-columns: repeat(4, 1fr) 50px;
+  gap: 10px;
   align-items: center;
-  margin-bottom: 1em;
 }
 
-.piece-input {
+.piece-row input {
   width: 100%;
-  padding: 12px;
-  box-sizing: border-box;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  font-size: 1em;
-  font-family: 'Poppins', sans-serif;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  padding: 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background-color: #444;
+  color: #eee;
+  font-size: 0.9em;
 }
 
-.piece-input:focus {
+.piece-row input:focus {
   outline: none;
-  border-color: #002D62; /* EFM Corporate Blue */
-  box-shadow: 0 0 0 3px rgba(0, 45, 98, 0.25);
+  border-color: #66BB6A;
+  box-shadow: 0 0 0 2px rgba(102, 187, 106, 0.5);
 }
 
-.btn-remove {
-  background-color: #D42E28; /* EFM Corporate Red */
+.remove-piece-btn {
+  background-color: #f44336;
   color: white;
   border: none;
-  border-radius: 8px;
-  font-size: 0.8em;
-  font-weight: 600;
   padding: 8px 12px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: transform 0.1s, background-color 0.2s;
+  transition: background-color 0.3s ease;
+  font-size: 0.9em;
 }
 
-.btn-remove:hover {
-  transform: translateY(-2px);
-  background-color: #a32420; /* Darker red on hover */
+.remove-piece-btn:hover {
+  background-color: #da190b;
+}
+
+.remove-piece-btn:disabled {
+  background-color: #666;
+  cursor: not-allowed;
 }

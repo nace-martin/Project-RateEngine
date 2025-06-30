@@ -47,6 +47,11 @@ function reducer(state, action) {
       }
     case 'CLEAR_ERROR':
       return { ...state, error: null };
+    case 'RESET':
+      return {
+        ...initialState,
+        loading: true, // Ensure loading state is true to re-fetch data
+      };
     default:
       throw new Error(`Unknown action type: ${action.type}`);
   }
@@ -91,5 +96,9 @@ export function useQuoteBuilder(targetCurrency) {
     dispatch({ type: 'SET_FIELD', field: 'pieces', value: newPieces });
   };
 
-  return { ...state, setField, generateQuote, clearError, setPieces };
+  const resetQuote = () => {
+    dispatch({ type: 'RESET' });
+  };
+
+  return { ...state, setField, generateQuote, clearError, setPieces, resetQuote };
 }

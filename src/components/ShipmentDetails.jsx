@@ -1,4 +1,5 @@
 import PieceRow from './PieceRow';
+import './ShipmentDetails.css';
 
 const ShipmentDetails = ({ pieces, setPieces }) => {
 
@@ -19,7 +20,7 @@ const ShipmentDetails = ({ pieces, setPieces }) => {
   };
 
   return (
-    <div className="form-section">
+    <div className="form-section shipment-details-section">
       <h2>Shipment Details</h2>
       <div className="piece-header">
         <span>Weight (kg)</span>
