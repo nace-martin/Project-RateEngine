@@ -31,14 +31,14 @@ function QuoteOutput({ quote }) {
           {quote.lineItems.map((item, index) => (
             <tr key={index}>
               <td>{item.name}</td>
-              <td>${item.cost.toFixed(2)}</td>
+              <td>${(item.cost || 0).toFixed(2)}</td>
             </tr>
           ))}
         </tbody>
       </table>
       <div className="quote-totals">
-        <p><strong>Subtotal:</strong> ${quote.subTotal.toFixed(2)}</p>
-        <p><strong>GST:</strong> ${quote.gst.toFixed(2)}</p>
+        <p><strong>Subtotal:</strong> ${(quote.subTotal || 0).toFixed(2)}</p>
+        <p><strong>GST:</strong> ${(quote.gst || 0).toFixed(2)}</p>
         <p><strong>Grand Total:</strong> ${(quote.grandTotal || 0).toFixed(2)}</p>
       </div>
     </div>
