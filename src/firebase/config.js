@@ -6,12 +6,12 @@ import { getFirestore } from "firebase/firestore";
 // Your web app's Firebase configuration from your .env file
 // Vite automatically makes these available via import.meta.env
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_API_KEY,
-  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_APP_ID
+  apiKey: import.meta.env.VITE_API_KEY || (() => { throw new Error('VITE_API_KEY is required') })(),
+  authDomain: import.meta.env.VITE_AUTH_DOMAIN || (() => { throw new Error('VITE_AUTH_DOMAIN is required') })(),
+  projectId: import.meta.env.VITE_PROJECT_ID || (() => { throw new Error('VITE_PROJECT_ID is required') })(),
+  storageBucket: import.meta.env.VITE_STORAGE_BUCKET || (() => { throw new Error('VITE_STORAGE_BUCKET is required') })(),
+  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID || (() => { throw new Error('VITE_MESSAGING_SENDER_ID is required') })(),
+  appId: import.meta.env.VITE_APP_ID || (() => { throw new Error('VITE_APP_ID is required') })()
 };
 
 
