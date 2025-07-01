@@ -25,7 +25,7 @@ function QuoteBuilder() {
 
     fetchCustomers();
   }, []);
-  const [freightMode, setFreightMode] = useState('domesticAir'); // Default to Domestic Air
+  // const [freightMode, setFreightMode] = useState('domesticAir'); // Default to Domestic Air // Removed duplicate state declaration
 
   const {
     origin,

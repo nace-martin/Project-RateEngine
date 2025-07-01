@@ -1,9 +1,9 @@
 // database.js
 
 // Import our database instance from the config file
-import { db } from './firebase-config.js';
+import { db } from '../firebase/config.js';
 // Import the Firestore functions we need
-import { collection, addDoc, serverTimestamp, query, where, orderBy, getDocs, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+import { collection, addDoc, serverTimestamp, query, where, orderBy, getDocs, doc, updateDoc, deleteDoc } from "firebase/firestore";
 
 /**
  * Saves a quote data object to the 'quotes' collection in Firestore.

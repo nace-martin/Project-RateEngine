@@ -2,7 +2,7 @@ import { ancillaryCharges } from '../config/config.js';
 
 
 
-function calculateChargeableWeight(pieces) {
+function calculateChargeableWeight(pieces, freightMode) {
   // Ensure all piece dimensions are numbers before calculation
   const totalWeight = pieces.reduce((sum, piece) => sum + Number(piece.weight || 0), 0);
   const totalVolume = pieces.reduce((sum, piece) => {
@@ -37,9 +37,9 @@ function calculateChargeableWeight(pieces) {
  * @param {object} ratesData - The rate data object.
  * @returns {object} A quote object with all calculated details.
  */
-export function generateQuote({ origin, destination, pieces, freightMode }, ratesData) {
+export function generateQuote({ origin, destination, pieces, freightMode, targetCurrency }, ratesData) {
   console.log('QuoteLogicEngine.js - received freightMode:', freightMode);
-  const chargeableWeight = calculateChargeableWeight(pieces);
+  const chargeableWeight = calculateChargeableWeight(pieces, freightMode);
   const routeRateData = ratesData[origin]?.[destination];
 
   if (!routeRateData) {
