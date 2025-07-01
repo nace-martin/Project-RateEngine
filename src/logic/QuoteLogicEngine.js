@@ -1,32 +1,5 @@
 import { ancillaryCharges } from '../config/config.js';
-import { fxRates } from '../config/fxRates.js';
 
-/**
- * Converts a given amount from a source currency to a target currency
- * using USD as the common base.
- * @param {number} amount The amount to convert.
- * @param {string} fromCurrency The starting currency code (e.g., 'PGK').
- * @param {string} toCurrency The target currency code (e.g., 'AUD').
- * @returns {number} The converted amount.
- */
-function convertCurrency(amount, fromCurrency, toCurrency) {
-  if (!fxRates[fromCurrency] || !fxRates[toCurrency]) {
-    throw new Error(`Invalid currency code provided. Conversion from ${fromCurrency} to ${toCurrency} is not possible.`);
-  }
-
-  // If currencies are the same, no conversion needed
-  if (fromCurrency === toCurrency) {
-    return amount;
-  }
-
-  // Step 1: Convert the initial amount to the base currency (USD)
-  const amountInBase = amount / fxRates[fromCurrency];
-
-  // Step 2: Convert the USD amount to the target currency
-  const finalAmount = amountInBase * fxRates[toCurrency];
-
-  return finalAmount;
-}
 
 
 function calculateChargeableWeight(pieces) {
@@ -64,7 +37,7 @@ function calculateChargeableWeight(pieces) {
  * @param {object} ratesData - The rate data object.
  * @returns {object} A quote object with all calculated details.
  */
-export function generateQuote({ origin, destination, pieces, rateCurrency, targetCurrency, freightMode }, ratesData) {
+export function generateQuote({ origin, destination, pieces, freightMode }, ratesData) {
   console.log('QuoteLogicEngine.js - received freightMode:', freightMode);
   const chargeableWeight = calculateChargeableWeight(pieces);
   const routeRateData = ratesData[origin]?.[destination];
@@ -91,7 +64,7 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
 
   lineItems.push({
     name: freightName,
-    cost: convertCurrency(baseFreightCost, rateCurrency, targetCurrency),
+    cost: baseFreightCost,
   });
 
   // Ancillary charges calculation
@@ -131,7 +104,7 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
 
     lineItems.push({
       name: charge.name,
-      cost: convertCurrency(chargeCostPGK, 'PGK', targetCurrency), // Convert final cost to target currency
+      cost: chargeCostPGK, // Cost is already in PGK, no conversion needed for MVP
     });
   });
 
@@ -150,6 +123,5 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
     gst,
     grandTotal,
     currency: targetCurrency,
-    fxRateNote: rateCurrency === targetCurrency ? 'All charges in native currency.' : `Rates converted from ${rateCurrency} to ${targetCurrency} using USD as a base.`
   };
 }
