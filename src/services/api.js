@@ -14,12 +14,17 @@ export async function loadRateData() {
         dataFromSheet.forEach(row => {
             const origin = row.OriginAirportCode;
             const dest = row.DestinationAirportCode;
-            const rate = row.Rate_Per_KG_PGK;
+            const airRate = row.Rate_Per_KG_PGK;
+            const lclRate = row.LCL_Rate_Per_RT_PGK; // Assuming this column exists for LCL rates
+
             if(origin && dest && origin.trim() !== "" && dest.trim() !== "") {
                 uniqueLocations.add(origin);
                 uniqueLocations.add(dest);
                 if (!nestedRates[origin]) nestedRates[origin] = {};
-                nestedRates[origin][dest] = { rate: parseFloat(rate) };
+                nestedRates[origin][dest] = {
+                    airRate: parseFloat(airRate),
+                    lclRate: parseFloat(lclRate) || 0, // Default to 0 if not available
+                };
             }
         });
         

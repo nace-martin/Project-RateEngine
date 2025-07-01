@@ -1,0 +1,48 @@
+#root {
+  max-width: 1280px; /* This can be adjusted based on overall layout needs */
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center; /* May need to be adjusted depending on content alignment */
+  background-color: var(--white); /* Ensure root background is white */
+}
+
+/* Logo styles might be deprecated or changed based on new design */
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em var(--efm-blue)); /* Use EFM Blue for shadow */
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa); /* Keep React logo color or update if needed */
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+/* General card class from App.css, prefer .card-base from index.css or specific component styles */
+.card {
+  padding: 2em;
+  /* background-color: var(--white); Replaced by more specific card styling */
+  /* border-radius: 1rem; */
+  /* box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); */
+}
+
+.read-the-docs {
+  color: var(--mid-gray); /* Use Mid Gray for less important text */
+}

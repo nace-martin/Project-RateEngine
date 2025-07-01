@@ -30,14 +30,16 @@ function reducer(state, action) {
     case 'SET_FIELD':
       return { ...state, [action.field]: action.value };
     case 'GENERATE_QUOTE':
+      console.log('useQuoteBuilder.js - reducer action.payload.freightMode:', action.payload.freightMode);
       try {
         const newQuote = generateQuoteFromLogic(
           {
             origin: state.origin,
             destination: state.destination,
             pieces: state.pieces,
-            rateCurrency: action.payload.rateCurrency, // Pass the rate currency
-            targetCurrency: action.payload.targetCurrency, // Use the customer's currency
+            rateCurrency: action.payload.rateCurrency,
+            targetCurrency: action.payload.targetCurrency,
+            freightMode: action.payload.freightMode, // Pass freightMode from payload
           },
           state.freightRates
         );
@@ -57,7 +59,7 @@ function reducer(state, action) {
   }
 }
 
-export function useQuoteBuilder(targetCurrency) {
+export function useQuoteBuilder(targetCurrency, freightMode) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   useEffect(() => {
@@ -88,7 +90,7 @@ export function useQuoteBuilder(targetCurrency) {
   };
 
   const generateQuote = () => {
-    dispatch({ type: 'GENERATE_QUOTE', payload: { targetCurrency, rateCurrency: 'PGK' } });
+    dispatch({ type: 'GENERATE_QUOTE', payload: { targetCurrency, rateCurrency: 'PGK', freightMode } });
   };
 
   const clearError = () => {

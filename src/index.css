@@ -1,3 +1,141 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap');
+
+:root {
+  /* EFM Style Guide Colors */
+  --efm-blue: #005BAB;
+  --efm-orange: #FF6C00;
+  --slate-gray: #2F3A4A;
+  --cool-gray: #E5E7EB;
+  --white: #FFFFFF;
+  --light-gray: #F7F8FA;
+  --dark-charcoal: #1F2937;
+  --mid-gray: #6B7280;
+  --success-green: #22C55E;
+  --warning-yellow: #FACC15;
+  --error-red: #EF4444;
+  --info-blue: #3B82F6;
+
+  /* Typography */
+  --font-primary: 'Inter', sans-serif;
+  --font-headings: 'Poppins', 'Inter', sans-serif; /* Poppins for headings, Inter fallback */
+
+  font-family: var(--font-primary);
+  line-height: 1.6; /* Slightly more line height for readability */
+  font-weight: 400; /* Regular weight for body */
+  font-size: 16px; /* Body: 16px / Regular */
+
+  color-scheme: light;
+  color: var(--dark-charcoal);
+  background-color: var(--white);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: var(--efm-blue);
+  text-decoration: inherit;
+}
+a:hover {
+  color: #004a8c; /* Darken EFM Blue slightly for hover */
+}
+
+body {
+  margin: 0;
+  /* display: flex; place-items: center; -- Removing these as they center the whole app, better to control layout per page */
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--white);
+  font-family: var(--font-primary); /* Ensure body inherits primary font */
+  font-size: 16px; /* Explicitly set body font size */
+  color: var(--dark-charcoal);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-headings);
+  color: var(--dark-charcoal); /* Default heading color from neutrals */
+  margin-top: 1.5em; /* Standard spacing */
+  margin-bottom: 0.75em; /* Standard spacing */
+  line-height: 1.2; /* Tighter line height for headings */
+  text-transform: uppercase; /* As preferred in style guide */
+}
+
+h1 { /* H1: 32px / Semi-bold (Poppins) */
+  font-size: 32px;
+  font-weight: 600; /* Poppins semi-bold is 600, Inter bold is 700. Guide: semi-bold preferred. */
+}
+
+h2 { /* H2: 24px / Semi-bold */
+  font-size: 24px;
+  font-weight: 600;
+}
+
+h3 { /* H3: 20px / Medium */
+  font-size: 20px;
+  font-weight: 500;
+}
+
+/* Small text style */
+small, .text-small {
+  font-size: 14px; /* Small: 14px */
+  font-weight: 300; /* Light or muted - Inter light is 300 */
+  color: var(--mid-gray); /* Muted color */
+}
+
+
+button {
+  border-radius: 0.75rem; /* rounded-xl from style guide */
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: bold; /* Bold text for buttons */
+  font-family: inherit;
+  background-color: var(--efm-blue); /* Primary button color */
+  color: var(--white);
+  cursor: pointer;
+  transition: background-color 0.25s, border-color 0.25s;
+}
+button:hover {
+  background-color: #004a8c; /* Darken EFM Blue */
+  border-color: #003d73;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto var(--efm-blue); /* Focus ring with EFM Blue */
+}
+
+/* Remove default dark mode media query as we are implementing a light theme first */
+/* @media (prefers-color-scheme: light) { ... } */
+
+/* Specific button styles for secondary/destructive will be handled in component CSS or via classes */
+.btn-secondary, .btn-destructive {
+  background-color: var(--efm-orange);
+  color: var(--white);
+}
+.btn-secondary:hover, .btn-destructive:hover {
+  background-color: #e05e00; /* Darken EFM Orange */
+  border-color: #c75400;
+}
+
+/* General card styling - can be a base for components */
+.card-base {
+  background-color: var(--white);
+  border-radius: 1rem; /* rounded-2xl */
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); /* Soft shadow */
+  border: 1px solid var(--cool-gray); /* Subtle border */
+  padding: 1.5rem; /* Default padding */
+  transition: box-shadow 0.3s ease-in-out, transform 0.3s ease-in-out; /* For hover effect */
+}
+
+.card-base:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); /* Slightly larger shadow */
+  transform: translateY(-2px); /* Slight lift */
+}
+
+/* Utility class for secondary text */
+.text-secondary {
+  color: var(--mid-gray);
+}

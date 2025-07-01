@@ -39,9 +39,18 @@ function calculateChargeableWeight(pieces) {
     return sum + (length * width * height) / 1000000; // Convert cm3 to m3
   }, 0);
 
-  const volumetricWeight = totalVolume * 167; // IATA standard
+  const volumetricWeight = totalVolume * 167; // IATA standard for air freight
 
-  return Math.max(totalWeight, volumetricWeight);
+  if (freightMode === 'lclSea') {
+    // For LCL Sea Freight, 1 Revenue Ton (RT) = 1 cubic meter (CBM) or 1,000 kg, whichever is greater.
+    // Since totalVolume is already in CBM, and totalWeight is in kg, we need to compare CBM with MT (metric tons).
+    // 1 MT = 1000 kg. So, totalWeight / 1000 gives us metric tons.
+    const totalMetricTons = totalWeight / 1000;
+    return Math.max(totalVolume, totalMetricTons);
+  } else {
+    // For Domestic Air Freight and other modes, use the IATA standard
+    return Math.max(totalWeight, volumetricWeight);
+  }
 }
 
 /**
@@ -55,7 +64,8 @@ function calculateChargeableWeight(pieces) {
  * @param {object} ratesData - The rate data object.
  * @returns {object} A quote object with all calculated details.
  */
-export function generateQuote({ origin, destination, pieces, rateCurrency, targetCurrency }, ratesData) {
+export function generateQuote({ origin, destination, pieces, rateCurrency, targetCurrency, freightMode }, ratesData) {
+  console.log('QuoteLogicEngine.js - received freightMode:', freightMode);
   const chargeableWeight = calculateChargeableWeight(pieces);
   const routeRateData = ratesData[origin]?.[destination];
 
@@ -66,11 +76,21 @@ export function generateQuote({ origin, destination, pieces, rateCurrency, targe
   const lineItems = [];
   
   // The main freight cost calculation
-  const baseFreightCost = chargeableWeight * routeRateData.rate; // This cost is in the 'rateCurrency' (e.g., PGK)
+  let baseFreightCost;
+  let freightName;
+
+  if (freightMode === 'domesticAir') {
+    baseFreightCost = chargeableWeight * routeRateData.airRate; // Assuming airRate for domestic air
+    freightName = 'Air Freight';
+  } else if (freightMode === 'lclSea') {
+    baseFreightCost = chargeableWeight * routeRateData.lclRate; // Assuming lclRate for LCL sea
+    freightName = 'LCL Sea Freight';
+  } else {
+    throw new Error(`Unsupported freight mode: ${freightMode}`);
+  }
 
   lineItems.push({
-    name: 'Air Freight',
-    // Convert the base freight cost from its native currency to the final target currency
+    name: freightName,
     cost: convertCurrency(baseFreightCost, rateCurrency, targetCurrency),
   });
 

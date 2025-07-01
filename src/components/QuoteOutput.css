@@ -1,0 +1,82 @@
+/* src/components/QuoteOutput.css */
+
+.quote-output {
+  background-color: var(--white); /* Card background */
+  padding: 20px; /* Or 1.5rem to match .card-base */
+  border-radius: 1rem; /* rounded-2xl */
+  border: 1px solid var(--cool-gray); /* Subtle border */
+  color: var(--dark-charcoal); /* Default text color */
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); /* Soft shadow */
+}
+
+.quote-output h2 {
+  color: var(--efm-blue); /* EFM Blue for headers */
+  text-align: center;
+  margin-bottom: 20px;
+  /* Font size/weight will be handled in typography step */
+}
+
+.quote-summary p {
+  margin-bottom: 8px;
+  font-size: 1.1em; /* Or adjust with typography step */
+  color: var(--dark-charcoal);
+}
+
+.quote-summary strong {
+  color: var(--efm-blue); /* Highlight with EFM Blue */
+}
+
+.quote-output h3 {
+  color: var(--efm-blue); /* EFM Blue for sub-headers */
+  margin-top: 25px;
+  margin-bottom: 15px;
+  border-bottom: 1px solid var(--cool-gray); /* Lighter border */
+  padding-bottom: 10px;
+  /* Font size/weight will be handled in typography step */
+}
+
+.quote-output table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.quote-output th,
+.quote-output td {
+  border: 1px solid var(--cool-gray); /* Lighter table borders */
+  padding: 12px; /* Style guide: 12px padding */
+  text-align: left;
+  color: var(--dark-charcoal);
+}
+
+.quote-output th {
+  background-color: var(--light-gray); /* Light gray for table headers */
+  color: var(--efm-blue); /* EFM Blue for table header text */
+  font-weight: bold; /* Headers should be bold */
+}
+
+.quote-output tr:nth-child(even) {
+  background-color: var(--light-gray); /* Style guide: even:bg-gray-50 (using --light-gray) */
+}
+.quote-output tr:nth-child(odd) {
+  background-color: var(--white);
+}
+
+
+.quote-totals {
+  border-top: 1px solid var(--cool-gray); /* Lighter border */
+  padding-top: 15px;
+}
+
+.quote-totals p {
+  font-size: 1.2em; /* Or adjust with typography step */
+  font-weight: bold;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--dark-charcoal);
+}
+
+.quote-totals p strong {
+  color: var(--efm-blue); /* Highlight totals with EFM Blue */
+}

@@ -1,0 +1,63 @@
+/* src/components/ShipmentDetails.css */
+
+.shipment-details-section {
+  background-color: var(--white); /* Card background */
+  padding: 1.5rem; /* Consistent with .card-base */
+  border-radius: 1rem; /* rounded-2xl */
+  border: 1px solid var(--cool-gray); /* Subtle border */
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); /* Soft shadow */
+  color: var(--dark-charcoal);
+}
+
+.shipment-details-section h2 {
+  color: var(--efm-blue); /* EFM Blue for headers */
+  margin-top: 0;
+  margin-bottom: 15px;
+  border-bottom: 1px solid var(--cool-gray); /* Lighter border */
+  padding-bottom: 10px;
+  /* Font size/weight will be handled in typography step */
+}
+
+.piece-header {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr) auto; /* Adjust last column for button space */
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--cool-gray); /* Lighter border */
+  color: var(--mid-gray); /* Mid Gray for secondary text */
+  font-weight: bold;
+}
+
+.pieces-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* .piece-row styles are primarily in PieceRow.css, but if there were overrides: */
+/* .piece-row { ... } */
+/* .piece-row input { ... } */
+/* .remove-piece-btn styles are in PieceRow.css */
+
+
+.add-piece-container {
+  margin-top: 15px;
+  text-align: center; /* Or align with form elements */
+}
+
+.btn-add-piece {
+  background-color: var(--efm-blue); /* Primary button color */
+  color: var(--white);
+  border: none; /* Or 1px solid var(--efm-blue) if preferred */
+  padding: 10px 20px; /* Adjust padding to match global button spec if needed */
+  font-size: 1em; /* Match global button spec */
+  font-weight: bold; /* Style guide button text */
+  border-radius: 0.75rem; /* rounded-xl */
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.btn-add-piece:hover {
+  background-color: #004a8c; /* Darken EFM Blue */
+}

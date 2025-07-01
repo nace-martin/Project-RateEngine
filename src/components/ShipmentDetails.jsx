@@ -1,4 +1,5 @@
 import PieceRow from './PieceRow';
+import './ShipmentDetails.css';
 
 const ShipmentDetails = ({ pieces, setPieces }) => {
 
@@ -19,28 +20,30 @@ const ShipmentDetails = ({ pieces, setPieces }) => {
   };
 
   return (
-    <div className="bg-white p-4 rounded-2xl shadow-soft border border-cool-gray">
-      <h2 className="text-efm-blue text-2xl font-semibold mb-4 pb-2 border-b border-cool-gray">Shipment Details</h2>
-      <div className="grid grid-cols-5 gap-2 mb-2 text-mid-gray font-bold border-b border-cool-gray pb-2">
+    <div className="form-section shipment-details-section">
+      <h2>Shipment Details</h2>
+      <div className="piece-header">
         <span>Weight (kg)</span>
         <span>Length (cm)</span>
         <span>Width (cm)</span>
         <span>Height (cm)</span>
         <span></span>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="pieces-container">
         {pieces.map(piece => (
           <PieceRow
             key={piece.id}
             piece={piece}
-            onRemove={removePiece}
+            // Corrected prop name from onPieceChange to onChange
             onChange={handlePieceChange}
+            onRemove={removePiece}
           />
         ))}
       </div>
-      <div className="mt-4 text-center">
-        <button type="button" className="bg-efm-blue text-white px-4 py-2 rounded-xl font-bold text-sm hover:bg-blue-700" onClick={addPiece}>
-          + Add Another Piece
+      <div className="add-piece-container">
+        {/* User's version of button text, kept from their provided code */}
+        <button type="button" onClick={addPiece} className="btn-add-piece">
+          Add Piece
         </button>
       </div>
     </div>
