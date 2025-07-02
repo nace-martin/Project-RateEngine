@@ -11,7 +11,7 @@ const ServiceTypeSelector = ({ selectedServiceType, onServiceTypeChange }) => {
     { value: 'airFreight', label: 'Air Freight', enabled: true },
     { value: 'seaFreight', label: 'Sea Freight', enabled: true },
     { value: 'customsClearance', label: 'Customs Clearance Only', enabled: true },
-    { value: 'inlandCartage', label: 'Inland Transport / Cartage', enabled: false },
+    { value: 'inlandTransport', label: 'Inland Transport / Cartage', enabled: true },
     { value: 'projectCargo', label: 'Breakbulk or Project Cargo', enabled: false },
   ];
 

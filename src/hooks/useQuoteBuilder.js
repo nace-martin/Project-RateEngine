@@ -18,6 +18,23 @@ const initialState = {
   displayCBM: 0,
   displayRT: 0,
   serviceType: 'airFreight', // Default service type
+  inlandTransportData: { // Added for Inland Transport
+    transportType: 'Port to Door', // Default or first from list
+    pickupLocation: '',
+    dropOffLocation: '',
+    containerType: '20GP', // Default or first from list
+    truckType: '1-ton', // Default or first from list
+    specialInstructions: '',
+  },
+  customsClearanceData: { // Added for Customs Clearance
+    direction: 'import',
+    mode: 'air',
+    originCountry: '',
+    destinationPort: '',
+    hsCodes: '',
+    invoiceLines: '',
+    naqiaOrExemption: false,
+  },
 };
 
 function calculateDisplayMetrics(pieces, freightMode) {
