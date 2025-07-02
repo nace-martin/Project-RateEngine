@@ -7,23 +7,16 @@ import { getCustomersFromDb } from '../services/database.js';
 import ModeSelector from '../components/ModeSelector.jsx';
 import ServiceTypeSelector from '../components/ServiceTypeSelector.jsx'; // Import new component
 import CustomsClearanceBlock from '../components/CustomsClearanceBlock.jsx'; // Import CustomsClearanceBlock
+import InlandTransportBlock from '../components/InlandTransportBlock.jsx'; // Import InlandTransportBlock
 
 function QuoteBuilder() {
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [freightMode, setFreightMode] = useState('air-domestic'); // Default freight mode
   const [customersLoading, setCustomersLoading] = useState(true);
-  const [customsClearanceData, setCustomsClearanceData] = useState({
-    direction: 'import',
-    mode: 'air',
-    originCountry: '',
-    destinationPort: '',
-    hsCodes: '',
-    invoiceLines: '',
-    naqiaOrExemption: false,
-  });
+  // const [customsClearanceData, setCustomsClearanceData] = useState({...}); // This local state is no longer needed if managed by useQuoteBuilder or if customs data is also moved to useQuoteBuilder
 
-  // Destructure serviceType from useQuoteBuilder (already done in a previous step, ensuring it's here)
+  // Destructure serviceType and inlandTransportData from useQuoteBuilder
   const {
     origin,
     destination,
@@ -36,8 +29,10 @@ function QuoteBuilder() {
     warehouseCutoffDate,
     displayCBM,
     displayRT,
-    serviceType, // Make sure serviceType is destructured
-    setField,
+    serviceType,
+    inlandTransportData, // Destructure inlandTransportData
+    customsClearanceData, // Destructure customsClearanceData
+    setField, // Generic setter from useQuoteBuilder
     generateQuote,
     clearError,
     setPieces,
@@ -203,8 +198,20 @@ function QuoteBuilder() {
       {/* Customs Clearance specific fields */}
       {serviceType === 'customsClearance' && (
         <CustomsClearanceBlock
-          onChange={setCustomsClearanceData}
-          locations={locations} // Pass locations to CustomsClearanceBlock
+          // Pass the current data to the component if it needs to display it, though it manages its own form state internally
+          // customsData={customsClearanceData}
+          onChange={(newData) => setField('customsClearanceData', newData)}
+          locations={locations}
+        />
+      )}
+
+      {/* Inland Transport specific fields */}
+      {serviceType === 'inlandTransport' && (
+        <InlandTransportBlock
+          // Pass the current data to the component if it needs to display it, though it manages its own form state internally
+          // inlandData={inlandTransportData}
+          onChange={(newData) => setField('inlandTransportData', newData)}
+          locations={locations}
         />
       )}
 
