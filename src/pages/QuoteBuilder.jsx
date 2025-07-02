@@ -6,12 +6,22 @@ import { useQuoteBuilder } from '../hooks/useQuoteBuilder';
 import { getCustomersFromDb } from '../services/database.js';
 import ModeSelector from '../components/ModeSelector.jsx';
 import ServiceTypeSelector from '../components/ServiceTypeSelector.jsx'; // Import new component
+import CustomsClearanceBlock from '../components/CustomsClearanceBlock.jsx'; // Import CustomsClearanceBlock
 
 function QuoteBuilder() {
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [freightMode, setFreightMode] = useState('air-domestic'); // Default freight mode
   const [customersLoading, setCustomersLoading] = useState(true);
+  const [customsClearanceData, setCustomsClearanceData] = useState({
+    direction: 'import',
+    mode: 'air',
+    originCountry: '',
+    destinationPort: '',
+    hsCodes: '',
+    invoiceLines: '',
+    naqiaOrExemption: false,
+  });
 
   // Destructure serviceType from useQuoteBuilder (already done in a previous step, ensuring it's here)
   const {
@@ -190,16 +200,12 @@ function QuoteBuilder() {
         </>
       )}
 
-      {/* Placeholder for Customs Clearance specific fields - to be added in a future step */}
+      {/* Customs Clearance specific fields */}
       {serviceType === 'customsClearance' && (
-        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-md text-gray-800">
-          <h2 className="text-xl font-bold text-blue-600 mb-4">Customs Clearance Details</h2>
-          <p className="text-gray-600">Fields for Customs Clearance will be added here (e.g., Port of Entry, AWB/BL Number, Commercial Invoice Value).</p>
-          {/* Example:
-          <label htmlFor="portOfEntry">Port of Entry:</label>
-          <input type="text" id="portOfEntry" name="portOfEntry" />
-          */}
-        </div>
+        <CustomsClearanceBlock
+          onChange={setCustomsClearanceData}
+          locations={locations} // Pass locations to CustomsClearanceBlock
+        />
       )}
 
       <div className="flex justify-center gap-4 mt-5">
