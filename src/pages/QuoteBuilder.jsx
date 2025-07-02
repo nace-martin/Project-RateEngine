@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import ShipmentDetails from '../components/ShipmentDetails.jsx';
 import QuoteOutput from '../components/QuoteOutput.jsx';
-import { useQuoteBuilder } from '../hooks/useQuoteBuilder';
+import useQuoteBuilder from '../hooks/useQuoteBuilder.js'; // Corrected import
 import { getCustomersFromDb } from '../services/database.js';
 import ModeSelector from '../components/ModeSelector.jsx';
 import ServiceTypeSelector from '../components/ServiceTypeSelector.jsx'; // Import new component

@@ -1,194 +1,150 @@
-import { useReducer, useEffect } from 'react';
-import { loadRateData } from '../services/api';
-import { generateQuote as generateQuoteFromLogic } from '../logic/QuoteLogicEngine';
+import { useState, useCallback } from 'react';
 
-const initialState = {
-  freightRates: {},
-  locations: [],
-  origin: '',
-  destination: '',
-  quote: null,
-  chargeableWeight: 0,
-  error: null,
-  loading: true,
-  pieces: [{ id: 1, weight: '', length: '', width: '', height: '' }],
-  incoterm: 'EXW', // Default Incoterm
-  warehouseCutoffDate: '', // For LCL
-  // Derived values for display, not part of core state for quote generation but for UI
-  displayCBM: 0,
-  displayRT: 0,
-  serviceType: 'airFreight', // Default service type
-  inlandTransportData: { // Added for Inland Transport
-    transportType: 'Port to Door', // Default or first from list
-    pickupLocation: '',
-    dropOffLocation: '',
-    containerType: '20GP', // Default or first from list
-    truckType: '1-ton', // Default or first from list
-    specialInstructions: '',
-  },
-  customsClearanceData: { // Added for Customs Clearance
-    direction: 'import',
-    mode: 'air',
-    originCountry: '',
-    destinationPort: '',
-    hsCodes: '',
-    invoiceLines: '',
-    naqiaOrExemption: false,
-  },
-};
+// Mock locations data as it seems QuoteBuilder expects it
+const MOCK_LOCATIONS = ['New York, USA', 'Los Angeles, USA', 'London, UK', 'Paris, FR', 'Tokyo, JP'];
 
-function calculateDisplayMetrics(pieces, freightMode) {
-  const totalWeight = pieces.reduce((sum, piece) => sum + Number(piece.weight || 0), 0);
-  const totalCBM = pieces.reduce((sum, piece) => {
-    const length = Number(piece.length || 0);
-    const width = Number(piece.width || 0);
-    const height = Number(piece.height || 0);
-    return sum + (length * width * height) / 1000000; // Convert cm3 to m3 (CBM)
-  }, 0);
+const useQuoteBuilder = (selectedCustomerBillingCurrency, freightMode) => { // Added params from QuoteBuilder
+  const [serviceType, setServiceType] = useState('import');
+  const [mode, setMode] = useState(freightMode || 'air'); // Use freightMode from param if available
+  const [pieces, setPieces] = useState([{ id: 1, weight: '', length: '', width: '', height: '' }]);
+  const [incoterm, setIncoterm] = useState('FOB');
+  const [warehouseCutoffDate, setWarehouseCutoffDate] = useState('');
 
-  let displayRT = 0;
-  if (freightMode === 'sea-lcl') {
-    const totalMetricTons = totalWeight / 1000;
-    displayRT = Math.max(totalCBM, totalMetricTons);
-  } else if (freightMode === 'air-domestic' || freightMode === 'air-international') {
-    // For air, RT isn't typically displayed, chargeable weight is key.
-    // However, if RT concept is needed for air based on 1:6000, it's Volumetric Weight / 1000 if comparing to MT.
-    // Or simply the chargeable weight itself. For now, let's keep it specific to LCL display.
-    const volumetricWeight = totalCBM * 167;
-    displayRT = Math.max(totalWeight, volumetricWeight); // This is chargeable weight for air
-  }
+  // State expected by QuoteBuilder.jsx
+  const [origin, setOrigin] = useState(MOCK_LOCATIONS[0] || '');
+  const [destination, setDestination] = useState(MOCK_LOCATIONS[1] || '');
+  const [quote, setQuote] = useState(null); // Or some initial quote structure
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [locations] = useState(MOCK_LOCATIONS); // Read-only for now
+  const [displayCBM, setDisplayCBM] = useState(0); // Will need calculation
+  const [displayRT, setDisplayRT] = useState(0);   // Will need calculation
+  const [customsClearanceData, setCustomsClearanceData] = useState({});
+  const [inlandTransportData, setInlandTransportData] = useState({});
 
 
-  return { displayCBM: totalCBM, displayRT };
-}
+  const handleServiceTypeChange = useCallback((eventOrValue) => {
+    const value = eventOrValue?.target?.value !== undefined ? eventOrValue.target.value : eventOrValue;
+    setServiceType(value);
+  }, []);
 
-function reducer(state, action) {
-  switch (action.type) {
-    case 'FETCH_SUCCESS': {
-      // Metrics will be updated by the useEffect hook based on initial pieces and freightMode
-      return {
-        ...state,
-        freightRates: action.payload.freightRates,
-        locations: action.payload.locations,
-        origin: action.payload.locations[0] || '',
-        destination: action.payload.locations[1] || action.payload.locations[0] || '',
-        loading: false,
-      };
+  const handleModeChange = useCallback((eventOrValue) => {
+    const value = eventOrValue?.target?.value !== undefined ? eventOrValue.target.value : eventOrValue;
+    setMode(value);
+  }, []);
+
+  const handleIncotermChange = useCallback((eventOrValue) => {
+    const value = eventOrValue?.target?.value !== undefined ? eventOrValue.target.value : eventOrValue;
+    setIncoterm(value);
+  }, []);
+
+  const handleWarehouseCutoffDateChange = useCallback((eventOrValue) => {
+    const value = eventOrValue?.target?.value !== undefined ? eventOrValue.target.value : eventOrValue;
+    setWarehouseCutoffDate(value);
+  }, []);
+
+  const setField = useCallback((fieldName, value) => {
+    switch (fieldName) {
+      case 'serviceType':
+        setServiceType(value);
+        break;
+      case 'mode': // Note: QuoteBuilder uses setFreightMode, not setField('mode',...)
+        setMode(value);
+        break;
+      case 'incoterm':
+        setIncoterm(value);
+        break;
+      case 'warehouseCutoffDate':
+        setWarehouseCutoffDate(value);
+        break;
+      case 'origin':
+        setOrigin(value);
+        break;
+      case 'destination':
+        setDestination(value);
+        break;
+      case 'customsClearanceData':
+        setCustomsClearanceData(value);
+        break;
+      case 'inlandTransportData':
+        setInlandTransportData(value);
+        break;
+      // Add other fields as necessary that QuoteBuilder might try to set via setField
+      default:
+        console.warn(`setField called for unhandled field: ${fieldName}`);
     }
-    case 'FETCH_ERROR':
-      return { ...state, error: action.payload, loading: false };
-    case 'SET_FIELD': {
-      // If pieces are being updated, the useEffect will catch it.
-      // This primarily handles fields like origin, destination, incoterm, warehouseCutoffDate
-      return { ...state, [action.field]: action.value };
-    }
-    case 'UPDATE_DISPLAY_METRICS': // New action type specifically for metrics
-      return { ...state, displayCBM: action.payload.displayCBM, displayRT: action.payload.displayRT };
-    case 'GENERATE_QUOTE': {
-      console.log('useQuoteBuilder.js - reducer action.payload.freightMode:', action.payload.freightMode);
-      // Add CBM > 0 validation for LCL before attempting to generate quote
-      if (action.payload.freightMode === 'sea-lcl') {
-        // Recalculate metrics here to ensure fresh data for validation, though useEffect should keep it up to date.
-        const currentMetrics = calculateDisplayMetrics(state.pieces, action.payload.freightMode);
-        if (currentMetrics.displayCBM <= 0) {
-          return { ...state, error: 'Total CBM must be greater than 0 for LCL shipments.', quote: null };
-        }
-      }
-      try {
-        const newQuote = generateQuoteFromLogic(
-          {
-            origin: state.origin,
-            destination: state.destination,
-            pieces: state.pieces,
-            rateCurrency: action.payload.rateCurrency,
-            targetCurrency: action.payload.targetCurrency,
-            freightMode: action.payload.freightMode,
-            incoterm: state.incoterm,
-            warehouseCutoffDate: state.warehouseCutoffDate,
-          },
-          state.freightRates
-        );
-        return { ...state, quote: newQuote, error: null };
-      } catch (_err) {
-        return { ...state, error: _err.message, quote: null };
-      }
-    }
-    case 'CLEAR_ERROR':
-      return { ...state, error: null };
-    case 'RESET': {
-      // When resetting, also recalculate display metrics for the initial state
-      const resetMetrics = calculateDisplayMetrics(initialState.pieces, initialState.freightMode);
-      return {
-        ...initialState,
-        loading: true, // Ensure loading state is true to re-fetch data
-        displayCBM: resetMetrics.displayCBM, // Apply reset metrics
-        displayRT: resetMetrics.displayRT,   // Apply reset metrics
-      };
-    }
-    default:
-      throw new Error(`Unknown action type: ${action.type}`);
-  }
-}
+  }, []);
 
-export function useQuoteBuilder(targetCurrency, freightMode) { // freightMode is a prop from QuoteBuilder
-  const [state, dispatch] = useReducer(reducer, initialState);
+  // Placeholder functions expected by QuoteBuilder
+  const generateQuote = useCallback(() => {
+    console.log('generateQuote called with:', { origin, destination, pieces, incoterm, serviceType, mode, selectedCustomerBillingCurrency });
+    setLoading(true);
+    setError(null);
+    // Simulate API call
+    setTimeout(() => {
+      setQuote({
+        summary: `Quote generated for ${serviceType} from ${origin} to ${destination}.`,
+        details: pieces,
+        // ... other quote details
+      });
+      setLoading(false);
+    }, 1000);
+  }, [origin, destination, pieces, incoterm, serviceType, mode, selectedCustomerBillingCurrency]);
 
-  // Effect to update display metrics when pieces or the freightMode prop changes
-  useEffect(() => {
-    const metrics = calculateDisplayMetrics(state.pieces, freightMode);
-    dispatch({ type: 'UPDATE_DISPLAY_METRICS', payload: metrics });
-  }, [state.pieces, freightMode]);
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-    async function getRates() {
-      try {
-        const { freightRates, locations } = await loadRateData();
-        if (isMounted) {
-          dispatch({ type: 'FETCH_SUCCESS', payload: { freightRates, locations } });
-        }
-      } catch (err) { // eslint-disable-line no-unused-vars
-        if (isMounted) {
-          dispatch({ type: 'FETCH_ERROR', payload: 'Failed to load rate data.' });
-        }
-      }
-    }
-    // Only fetch if loading is true (initial state or after reset)
-    if (state.loading) {
-      getRates();
-    }
-    return () => {
-      isMounted = false;
-    };
-  }, [state.loading]); // Depend on state.loading
+  const resetQuote = useCallback(() => {
+    console.log('resetQuote called');
+    setServiceType('import');
+    setMode(freightMode || 'air');
+    setPieces([{ id: 1, weight: '', length: '', width: '', height: '' }]);
+    setIncoterm('FOB');
+    setWarehouseCutoffDate('');
+    setOrigin(MOCK_LOCATIONS[0] || '');
+    setDestination(MOCK_LOCATIONS[1] || '');
+    setQuote(null);
+    setError(null);
+    setCustomsClearanceData({});
+    setInlandTransportData({});
+    // Reset CBM/RT if they are calculated and stored in state
+    setDisplayCBM(0);
+    setDisplayRT(0);
+  }, [freightMode]);
 
-  const setField = (field, value) => {
-    dispatch({ type: 'SET_FIELD', field, value });
-  };
+  // TODO: Implement CBM and RT calculations based on pieces
+  // For now, just placeholders. These might need useEffect to update.
 
-  const generateQuote = () => {
-    dispatch({ type: 'GENERATE_QUOTE', payload: { targetCurrency, rateCurrency: 'PGK', freightMode } });
-  };
-
-  const clearError = () => {
-    dispatch({ type: 'CLEAR_ERROR' });
-  };
-
-  const setPieces = (newPieces) => {
-    dispatch({ type: 'SET_FIELD', field: 'pieces', value: newPieces });
-  };
-
-  const resetQuote = () => {
-    dispatch({ type: 'RESET' });
-  };
-
-  // Ensure all necessary state variables are returned from the hook
   return {
-    ...state, // includes origin, destination, quote, error, loading, pieces, incoterm, warehouseCutoffDate, displayCBM, displayRT
-    setField,
+    // States and setters for AirQuoteBuilder
+    serviceType,
+    handleServiceTypeChange, // Specific handler for AirQuoteBuilder if it uses it
+    mode,
+    handleModeChange, // Specific handler for AirQuoteBuilder if it uses it
+    pieces,
+    setPieces,
+    incoterm,
+    handleIncotermChange, // Specific handler for AirQuoteBuilder if it uses it
+    warehouseCutoffDate,
+    handleWarehouseCutoffDateChange, // Specific handler for AirQuoteBuilder if it uses it
+
+    // States and setters expected by QuoteBuilder.jsx
+    origin,
+    destination,
+    quote,
+    error,
+    loading,
+    locations,
+    displayCBM,
+    displayRT,
+    customsClearanceData,
+    inlandTransportData,
+    setField, // Generic setter
     generateQuote,
     clearError,
-    setPieces,
     resetQuote,
   };
-}
+};
+
+export default useQuoteBuilder;

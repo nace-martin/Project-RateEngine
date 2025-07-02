@@ -2,6 +2,13 @@ import { ancillaryCharges } from '../config/config.js';
 
 // Updated to accept freightMode
 function calculateChargeableWeight(pieces, freightMode) {
+  if (!freightMode) {
+    console.warn('calculateChargeableWeight called without freightMode. Defaulting to actual weight.');
+    // Fallback to actual weight if freightMode is not specified, or throw an error.
+    // For now, let's return total actual weight, consistent with the function's previous fallback.
+    return pieces.reduce((sum, piece) => sum + Number(piece.weight || 0), 0);
+  }
+
   // Ensure all piece dimensions are numbers before calculation
   const totalWeight = pieces.reduce((sum, piece) => sum + Number(piece.weight || 0), 0);
   const totalVolume = pieces.reduce((sum, piece) => {
