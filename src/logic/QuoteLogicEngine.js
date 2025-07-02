@@ -1,7 +1,6 @@
 import { ancillaryCharges } from '../config/config.js';
 
-
-
+// Updated to accept freightMode
 function calculateChargeableWeight(pieces, freightMode) {
   // Ensure all piece dimensions are numbers before calculation
   const totalWeight = pieces.reduce((sum, piece) => sum + Number(piece.weight || 0), 0);
@@ -12,18 +11,27 @@ function calculateChargeableWeight(pieces, freightMode) {
     return sum + (length * width * height) / 1000000; // Convert cm3 to m3
   }, 0);
 
-  const volumetricWeight = totalVolume * 167; // IATA standard for air freight
-
-  if (freightMode === 'lclSea') {
-    // For LCL Sea Freight, 1 Revenue Ton (RT) = 1 cubic meter (CBM) or 1,000 kg, whichever is greater.
-    // Since totalVolume is already in CBM, and totalWeight is in kg, we need to compare CBM with MT (metric tons).
-    // 1 MT = 1000 kg. So, totalWeight / 1000 gives us metric tons.
-    const totalMetricTons = totalWeight / 1000;
+  // For LCL Sea Freight, 1 Revenue Ton (RT) = 1 cubic meter (CBM) or 1,000 kg, whichever is greater.
+  // This logic is specific to LCL and will be used when freightMode is 'sea-lcl'.
+  if (freightMode === 'sea-lcl') {
+    const totalMetricTons = totalWeight / 1000; // Convert kg to metric tons
+    // RT = max(CBM, MT)
     return Math.max(totalVolume, totalMetricTons);
-  } else {
-    // For Domestic Air Freight and other modes, use the IATA standard
+  }
+  
+  // For Air Freight (Domestic and International), use IATA volumetric weight.
+  // Other modes might have different calculations in the future.
+  if (freightMode === 'air-domestic' || freightMode === 'air-international') {
+    const volumetricWeight = totalVolume * 167; // IATA standard volumetric factor for air freight (kg per CBM)
     return Math.max(totalWeight, volumetricWeight);
   }
+
+  // Default or other modes (e.g., 'sea-fcl', 'inland-domestic') might not use this function
+  // or have their specific chargeable quantity calculated differently.
+  // For now, return total weight if mode is not explicitly handled for volumetric calculation.
+  // This part may need refinement as other modes are implemented.
+  // console.warn(`Chargeable weight calculation not fully defined for mode: ${freightMode}. Defaulting to actual weight.`);
+  return totalWeight; // Fallback for modes not explicitly handled by volumetric calculations here.
 }
 
 /**
@@ -37,8 +45,9 @@ function calculateChargeableWeight(pieces, freightMode) {
  * @param {object} ratesData - The rate data object.
  * @returns {object} A quote object with all calculated details.
  */
-export function generateQuote({ origin, destination, pieces, freightMode, targetCurrency }, ratesData) {
+export function generateQuote({ origin, destination, pieces, freightMode }, ratesData) {
   console.log('QuoteLogicEngine.js - received freightMode:', freightMode);
+  // Pass freightMode to calculateChargeableWeight
   const chargeableWeight = calculateChargeableWeight(pieces, freightMode);
   const routeRateData = ratesData[origin]?.[destination];
 
@@ -52,12 +61,30 @@ export function generateQuote({ origin, destination, pieces, freightMode, target
   let baseFreightCost;
   let freightName;
 
-  if (freightMode === 'domesticAir') {
-    baseFreightCost = chargeableWeight * routeRateData.airRate; // Assuming airRate for domestic air
-    freightName = 'Air Freight';
-  } else if (freightMode === 'lclSea') {
-    baseFreightCost = chargeableWeight * routeRateData.lclRate; // Assuming lclRate for LCL sea
+  // Updated conditions for new freight modes
+  if (freightMode === 'air-domestic') {
+    if (!routeRateData.airRate) throw new Error(`Air rate not available for ${origin}-${destination}.`);
+    baseFreightCost = chargeableWeight * routeRateData.airRate;
+    freightName = 'Domestic Air Freight';
+  } else if (freightMode === 'sea-lcl') {
+    // LCL rating logic will be fully fleshed out in its own step.
+    // For now, ensure it doesn't crash if lclRate isn't present or if chargeableWeight is RT.
+    // This part will need careful review when implementing LCL rating.
+    if (!routeRateData.lclRate) throw new Error(`LCL rate not available for ${origin}-${destination}.`);
+    // Assuming lclRate is per RT. Chargeable weight for LCL is already RT.
+    baseFreightCost = chargeableWeight * routeRateData.lclRate; 
     freightName = 'LCL Sea Freight';
+  } else if (freightMode === 'air-international' || freightMode === 'sea-fcl' || freightMode === 'inland-domestic') {
+    // Placeholder: Rating logic for these modes is not yet implemented.
+    // In a real scenario, these would have their own rate lookups and calculations.
+    // For now, to prevent crashes and indicate WIP:
+    // Option 1: Throw error (as it was)
+    // throw new Error(`Rating for freight mode '${freightMode}' is not yet implemented.`);
+    // Option 2: Return a zero-cost item or specific message (less disruptive for UI testing)
+    baseFreightCost = 0; // Or some indicator value
+    freightName = `${freightMode.replace('-', ' ')} (Rating Not Implemented)`;
+    // To avoid breaking ancillary calculations, we push a zero item.
+    // Consider if ancillary charges should apply if base freight isn't rated.
   } else {
     throw new Error(`Unsupported freight mode: ${freightMode}`);
   }

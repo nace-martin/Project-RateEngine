@@ -18,7 +18,13 @@ const ModeSelector = ({ selectedMode, onModeChange }) => {
           key={mode.value}
           type="button"
           onClick={() => onModeChange(mode.value)}
-          className={`${baseClasses} ${index === 0 ? 'rounded-l-lg' : ''} ${index === modes.length - 1 ? 'rounded-r-lg' : ''} ${selectedMode === mode.value ? activeClasses : inactiveClasses} mb-2 md:mb-0 md:mr-1 last:mr-0`}
+          className={[
+            baseClasses,
+            index === 0 && 'rounded-l-lg',
+            index === modes.length - 1 && 'rounded-r-lg',
+            selectedMode === mode.value ? activeClasses : inactiveClasses,
+            'mb-2 md:mb-0 md:mr-1 last:mr-0'
+          ].filter(Boolean).join(' ')}
           style={{ minWidth: '120px' }} // Ensure buttons have some minimum width
         >
           {mode.label}
