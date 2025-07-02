@@ -2,20 +2,40 @@
 import { useState, useEffect } from 'react';
 import ShipmentDetails from '../components/ShipmentDetails.jsx';
 import QuoteOutput from '../components/QuoteOutput.jsx';
-import QuoteSummaryCard from '../components/QuoteSummaryCard.jsx'; // Import QuoteSummaryCard
 import { useQuoteBuilder } from '../hooks/useQuoteBuilder';
 import { getCustomersFromDb } from '../services/database.js';
 import ModeSelector from '../components/ModeSelector.jsx';
 import ServiceTypeSelector from '../components/ServiceTypeSelector.jsx'; // Import new component
 import CustomsClearanceBlock from '../components/CustomsClearanceBlock.jsx'; // Import CustomsClearanceBlock
 import InlandTransportBlock from '../components/InlandTransportBlock.jsx'; // Import InlandTransportBlock
+import { getAuth, onAuthStateChanged } from 'firebase/auth'; // Import Firebase Auth
+import { app } from '../firebase/config.js'; // Assuming your Firebase app init is here
+import { saveQuote } from '../lib/firestore/quotes.ts'; // Import saveQuote
+
+const auth = getAuth(app);
 
 function QuoteBuilder() {
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [freightMode, setFreightMode] = useState('air-domestic'); // Default freight mode
   const [customersLoading, setCustomersLoading] = useState(true);
-  // const [customsClearanceData, setCustomsClearanceData] = useState({...}); // This local state is no longer needed if managed by useQuoteBuilder or if customs data is also moved to useQuoteBuilder
+  const [currentUserEmail, setCurrentUserEmail] = useState(null);
+  const [isSavingQuote, setIsSavingQuote] = useState(false); // To track save operation
+
+  // Listen for auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUserEmail(user.email);
+      } else {
+        setCurrentUserEmail(null);
+        // Handle user not logged in if necessary, e.g., disable save, redirect, etc.
+        console.log("User is not logged in. Quotes will not be saved.");
+      }
+    });
+    return () => unsubscribe(); // Cleanup subscription
+  }, []);
+
 
   // Destructure serviceType and inlandTransportData from useQuoteBuilder
   const {
@@ -72,8 +92,61 @@ function QuoteBuilder() {
 
   const handleGenerateQuote = () => {
     clearError();
+    // We only trigger generateQuote here. Saving will be handled by a useEffect hook
+    // that watches for changes in the 'quote' object from useQuoteBuilder.
     generateQuote();
   };
+
+  // useEffect to save quote when it's generated and user is logged in
+  useEffect(() => {
+    // Ensure quote exists, is not currently being saved, and user is logged in
+    if (quote && !isSavingQuote && currentUserEmail) {
+      // Check if this quote has already been saved to prevent duplicates on re-renders
+      // This simple check assumes quote objects don't get a unique ID until saved.
+      // If your quote object from useQuoteBuilder might already have an ID or a timestamp 
+      // that changes frequently, this condition might need adjustment.
+      // A more robust check might involve comparing more fields or managing a 'lastSavedQuote' state.
+      if (!quote.id) { // Assuming 'id' is added by Firestore, so a new quote won't have it.
+        setIsSavingQuote(true);
+        // Assuming 'quote' from useQuoteBuilder contains all necessary data for QuoteData interface
+        // You might need to transform or pick specific fields from the 'quote' object
+        // if its structure doesn't exactly match the QuoteData interface.
+        const quoteDataForFirestore = {
+          // Example: Assuming 'quote' has 'quoteText' and 'author'
+          // quoteText: quote.fullText, 
+          // author: quote.authorName,
+          // ... and other fields that match your QuoteData interface in quotes.ts
+          // For now, let's assume the entire 'quote' object (or relevant parts) is what we want to save.
+          // Ensure that the 'quote' object's structure is compatible with 'QuoteData'.
+          // This might involve spreading parts of it or mapping fields.
+          // For simplicity, if 'quote' directly matches 'QuoteData' (excluding metadata):
+          ...quote // Spread the generated quote details
+        };
+
+        // Remove fields that Firestore should generate or that are not part of the 'quotes' collection schema
+        // For example, if 'quote' object from useQuoteBuilder contains 'generatedAt' client-side timestamp
+        // or any other metadata that we are replacing/adding (like 'id', 'createdAt', 'createdBy', 'status')
+        delete quoteDataForFirestore.id; // Ensure no client-side ID conflicts with Firestore's generated ID
+        delete quoteDataForFirestore.generatedAt; // We'll use serverTimestamp for createdAt
+
+        saveQuote(quoteDataForFirestore, currentUserEmail)
+          .then((docId) => {
+            alert(`Quote saved! ID: ${docId}`);
+            // Optionally, you could update the local quote state with the new ID
+            // if useQuoteBuilder is designed to handle it, e.g., by calling setField('id', docId)
+            // This would also help the !quote.id check above.
+          })
+          .catch((err) => {
+            // Error is already logged by saveQuote, just show alert
+            alert('Failed to save quote. See console for details.');
+          })
+          .finally(() => {
+            setIsSavingQuote(false);
+          });
+      }
+    }
+  }, [quote, currentUserEmail, isSavingQuote]); // Dependencies for the effect
+
 
   const handleResetQuote = () => {
     resetQuote();
@@ -235,14 +308,6 @@ function QuoteBuilder() {
       </div>
 
       <QuoteOutput quote={quote} />
-      <QuoteSummaryCard
-        serviceType={serviceType}
-        freightMode={freightMode}
-        origin={origin}
-        destination={destination}
-        incoterm={incoterm}
-        pieces={pieces}
-      />
     </div>
   );
 }
