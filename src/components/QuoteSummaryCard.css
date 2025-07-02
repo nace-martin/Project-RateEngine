@@ -1,0 +1,57 @@
+.quote-summary-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 16px;
+  background-color: #f9f9f9;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.quote-summary-card h2 {
+  margin-top: 0;
+  color: #333;
+  font-size: 1.5em;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+
+.quote-summary-card h3 {
+  margin-top: 16px;
+  color: #555;
+  font-size: 1.2em;
+  border-bottom: 1px dashed #eee;
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+}
+
+.quote-summary-card p {
+  margin: 8px 0;
+  color: #666;
+  font-size: 0.95em;
+}
+
+.status-line {
+  font-weight: bold;
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 16px;
+  text-align: center;
+}
+
+.status-ready {
+  color: #28a745; /* Green */
+  background-color: #e9f5ec;
+  border: 1px solid #28a745;
+}
+
+.status-waiting {
+  color: #ffc107; /* Amber */
+  background-color: #fff8e1;
+  border: 1px solid #ffc107;
+}
+
+.status-invalid {
+  color: #dc3545; /* Red */
+  background-color: #fbeeed;
+  border: 1px solid #dc3545;
+}

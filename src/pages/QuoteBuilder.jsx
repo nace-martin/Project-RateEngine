@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import ShipmentDetails from '../components/ShipmentDetails.jsx';
 import QuoteOutput from '../components/QuoteOutput.jsx';
+import QuoteSummaryCard from '../components/QuoteSummaryCard.jsx'; // Import QuoteSummaryCard
 import { useQuoteBuilder } from '../hooks/useQuoteBuilder';
 import { getCustomersFromDb } from '../services/database.js';
 import ModeSelector from '../components/ModeSelector.jsx';
@@ -234,6 +235,14 @@ function QuoteBuilder() {
       </div>
 
       <QuoteOutput quote={quote} />
+      <QuoteSummaryCard
+        serviceType={serviceType}
+        freightMode={freightMode}
+        origin={origin}
+        destination={destination}
+        incoterm={incoterm}
+        pieces={pieces}
+      />
     </div>
   );
 }

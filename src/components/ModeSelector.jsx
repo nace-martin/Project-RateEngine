@@ -8,7 +8,6 @@ const ModeSelector = ({ selectedMode, onModeChange }) => {
     { value: 'air-international', label: 'Int\'l Air' },
     { value: 'sea-lcl', label: 'Sea LCL' },
     { value: 'sea-fcl', label: 'Sea FCL' },
-    { value: 'inland-domestic', label: 'Inland Domestic' },
   ];
 
   return (
