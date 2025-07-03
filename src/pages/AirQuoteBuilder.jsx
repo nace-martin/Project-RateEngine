@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import useQuoteBuilder from '../hooks/useQuoteBuilder';
-import { saveQuote } from '../../lib/firestore/quotes';
-import ServiceTypeSelector from '../components/quoteBuilder/common/ServiceTypeSelector';
+import useQuoteBuilder from '@/hooks/useQuoteBuilder';
+import { saveQuote } from '@/lib/firestore/quotes';
+import ServiceTypeSelector from '@/components/quoteBuilder/common/ServiceTypeSelector';
 import ModeSelector from '@/components/quoteBuilder/common/ModeSelector';
 import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails';
+import QuoteSummaryCard from '@/components/quoteBuilder/common/QuoteSummaryCard';
+import useFirebaseUser from '@/hooks/useFirebaseUser';
 
 const AirQuoteBuilder = () => {
+  const firebaseUser = useFirebaseUser();
   const {
     serviceType,
     handleServiceTypeChange,
@@ -17,31 +20,24 @@ const AirQuoteBuilder = () => {
     handleIncotermChange,
     warehouseCutoffDate,
     handleWarehouseCutoffDateChange,
-    origin, // Added origin
-    destination, // Added destination
-    displayRT, // Added displayRT for chargeableWeight
-    displayCBM, // Added displayCBM
+    origin,
+    destination,
+    displayRT,
+    displayCBM,
   } = useQuoteBuilder();
 
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+
+  const [isDangerousGoods, setIsDangerousGoods] = useState(false);
+  const [notes, setNotes] = useState('');
 
   const handleSaveQuote = async () => {
     setSaving(true);
     setSaveSuccess(false);
     setSaveError(null);
-
-    // Access values from useQuoteBuilder hook
-    // const {
-    //   origin, // Not directly available in AirQuoteBuilder, need to get from useQuoteBuilder
-    //   destination, // Not directly available in AirQuoteBuilder, need to get from useQuoteBuilder
-    //   chargeableWeightRT, // Available as displayRT from useQuoteBuilder
-    //   pieces,
-    //   mode, // Available as mode from useQuoteBuilder (maps to freightMode)
-    //   incoterm,
-    //   warehouseCutoffDate,
-    // } = useQuoteBuilder(); // This is incorrect, need to access them from the hook's return values
 
     const quoteData = {
       origin,
@@ -51,7 +47,6 @@ const AirQuoteBuilder = () => {
       freightMode: mode,
       incoterm,
       warehouseCutoffDate,
-      // Placeholder for fields not yet available
       lineItems: [],
       subTotal: 0,
       gst: 0,
@@ -70,11 +65,54 @@ const AirQuoteBuilder = () => {
     }
   };
 
-  // Note: The onServiceTypeChange and onModeChange props for the selectors
-  // expect a direct value, while the hook's handlers expect an event-like object.
-  // This adaptation is kept here.
-  // ShipmentDetails' onIncotermChange and onWarehouseCutoffDateChange props
-  // pass the value directly, which is compatible with the updated hook handlers.
+  const handleDownloadPdf = async () => {
+    setIsDownloadingPdf(true);
+
+    const quoteDataForPdf = {
+      quoteId: `QTE-${Date.now()}`,
+      quoteDate: new Date().toISOString().split('T')[0],
+      customerName: 'Global Corp Inc.', // Placeholder, replace with actual customer data
+      origin: origin || 'N/A',
+      destination: destination || 'N/A',
+      incoterm: incoterm || 'N/A',
+      transportMode: mode || 'N/A',
+      isDangerousGoods: isDangerousGoods ? 'Yes' : 'No',
+      chargeableWeight: displayRT ? `${displayRT} RT` : 'N/A',
+      piecesSummary: pieces.length > 0 ? `${pieces.length} pcs / ...` : 'No pieces', // Needs more detailed summary
+      totalAmount: 'USD 0.00', // Placeholder, replace with actual total
+      createdBy: firebaseUser?.email || 'N/A',
+      notes: notes || ''
+    };
+
+    try {
+      const response = await fetch('https://australia-southeast1-long-justice-454003-b0.cloudfunctions.net/generateQuotePdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(quoteDataForPdf),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate PDF');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `quote-${quoteDataForPdf.quoteId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+    } catch (err) {
+      console.error('Error downloading PDF:', err);
+      alert('Failed to download PDF. See console for details.');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   return (
     <main className="p-4 space-y-6 max-w-4xl mx-auto">
@@ -91,56 +129,40 @@ const AirQuoteBuilder = () => {
         setPieces={setPieces}
         freightMode={mode}
         incoterm={incoterm}
-        onIncotermChange={handleIncotermChange} // Directly use handler from hook
+        onIncotermChange={handleIncotermChange}
         warehouseCutoffDate={warehouseCutoffDate}
-        onWarehouseCutoffDateChange={handleWarehouseCutoffDateChange} // Directly use handler from hook
+        onWarehouseCutoffDateChange={handleWarehouseCutoffDateChange}
         displayCBM={displayCBM}
         displayRT={displayRT}
       />
 
-      {/* Original placeholder sections can be reviewed for removal or integration */}
-      <section>
-        <h2>Direction & Route Info</h2>
-        {/* ServiceTypeSelector and ModeSelector are part of this */}
-      </section>
-      <section>
-        <h2>Cargo Details</h2>
-        {/* ShipmentDetails is part of this */}
-      </section>
-      <section>
-        <h2>Dimensions & Chargeable Weight</h2>
-        {/* Placeholder content */}
-      </section>
-      <section>
-        <h2>Payer & Currency</h2>
-        {/* Placeholder content */}
-      </section>
-      <section>
-        <h2>Rate Lookup</h2>
-        {/* Placeholder content */}
-      </section>
-      <section>
-        <h2>Cost Breakdown</h2>
-        {/* Placeholder content */}
-      </section>
       <section>
         <h2>Quote Summary</h2>
-        {/* Placeholder content */}
-      </section>
-      <section>
-        <h2>Action Buttons</h2>
-        <button
-          onClick={handleSaveQuote}
-          disabled={saving}
-          className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save Quote'}
-        </button>
-        {saveSuccess && (
-          <p className="text-green-500 mt-2">Quote saved successfully!</p>
+        {origin && destination && pieces && pieces.length > 0 && (
+          <QuoteSummaryCard
+            quoteData={{
+              pieces,
+              totalChargeableWeight: displayRT,
+              origin,
+              destination,
+              incoterm,
+              isDangerousGoods, 
+              notes, 
+              createdBy: firebaseUser?.email || 'N/A',
+              transportMode: mode,
+            }}
+            onSaveQuote={handleSaveQuote}
+            saving={saving}
+            saveSuccess={saveSuccess}
+            saveError={saveError}
+            onDownloadPdf={handleDownloadPdf}
+            isDownloadingPdf={isDownloadingPdf}
+          />
         )}
-        {saveError && (
-          <p className="text-red-500 mt-2">Error: {saveError}</p>
+        {!(origin && destination && pieces && pieces.length > 0) && (
+          <p className="text-gray-500 italic">
+            Please fill in Origin, Destination, and at least one Piece to see the quote summary.
+          </p>
         )}
       </section>
     </main>

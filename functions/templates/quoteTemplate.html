@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quote {{quoteId}}</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            color: #333;
+        }
+        .container {
+            width: 90%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        .header .company-logo {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .header .quote-details {
+            text-align: right;
+        }
+        .section {
+            margin-top: 20px;
+        }
+        .section h2 {
+            font-size: 18px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+        }
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .detail-item {
+            padding: 5px 0;
+        }
+        .detail-item strong {
+            display: block;
+            margin-bottom: 2px;
+            color: #555;
+        }
+        .pricing-section {
+            margin-top: 30px;
+            text-align: right;
+        }
+        .pricing-section .total {
+            font-size: 22px;
+            font-weight: bold;
+            color: #000;
+        }
+        .footer {
+            margin-top: 40px;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+            font-size: 12px;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="company-logo">
+                <!-- EFM Company Logo Placeholder -->
+                Your Company Name
+            </div>
+            <div class="quote-details">
+                <h1>Quote</h1>
+                <p><strong>ID:</strong> {{quoteId}}</p>
+                <p><strong>Date:</strong> {{quoteDate}}</p>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Customer</h2>
+            <p>{{customerName}}</p>
+        </div>
+
+        <div class="section">
+            <h2>Route & Service</h2>
+            <div class="details-grid">
+                <div class="detail-item">
+                    <strong>Origin:</strong>
+                    <span>{{origin}}</span>
+                </div>
+                <div class="detail-item">
+                    <strong>Destination:</strong>
+                    <span>{{destination}}</span>
+                </div>
+                <div class="detail-item">
+                    <strong>Incoterm:</strong>
+                    <span>{{incoterm}}</span>
+                </div>
+                <div class="detail-item">
+                    <strong>Transport Mode:</strong>
+                    <span>{{transportMode}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Cargo Details</h2>
+            <div class="details-grid">
+                <div class="detail-item">
+                    <strong>Pieces Summary:</strong>
+                    <span>{{piecesSummary}}</span>
+                </div>
+                <div class="detail-item">
+                    <strong>Chargeable Weight:</strong>
+                    <span>{{chargeableWeight}}</span>
+                </div>
+                <div class="detail-item">
+                    <strong>Dangerous Goods:</strong>
+                    <span>{{isDangerousGoods}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section pricing-section">
+            <h2>Total</h2>
+            <div class="total">{{totalAmount}}</div>
+        </div>
+
+        <div class="footer">
+            <p><strong>Created By:</strong> {{createdBy}}</p>
+            <p><strong>Notes:</strong> {{notes}}</p>
+        </div>
+    </div>
+</body>
+</html>

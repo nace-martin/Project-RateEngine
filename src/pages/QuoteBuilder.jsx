@@ -2,42 +2,39 @@
 import { useState, useEffect } from 'react';
 import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails.jsx';
 import QuoteOutput from '@/components/quoteBuilder/common/QuoteOutput.jsx';
-import useQuoteBuilder from '../hooks/useQuoteBuilder.js'; // Corrected import
+import useQuoteBuilder from '../hooks/useQuoteBuilder.js';
 import { getCustomersFromDb } from '../services/database.js';
 import ModeSelector from '@/components/quoteBuilder/common/ModeSelector.jsx';
-import ServiceTypeSelector from '@/components/quoteBuilder/common/ServiceTypeSelector.jsx'; // Import new component
-import CustomsClearanceBlock from '@/components/quoteBuilder/sea/CustomsClearanceBlock.jsx'; // Import CustomsClearanceBlock
-import InlandTransportBlock from '@/components/quoteBuilder/transport/InlandTransportBlock.jsx'; // Import InlandTransportBlock
-import { getAuth, onAuthStateChanged } from 'firebase/auth'; // Import Firebase Auth
-import { app } from '../firebase/config.js'; // Assuming your Firebase app init is here
-import { saveQuote } from '@/lib/firestore/quotes.ts'; // Import saveQuote
+import ServiceTypeSelector from '@/components/quoteBuilder/common/ServiceTypeSelector.jsx';
+import CustomsClearanceBlock from '@/components/quoteBuilder/sea/CustomsClearanceBlock.jsx';
+import InlandTransportBlock from '@/components/quoteBuilder/transport/InlandTransportBlock.jsx';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { app } from '../firebase/config.js';
+import { saveQuote } from '@/lib/firestore/quotes.ts';
 
 const auth = getAuth(app);
 
 function QuoteBuilder() {
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [freightMode, setFreightMode] = useState('air-domestic'); // Default freight mode
+  const [freightMode, setFreightMode] = useState('air-domestic');
   const [customersLoading, setCustomersLoading] = useState(true);
   const [currentUserEmail, setCurrentUserEmail] = useState(null);
-  const [isSavingQuote, setIsSavingQuote] = useState(false); // To track save operation
+  const [isSavingQuote, setIsSavingQuote] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
-  // Listen for auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setCurrentUserEmail(user.email);
       } else {
         setCurrentUserEmail(null);
-        // Handle user not logged in if necessary, e.g., disable save, redirect, etc.
         console.log("User is not logged in. Quotes will not be saved.");
       }
     });
-    return () => unsubscribe(); // Cleanup subscription
+    return () => unsubscribe();
   }, []);
 
-
-  // Destructure serviceType and inlandTransportData from useQuoteBuilder
   const {
     origin,
     destination,
@@ -50,35 +47,29 @@ function QuoteBuilder() {
     warehouseCutoffDate,
     displayCBM,
     displayRT,
-    totalGrossWeight, // Destructure totalGrossWeight
+    totalGrossWeight,
     serviceType, 
-    inlandTransportData, // Destructure inlandTransportData
-    customsClearanceData, // Destructure customsClearanceData
-    setField, // Generic setter from useQuoteBuilder
+    inlandTransportData,
+    customsClearanceData,
+    setField,
     generateQuote,
     clearError,
     setPieces,
     resetQuote,
   } = useQuoteBuilder(selectedCustomer?.billingCurrency, freightMode);
 
-
   useEffect(() => {
-    // Effect to handle freightMode changes when serviceType changes
     if (serviceType === 'airFreight') {
       setFreightMode('air-domestic');
     } else if (serviceType === 'seaFreight') {
-      setFreightMode('sea-lcl'); // Default for Sea Freight
+      setFreightMode('sea-lcl');
     } else {
-      // For other service types like 'customsClearance', freightMode might be irrelevant for ModeSelector
-      // Setting it back to a general default or null.
-      // For now, let's reset to air-domestic to ensure a valid state if user switches back.
       setFreightMode('air-domestic');
     }
-  }, [serviceType]); // Re-run when serviceType changes
+  }, [serviceType]);
 
   useEffect(() => {
     const fetchCustomers = async () => {
-      // Assuming a default userId for now. In a real app, this would come from auth.
       const fetchedCustomers = await getCustomersFromDb('user123');
       setCustomers(fetchedCustomers);
       if (fetchedCustomers.length > 0) {
@@ -90,55 +81,81 @@ function QuoteBuilder() {
     fetchCustomers();
   }, []);
   
-
   const handleGenerateQuote = () => {
     clearError();
-    // We only trigger generateQuote here. Saving will be handled by a useEffect hook
-    // that watches for changes in the 'quote' object from useQuoteBuilder.
     generateQuote();
   };
 
-  // useEffect to save quote when it's generated and user is logged in
+  const handleDownloadPdf = async () => {
+    if (!quote) {
+      alert("Please generate a quote first.");
+      return;
+    }
+
+    setIsDownloadingPdf(true);
+
+    const pdfPayload = {
+      quoteId: quote.quoteId || 'N/A',
+      quoteDate: new Date().toISOString().split('T')[0],
+      customerName: selectedCustomer?.name || 'N/A',
+      origin: origin,
+      destination: destination,
+      incoterm: incoterm,
+      transportMode: freightMode,
+      isDangerousGoods: quote.isDangerousGoods ? 'Yes' : 'No',
+      chargeableWeight: `${quote.totalChargeableWeight} RT`,
+      piecesSummary: '...',
+      totalAmount: quote.totalAmount,
+      createdBy: currentUserEmail,
+      notes: quote.notes || ''
+    };
+
+    try {
+      const response = await fetch('https://australia-southeast1-long-justice-454003-b0.cloudfunctions.net/generateQuotePdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(pdfPayload),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate PDF');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `quote-${pdfPayload.quoteId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+    } catch (err) {
+      console.error(err);
+      alert('Failed to download PDF. See console for details.');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   useEffect(() => {
-    // Ensure quote exists, is not currently being saved, and user is logged in
     if (quote && !isSavingQuote && currentUserEmail) {
-      // Check if this quote has already been saved to prevent duplicates on re-renders
-      // This simple check assumes quote objects don't get a unique ID until saved.
-      // If your quote object from useQuoteBuilder might already have an ID or a timestamp 
-      // that changes frequently, this condition might need adjustment.
-      // A more robust check might involve comparing more fields or managing a 'lastSavedQuote' state.
-      if (!quote.id) { // Assuming 'id' is added by Firestore, so a new quote won't have it.
+      if (!quote.id) {
         setIsSavingQuote(true);
-        // Assuming 'quote' from useQuoteBuilder contains all necessary data for QuoteData interface
-        // You might need to transform or pick specific fields from the 'quote' object
-        // if its structure doesn't exactly match the QuoteData interface.
         const quoteDataForFirestore = {
-          // Example: Assuming 'quote' has 'quoteText' and 'author'
-          // quoteText: quote.fullText, 
-          // author: quote.authorName,
-          // ... and other fields that match your QuoteData interface in quotes.ts
-          // For now, let's assume the entire 'quote' object (or relevant parts) is what we want to save.
-          // Ensure that the 'quote' object's structure is compatible with 'QuoteData'.
-          // This might involve spreading parts of it or mapping fields.
-          // For simplicity, if 'quote' directly matches 'QuoteData' (excluding metadata):
-          ...quote // Spread the generated quote details
+          ...quote
         };
 
-        // Remove fields that Firestore should generate or that are not part of the 'quotes' collection schema
-        // For example, if 'quote' object from useQuoteBuilder contains 'generatedAt' client-side timestamp
-        // or any other metadata that we are replacing/adding (like 'id', 'createdAt', 'createdBy', 'status')
-        delete quoteDataForFirestore.id; // Ensure no client-side ID conflicts with Firestore's generated ID
-        delete quoteDataForFirestore.generatedAt; // We'll use serverTimestamp for createdAt
+        delete quoteDataForFirestore.id;
+        delete quoteDataForFirestore.generatedAt;
 
         saveQuote(quoteDataForFirestore, currentUserEmail)
           .then((docId) => {
             alert(`Quote saved! ID: ${docId}`);
-            // Optionally, you could update the local quote state with the new ID
-            // if useQuoteBuilder is designed to handle it, e.g., by calling setField('id', docId)
-            // This would also help the !quote.id check above.
           })
           .catch((err) => {
-            // Error is already logged by saveQuote, just show alert
             alert('Failed to save quote. See console for details.');
           })
           .finally(() => {
@@ -146,8 +163,7 @@ function QuoteBuilder() {
           });
       }
     }
-  }, [quote, currentUserEmail, isSavingQuote]); // Dependencies for the effect
-
+  }, [quote, currentUserEmail, isSavingQuote]);
 
   const handleResetQuote = () => {
     resetQuote();
@@ -177,7 +193,6 @@ function QuoteBuilder() {
         </div>
       )}
 
-      {/* Service Type Selector will go here, above Customer */}
       <ServiceTypeSelector
         selectedServiceType={serviceType}
         onServiceTypeChange={(value) => setField('serviceType', value)}
@@ -204,7 +219,6 @@ function QuoteBuilder() {
         </div>
       </div>
 
-      {/* Conditional rendering for ModeSelector, Routing, and ShipmentDetails */}
       {(serviceType === 'airFreight' || serviceType === 'seaFreight') && (
         <>
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-md text-gray-800">
@@ -252,8 +266,6 @@ function QuoteBuilder() {
         </div>
       </div>
 
-          {/* ShipmentDetails is also part of this conditional block */}
-          {/* The inner condition for ShipmentDetails based on freightMode still applies */}
           {(freightMode === 'air-domestic' || freightMode === 'air-international' || freightMode === 'sea-lcl') && (
             <ShipmentDetails
               pieces={pieces}
@@ -270,21 +282,15 @@ function QuoteBuilder() {
         </>
       )}
 
-      {/* Customs Clearance specific fields */}
       {serviceType === 'customsClearance' && (
         <CustomsClearanceBlock
-          // Pass the current data to the component if it needs to display it, though it manages its own form state internally
-          // customsData={customsClearanceData} 
           onChange={(newData) => setField('customsClearanceData', newData)}
           locations={locations} 
         />
       )}
 
-      {/* Inland Transport specific fields */}
       {serviceType === 'inlandTransport' && (
         <InlandTransportBlock
-          // Pass the current data to the component if it needs to display it, though it manages its own form state internally
-          // inlandData={inlandTransportData} 
           onChange={(newData) => setField('inlandTransportData', newData)} 
           locations={locations} 
         />
@@ -308,7 +314,7 @@ function QuoteBuilder() {
         </button>
       </div>
 
-      <QuoteOutput quote={quote} />
+      <QuoteOutput quote={quote} onDownloadPdf={handleDownloadPdf} isDownloadingPdf={isDownloadingPdf} />
     </div>
   );
 }
