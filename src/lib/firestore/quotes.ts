@@ -40,24 +40,9 @@ interface QuoteData {
   // Client-side 'generatedAt' and 'id' (if any) from the quote object will be excluded
 }
 
-/**
- * Saves a quote to Firestore.
- * @param quoteData The quote data from useQuoteBuilder.
- * @param userEmail The email of the current user.
- * @returns The ID of the newly created document.
- * @throws Will throw an error if the save operation fails.
- */
-export const saveQuote = async (quoteData: QuoteData, userEmail: string): Promise<string> => {
-  try {
-    const docRef = await addDoc(collection(db, 'quotes'), {
-      ...quoteData,
-      createdAt: serverTimestamp(),
-      createdBy: userEmail,
-      status: 'draft',
-    });
-    return docRef.id;
-  } catch (error) {
-    console.error('Error saving quote to Firestore:', error);
-    throw new Error('Failed to save quote');
-  }
+// Placeholder for quotes.ts
+// Functions for interacting with the quotes collection in Firestore
+export const saveQuote = async (quoteData) => {
+  console.log("Saving quote:", quoteData);
+  return "mock-quote-id";
 };

@@ -1,8 +1,8 @@
 import React from 'react'; // No longer need useState here
 import useQuoteBuilder from '../hooks/useQuoteBuilder';
-import ServiceTypeSelector from '../components/ServiceTypeSelector';
-import ModeSelector from '../components/ModeSelector';
-import ShipmentDetails from '../components/ShipmentDetails';
+import ServiceTypeSelector from '../components/quoteBuilder/common/ServiceTypeSelector';
+import ModeSelector from '@/components/quoteBuilder/common/ModeSelector';
+import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails';
 
 const AirQuoteBuilder = () => {
   const {

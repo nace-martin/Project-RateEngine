@@ -27,7 +27,7 @@ function QuoteOutput({ quote }) {
           </tr>
         </thead>
         <tbody>
-          {quote.lineItems.map((item, index) => (
+          {quote.lineItems && Array.isArray(quote.lineItems) && quote.lineItems.map((item, index) => (
             <tr key={index} className={`${index % 2 === 0 ? 'bg-light-gray' : 'bg-white'}`}>
               <td className="border border-cool-gray p-2 text-dark-charcoal">{item.name}</td>
               <td className="border border-cool-gray p-2 text-dark-charcoal">${(item.cost || 0).toFixed(2)}</td>

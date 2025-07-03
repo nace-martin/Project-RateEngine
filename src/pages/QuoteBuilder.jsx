@@ -1,16 +1,16 @@
 
 import { useState, useEffect } from 'react';
-import ShipmentDetails from '../components/ShipmentDetails.jsx';
-import QuoteOutput from '../components/QuoteOutput.jsx';
+import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails.jsx';
+import QuoteOutput from '@/components/quoteBuilder/common/QuoteOutput.jsx';
 import useQuoteBuilder from '../hooks/useQuoteBuilder.js'; // Corrected import
 import { getCustomersFromDb } from '../services/database.js';
-import ModeSelector from '../components/ModeSelector.jsx';
-import ServiceTypeSelector from '../components/ServiceTypeSelector.jsx'; // Import new component
-import CustomsClearanceBlock from '../components/CustomsClearanceBlock.jsx'; // Import CustomsClearanceBlock
-import InlandTransportBlock from '../components/InlandTransportBlock.jsx'; // Import InlandTransportBlock
+import ModeSelector from '@/components/quoteBuilder/common/ModeSelector.jsx';
+import ServiceTypeSelector from '@/components/quoteBuilder/common/ServiceTypeSelector.jsx'; // Import new component
+import CustomsClearanceBlock from '@/components/quoteBuilder/sea/CustomsClearanceBlock.jsx'; // Import CustomsClearanceBlock
+import InlandTransportBlock from '@/components/quoteBuilder/transport/InlandTransportBlock.jsx'; // Import InlandTransportBlock
 import { getAuth, onAuthStateChanged } from 'firebase/auth'; // Import Firebase Auth
 import { app } from '../firebase/config.js'; // Assuming your Firebase app init is here
-import { saveQuote } from '../lib/firestore/quotes.ts'; // Import saveQuote
+import { saveQuote } from '@/lib/firestore/quotes.ts'; // Import saveQuote
 
 const auth = getAuth(app);
 
@@ -312,4 +312,4 @@ function QuoteBuilder() {
   );
 }
 
-export default QuoteBuilder;
+export default QuoteBuilder; 

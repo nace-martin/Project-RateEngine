@@ -1,5 +1,5 @@
 
-import ToggleButtonGroup from './ToggleButtonGroup';
+import ToggleButtonGroup from '@/components/ui/ToggleButtonGroup';
 
 const ServiceTypeSelector = ({ selectedServiceType, onServiceTypeChange }) => {
   const baseClasses = "flex-1 py-3 px-4 text-center font-semibold cursor-pointer transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500";
