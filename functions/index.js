@@ -1,7 +1,10 @@
 const functions = require("firebase-functions");
+const admin = require("firebase-admin");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const path = require("path");
+
+admin.initializeApp();
 
 // Read the HTML template from the file system
 const quoteTemplateHtml = fs.readFileSync(path.resolve(__dirname, "templates/quoteTemplate.html"), "utf8");
@@ -68,3 +71,33 @@ exports.generateQuotePdf = functions.https.onRequest({ region: "australia-southe
         res.status(500).send("Internal Server Error: Could not generate PDF.");
     }
 });
+
+exports.logQuoteToCRM = functions.firestore
+  .document("quotes/{quoteId}")
+  .onCreate(async (snap, context) => {
+    const quote = snap.data();
+    const quoteId = context.params.quoteId;
+
+    if (!quote || !quote.createdBy) {
+      functions.logger.info("Quote data or createdBy field is missing, skipping CRM log.", { quoteId });
+      return;
+    }
+
+    const userId = quote.createdBy;
+    const crmLogRef = admin.firestore().collection("users").doc(userId).collection("crmLogs").doc();
+
+    try {
+      await crmLogRef.set({
+        quoteId,
+        customer: quote.customer || "Unknown",
+        serviceType: quote.serviceType || "Air",
+        createdBy: quote.createdBy,
+        createdAt: quote.createdAt || admin.firestore.FieldValue.serverTimestamp(),
+        status: "draft",
+        note: "Auto-logged on quote creation"
+      });
+      functions.logger.info("CRM log created successfully", { crmLogId: crmLogRef.id, quoteId, userId });
+    } catch (error) {
+      functions.logger.error("Error creating CRM log:", error, { quoteId, userId });
+    }
+  });

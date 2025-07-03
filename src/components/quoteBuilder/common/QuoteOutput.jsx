@@ -1,6 +1,6 @@
 import React from 'react';
 
-function QuoteOutput({ quote }) {
+function QuoteOutput({ quote, onDownloadPdf, isDownloadingPdf }) { // Added onDownloadPdf and isDownloadingPdf props
   if (!quote) {
     return (
       <div className="quote-output">
@@ -40,6 +40,19 @@ function QuoteOutput({ quote }) {
         <p className="text-lg font-bold flex justify-between mb-2"><strong>GST:</strong> <span className="text-dark-charcoal">${(quote.gst || 0).toFixed(2)}</span></p>
         <p className="text-xl font-bold flex justify-between text-efm-blue"><strong>Grand Total:</strong> <span className="text-efm-blue">${(quote.grandTotal || 0).toFixed(2)}</span></p>
       </div>
+
+      {onDownloadPdf && ( // Conditionally render the button if the handler is provided
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            disabled={isDownloadingPdf}
+            className="bg-green-500 text-white font-bold py-3 px-6 rounded-xl hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {isDownloadingPdf ? 'Downloading PDF...' : 'Download PDF'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
