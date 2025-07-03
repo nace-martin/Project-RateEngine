@@ -50,6 +50,7 @@ function QuoteBuilder() {
     warehouseCutoffDate,
     displayCBM,
     displayRT,
+    totalGrossWeight, // Destructure totalGrossWeight
     serviceType, 
     inlandTransportData, // Destructure inlandTransportData
     customsClearanceData, // Destructure customsClearanceData
