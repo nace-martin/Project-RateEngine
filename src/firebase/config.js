@@ -1,7 +1,7 @@
 // src/firebase/config.js
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-// import { getAuth } from "firebase/auth"; // We'll need this later for logins
+import { getAuth } from "firebase/auth";
 
 // Your web app's Firebase configuration from your .env file
 // Vite automatically makes these available via import.meta.env
@@ -23,4 +23,4 @@ export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
 // Initialize and export Auth service
-// export const auth = getAuth(app);
+export const auth = getAuth(app);
