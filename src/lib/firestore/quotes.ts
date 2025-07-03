@@ -1,8 +1,9 @@
 import { getFirestore, collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { app } from '../../firebase/config.js'; // Updated path
+import { getAuth } from 'firebase/auth';
+import { app } from '../../firebase/config.js';
 
-// Initialize Firestore
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 // Define the structure of a piece
 interface Piece {
@@ -40,9 +41,18 @@ interface QuoteData {
   // Client-side 'generatedAt' and 'id' (if any) from the quote object will be excluded
 }
 
-// Placeholder for quotes.ts
-// Functions for interacting with the quotes collection in Firestore
 export const saveQuote = async (quoteData) => {
-  console.log("Saving quote:", quoteData);
-  return "mock-quote-id";
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('User not authenticated. Cannot save quote.');
+  }
+
+  const enrichedQuote = {
+    ...quoteData,
+    createdAt: serverTimestamp(),
+    createdBy: user.uid,
+  };
+
+  const docRef = await addDoc(collection(db, 'quotes'), enrichedQuote);
+  return docRef.id;
 };
