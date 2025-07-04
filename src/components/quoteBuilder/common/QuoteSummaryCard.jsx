@@ -15,7 +15,10 @@ const QuoteSummaryCard = ({ quoteData, onSaveQuote, saving, saveSuccess, saveErr
     notes,
     createdBy,
     transportMode,
+    fxQuoteData, // Destructure fxQuoteData
   } = quoteData;
+
+  const { quoteAmount, adjustedRate } = fxQuoteData || {}; // Provide default empty object
 
   const totalQuantity = pieces.reduce((sum, piece) => sum + (parseInt(piece.quantity, 10) || 0), 0);
   const totalWeight = pieces.reduce((sum, piece) => sum + ((parseInt(piece.quantity, 10) || 0) * (parseFloat(piece.weightKg, 10) || 0)), 0);
@@ -73,6 +76,16 @@ const QuoteSummaryCard = ({ quoteData, onSaveQuote, saving, saveSuccess, saveErr
           <p className="text-sm font-medium text-gray-500">Created By</p>
           <p className="text-md text-gray-800">{createdBy || 'N/A'}</p>
         </div>
+
+        {/* Display FX Quote Information if available */}
+        {quoteAmount && adjustedRate && (
+          <div className="md:col-span-2 pt-4 mt-4 border-t">
+            <p className="text-sm font-medium text-gray-500">Quoted Amount (USD)</p>
+            <p className="text-md text-gray-800">
+              ${quoteAmount} @ FX rate: {adjustedRate}
+            </p>
+          </div>
+        )}
       </div>
 
       {(onSaveQuote || onDownloadPdf) && (

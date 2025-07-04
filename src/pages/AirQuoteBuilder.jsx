@@ -6,6 +6,7 @@ import ModeSelector from '@/components/quoteBuilder/common/ModeSelector';
 import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails';
 import QuoteSummaryCard from '@/components/quoteBuilder/common/QuoteSummaryCard';
 import useFirebaseUser from '@/hooks/useFirebaseUser';
+import { calculateForeignQuote } from '@/lib/quoting/fxCalculator';
 
 const AirQuoteBuilder = () => {
   const firebaseUser = useFirebaseUser();
@@ -33,6 +34,30 @@ const AirQuoteBuilder = () => {
 
   const [isDangerousGoods, setIsDangerousGoods] = useState(false);
   const [notes, setNotes] = useState('');
+
+  // Placeholder for PGK Total Cost calculation
+  // TODO: Replace with actual PGK total cost calculation logic
+  const PGK_RATE_PER_RT = 10; // Example rate
+  const pgkTotal = displayRT * PGK_RATE_PER_RT; // This is a simplified placeholder
+
+  // FX Calculation
+  // TODO: Obtain billingLocation to conditionally run this logic.
+  // For now, assuming it should run if pgkTotal is available.
+  let fxQuoteData = null;
+  if (pgkTotal > 0) { // Basic check, will be replaced/augmented by billingLocation check
+    // const userBillingLocation = firebaseUser?.billingLocation || 'PNG'; // Example, once firebaseUser has this
+    const userBillingLocation = 'AUS'; // Hardcoded for now, assuming overseas for testing
+
+    if (userBillingLocation !== 'PNG') {
+      const { quoteAmount, adjustedRate } = calculateForeignQuote(
+        pgkTotal,     // Total PGK after margin (using placeholder pgkTotal for now)
+        0.2499,       // FX Rate (TT Buy) - example value
+        3,            // CAF % (Currency Adjustment Factor) - example value
+        10            // Margin % - example value
+      );
+      fxQuoteData = { quoteAmount, adjustedRate };
+    }
+  }
 
   const handleSaveQuote = async () => {
     setSaving(true);
@@ -150,6 +175,7 @@ const AirQuoteBuilder = () => {
               notes, 
               createdBy: firebaseUser?.email || 'N/A',
               transportMode: mode,
+              fxQuoteData, // Pass FX data to the summary card
             }}
             onSaveQuote={handleSaveQuote}
             saving={saving}
