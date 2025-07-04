@@ -7,9 +7,17 @@ import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails';
 import QuoteSummaryCard from '@/components/quoteBuilder/common/QuoteSummaryCard';
 import useFirebaseUser from '@/hooks/useFirebaseUser';
 import { calculateForeignQuote } from '@/lib/quoting/fxCalculator';
+import { ancillaryCharges as allAncillaryCharges } from '@/config/config';
+import { fxParameters } from '@/config/fxConfig'; // Import FX parameters
+
+// Define constants for international air freight rate and margin
+// TODO: These should ideally come from a more dynamic config or rate engine
+const INTERNATIONAL_AIR_FREIGHT_RATE_PER_RT = 50; // PGK per RT, placeholder
+const DANGEROUS_GOODS_SURCHARGE_PER_SHIPMENT = 150; // PGK, placeholder
+const MARGIN_PERCENTAGE = 15; // 15% margin
 
 const AirQuoteBuilder = () => {
-  const firebaseUser = useFirebaseUser();
+  const { user: firebaseUser, loading: userLoading, error: userError } = useFirebaseUser(); // Destructure user, loading, error
   const {
     serviceType,
     handleServiceTypeChange,
@@ -35,25 +43,86 @@ const AirQuoteBuilder = () => {
   const [isDangerousGoods, setIsDangerousGoods] = useState(false);
   const [notes, setNotes] = useState('');
 
-  // Placeholder for PGK Total Cost calculation
-  // TODO: Replace with actual PGK total cost calculation logic
-  const PGK_RATE_PER_RT = 10; // Example rate
-  const pgkTotal = displayRT * PGK_RATE_PER_RT; // This is a simplified placeholder
+  // --- Start PGK Total Cost Calculation ---
+  let subTotalBeforeMargin = 0;
+
+  if (mode === 'air-international' && displayRT > 0) {
+    // 1. Base Freight Cost (Placeholder for international air freight)
+    const baseFreightCost = displayRT * INTERNATIONAL_AIR_FREIGHT_RATE_PER_RT;
+    subTotalBeforeMargin += baseFreightCost;
+
+    // 2. Ancillary Charges from config.js
+    // Filter ancillary charges applicable to air-international or all modes.
+    // For now, assume all charges in config.js might apply if not mode-specific.
+    // This might need refinement if ancillaryCharges have mode applicability.
+    const ancillaryChargesToApply = allAncillaryCharges; // Or filter them: allAncillaryCharges.filter(c => !c.mode || c.mode === 'air-international');
+
+    const calculatedAncillaryCosts = {}; // For dependent charges
+
+    ancillaryChargesToApply.forEach(charge => {
+      let chargeCostPGK = 0;
+      if (charge.type === 'per_kg') {
+        chargeCostPGK = displayRT * charge.rate;
+      } else if (charge.type === 'per_shipment') {
+        chargeCostPGK = charge.rate;
+      } else if (charge.type === 'Percentage_Of_PUD' && charge.dependsOn) {
+        // Assuming PUD Fee is the only one with 'Percentage_Of_PUD' type for now
+        // This logic is simplified from QuoteLogicEngine.js for direct use here
+        const dependedOnChargeConfig = ancillaryChargesToApply.find(c => c.name === charge.dependsOn);
+        if (dependedOnChargeConfig) {
+          let dependedOnCostPGK = calculatedAncillaryCosts[charge.dependsOn];
+          if (dependedOnCostPGK === undefined) { // Calculate if not already done (e.g. PUD Fee)
+            if (dependedOnChargeConfig.type === 'per_kg') {
+              dependedOnCostPGK = displayRT * dependedOnChargeConfig.rate;
+            } else if (dependedOnChargeConfig.type === 'per_shipment') {
+              dependedOnCostPGK = dependedOnChargeConfig.rate;
+            }
+             // Apply min for the depended-on charge before calculating percentage
+            if (dependedOnChargeConfig.min && dependedOnCostPGK < dependedOnChargeConfig.min) {
+                dependedOnCostPGK = dependedOnChargeConfig.min;
+            }
+            calculatedAncillaryCosts[charge.dependsOn] = dependedOnCostPGK; // Store it
+          }
+          chargeCostPGK = dependedOnCostPGK * charge.rate; // Rate is percentage e.g. 0.10 for 10%
+        }
+      }
+
+      if (charge.min && chargeCostPGK < charge.min && charge.type !== 'Percentage_Of_PUD') { // Min for percentage based is on the parent
+        chargeCostPGK = charge.min;
+      }
+
+      // Store for potential dependencies and add to subtotal
+      if (charge.type !== 'Percentage_Of_PUD' || !calculatedAncillaryCosts[charge.name]) { // Add if not already part of a calculation (like PUD fee for PUD fuel)
+         calculatedAncillaryCosts[charge.name] = chargeCostPGK;
+      }
+      subTotalBeforeMargin += chargeCostPGK;
+    });
+
+    // 3. Dangerous Goods Surcharge (if applicable)
+    // TODO: Add DG Surcharge to ancillaryCharges in config.js for better management
+    if (isDangerousGoods) {
+      subTotalBeforeMargin += DANGEROUS_GOODS_SURCHARGE_PER_SHIPMENT;
+    }
+  }
+
+  // 4. Apply Margin
+  const pgkTotal = subTotalBeforeMargin * (1 + MARGIN_PERCENTAGE / 100);
+  // --- End PGK Total Cost Calculation ---
 
   // FX Calculation
-  // TODO: Obtain billingLocation to conditionally run this logic.
+  // TODO: Obtain billingLocation to conditionally run this logic. For now, using hardcoded 'AUS'.
   // For now, assuming it should run if pgkTotal is available.
   let fxQuoteData = null;
-  if (pgkTotal > 0) { // Basic check, will be replaced/augmented by billingLocation check
-    // const userBillingLocation = firebaseUser?.billingLocation || 'PNG'; // Example, once firebaseUser has this
-    const userBillingLocation = 'AUS'; // Hardcoded for now, assuming overseas for testing
+  // Ensure firebaseUser and clientData are loaded before attempting to access billingLocation
+  if (pgkTotal > 0 && firebaseUser && firebaseUser.clientData) {
+    const userBillingLocation = firebaseUser.clientData.billingLocation || 'PNG'; // Default to 'PNG' if not set
 
     if (userBillingLocation !== 'PNG') {
       const { quoteAmount, adjustedRate } = calculateForeignQuote(
-        pgkTotal,     // Total PGK after margin (using placeholder pgkTotal for now)
-        0.2499,       // FX Rate (TT Buy) - example value
-        3,            // CAF % (Currency Adjustment Factor) - example value
-        10            // Margin % - example value
+        pgkTotal,     // Total PGK after margin
+        fxParameters.DEFAULT_FX_RATE,
+        fxParameters.DEFAULT_CAF_PERCENTAGE,
+        fxParameters.DEFAULT_FX_MARGIN_PERCENTAGE
       );
       fxQuoteData = { quoteAmount, adjustedRate };
     }
