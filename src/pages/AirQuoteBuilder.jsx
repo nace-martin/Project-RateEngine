@@ -6,6 +6,7 @@ import ModeSelector from '@/components/quoteBuilder/common/ModeSelector';
 import ShipmentDetails from '@/components/quoteBuilder/air/ShipmentDetails';
 import QuoteSummaryCard from '@/components/quoteBuilder/common/QuoteSummaryCard';
 import useFirebaseUser from '@/hooks/useFirebaseUser';
+import { FX_SETTINGS } from '@/config/fxSettings';
 
 const AirQuoteBuilder = () => {
   const firebaseUser = useFirebaseUser();
@@ -80,6 +81,9 @@ const AirQuoteBuilder = () => {
       chargeableWeight: displayRT ? `${displayRT} RT` : 'N/A',
       piecesSummary: pieces.length > 0 ? `${pieces.length} pcs / ...` : 'No pieces', // Needs more detailed summary
       totalAmount: 'USD 0.00', // Placeholder, replace with actual total
+      defaultFxRate: FX_SETTINGS.defaultFxRate,
+      defaultCAFPercent: FX_SETTINGS.defaultCAFPercent,
+      defaultMarginPercent: FX_SETTINGS.defaultMarginPercent,
       createdBy: firebaseUser?.email || 'N/A',
       notes: notes || ''
     };

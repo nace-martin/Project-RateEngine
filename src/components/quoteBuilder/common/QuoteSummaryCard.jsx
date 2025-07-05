@@ -1,6 +1,7 @@
 import React from 'react';
 
 const QuoteSummaryCard = ({ quoteData, onSaveQuote, saving, saveSuccess, saveError, onDownloadPdf, isDownloadingPdf }) => {
+  const { defaultFxRate, defaultCAFPercent, defaultMarginPercent } = quoteData;
   if (!quoteData) {
     return null;
   }
@@ -15,6 +16,9 @@ const QuoteSummaryCard = ({ quoteData, onSaveQuote, saving, saveSuccess, saveErr
     notes,
     createdBy,
     transportMode,
+    defaultFxRate,
+    defaultCAFPercent,
+    defaultMarginPercent,
   } = quoteData;
 
   const totalQuantity = pieces.reduce((sum, piece) => sum + (parseInt(piece.quantity, 10) || 0), 0);
