@@ -1,0 +1,18 @@
+#!/bin/sh
+
+echo "🔒 Running .env validation..."
+node .env.validate.js
+if [ $? -ne 0 ]; then
+  echo "❌ .env validation failed. Aborting push."
+  exit 1
+fi
+
+echo "🕵️ Running Gitleaks secret scan..."
+gitleaks detect --source . --report-path gitleaks-report.json --redact
+if [ $? -ne 0 ]; then
+  echo "❌ Gitleaks found secrets. Check gitleaks-report.json for details. Aborting push."
+  exit 1
+fi
+
+echo "✅ All checks passed. Proceeding with push..."
+exit 0
