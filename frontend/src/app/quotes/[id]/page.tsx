@@ -1,15 +1,26 @@
 import { Quote } from '@/lib/types';
+import { notFound } from 'next/navigation';
+// This function fetches ONE quote using its ID
+import { Quote } from '@/lib/types';
+import { notFound } from 'next/navigation';
 
 // This function fetches ONE quote using its ID
 async function getQuote(id: string): Promise<Quote> {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-  const res = await fetch(`${apiBase}/quotes/${id}/`, { cache: 'no-store' });
-  if (!res.ok) {
-    throw new Error('Failed to fetch quote');
+  if (!apiBase) {
+    throw new Error('Missing NEXT_PUBLIC_API_BASE environment variable');
   }
-  return res.json();
+  const base = apiBase.replace(/\/$/, '');
+  const res = await fetch(`${base}/quotes/${encodeURIComponent(id)}/`, { cache: 'no-store' });
+  if (res.status === 404) {
+    notFound();
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to fetch quote (status ${res.status})`);
+  }
+  const data = (await res.json()) as Quote;
+  return data;
 }
-
 // The 'params' prop is automatically passed by Next.js for dynamic routes like [id]
 export default async function QuoteDetailPage({ params }: { params: { id: string } }) {
   // We get the specific id from the params and pass it to our fetch function

@@ -2,14 +2,19 @@ import Link from 'next/link';
 import { Quote } from '@/lib/types';
 
 async function getQuotes(): Promise<Quote[]> {
+async function getQuotes(): Promise<Quote[]> {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-  const res = await fetch(`${apiBase}/quotes/`, { cache: 'no-store' });
-  if (!res.ok) {
-    throw new Error('Failed to fetch quotes');
+  if (!apiBase) {
+    throw new Error('Environment variable NEXT_PUBLIC_API_BASE is not set');
   }
-  return res.json();
+  const url = new URL('quotes/', apiBase);
+  const res = await fetch(url.toString(), { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch quotes: ${res.status} ${res.statusText}`);
+  }
+  const data = (await res.json()) as Quote[];
+  return data;
 }
-
 export default async function QuotesListPage() {
   const quotes = await getQuotes();
 

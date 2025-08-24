@@ -16,16 +16,36 @@ export default function CreateQuotePage() {
   
   // This effect runs once when the component loads to fetch clients
   useEffect(() => {
-    const fetchClients = async () => {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-      const res = await fetch(`${apiBase}/clients/`);
-      const data = await res.json();
-      setClients(data);
-    };
-
-    fetchClients();
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+    if (!apiBase) {
+      console.error('NEXT_PUBLIC_API_BASE is not set');
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${apiBase}/clients/`, {
+          signal: controller.signal,
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          console.error('Failed to fetch clients', res.status);
+          return;
+        }
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setClients(data);
+        } else {
+          console.error('Unexpected clients payload', data);
+        }
+      } catch (err) {
+        if ((err as any).name !== 'AbortError') {
+          console.error('Error fetching clients', err);
+        }
+      }
+    })();
+    return () => controller.abort();
   }, []); // The empty array [] means this effect runs only once
-
   // This function is called when the form is submitted
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); // Prevent the default form submission behavior
@@ -36,25 +56,33 @@ export default function CreateQuotePage() {
       origin: origin,
       destination: destination,
       mode: 'air',
-      actual_weight_kg: actualWeight,
+      actual_weight_kg: actualWeight ? Number(actualWeight) : 0,
       // You can add volume and margin fields to your form later
-      // volume_cbm: volume,
-      // margin_pct: margin,
+      // volume_cbm: volume ? Number(volume) : undefined,
+      // margin_pct: margin ? Number(margin) : undefined,
     };
 
     const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-    const res = await fetch(`${apiBase}/quotes/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(quoteData),
-    });
+    try {
+      const res = await fetch(`${apiBase}/quotes/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(quoteData),
+      });
 
-if (res.ok) {
-  // If the quote was created successfully, redirect to the new quotes list page
-  router.push('/quotes'); 
-} else {
-      // Handle errors
-      alert('Failed to create quote');
+      if (res.ok) {
+        router.push('/quotes');
+      } else {
+        const errorData = await res.json().catch(() => null);
+        let errorMsg = 'Failed to create quote.';
+        if (errorData && errorData.error) {
+          errorMsg += `\n${errorData.error}`;
+        }
+        alert(errorMsg);
+      }
+    } catch (err) {
+      alert('Network error: Unable to submit quote.');
+      console.error('Submit error:', err);
     }
   };
 
