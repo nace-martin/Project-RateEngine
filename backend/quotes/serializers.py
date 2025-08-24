@@ -15,3 +15,10 @@ class QuoteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Quote
         fields = '__all__'
+        # These fields will be calculated by the backend, not sent by the frontend
+        read_only_fields = [
+            'chargeable_weight_kg', 
+            'rate_used_per_kg', 
+            'base_cost', 
+            'total_sell',
+        ]
