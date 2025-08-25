@@ -1,6 +1,19 @@
 from django.db import models
 from django.conf import settings
 
+class ShipmentPiece(models.Model):
+    quote = models.ForeignKey('Quote', on_delete=models.CASCADE, related_name="pieces")
+    quantity = models.PositiveIntegerField(default=1)
+    length_cm = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    width_cm = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    height_cm = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    weight_kg = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    def __str__(self):
+        return f"{self.quantity} x {self.weight_kg}kg piece for Quote #{self.quote.id}"
+from django.db import models
+from django.conf import settings
+
 class Client(models.Model):
     name = models.CharField(max_length=200, unique=True)
     email = models.EmailField(blank=True)

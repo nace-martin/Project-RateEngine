@@ -10,11 +10,19 @@ export interface Client {
 
 export interface Quote {
   id: number;
-  client: number; // The ID of the related client
+  client: Client; // The related client object
   origin: string;
   destination: string;
   mode: string;
   actual_weight_kg: string;
   total_sell: string; // We'll use string for decimals for now
   created_at: string;
+}
+
+export interface ShipmentPiece {
+  quantity: number;
+  length_cm: number;
+  width_cm: number;
+  height_cm: number;
+  weight_kg: number;
 }

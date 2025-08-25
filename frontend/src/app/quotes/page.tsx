@@ -1,49 +1,61 @@
 import Link from 'next/link';
 import { Quote } from '@/lib/types';
 
-async function getQuotes(): Promise<Quote[]> {
+// This is a Server Component, so we can fetch data directly
 async function getQuotes(): Promise<Quote[]> {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE;
   if (!apiBase) {
     throw new Error('Environment variable NEXT_PUBLIC_API_BASE is not set');
   }
-  const url = new URL('quotes/', apiBase);
-  const res = await fetch(url.toString(), { cache: 'no-store' });
+  
+  const res = await fetch(`${apiBase}/quotes/`, { cache: 'no-store' });
+
   if (!res.ok) {
-    throw new Error(`Failed to fetch quotes: ${res.status} ${res.statusText}`);
+    // This will be caught by the nearest error page
+    throw new Error('Failed to fetch quotes');
   }
-  const data = (await res.json()) as Quote[];
+
+  const data = await res.json();
+  // We'll sort so the newest quotes appear first
+  data.sort((a: Quote, b: Quote) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   return data;
 }
+
 export default async function QuotesListPage() {
   const quotes = await getQuotes();
 
   return (
     <main className="container mx-auto p-8">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex justify-between items-center mb-6">
         <h1 className="text-4xl font-bold">All Quotes</h1>
-        <Link href="/quotes/new" className="bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700">
+        <Link href="/quotes/new" className="bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition-colors">
           Create New Quote
         </Link>
       </div>
 
-      <div className="bg-white shadow rounded-lg">
+      <div className="bg-white shadow-md rounded-lg">
         <ul className="divide-y divide-gray-200">
-          {quotes.map((quote) => (
-            <li key={quote.id}>
-              <Link href={`/quotes/${quote.id}`} className="block hover:bg-gray-50 p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-lg font-medium text-blue-600">
-                    Quote #{quote.id}
+          {quotes.length > 0 ? (
+            quotes.map((quote) => (
+              <li key={quote.id} className="p-4 sm:p-6 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                <div>
+                  {/* This line will now work correctly after updating types.ts */}
+                  <p className="font-semibold text-lg text-gray-800">{quote.client.name}</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {quote.origin} → {quote.destination} - <span className="font-medium text-gray-700">${quote.total_sell}</span>
                   </p>
-                  <p className="text-lg font-bold">${quote.total_sell}</p>
+                  <p className="text-xs text-gray-400 mt-2">
+                    {new Date(quote.created_at).toLocaleString()}
+                  </p>
                 </div>
-                <p className="text-gray-600 mt-1">
-                  {quote.origin} to {quote.destination} - {quote.actual_weight_kg} kg
-                </p>
-              </Link>
-            </li>
-          ))}
+                <Link href={`/quotes/${quote.id}`} className="text-blue-600 hover:underline font-semibold">
+                  View Details
+                </Link>
+              </li>
+            ))
+          ) : (
+            <li className="p-6 text-center text-gray-500">No quotes found.</li>
+          )}
         </ul>
       </div>
     </main>
