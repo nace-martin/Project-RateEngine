@@ -30,9 +30,23 @@ export default function CreateQuotePage() {
   useEffect(() => {
     const fetchClients = async () => {
       const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-      const res = await fetch(`${apiBase}/clients/`);
-      const data = await res.json();
-      setClients(data);
+      try {
+        const res = await fetch(`${apiBase}/clients/`);
+        if (!res.ok) {
+          throw new Error(`Failed to fetch clients: ${res.status}`);
+        }
+        let data;
+        try {
+          data = await res.json();
+        } catch (jsonErr) {
+          throw new Error("Failed to parse clients response as JSON.");
+        }
+        setClients(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Error fetching clients:", err);
+        setClients([]);
+        // Optionally set an error state here to show a UI message
+      }
     };
     fetchClients();
   }, []);
@@ -50,16 +64,18 @@ export default function CreateQuotePage() {
       const height = Number(p.height_cm) || 0;
 
       totalGrossWeight += quantity * weight;
-      totalVolume += (length * width * height) / 1000000 * quantity; // in CBM
-    });
-
-    const totalVolumetricWeight = totalVolume * 167;
-    const chargeableWeight = Math.max(totalGrossWeight, totalVolumetricWeight);
-
-    return {
-      totalGrossWeight: totalGrossWeight.toFixed(2),
-      totalVolumetricWeight: totalVolumetricWeight.toFixed(2),
-      chargeableWeight: chargeableWeight.toFixed(2),
+  const handlePieceChange = (index: number, field: keyof ShipmentPiece, value: string) => {
+    // Validate numeric input
+    if (value !== '' && isNaN(Number(value))) {
+      return; // Ignore non-numeric input
+    }
+    const updatedPieces = [...pieces];
+    updatedPieces[index] = { ...updatedPieces[index], [field]: value };
+    setPieces(updatedPieces);
+  };
+  const addPiece = () => {
+    setPieces([...pieces, { ...initialPieceState }]);
+  };      chargeableWeight: chargeableWeight.toFixed(2),
     };
   }, [pieces]); // This recalculates whenever the 'pieces' array changes
 
@@ -74,15 +90,30 @@ export default function CreateQuotePage() {
     setPieces([...pieces, initialPieceState]);
   };
 
-  const removePiece = (index: number) => {
-    if (pieces.length > 1) {
-      const updatedPieces = pieces.filter((_, i) => i !== index);
-      setPieces(updatedPieces);
-    }
-  };
-
-  // --- FORM SUBMISSION ---
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+      pieces: pieces.map(p => {
+        const piece = {
+          quantity: Number(p.quantity) || 0,
+          length_cm: Number(p.length_cm) || 0,
+          width_cm: Number(p.width_cm) || 0,
+          height_cm: Number(p.height_cm) || 0,
+          weight_kg: Number(p.weight_kg) || 0,
+        };
+        
+        // Validate piece data
+        if (
+          piece.quantity <= 0 ||
+          piece.length_cm <= 0 ||
+          piece.width_cm <= 0 ||
+          piece.height_cm <= 0 ||
+          piece.weight_kg <= 0
+        ) {
+          throw new Error(
+            'All piece dimensions and weight must be positive values'
+          );
+        }
+        
+        return piece;
+      }),  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const quoteData = {

@@ -19,10 +19,21 @@ export interface Quote {
   created_at: string;
 }
 
-export interface ShipmentPiece {
+  /**
+   * Quantity is expected to be an integer
+   */
   quantity: number;
   length_cm: number;
   width_cm: number;
   height_cm: number;
-  weight_kg: number;
+  /**
+   * Weight in kg, as a decimal string (to match Quote)
+   */
+  weight_kg: DecimalString;
+}
+
+/**
+ * Branded type for decimal strings (e.g., "12.34")
+ */
+export type DecimalString = string & { __decimalStringBrand: never };
 }

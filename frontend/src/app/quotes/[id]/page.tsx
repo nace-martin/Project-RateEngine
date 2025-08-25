@@ -39,10 +39,14 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
       if (!params.id) return;
 
       const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      if (!apiBase) {
+        throw new Error('API base URL is not configured');
+      }
       try {
         setLoading(true);
-        const res = await fetch(`${apiBase}/quotes/${params.id}/`);
-        if (!res.ok) {
+        const res = await fetch(`${apiBase}/quotes/${params.id}/`, {
+          signal: AbortSignal.timeout(10000) // 10 second timeout
+        });        if (!res.ok) {
           throw new Error(`Failed to fetch quote. Status: ${res.status}`);
         }
         const data = await res.json();
@@ -82,7 +86,14 @@ export default function QuoteDetailPage({ params }: { params: { id: string } }) 
         
         <dl className="divide-y divide-gray-200">
           <DetailRow label="Route" value={`${quote.origin} → ${quote.destination}`} />
-          <DetailRow label="Mode" value={quote.mode.charAt(0).toUpperCase() + quote.mode.slice(1)} />
+          <DetailRow 
+            label="Mode" 
+            value={
+              typeof quote.mode === 'string' && quote.mode.length > 0
+                ? quote.mode.charAt(0).toUpperCase() + quote.mode.slice(1)
+                : 'Unknown'
+            }
+          />
           <DetailRow label="Actual Weight" value={`${quote.actual_weight_kg} kg`} />
           <DetailRow label="Volume" value={`${quote.volume_cbm} CBM`} />
           <DetailRow label="Chargeable Weight" value={`${quote.chargeable_weight_kg} kg`} />

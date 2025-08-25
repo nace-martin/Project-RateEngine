@@ -57,9 +57,19 @@ class QuoteViewSet(viewsets.ModelViewSet):
         else: rate_per_kg = rate_card.brk_45
 
         base_cost = max(chargeable_weight * rate_per_kg, rate_card.min_charge)
-        margin_pct = decimal.Decimal(data.get('margin_pct', 20.0)) / 100
-        total_sell = base_cost * (1 + margin_pct)
-
+        raw_margin = data.get('margin_pct', None)
+        try:
+            margin_pct = (
+                decimal.Decimal(str(raw_margin))
+                if raw_margin is not None
+                else decimal.Decimal('20')
+            ) / decimal.Decimal('100')
+        except (decimal.InvalidOperation, TypeError):
+            return Response(
+                {"error": "Invalid numeric input for margin_pct."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        total_sell = base_cost * (decimal.Decimal('1') + margin_pct)
         allowed_fields = ['client', 'origin', 'destination', 'mode', 'actual_weight_kg', 'volume_cbm', 'margin_pct']
         final_quote_data = {field: data.get(field) for field in allowed_fields if field in data}
         final_quote_data['chargeable_weight_kg'] = chargeable_weight.quantize(decimal.Decimal('0.01'))

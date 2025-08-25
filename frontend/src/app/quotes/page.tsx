@@ -16,10 +16,13 @@ async function getQuotes(): Promise<Quote[]> {
   }
 
   const data = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error('Invalid response format: expected an array');
+  }
+  const quotes = data as Quote[];
   // We'll sort so the newest quotes appear first
-  data.sort((a: Quote, b: Quote) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  return data;
-}
+  quotes.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return quotes;}
 
 export default async function QuotesListPage() {
   const quotes = await getQuotes();
@@ -42,7 +45,13 @@ export default async function QuotesListPage() {
                   {/* This line will now work correctly after updating types.ts */}
                   <p className="font-semibold text-lg text-gray-800">{quote.client.name}</p>
                   <p className="text-sm text-gray-500 mt-1">
-                    {quote.origin} → {quote.destination} - <span className="font-medium text-gray-700">${quote.total_sell}</span>
+                    {quote.origin} → {quote.destination} - <span className="font-medium text-gray-700">{
+                      Intl.NumberFormat('en-US', {
+                        style: 'currency',
+                        currency: 'PGK',
+                        maximumFractionDigits: 2,
+                      }).format(Number(quote.total_sell ?? 0))
+                    }</span>
                   </p>
                   <p className="text-xs text-gray-400 mt-2">
                     {new Date(quote.created_at).toLocaleString()}
