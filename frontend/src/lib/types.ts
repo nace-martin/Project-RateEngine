@@ -19,6 +19,7 @@ export interface Quote {
   created_at: string;
 }
 
+export interface ShipmentPiece {
   /**
    * Quantity is expected to be an integer
    */
@@ -36,4 +37,3 @@ export interface Quote {
  * Branded type for decimal strings (e.g., "12.34")
  */
 export type DecimalString = string & { __decimalStringBrand: never };
-}

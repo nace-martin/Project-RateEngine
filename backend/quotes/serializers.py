@@ -8,6 +8,14 @@ class InlineClientSerializer(serializers.ModelSerializer):
         model = Client
         fields = ['id', 'name']
 
+
+# Full client serializer for CRUD operations
+class ClientSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Client
+        fields = '__all__'
+
+
 class RateCardSerializer(serializers.ModelSerializer):
     class Meta:
         model = RateCard

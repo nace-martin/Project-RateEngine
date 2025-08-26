@@ -64,18 +64,20 @@ export default function CreateQuotePage() {
       const height = Number(p.height_cm) || 0;
 
       totalGrossWeight += quantity * weight;
-  const handlePieceChange = (index: number, field: keyof ShipmentPiece, value: string) => {
-    // Validate numeric input
-    if (value !== '' && isNaN(Number(value))) {
-      return; // Ignore non-numeric input
-    }
-    const updatedPieces = [...pieces];
-    updatedPieces[index] = { ...updatedPieces[index], [field]: value };
-    setPieces(updatedPieces);
-  };
-  const addPiece = () => {
-    setPieces([...pieces, { ...initialPieceState }]);
-  };      chargeableWeight: chargeableWeight.toFixed(2),
+      totalVolume += quantity * length * width * height;
+    });
+
+    // Assuming a volumetric weight factor (this may vary based on actual shipping rules)
+    const volumetricWeightFactor = 5000;
+    const totalVolumetricWeight = totalVolume / volumetricWeightFactor;
+
+    // Chargeable weight is the greater of gross weight or volumetric weight
+    const chargeableWeight = Math.max(totalGrossWeight, totalVolumetricWeight);
+
+    return {
+      totalGrossWeight: totalGrossWeight.toFixed(2),
+      totalVolumetricWeight: totalVolumetricWeight.toFixed(2),
+      chargeableWeight: chargeableWeight.toFixed(2),
     };
   }, [pieces]); // This recalculates whenever the 'pieces' array changes
 
@@ -87,33 +89,15 @@ export default function CreateQuotePage() {
   };
 
   const addPiece = () => {
-    setPieces([...pieces, initialPieceState]);
+    setPieces([...pieces, { ...initialPieceState }]);
   };
 
-      pieces: pieces.map(p => {
-        const piece = {
-          quantity: Number(p.quantity) || 0,
-          length_cm: Number(p.length_cm) || 0,
-          width_cm: Number(p.width_cm) || 0,
-          height_cm: Number(p.height_cm) || 0,
-          weight_kg: Number(p.weight_kg) || 0,
-        };
-        
-        // Validate piece data
-        if (
-          piece.quantity <= 0 ||
-          piece.length_cm <= 0 ||
-          piece.width_cm <= 0 ||
-          piece.height_cm <= 0 ||
-          piece.weight_kg <= 0
-        ) {
-          throw new Error(
-            'All piece dimensions and weight must be positive values'
-          );
-        }
-        
-        return piece;
-      }),  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const removePiece = (index: number) => {
+    const updatedPieces = pieces.filter((_, i) => i !== index);
+    setPieces(updatedPieces);
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const quoteData = {
