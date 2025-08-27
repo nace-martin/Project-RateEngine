@@ -1,11 +1,11 @@
-
-# --- 1. All imports should be at the top ---
+import decimal
+import math
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.views import APIView
-from .models import Client, RateCard, Quote
+from rest_framework.views import APIView  # <<< CORRECTED: APIView is now imported
+from .models import Client, RateCard, Quote, ShipmentPiece
 from .serializers import ClientSerializer, RateCardSerializer, QuoteSerializer
-import decimal
+
 
 # --- 2. All ViewSets and Views ---
 
@@ -17,72 +17,101 @@ class RateCardViewSet(viewsets.ModelViewSet):
     queryset = RateCard.objects.all()
     serializer_class = RateCardSerializer
 
+# Replace the existing QuoteViewSet in backend/quotes/views.py
+
 class QuoteViewSet(viewsets.ModelViewSet):
     queryset = Quote.objects.all()
     serializer_class = QuoteSerializer
 
-    VOLUMETRIC_FACTOR = decimal.Decimal('167')
-
     def create(self, request, *args, **kwargs):
         data = request.data
-        # --- 1. Calculate Chargeable Weight ---
-        raw_actual_weight = data.get('actual_weight_kg', 0)
-        raw_volume_cbm = data.get('volume_cbm', 0)
-        try:
-            actual_weight = decimal.Decimal(str(raw_actual_weight))
-            volume_cbm = decimal.Decimal(str(raw_volume_cbm))
-        except (decimal.InvalidOperation, TypeError):
-            return Response(
-                {"error": "Invalid numeric input for actual_weight_kg or volume_cbm."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        volumetric_weight = volume_cbm * self.VOLUMETRIC_FACTOR
-        chargeable_weight = max(actual_weight, volumetric_weight)
+        pieces_data = data.pop('pieces', []) 
 
+        if not pieces_data:
+            return Response({"error": "A quote must have at least one shipment piece."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # --- 1. Calculate Totals using the Correct Formula ---
+        total_actual_weight = decimal.Decimal(0)
+        total_volumetric_weight = decimal.Decimal(0)
+        total_volume_cbm = decimal.Decimal(0)
+
+        for piece in pieces_data:
+            quantity = int(piece.get('quantity', 1))
+            l = decimal.Decimal(piece.get('length_cm', 0))
+            w = decimal.Decimal(piece.get('width_cm', 0))
+            h = decimal.Decimal(piece.get('height_cm', 0))
+            weight = decimal.Decimal(piece.get('weight_kg', 0))
+
+            total_actual_weight += quantity * weight
+            
+            # CORRECTED FORMULA: Use the / 6000 divisor for precision
+            piece_volumetric_weight = (l * w * h) / 6000
+            print(f"Piece: L={l}, W={w}, H={h}, Volume={l * w * h}, Volumetric Weight={piece_volumetric_weight}")
+            total_volumetric_weight += piece_volumetric_weight * quantity
+            
+            # Also calculate CBM for storing in the database
+            total_volume_cbm += (l * w * h) / 1000000 * quantity
+
+
+        # --- 2. Round UP and Determine Chargeable Weight ---
+        rounded_actual_weight = math.ceil(total_actual_weight)
+        rounded_volumetric_weight = math.ceil(total_volumetric_weight)
+        
+        print(f"Total Actual Weight: {total_actual_weight}")
+        print(f"Total Volumetric Weight: {total_volumetric_weight}")
+        print(f"Rounded Actual Weight: {rounded_actual_weight}")
+        print(f"Rounded Volumetric Weight: {rounded_volumetric_weight}")
+        
+        chargeable_weight = max(rounded_actual_weight, rounded_volumetric_weight)
+        print(f"Chargeable Weight: {chargeable_weight}")
+
+        # --- 3. Find Rate Card and Select Rate ---
         try:
-            rate_card = RateCard.objects.get(
-                origin=data.get('origin'),
-                destination=data.get('destination')
-            )
+            rate_card = RateCard.objects.get(origin=data.get('origin'), destination=data.get('destination'))
         except RateCard.DoesNotExist:
-            return Response(
-                {"error": "No rate card found for the specified route."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "No rate card found for this route."}, status=status.HTTP_400_BAD_REQUEST)
+
         rate_per_kg = decimal.Decimal(0)
-        if chargeable_weight >= 1000: rate_per_kg = rate_card.brk_1000
-        elif chargeable_weight >= 500: rate_per_kg = rate_card.brk_500
-        elif chargeable_weight >= 250: rate_per_kg = rate_card.brk_250
-        elif chargeable_weight >= 100: rate_per_kg = rate_card.brk_100
+        # Use the final chargeable_weight to find the correct rate break
+        if chargeable_weight > 1000: rate_per_kg = rate_card.brk_1000
+        elif chargeable_weight > 500: rate_per_kg = rate_card.brk_500
+        elif chargeable_weight > 250: rate_per_kg = rate_card.brk_250
+        elif chargeable_weight > 100: rate_per_kg = rate_card.brk_100
         else: rate_per_kg = rate_card.brk_45
+        
+        # --- 4. Calculate Final Costs ---
+        base_cost = max(decimal.Decimal(chargeable_weight) * rate_per_kg, rate_card.min_charge)
+        margin_pct = decimal.Decimal(data.get('margin_pct', 20.0)) / 100
+        total_sell = base_cost * (1 + margin_pct)
 
-        base_cost = max(chargeable_weight * rate_per_kg, rate_card.min_charge)
-        raw_margin = data.get('margin_pct', None)
-        try:
-            margin_pct = (
-                decimal.Decimal(str(raw_margin))
-                if raw_margin is not None
-                else decimal.Decimal('20')
-            ) / decimal.Decimal('100')
-        except (decimal.InvalidOperation, TypeError):
-            return Response(
-                {"error": "Invalid numeric input for margin_pct."},
-                status=status.HTTP_400_BAD_REQUEST
+        # --- 5. Save the Quote and its Pieces ---
+        final_quote_data = {
+            **data,
+            'actual_weight_kg': total_actual_weight.quantize(decimal.Decimal('0.01')),
+            'volume_cbm': total_volume_cbm.quantize(decimal.Decimal('0.001')),
+            'chargeable_weight_kg': chargeable_weight,
+            'rate_used_per_kg': rate_per_kg.quantize(decimal.Decimal('0.01')),
+            'base_cost': base_cost.quantize(decimal.Decimal('0.01')),
+            'total_sell': total_sell.quantize(decimal.Decimal('0.01')),
+        }
+        
+        quote_serializer = self.get_serializer(data=final_quote_data)
+        quote_serializer.is_valid(raise_exception=True)
+        quote = quote_serializer.save()
+
+        for piece in pieces_data:
+            ShipmentPiece.objects.create(
+                quote=quote,
+                quantity=piece.get('quantity', 1),
+                length_cm=piece.get('length_cm', 0),
+                width_cm=piece.get('width_cm', 0),
+                height_cm=piece.get('height_cm', 0),
+                weight_kg=piece.get('weight_kg', 0)
             )
-        total_sell = base_cost * (decimal.Decimal('1') + margin_pct)
-        allowed_fields = ['client', 'origin', 'destination', 'mode', 'actual_weight_kg', 'volume_cbm', 'margin_pct']
-        final_quote_data = {field: data.get(field) for field in allowed_fields if field in data}
-        final_quote_data['chargeable_weight_kg'] = chargeable_weight.quantize(decimal.Decimal('0.01'))
-        final_quote_data['rate_used_per_kg'] = rate_per_kg.quantize(decimal.Decimal('0.01'))
-        final_quote_data['base_cost'] = base_cost.quantize(decimal.Decimal('0.01'))
-        final_quote_data['total_sell'] = total_sell.quantize(decimal.Decimal('0.01'))
-
-        serializer = self.get_serializer(data=final_quote_data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-
+        
+        headers = self.get_success_headers(quote_serializer.data)
+        return Response(quote_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        
 class RouteListView(APIView):
     """
     A view to provide a list of unique origins and destinations.

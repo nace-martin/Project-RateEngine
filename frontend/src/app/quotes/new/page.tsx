@@ -67,17 +67,32 @@ export default function CreateQuotePage() {
       totalVolume += quantity * length * width * height;
     });
 
+    // Log the calculations for debugging
+    console.log('Total volume (cm³):', totalVolume);
+    
     // Assuming a volumetric weight factor (this may vary based on actual shipping rules)
-    const volumetricWeightFactor = 5000;
+    const volumetricWeightFactor = 6000; // Changed from 5000 to 6000 for air freight
     const totalVolumetricWeight = totalVolume / volumetricWeightFactor;
 
-    // Chargeable weight is the greater of gross weight or volumetric weight
-    const chargeableWeight = Math.max(totalGrossWeight, totalVolumetricWeight);
+    // Log the volumetric weight calculation
+    console.log('Volumetric weight factor:', volumetricWeightFactor);
+    console.log('Total volumetric weight (kg):', totalVolumetricWeight);
+    console.log('Total gross weight (kg):', totalGrossWeight);
+    
+    // Round up gross weight and volumetric weight as per air freight rules
+    const roundedGrossWeight = Math.ceil(totalGrossWeight);
+    const roundedVolumetricWeight = Math.ceil(totalVolumetricWeight);
+    
+    // Chargeable weight is the greater of gross weight or volumetric weight (both rounded up)
+    const chargeableWeight = Math.max(roundedGrossWeight, roundedVolumetricWeight);
+    
+    // Log the final chargeable weight
+    console.log('Chargeable weight (kg):', chargeableWeight);
 
     return {
-      totalGrossWeight: totalGrossWeight.toFixed(2),
-      totalVolumetricWeight: totalVolumetricWeight.toFixed(2),
-      chargeableWeight: chargeableWeight.toFixed(2),
+      totalGrossWeight: roundedGrossWeight.toFixed(0), // Show as whole number since we're rounding up
+      totalVolumetricWeight: roundedVolumetricWeight.toFixed(0), // Show as whole number since we're rounding up
+      chargeableWeight: chargeableWeight.toFixed(0), // Show as whole number since we're rounding up
     };
   }, [pieces]); // This recalculates whenever the 'pieces' array changes
 

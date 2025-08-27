@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Client, RateCard, Quote
+from .models import Client, RateCard, Quote, ShipmentPiece
 
 
 # Minimal inline serializer for client reference (id + name only)
@@ -22,6 +23,13 @@ class RateCardSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class ShipmentPieceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShipmentPiece
+        fields = ['id', 'quantity', 'length_cm', 'width_cm', 'height_cm', 'weight_kg']
+        read_only_fields = ['id']
+
+
 class QuoteSerializer(serializers.ModelSerializer):
     # Minimal client info for read operations
     client = InlineClientSerializer(read_only=True)
@@ -29,6 +37,7 @@ class QuoteSerializer(serializers.ModelSerializer):
     client_id = serializers.PrimaryKeyRelatedField(
         queryset=Client.objects.none(), source='client', write_only=True, required=False
     )
+    pieces = ShipmentPieceSerializer(many=True, required=False)
 
     def get_fields(self):
         fields = super().get_fields()
@@ -51,11 +60,13 @@ class QuoteSerializer(serializers.ModelSerializer):
             'actual_weight_kg', 'volume_cbm', 'chargeable_weight_kg',
             'rate_used_per_kg', 'base_cost', 'margin_pct', 'total_sell',
             'created_at'
+            'created_at', 'pieces',
         ]
         # Mark server-calculated fields as read_only
         read_only_fields = [
             'chargeable_weight_kg', 'rate_used_per_kg',
             'base_cost', 'total_sell', 'created_at'
+            'base_cost', 'total_sell', 'created_at',
         ]
 
     # Field validators
@@ -74,3 +85,11 @@ class QuoteSerializer(serializers.ModelSerializer):
         if not (0 <= value <= 100):
             raise serializers.ValidationError("margin_pct must be between 0 and 100 (percent).")
         return value
+        return value
+
+    def create(self, validated_data):
+        pieces_data = validated_data.pop('pieces', [])
+        quote = Quote.objects.create(**validated_data)
+        for piece_data in pieces_data:
+            ShipmentPiece.objects.create(quote=quote, **piece_data)
+        return quote
