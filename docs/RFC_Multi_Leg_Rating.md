@@ -68,7 +68,7 @@ We must evolve RateEngine into a system that:
 - **DAP**: include delivery, exclude duties/taxes.  
 - **DDP**: include delivery + duties/taxes.  
 
-Incoterms always **override service type** if conflicting.  
+**Why:** Incoterms define the **legal and financial responsibility** for each shipment leg. Since they reflect the binding contract between buyer and seller, they must take precedence over the operational service type when determining which legs to include.  
 
 ---
 
@@ -84,6 +84,7 @@ Incoterms always **override service type** if conflicting.
 1. Compute shipment metrics: gross, CBM, volumetric kg, chargeable kg.  
 2. Resolve applicable legs.  
 3. For each leg, look up rate components and compute **COGS native** (with min/weight break logic).  
+   - *Example:* A 60 kg shipment may rate cheaper at the **+100 kg tier** than the **+45 kg tier**. Always select the cheapest applicable break, not just the first valid tier.  
 4. Convert each leg’s COGS to a **valuation currency (PGK)** with FX+CAF snapshot.  
 5. Sum legs for total COGS (valuation currency).  
 6. Convert to client currency (USD/AUD/PGK).  
@@ -176,6 +177,7 @@ If a required leg has no rate:
 - How will cartage zones be defined (km or postcode tables)?  
 - Default margin strategy: overall or per-category by client?  
 - Should rounding rules be global or per-currency?  
+- **Data Sources:** What will be the source of truth for leg-based COGS? Will this data be entered manually via Django Admin, imported from carrier spreadsheets, or synced from external systems?  
 
 ---
 

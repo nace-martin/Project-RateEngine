@@ -1,11 +1,5 @@
 # Project-RateEngine 
-Of course. A good `README.md` is the front door to your project. It should be clear, concise, and tell anyone who visits (including your future self) exactly what the project is and how to get it running.
 
-Here is a professional `README.md` draft for your RateEngine project. You can copy and paste this directly into the `README.md` file in the root of your repository.
-
------
-
-````markdown
 # RateEngine MVP 🚚
 
 RateEngine is an internal web application designed to streamline and automate the air freight quoting process for freight forwarders.
