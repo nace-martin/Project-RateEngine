@@ -2,30 +2,49 @@ import Link from 'next/link';
 import { Quote } from '@/lib/types';
 
 // This is a Server Component, so we can fetch data directly
-async function getQuotes(): Promise<Quote[]> {
+async function getQuotes(): Promise<{ quotes: Quote[]; error?: string }> {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE;
   if (!apiBase) {
-    throw new Error('Environment variable NEXT_PUBLIC_API_BASE is not set');
+    console.error('NEXT_PUBLIC_API_BASE environment variable is not set');
+    return { quotes: [], error: 'API configuration error' }; // Return empty array with error info
   }
   
-  const res = await fetch(`${apiBase}/quotes/`, { cache: 'no-store' });
+  try {
+    const res = await fetch(`${apiBase}/quotes/`, {
+      cache: 'no-store',
+      // Add timeout to prevent hanging
+      signal: AbortSignal.timeout(10000) // 10 second timeout
+    });
 
-  if (!res.ok) {
-    // This will be caught by the nearest error page
-    throw new Error('Failed to fetch quotes');
-  }
+    if (!res.ok) {
+      console.error(`Failed to fetch quotes: ${res.status} ${res.statusText}`);
+      console.error(`API Base URL: ${apiBase}`);
+      return { quotes: [], error: `Failed to fetch quotes (${res.status})` }; // Return empty array with error info
+    }
 
-  const data = await res.json();
-  if (!Array.isArray(data)) {
-    throw new Error('Invalid response format: expected an array');
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      console.error('Invalid response format: expected an array');
+      return { quotes: [], error: 'Invalid response format from server' }; // Return empty array with error info
+    }
+    const quotes = data as Quote[];
+    // We'll sort so the newest quotes appear first
+    quotes.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    return { quotes, error: undefined }; // Success case
+  } catch (error) {
+    console.error('Error fetching quotes:', error);
+    // Check if it's a timeout error
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      console.error('Request timed out while fetching quotes');
+      return { quotes: [], error: 'Request timed out' };
+    }
+    // Return empty array with error info instead of throwing
+    return { quotes: [], error: 'Failed to connect to server' };
   }
-  const quotes = data as Quote[];
-  // We'll sort so the newest quotes appear first
-  quotes.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-  return quotes;}
+}
 
 export default async function QuotesListPage() {
-  const quotes = await getQuotes();
+  const { quotes, error } = await getQuotes();
 
   return (
     <main className="container mx-auto p-8">
@@ -38,7 +57,12 @@ export default async function QuotesListPage() {
 
       <div className="bg-white shadow-md rounded-lg">
         <ul className="divide-y divide-gray-200">
-          {quotes.length > 0 ? (
+          {error ? (
+            <li className="p-6 text-center">
+              <p className="text-red-500 font-medium">Unable to load quotes: {error}</p>
+              <p className="text-gray-500 mt-2">Please check your connection and ensure the API server is running.</p>
+            </li>
+          ) : quotes.length > 0 ? (
             quotes.map((quote) => (
               <li key={quote.id} className="p-4 sm:p-6 flex justify-between items-center hover:bg-gray-50 transition-colors">
                 <div>

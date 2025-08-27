@@ -59,13 +59,11 @@ class QuoteSerializer(serializers.ModelSerializer):
             'id', 'client', 'client_id', 'origin', 'destination', 'mode',
             'actual_weight_kg', 'volume_cbm', 'chargeable_weight_kg',
             'rate_used_per_kg', 'base_cost', 'margin_pct', 'total_sell',
-            'created_at'
             'created_at', 'pieces',
         ]
         # Mark server-calculated fields as read_only
         read_only_fields = [
             'chargeable_weight_kg', 'rate_used_per_kg',
-            'base_cost', 'total_sell', 'created_at'
             'base_cost', 'total_sell', 'created_at',
         ]
 
@@ -84,7 +82,6 @@ class QuoteSerializer(serializers.ModelSerializer):
         # margin_pct is expected in the range 0..100 (percent)
         if not (0 <= value <= 100):
             raise serializers.ValidationError("margin_pct must be between 0 and 100 (percent).")
-        return value
         return value
 
     def create(self, validated_data):
