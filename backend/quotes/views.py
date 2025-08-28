@@ -1,10 +1,12 @@
 import decimal
 import math
 from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView  # <<< CORRECTED: APIView is now imported
 from .models import Client, RateCard, Quote, ShipmentPiece
 from .serializers import ClientSerializer, RateCardSerializer, QuoteSerializer
+from accounts.permissions import IsSales, IsManager, IsFinance, CanViewCOGS, CanModifyPricingRules
 
 
 # --- 2. All ViewSets and Views ---
@@ -17,15 +19,46 @@ class RateCardViewSet(viewsets.ModelViewSet):
     queryset = RateCard.objects.all()
     serializer_class = RateCardSerializer
 
+    def get_permissions(self):
+        """Restrict mutations to finance; allow read for authenticated users."""
+        if self.action in [
+            'create',
+            'update',
+            'partial_update',
+            'destroy',
+        ]:
+            permission_classes = [CanModifyPricingRules]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
+
 # Replace the existing QuoteViewSet in backend/quotes/views.py
 
 class QuoteViewSet(viewsets.ModelViewSet):
     queryset = Quote.objects.all()
     serializer_class = QuoteSerializer
 
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action == 'create':
+            # Sales, Manager, and Finance can create quotes
+            permission_classes = [IsSales | IsManager | IsFinance]
+        elif self.action in ['update', 'partial_update']:
+            # Sales, Manager, and Finance can update quotes
+            permission_classes = [IsSales | IsManager | IsFinance]
+        elif self.action == 'destroy':
+            # Only Manager and Finance can delete quotes
+            permission_classes = [IsManager | IsFinance]
+        else:
+            # For list and retrieve actions, require authentication
+            permission_classes = [IsAuthenticated]
+        return [permission() for permission in permission_classes]
+
     def create(self, request, *args, **kwargs):
         data = request.data
-        pieces_data = data.pop('pieces', []) 
+        pieces_data = data.pop('pieces', [])
 
         if not pieces_data:
             return Response({"error": "A quote must have at least one shipment piece."}, status=status.HTTP_400_BAD_REQUEST)

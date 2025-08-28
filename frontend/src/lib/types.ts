@@ -15,6 +15,11 @@ export interface Quote {
   destination: string;
   mode: string;
   actual_weight_kg: string;
+  volume_cbm: string;
+  chargeable_weight_kg: string;
+  rate_used_per_kg: string;
+  base_cost: string; // COGS data - only visible to Manager and Finance roles
+  margin_pct: string;
   total_sell: string; // We'll use string for decimals for now
   created_at: string;
 }

@@ -62,10 +62,25 @@ class QuoteSerializer(serializers.ModelSerializer):
             'created_at', 'pieces',
         ]
         # Mark server-calculated fields as read_only
+        # Note: These fields are calculated by the view and passed to the serializer,
+        # so they should not be marked as read_only to allow them to be included in validated_data
         read_only_fields = [
-            'chargeable_weight_kg', 'rate_used_per_kg',
-            'base_cost', 'total_sell', 'created_at',
+            'created_at',
         ]
+
+    def to_representation(self, instance):
+        """
+        Conditionally modify the serialized representation based on user role.
+        """
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        
+        if request and request.user.is_authenticated:
+            # If user is sales, remove COGS data
+            if request.user.role == 'sales':
+                data.pop('base_cost', None)
+        
+        return data
 
     # Field validators
     def validate_actual_weight_kg(self, value):
@@ -85,6 +100,9 @@ class QuoteSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        # The view is responsible for calculating these values, so we should not remove them
+        # They are marked as read_only in the serializer but still needed for object creation
+        
         pieces_data = validated_data.pop('pieces', [])
         quote = Quote.objects.create(**validated_data)
         for piece_data in pieces_data:

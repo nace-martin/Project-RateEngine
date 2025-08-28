@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     # 3rd Party Apps
     'rest_framework',
     'corsheaders',
+    'rest_framework.authtoken',
 
     # Local Apps
     'accounts',
@@ -130,6 +131,16 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# DRF settings
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
