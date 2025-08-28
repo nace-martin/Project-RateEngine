@@ -79,6 +79,7 @@ class QuoteSerializer(serializers.ModelSerializer):
             # If user is sales, remove COGS data
             if request.user.role == 'sales':
                 data.pop('base_cost', None)
+                data.pop('rate_used_per_kg', None)
         
         return data
 

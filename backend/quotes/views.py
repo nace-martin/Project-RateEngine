@@ -6,7 +6,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView  # <<< CORRECTED: APIView is now imported
 from .models import Client, RateCard, Quote, ShipmentPiece
 from .serializers import ClientSerializer, RateCardSerializer, QuoteSerializer
-from accounts.permissions import IsSales, IsManager, IsFinance, CanViewCOGS, CanModifyPricingRules
+from accounts.permissions import (
+    IsSales,
+    IsManager,
+    IsFinance,
+    IsManagerOrFinance,
+    CanViewCOGS,
+    CanModifyPricingRules,
+)
 
 
 # --- 2. All ViewSets and Views ---
@@ -20,13 +27,17 @@ class RateCardViewSet(viewsets.ModelViewSet):
     serializer_class = RateCardSerializer
 
     def get_permissions(self):
-        """Restrict mutations to finance; allow read for authenticated users."""
-        if self.action in [
+        """Restrict access: only Manager/Finance can read; only Finance can modify."""
+        if self.action in ['list', 'retrieve']:
+            # Managers and Finance can view system settings (rate cards)
+            permission_classes = [IsManagerOrFinance]
+        elif self.action in [
             'create',
             'update',
             'partial_update',
             'destroy',
         ]:
+            # Only Finance can modify pricing rules (rate cards)
             permission_classes = [CanModifyPricingRules]
         else:
             permission_classes = [IsAuthenticated]
@@ -42,17 +53,11 @@ class QuoteViewSet(viewsets.ModelViewSet):
         """
         Instantiates and returns the list of permissions that this view requires.
         """
-        if self.action == 'create':
-            # Sales, Manager, and Finance can create quotes
-            permission_classes = [IsSales | IsManager | IsFinance]
-        elif self.action in ['update', 'partial_update']:
-            # Sales, Manager, and Finance can update quotes
-            permission_classes = [IsSales | IsManager | IsFinance]
-        elif self.action == 'destroy':
+        if self.action == 'destroy':
             # Only Manager and Finance can delete quotes
-            permission_classes = [IsManager | IsFinance]
+            permission_classes = [IsManagerOrFinance]
         else:
-            # For list and retrieve actions, require authentication
+            # For create, update, list and retrieve actions, require authentication
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
 
@@ -99,10 +104,15 @@ class QuoteViewSet(viewsets.ModelViewSet):
         print(f"Chargeable Weight: {chargeable_weight}")
 
         # --- 3. Find Rate Card and Select Rate ---
-        try:
-            rate_card = RateCard.objects.get(origin=data.get('origin'), destination=data.get('destination'))
-        except RateCard.DoesNotExist:
+        rc_qs = RateCard.objects.filter(
+            origin=data.get('origin'),
+            destination=data.get('destination')
+        ).order_by('-created_at', '-id')
+        if not rc_qs.exists():
             return Response({"error": "No rate card found for this route."}, status=status.HTTP_400_BAD_REQUEST)
+        # If duplicates exist, select the latest by created_at (then id)
+        duplicates_detected = rc_qs.count() > 1
+        rate_card = rc_qs.first()
 
         rate_per_kg = decimal.Decimal(0)
         # Use the final chargeable_weight to find the correct rate break
@@ -143,6 +153,8 @@ class QuoteViewSet(viewsets.ModelViewSet):
             )
         
         headers = self.get_success_headers(quote_serializer.data)
+        if duplicates_detected:
+            headers['X-RateCard-Warning'] = 'Duplicate rate cards found; using latest for pricing.'
         return Response(quote_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
         
 class RouteListView(APIView):

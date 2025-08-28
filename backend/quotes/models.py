@@ -37,9 +37,19 @@ class RateCard(models.Model):
     brk_500 = models.DecimalField(max_digits=10, decimal_places=2)
     brk_1000= models.DecimalField(max_digits=10, decimal_places=2)
     caf_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.origin} to {self.destination}"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["origin"], name="idx_ratecard_origin"),
+            models.Index(fields=["destination"], name="idx_ratecard_destination"),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["origin", "destination"], name="unique_ratecard_route"),
+        ]
 
 class Quote(models.Model):
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="quotes")
