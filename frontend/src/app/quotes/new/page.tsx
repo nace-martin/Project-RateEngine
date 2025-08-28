@@ -5,6 +5,11 @@ import { useRouter } from 'next/navigation';
 import { Client, ShipmentPiece, DecimalString } from '@/lib/types';
 import { useAuth } from '@/context/auth-context';
 import ProtectedRoute from '@/components/protected-route';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 // The initial state for a single piece
 const initialPieceState: ShipmentPiece = {
@@ -170,67 +175,82 @@ export default function CreateQuotePage() {
 
   return (
     <ProtectedRoute>
-      <main className="container mx-auto p-8">
-        <h1 className="text-4xl font-bold mb-6">Create New Air Freight Quote</h1>
+      <main className="container mx-auto p-8 space-y-6">
+        <h1 className="text-4xl font-bold tracking-tight">Create New Air Freight Quote</h1>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <form onSubmit={handleSubmit} className="space-y-6">
           {/* --- Main Quote Details --- */}
-          <div className="p-6 bg-white shadow rounded-lg">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div>
-                <label htmlFor="client" className="block text-sm font-medium text-gray-700">Client</label>
-                <select id="client" value={clientId} onChange={(e) => setClientId(e.target.value)} required className="mt-1 block w-full p-2 border border-gray-300 rounded-md">
-                  <option value="">Select a Client</option>
-                  {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-                </select>
+          <Card>
+            <CardHeader>
+              <CardTitle>Main Details</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="client">Client</Label>
+                  <Select id="client" value={clientId} onChange={(e) => setClientId(e.target.value)} required>
+                    <option value="">Select a Client</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={client.id}>{client.name}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="origin">Origin</Label>
+                  <Input id="origin" value={origin} onChange={(e) => setOrigin(e.target.value)} required placeholder="e.g., BNE" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="destination">Destination</Label>
+                  <Input id="destination" value={destination} onChange={(e) => setDestination(e.target.value)} required placeholder="e.g., POM" />
+                </div>
               </div>
-              <div>
-                <label htmlFor="origin" className="block text-sm font-medium text-gray-700">Origin</label>
-                <input type="text" id="origin" value={origin} onChange={(e) => setOrigin(e.target.value)} required className="mt-1 block w-full p-2 border border-gray-300 rounded-md" placeholder="e.g., BNE" />
-              </div>
-              <div>
-                <label htmlFor="destination" className="block text-sm font-medium text-gray-700">Destination</label>
-                <input type="text" id="destination" value={destination} onChange={(e) => setDestination(e.target.value)} required className="mt-1 block w-full p-2 border border-gray-300 rounded-md" placeholder="e.g., POM" />
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           {/* --- Shipment Pieces Details --- */}
-          <div className="p-6 bg-white shadow rounded-lg">
-            <h2 className="text-2xl font-semibold mb-4">Shipment Pieces</h2>
+          <Card>
+            <CardHeader>
+              <CardTitle>Shipment Pieces</CardTitle>
+            </CardHeader>
+            <CardContent>
             <div className="space-y-4">
               {pieces.map((piece, index) => (
                 <div key={index} className="grid grid-cols-1 md:grid-cols-6 gap-4 items-center">
-                  <input type="number" placeholder="Qty" value={piece.quantity} onChange={(e) => handlePieceChange(index, 'quantity', e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
-                  <input type="number" placeholder="Length (cm)" value={piece.length_cm} onChange={(e) => handlePieceChange(index, 'length_cm', e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
-                  <input type="number" placeholder="Width (cm)" value={piece.width_cm} onChange={(e) => handlePieceChange(index, 'width_cm', e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
-                  <input type="number" placeholder="Height (cm)" value={piece.height_cm} onChange={(e) => handlePieceChange(index, 'height_cm', e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
-                  <input type="number" placeholder="Weight (kg)" value={piece.weight_kg} onChange={(e) => handlePieceChange(index, 'weight_kg', e.target.value)} className="w-full p-2 border border-gray-300 rounded-md" />
+                  <Input type="number" placeholder="Qty" value={piece.quantity} onChange={(e) => handlePieceChange(index, 'quantity', e.target.value)} />
+                  <Input type="number" placeholder="Length (cm)" value={piece.length_cm} onChange={(e) => handlePieceChange(index, 'length_cm', e.target.value)} />
+                  <Input type="number" placeholder="Width (cm)" value={piece.width_cm} onChange={(e) => handlePieceChange(index, 'width_cm', e.target.value)} />
+                  <Input type="number" placeholder="Height (cm)" value={piece.height_cm} onChange={(e) => handlePieceChange(index, 'height_cm', e.target.value)} />
+                  <Input type="number" placeholder="Weight (kg)" value={piece.weight_kg} onChange={(e) => handlePieceChange(index, 'weight_kg', e.target.value)} />
                   <button type="button" onClick={() => removePiece(index)} className="text-red-500 font-bold text-2xl disabled:opacity-50" disabled={pieces.length <= 1}>×</button>
                 </div>
               ))}
             </div>
-            <button type="button" onClick={addPiece} className="mt-4 bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-md hover:bg-gray-300">+ Add Piece</button>
-          </div>
+            <div className="mt-4">
+              <Button type="button" onClick={addPiece} variant="secondary">+ Add Piece</Button>
+            </div>
+            </CardContent>
+          </Card>
 
           {/* --- Totals and Submission --- */}
-          <div className="p-6 bg-gray-50 shadow rounded-lg grid grid-cols-1 md:grid-cols-4 gap-6 items-center">
+          <Card>
+            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-6 items-center p-6">
               <div className="text-center">
-                  <p className="text-sm text-gray-500">Total Gross Weight</p>
-                  <p className="text-xl font-bold">{totals.totalGrossWeight} kg</p>
+                <p className="text-sm text-muted-foreground">Total Gross Weight</p>
+                <p className="text-xl font-bold">{totals.totalGrossWeight} kg</p>
               </div>
               <div className="text-center">
-                  <p className="text-sm text-gray-500">Total Volumetric Weight</p>
-                  <p className="text-xl font-bold">{totals.totalVolumetricWeight} kg</p>
+                <p className="text-sm text-muted-foreground">Total Volumetric Weight</p>
+                <p className="text-xl font-bold">{totals.totalVolumetricWeight} kg</p>
               </div>
-              <div className="text-center p-4 bg-blue-100 rounded-lg">
-                  <p className="text-sm text-blue-800">Chargeable Weight</p>
-                  <p className="text-2xl font-extrabold text-blue-800">{totals.chargeableWeight} kg</p>
+              <div className="text-center p-4 rounded-lg bg-accent">
+                <p className="text-sm">Chargeable Weight</p>
+                <p className="text-2xl font-extrabold">{totals.chargeableWeight} kg</p>
               </div>
-              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 text-lg">
+              <Button type="submit" className="w-full" size="lg">
                 Calculate & Create Quote
-              </button>
-          </div>
+              </Button>
+            </CardContent>
+          </Card>
         </form>
       </main>
     </ProtectedRoute>
