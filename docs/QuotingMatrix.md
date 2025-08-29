@@ -108,7 +108,29 @@ sequenceDiagram
 
 ---
 
+## 4. Quoting Scenarios Matrix
+
+
+| **Dimension** | **Options / Variables** | **Business Logic / Impact on Quote** | **Notes for Developers (PNG-specific)** |
+|---------------|--------------------------|---------------------------------------|-----------------------------------------|
+| **Shipment Type** | - Import (INTL → PNG)<br>- Export (PNG → INTL)<br>- Domestic (PNG ↔ PNG) | Defines routing logic, gateways, and which departments own the shipment. | Must apply different business rules for Imports vs Exports vs Domestic. |
+| **Gateway / Routing** | - **Imports:** All cargo via POM (Jacksons Int’l) → cleared → domestic onforwarding if required.<br>- **Exports:** All cargo via POM (Jacksons Int’l) → uplift.<br>- **Domestic:** POM ↔ LAE = full door-to-door possible. Other ports (HGU, RAB, HKN, MAG, WWK, etc.) = only door-to-airport or airport-to-door. | Determines whether a domestic leg must be added after international clearance, or before export uplift. | Hardcode POM as mandatory gateway for all INTL shipments. Build conditional logic for LAE vs “outer-port” domestic service levels. |
+| **Service Scope** | - Door → Door<br>- Door → Airport<br>- Airport → Airport<br>- Airport → Door | Same as before, but constrained by shipment type + gateway rules. | Example: Import BNE → LAE Door → Door = (Origin pickup) + (BNE–POM air leg) + (POM clearance) + (POM–LAE domestic leg) + (LAE delivery). |
+| **Payment Terms** | Prepaid / Collect | Defines who is invoiced (shipper or consignee). | Must reflect correctly in system invoices. |
+| **Incoterms** | EXW, FOB, CPT, DDP, etc. | Defines which party pays which leg. | Tie directly to scope and payment terms. |
+| **Cargo Type** | General, DG, Perishables, Live Animals, AOG, High-Value, Restricted | Adds airline restrictions, surcharges, and handling rules. | Rate logic must check eligibility of each cargo type against airline/domestic carriers. |
+| **Commodity / HS Code** | Commodity description, HS code (if available) | Impacts Customs, permits (NAQIA, Quarantine). | Customs module integration needed. |
+| **Weight & Volume** | Actual vs Volumetric; Chargeable = max | Determines air freight charges and breakpoints. | Must handle CW consistently across INTL + DOM legs. |
+| **Client Requirements** | Transit time, carrier preference, insurance, consolidation/direct | Alters carrier/routing choice. | Allow optional toggles. |
+| **Surcharges** | Fuel, CAF, Security, War Risk, Peak season | Applied to INTL leg. | Add separate surcharge sets for international vs domestic carriers. |
+| **Market Constraints** | Airline capacity, seasonal embargoes | Impacts availability. | Fallback to manual/agent rate. |
+
+
+---
+
+
 ## Developer Acceptance Criteria
+
 
 - **Routing Rules:** All INTL shipments must pass through POM, with conditional domestic legs added for non-POM delivery/origin.
 - **Service Scope:** Quote builder must dynamically add or exclude legs depending on Door/Airport selection.
@@ -117,6 +139,8 @@ sequenceDiagram
 - **Fallback Handling:** If rate not found (DG restrictions, outer-port limits, etc.), system should trigger Agent Rate Request flow.
 - **Logging:** Each quote must record selected Shipment Type, Scope, Incoterm, and Legs for audit and reporting.
 
+
 ---
+
 
 📌 This document should be version-controlled under `docs/QuotingFlow.md` and referenced in the product roadmap.
