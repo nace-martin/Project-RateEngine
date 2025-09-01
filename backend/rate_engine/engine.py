@@ -53,6 +53,37 @@ def d(val) -> Decimal:
     return Decimal(str(val))
 
 
+def calculate_chargeable_weight(pieces: List[Dict]) -> float:
+    """Calculate total chargeable weight for a shipment.
+
+    Implements the standard air freight rule from the Quoting Scenarios Matrix:
+    Chargeable = max(Actual vs Volumetric) per piece, summed across all pieces.
+
+    Inputs are dictionaries with keys: 'weight', 'length', 'width', 'height'.
+    Units: weight in kilograms; dimensions in centimeters. Volumetric divisor = 6000.
+
+    Returns the final chargeable weight as a float (kilograms).
+    """
+    def _to_float(v) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    divisor = 6000.0  # IATA standard for cm-based dimensions
+    total = 0.0
+    for p in pieces or []:
+        actual = _to_float(p.get("weight"))
+        length = _to_float(p.get("length"))
+        width = _to_float(p.get("width"))
+        height = _to_float(p.get("height"))
+
+        volumetric = (length * width * height) / divisor if (length and width and height) else 0.0
+        total += max(actual, volumetric)
+
+    return float(total)
+
+
 @dataclass
 class Piece:
     weight_kg: Decimal
