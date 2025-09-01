@@ -1,9 +1,10 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from .models import (
     Providers, Stations, Ratecards, RatecardConfig, Lanes, LaneBreaks,
     FeeTypes, RatecardFees, Services, ServiceItems, SellCostLinksSimple,
     CurrencyRates, PricingPolicy,
 )
+from .engine import validate_break_monotonic
 
 class ReadOnlyAdmin(admin.ModelAdmin):
     def has_add_permission(self, request): return False
@@ -21,6 +22,19 @@ class LanesAdmin(ReadOnlyAdmin):
     list_display = ("id","ratecard","origin","dest","airline","is_direct")
     list_filter  = ("airline","is_direct","ratecard","origin","dest")
     autocomplete_fields = ("ratecard","origin","dest")
+    actions = ["validate_breaks"]
+
+    def validate_breaks(self, request, queryset):
+        any_warn = False
+        for lane in queryset:
+            warnings = validate_break_monotonic(lane.id)
+            if warnings:
+                any_warn = True
+                for w in warnings:
+                    messages.warning(request, f"Lane {lane.id}: {w}")
+        if not any_warn:
+            messages.info(request, "Selected lanes have monotonic breaks.")
+    validate_breaks.short_description = "Validate lane break monotonicity"
 
 @admin.register(LaneBreaks)
 class LaneBreaksAdmin(ReadOnlyAdmin):

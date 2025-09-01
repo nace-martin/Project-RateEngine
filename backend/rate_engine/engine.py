@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+import logging
 
 from django.db.models import Q, F
 from django.utils.timezone import now
@@ -346,10 +347,12 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     fx = FxConverter(caf_on_fx=bool(pol.caf_on_fx if pol else True), caf_pct=caf_pct)
 
     # 1) Choose BUY ratecards and lane
+    # BUY direction: for INTERNATIONAL legs we force BUY=EXPORT
+    buy_direction = "EXPORT" if payload.scope == "INTERNATIONAL" else payload.direction
     active_cards = Ratecard.objects.filter(
         role="BUY",
         scope=payload.scope,
-        direction=payload.direction,
+        direction=buy_direction,
         effective_date__lte=ts.date(),
     ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
 
@@ -386,6 +389,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
     best = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
     lane, chargeable_kg, chosen_break, base_freight = best
+    # Validate monotonic breaks, log warnings but do not block pricing
+    lane_warnings = validate_break_monotonic(lane.id)
+    for w in lane_warnings:
+        logging.warning(f"Lane {lane.id} break validation: {w}")
     rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
 
     # 2) BUY origin/tranship fees
@@ -433,10 +440,11 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         )
 
     # 3) SELL destination services (PGK import/export) based on audience & direction
+    sell_direction = payload.direction  # SELL follows request direction
     sell_card = Ratecard.objects.filter(
         role="SELL",
         scope=payload.scope,
-        direction=payload.direction,
+        direction=sell_direction,
         audience=payload.audience,
         currency=payload.sell_currency,
         effective_date__lte=ts.date(),
@@ -447,13 +455,25 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     sell_lines = compute_sell_lines(sell_card, buy_context, chargeable_kg)
 
     # 4) Totals & taxes (sell lines)
+    # Track FX usage to document CAF-on-FX behavior
+    fx_pairs_used = set()
+
+    def convert_track(m: Money) -> Money:
+        if m.currency != payload.sell_currency:
+            fx_pairs_used.add(f"{m.currency}->{payload.sell_currency}")
+        return fx.convert(m, payload.sell_currency)
+
     # Convert BUY to sell currency for total
-    total_buy = sum_money([l.extended for l in buy_lines], payload.sell_currency, fx)
+    total_buy_amount = ZERO
+    for bl in buy_lines:
+        total_buy_amount += convert_track(bl.extended).amount
+    total_buy = Money(total_buy_amount.quantize(TWOPLACES), payload.sell_currency)
 
     tax_total = ZERO
     sell_sum = ZERO
     for l in sell_lines:
-        sell_amt = fx.convert(l.extended, payload.sell_currency).amount
+        sell_amt_money = convert_track(l.extended)
+        sell_amt = sell_amt_money.amount
         tax = (sell_amt * (l.tax_pct/Decimal(100))).quantize(TWOPLACES)
         sell_sum += sell_amt + tax
         tax_total += tax
@@ -472,10 +492,17 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         "buy_ratecard_id": rc_buy.id,
         "sell_ratecard_id": sell_card.id,
         "dim_factor": float(RatecardConfig.objects.filter(ratecard_id=rc_buy.id).first().dim_factor_kg_per_m3 if RatecardConfig.objects.filter(ratecard_id=rc_buy.id).exists() else 167),
+        # FX & CAF documentation
         "fx_caf_pct": float(caf_pct),
-        "fx_rates_used": {},
+        "caf_on_fx": bool(fx.caf_on_fx),
+        "fx_pairs_used": sorted(list(fx_pairs_used)),
         "chargeable_kg": float(chargeable_kg),
         "chosen_break": chosen_break.break_code,
+        # Directional decoupling
+        "buy_direction": buy_direction,
+        "sell_direction": sell_direction,
+        # Data quality warnings (non-blocking)
+        "break_warnings": lane_warnings,
     }
 
     return CalcResult(buy_lines=buy_lines, sell_lines=sell_lines, totals=totals, snapshot=snapshot)
@@ -579,6 +606,19 @@ def validate_break_monotonic(lane_id: int) -> List[str]:
         last = rows[k]
     return warnings
 
+# Override with a clean implementation (fix malformed string in earlier definition)
+def validate_break_monotonic(lane_id: int) -> List[str]:
+    warnings: List[str] = []
+    order = ["N", "45", "100", "250", "500", "1000"]
+    rows = {b.break_code: d(b.per_kg or ZERO) for b in LaneBreak.objects.filter(lane_id=lane_id)}
+    last = None
+    for k in order:
+        if k not in rows:
+            continue
+        if last is not None and rows[k] > last:
+            warnings.append(f"Per-kg for {k} ({rows[k]}) exceeds previous break ({last}) — check data.")
+        last = rows[k]
+    return warnings
 
 def outlier_guard(per_kg: Decimal) -> Optional[str]:
     if per_kg > Decimal(50):
