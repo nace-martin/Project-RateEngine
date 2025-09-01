@@ -1,0 +1,71 @@
+Docker + WSL Reinstall Session Notes
+
+Date: 2025-08-31
+
+Actions completed
+- Uninstalled Docker Desktop (via bundled installer), then reinstalled latest via winget.
+- Docker Desktop version: 4.45.0
+- Docker CLI: docker version 28.3.3 (windows/amd64), context set to desktop-linux.
+- Enabled/verified WSL + VM Platform; default WSL version set to 2.
+- Installed Microsoft Store-based WSL: Microsoft.WSL 2.5.10.
+- WSL kernel reported by `wsl --status`: 5.10.106.
+- Installed and initialized Ubuntu WSL distro (default).
+- Attempted to launch Docker Desktop via `"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"` but the UI did not appear and the `docker-desktop` WSL distros were not created.
+
+Observations
+- `docker version` client works; server (Docker Desktop Linux engine) returned 500 while initializing.
+- Docker backend logs show repeated attempts and Windows named pipe messages; no docker-desktop WSL distros present yet.
+- `wsl --update` errors with 0x8024500c (Windows Update issue), but Store-based WSL is installed and should work post-reboot.
+
+Prerequisites to verify (once per machine)
+- Windows features: ensure `Microsoft-Windows-Subsystem-Linux` and `VirtualMachinePlatform` are Enabled.
+  - Check: `dism /online /get-features /format:table | findstr /i "VirtualMachinePlatform Microsoft-Windows-Subsystem-Linux"`
+- Virtualization: BIOS/SVM enabled. Check: `systeminfo | findstr /i "Virtualization"` shows `Enabled`.
+- WSL version: `wsl --version` should show a recent kernel (>= 5.15). Current is 5.10.106 → update required.
+  - Try: `wsl --update` (if this fails with 0x8024500c, install the "WSL2 Linux kernel update MSI" manually from Microsoft, then reboot).
+  - After updating: `wsl --shutdown` to restart the WSL VM.
+
+What to do next (clean start)
+1) Reboot Windows (ensures WSL and services reset), then sign in normally (do not run terminals as Administrator for Docker Desktop use).
+2) Start Docker Desktop from Start menu (preferred) or run:
+   - `"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"` (as the current user; not elevated).
+3) Wait 1–2 minutes, then verify WSL distros: `wsl -l -v` should list `docker-desktop` and `docker-desktop-data` alongside `Ubuntu`.
+4) Verify the engine:
+   - `"C:\\Program Files\\Docker\\Docker\\DockerCli.exe" -SwitchLinuxEngine`
+   - `docker version`
+   - `docker info`
+   - `docker run hello-world`
+
+If Docker Desktop UI does not appear
+- Check processes: `Get-Process -Name "Docker Desktop","com.docker.backend" -ErrorAction SilentlyContinue`
+- Start the Windows service if stopped: `Start-Service com.docker.service`
+- Kill stale processes, then start the app again:
+  - `Stop-Process -Name "Docker Desktop","com.docker.backend" -Force -ErrorAction SilentlyContinue`
+  - Launch: `"C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"`
+- Check logs for errors:
+  - User logs: `%LOCALAPPDATA%\Docker\log.txt`
+  - Service logs: `%PROGRAMDATA%\DockerDesktop\service.txt`
+- Ensure WSL backend is selected (Linux engine):
+  - CLI: `"C:\\Program Files\\Docker\\Docker\\DockerCli.exe" -SwitchLinuxEngine`
+  - GUI: Settings > General > Use the WSL 2 based engine (checked)
+
+If `docker-desktop` WSL distros never appear
+- Confirm WSL is healthy: `wsl --status` and `wsl -l -v` shows your distro at VERSION 2.
+- Update WSL kernel (see prerequisites), then run: `wsl --shutdown` and start Docker Desktop again.
+- Enable WSL Integration for your distro in Docker Desktop: Settings > Resources > WSL Integration > Enable for `Ubuntu`.
+- As a last resort (destructive: removes images/volumes/containers):
+  - `wsl --unregister docker-desktop`
+  - `wsl --unregister docker-desktop-data`
+  - Start Docker Desktop to let it recreate these distros.
+
+Reference commands
+- Check WSL status: `wsl --status`
+- List distros: `wsl -l -v`
+- Set default version to 2: `wsl --set-default-version 2`
+- Switch Docker to Linux engine (CLI): `"C:\\Program Files\\Docker\\Docker\\DockerCli.exe" -SwitchLinuxEngine`
+ - Stop all WSL VMs: `wsl --shutdown`
+ - Restart Docker Desktop service: `Restart-Service com.docker.service`
+
+Notes for resuming this session
+- Reopen this repo folder and ask the assistant to "Continue Docker verification".
+- These notes are saved at DOCKER-WSL-setup-notes.txt.

@@ -16,9 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include # Make sure 'include' is imported
+from rate_engine.engine import QuoteComputeView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('quotes.urls')), # Add this line
     path('api/', include('accounts.urls')), # Add accounts URLs
+    path("quote/compute", QuoteComputeView.as_view()),
 ]
