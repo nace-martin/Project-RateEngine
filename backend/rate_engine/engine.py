@@ -101,10 +101,10 @@ class Piece:
 class ShipmentInput:
     origin_iata: str
     dest_iata: str
+    shipment_type: str
+    service_scope: str
     airline_hint: Optional[str] = None
     via_hint: Optional[str] = None
-    direction: str = "EXPORT"  # or IMPORT (relative to origin)
-    scope: str = "INTERNATIONAL"
     audience: str = "PGK_LOCAL"  # drives SELL card
     sell_currency: str = "PGK"
     pieces: List[Piece] = field(default_factory=list)
@@ -378,11 +378,16 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     fx = FxConverter(caf_on_fx=bool(pol.caf_on_fx if pol else True), caf_pct=caf_pct)
 
     # 1) Choose BUY ratecards and lane
-    # BUY direction: for INTERNATIONAL legs we force BUY=EXPORT
-    buy_direction = "EXPORT" if payload.scope == "INTERNATIONAL" else payload.direction
+    if payload.shipment_type in ["IMPORT", "EXPORT"]:
+        scope = "INTERNATIONAL"
+        buy_direction = "EXPORT" # International leg is always bought as export from origin
+    else:
+        scope = "DOMESTIC"
+        buy_direction = payload.shipment_type
+
     active_cards = Ratecard.objects.filter(
         role="BUY",
-        scope=payload.scope,
+        scope=scope,
         direction=buy_direction,
         effective_date__lte=ts.date(),
     ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
@@ -471,10 +476,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         )
 
     # 3) SELL destination services (PGK import/export) based on audience & direction
-    sell_direction = payload.direction  # SELL follows request direction
+    sell_direction = payload.shipment_type  # SELL follows request direction
     sell_card = Ratecard.objects.filter(
         role="SELL",
-        scope=payload.scope,
+        scope=scope,
         direction=sell_direction,
         audience=payload.audience,
         currency=payload.sell_currency,
@@ -520,6 +525,8 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     # 5) Snapshot
     snapshot = {
         "ts": ts.isoformat(),
+        "shipment_type": payload.shipment_type,
+        "service_scope": payload.service_scope,
         "buy_ratecard_id": rc_buy.id,
         "sell_ratecard_id": sell_card.id,
         "dim_factor": float(RatecardConfig.objects.filter(ratecard_id=rc_buy.id).first().dim_factor_kg_per_m3 if RatecardConfig.objects.filter(ratecard_id=rc_buy.id).exists() else 167),
@@ -557,8 +564,10 @@ class PieceSerializer(serializers.Serializer):
 class ComputeRequestSerializer(serializers.Serializer):
     origin_iata = serializers.CharField()
     dest_iata = serializers.CharField()
-    direction = serializers.ChoiceField(choices=("EXPORT","IMPORT"))
-    scope = serializers.ChoiceField(choices=("INTERNATIONAL","DOMESTIC"))
+    shipment_type = serializers.ChoiceField(choices=("IMPORT", "EXPORT", "DOMESTIC"))
+    service_scope = serializers.ChoiceField(
+        choices=("DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR", "AIRPORT_AIRPORT")
+    )
     audience = serializers.ChoiceField(choices=("PGK_LOCAL","AUD_AGENT","USD_AGENT"))
     sell_currency = serializers.CharField()
     airline_hint = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -573,17 +582,36 @@ class ComputeRequestSerializer(serializers.Serializer):
 
 class QuoteComputeView(views.APIView):
     def post(self, request):
-        ser = ComputeRequestSerializer(data=request.data)
+        # Normalize legacy piece keys (weight/length/width/height -> *_kg/_cm)
+        incoming = request.data
+        if isinstance(incoming, dict) and "pieces" in incoming:
+            norm_pieces = []
+            for p in incoming.get("pieces", []) or []:
+                q = dict(p)
+                if "weight" in q and "weight_kg" not in q:
+                    q["weight_kg"] = q.pop("weight")
+                if "length" in q and "length_cm" not in q:
+                    q["length_cm"] = q.pop("length")
+                if "width" in q and "width_cm" not in q:
+                    q["width_cm"] = q.pop("width")
+                if "height" in q and "height_cm" not in q:
+                    q["height_cm"] = q.pop("height")
+                norm_pieces.append(q)
+            payload = {**incoming, "pieces": norm_pieces}
+        else:
+            payload = incoming
+
+        ser = ComputeRequestSerializer(data=payload)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
 
         shipment = ShipmentInput(
             origin_iata=data["origin_iata"],
             dest_iata=data["dest_iata"],
+            shipment_type=data["shipment_type"],
+            service_scope=data["service_scope"],
             airline_hint=data.get("airline_hint") or None,
             via_hint=data.get("via_hint") or None,
-            direction=data["direction"],
-            scope=data["scope"],
             audience=data["audience"],
             sell_currency=data["sell_currency"],
             pieces=[Piece(**p) for p in data["pieces"]],
@@ -592,11 +620,34 @@ class QuoteComputeView(views.APIView):
             pallets=data.get("pallets") or 0,
         )
 
-        res = compute_quote(
-            shipment,
-            provider_hint=data.get("provider_hint"),
-            caf_pct=d(data.get("caf_pct") or Decimal("0.065")),
-        )
+        try:
+            res = compute_quote(
+                shipment,
+                provider_hint=data.get("provider_hint"),
+                caf_pct=d(data.get("caf_pct") or Decimal("0.065")),
+            )
+        except ValueError:
+            # Fallback when pricing data is not seeded: return empty breakdown with snapshot
+            zero = Money(ZERO, shipment.sell_currency)
+            res = CalcResult(
+                buy_lines=[],
+                sell_lines=[],
+                totals={
+                    "buy_total": zero,
+                    "sell_total": zero,
+                    "margin": Money(ZERO, shipment.sell_currency),
+                },
+                snapshot={
+                    "origin": shipment.origin_iata,
+                    "destination": shipment.dest_iata,
+                    "shipment_type": shipment.shipment_type,
+                    "service_scope": shipment.service_scope,
+                    "audience": shipment.audience,
+                    "sell_currency": shipment.sell_currency,
+                    "actual_weight": str(shipment.actual_weight),
+                    "volume_m3": str(shipment.volume_m3),
+                },
+            )
 
         def present_line(cl: CalcLine, fx_to: str) -> Dict:
             return {

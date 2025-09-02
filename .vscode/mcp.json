@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "semgrep-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@semgrep/mcp"]
+    },
+    "ref-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "ref-mcp"]
+    }
+  }
+}

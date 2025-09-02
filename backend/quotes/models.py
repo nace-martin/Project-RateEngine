@@ -52,16 +52,25 @@ class RateCard(models.Model):
         ]
 
 class Quote(models.Model):
+    SHIPMENT_TYPES = [("IMPORT", "Import"), ("EXPORT", "Export"), ("DOMESTIC", "Domestic")]
+    SERVICE_SCOPES = [
+        ("DOOR_DOOR", "Door to Door"),
+        ("DOOR_AIRPORT", "Door to Airport"),
+        ("AIRPORT_DOOR", "Airport to Door"),
+        ("AIRPORT_AIRPORT", "Airport to Airport"),
+    ]
+
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="quotes")
+    shipment_type = models.CharField(max_length=16, choices=SHIPMENT_TYPES)
+    service_scope = models.CharField(max_length=16, choices=SERVICE_SCOPES)
     origin = models.CharField(max_length=8)
     destination = models.CharField(max_length=8)
-    mode = models.CharField(max_length=16, choices=[("air","Air"),("sea","Sea"),("customs","Customs")])
     actual_weight_kg = models.DecimalField(max_digits=10, decimal_places=2)
     volume_cbm = models.DecimalField(max_digits=10, decimal_places=3, default=0)
     chargeable_weight_kg = models.DecimalField(max_digits=10, decimal_places=2)
     rate_used_per_kg = models.DecimalField(max_digits=10, decimal_places=2)
     base_cost = models.DecimalField(max_digits=12, decimal_places=2)
-    margin_pct = models.DecimalField(max_digits=5, decimal_places=2, default=20.00) # Default 20% margin
+    margin_pct = models.DecimalField(max_digits=5, decimal_places=2, default=20.00)  # Default 20% margin
     total_sell = models.DecimalField(max_digits=12, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
 

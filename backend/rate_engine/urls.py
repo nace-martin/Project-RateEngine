@@ -22,5 +22,5 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('quotes.urls')), # Add this line
     path('api/', include('accounts.urls')), # Add accounts URLs
-    path("quote/compute", QuoteComputeView.as_view()),
+    path("quote/compute", QuoteComputeView.as_view(), name="compute-quote"),
 ]

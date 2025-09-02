@@ -26,10 +26,10 @@ class ClientAdmin(admin.ModelAdmin):
 @admin.register(Quote)
 class QuoteAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'client', 'origin', 'destination', 'mode',
+        'id', 'client', 'origin', 'destination', 'shipment_type', 'service_scope',
         'chargeable_weight_kg', 'rate_used_per_kg', 'base_cost', 'total_sell',
         'created_at',
     )
     search_fields = ('client__name', 'origin', 'destination')
-    list_filter = ('mode', 'origin', 'destination')
+    list_filter = ('shipment_type', 'service_scope', 'origin', 'destination')
     ordering = ('-created_at',)
