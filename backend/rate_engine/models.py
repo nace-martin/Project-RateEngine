@@ -37,6 +37,8 @@ class Ratecards(models.Model):
     scope = models.TextField()
     direction = models.TextField()
     audience = models.TextField(blank=True, null=True)
+    # New field to specify pricing strategy for this ratecard
+    rate_strategy = models.CharField(max_length=32, null=True, blank=True, default="BREAKS")
     currency = models.TextField()
     source = models.TextField()
     status = models.TextField()

@@ -306,9 +306,10 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
         buy_sum = ZERO
         if it.id in links:
             ln = links[it.id]
-            # Sum context costs for matching buy_fee_code
-            if ln.buy_fee_code in buy_context:
-                buy_sum = d(buy_context[ln.buy_fee_code].amount)
+            # The FK uses to_field='code'; use the raw id (code string) for lookup
+            buy_code = getattr(ln, "buy_fee_code_id", None) or (ln.buy_fee_code.code if ln.buy_fee_code else None)
+            if buy_code and buy_code in buy_context:
+                buy_sum = d(buy_context[buy_code].amount)
 
         # Compute the SELL amount
         sell_amt = ZERO
@@ -416,7 +417,20 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         cfg = RatecardConfig.objects.filter(ratecard_id=lane.ratecard_id).first()
         dim = d(cfg.dim_factor_kg_per_m3 if cfg else Decimal(167))
         chargeable = compute_chargeable(payload.actual_weight, payload.volume_m3, dim)
-        brk, base = pick_best_break(lane, chargeable)
+
+        # Support FLAT_PER_KG lanes during option building
+        rc_lane = lane.ratecard if hasattr(lane, "ratecard") else Ratecard.objects.get(id=lane.ratecard_id)
+        if getattr(rc_lane, "rate_strategy", None) == "FLAT_PER_KG":
+            flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code="FLAT").first()
+            if not flat_break:
+                # Skip lanes misconfigured for flat strategy
+                logging.warning(f"Lane {lane.id} marked FLAT_PER_KG but missing FLAT break; skipping.")
+                continue
+            base = Money((d(flat_break.per_kg) * chargeable).quantize(TWOPLACES), rc_lane.currency)
+            brk = flat_break
+        else:
+            brk, base = pick_best_break(lane, chargeable)
+
         buy_options.append((lane, chargeable, brk, base))
 
     # Pick cheapest base freight in its native currency converted to sell currency
@@ -431,15 +445,39 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         logging.warning(f"Lane {lane.id} break validation: {w}")
     rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
 
+    # =================================================================
+    # START: NEW LOGIC FOR FLAT_PER_KG STRATEGY
+    # =================================================================
+    if rc_buy.rate_strategy == 'FLAT_PER_KG':
+        # For flat rates, recalculate base freight using the simple per_kg rate.
+        # The 'chosen_break' from pick_best_break is not relevant here.
+        flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code='FLAT').first()
+        if not flat_break:
+            raise ValueError(
+                f"Missing FLAT break for lane {lane.id} (ratecard {rc_buy.id}). "
+                f"Seed a LaneBreak with break_code='FLAT' for flat-per-kg strategy."
+            )
+        base_freight_amount = (d(flat_break.per_kg) * chargeable_kg).quantize(TWOPLACES)
+        base_freight = Money(base_freight_amount, rc_buy.currency)
+        chosen_break_code = 'FLAT'
+        # Clear lane warnings as monotonic checks don't apply to flat rates
+        lane_warnings = []
+    else:
+        # This is the existing logic for standard 'BREAKS' strategy
+        chosen_break_code = chosen_break.break_code
+    # =================================================================
+    # END: NEW LOGIC
+    # =================================================================
+
     # 2) BUY origin/tranship fees
     buy_lines: List[CalcLine] = []
     buy_context: Dict[str, Money] = {}
 
-    # Freight line
+    # Freight line (update description to use the correct break code)
     buy_lines.append(
         CalcLine(
             code="FREIGHT",
-            description=f"Air freight {payload.origin_iata}->{payload.dest_iata} ({chosen_break.break_code})",
+            description=f"Air freight {payload.origin_iata}->{payload.dest_iata} ({chosen_break_code})",
             qty=chargeable_kg,
             unit="KG",
             unit_price=Money((base_freight.amount/chargeable_kg).quantize(FOURPLACES), base_freight.currency),
@@ -535,7 +573,7 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         "caf_on_fx": bool(fx.caf_on_fx),
         "fx_pairs_used": sorted(list(fx_pairs_used)),
         "chargeable_kg": float(chargeable_kg),
-        "chosen_break": chosen_break.break_code,
+        "chosen_break": chosen_break_code,
         # Directional decoupling
         "buy_direction": buy_direction,
         "sell_direction": sell_direction,
