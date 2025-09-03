@@ -193,7 +193,8 @@ class Command(BaseCommand):
                 defaults={
                     "currency": "PGK",
                     "amount": None,  # price set by mapping
-                    "tax_pct": Decimal("0.00"),
+                    # Apply 10% GST on domestic SELL items
+                    "tax_pct": Decimal("10.00"),
                     "conditions_json": {},
                 },
             )
