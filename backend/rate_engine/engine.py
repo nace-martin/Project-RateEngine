@@ -22,7 +22,7 @@ Author: Nas + GPT-5 Thinking (MVP build)
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_CEILING
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 import logging
@@ -51,6 +51,14 @@ def d(val) -> Decimal:
     if isinstance(val, Decimal):
         return val
     return Decimal(str(val))
+
+
+def round_up_nearest_0_05(amount: Decimal) -> Decimal:
+    """Round up to the nearest 0.05 (e.g., 12.01 -> 12.05, 12.05 -> 12.05)."""
+    step = Decimal("0.05")
+    # Use ceiling on the step multiple to ensure we round up
+    multiples = (d(amount) / step).to_integral_value(rounding=ROUND_CEILING)
+    return (multiples * step).quantize(TWOPLACES)
 
 
 def calculate_chargeable_weight(pieces: List[Dict]) -> float:
@@ -239,8 +247,11 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
     """Compute a BUY fee line in its native currency.
     context: map of code->Money already computed (for PERCENT_OF).
     """
-    code = FeeType.objects.get(id=fee.fee_type_id).code
-    basis = FeeType.objects.get(id=fee.fee_type_id).basis
+    ft = FeeType.objects.get(id=fee.fee_type_id)
+    code = ft.code
+    # Normalize basis to handle stray casing/whitespace from data seeds
+    # Normalize basis (basic cleanup only)
+    basis = (ft.basis or "").strip().upper()
     ccy = fee.currency
     amt = d(fee.amount)
     min_amt = d(fee.min_amount) if fee.min_amount is not None else None
@@ -256,8 +267,10 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
         return Money(ZERO, ccy)
 
     total = ZERO
+    # BUY-Side: for PER_KG fees, multiply the per-kg rate by chargeable kg
     if basis == "PER_KG":
-        total = (amt * kg)
+        kg_dec = d(kg)
+        total = (amt * kg_dec)
         if min_amt is not None:
             total = max(total, min_amt)
     elif basis in ("PER_SHIPMENT", "PER_AWB", "PER_SET", "PER_TRANSFER"):
@@ -273,6 +286,7 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
 
     if max_amt is not None:
         total = min(total, max_amt)
+    # Ensure final amount is quantized; for PER_KG this remains the extended (rate * kg)
     return Money(total.quantize(TWOPLACES), ccy)
 
 
@@ -285,7 +299,7 @@ def sum_money(items: List[Money], to_ccy: str, fx: FxConverter) -> Money:
 
 # ----------------------- SELL computation ------------------------
 
-def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: Decimal) -> List[CalcLine]:
+def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: Decimal, service_scope: str = "AIRPORT_AIRPORT") -> List[CalcLine]:
     lines: List[CalcLine] = []
     items = (
         ServiceItem.objects
@@ -294,6 +308,9 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
     )
     links = {l.sell_item_id: l for l in SellCostLink.objects.filter(sell_item_id__in=[i.id for i in items])}
 
+    # SELL-Side: CARTAGE and CARTAGE_FSC apply only to these scopes
+    allowed_cartage_scopes = {"DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR"}
+
     for it in items:
         svc = it.service
         code = svc.code
@@ -301,6 +318,10 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
         ccy = it.currency
         tax_pct = d(it.tax_pct)
         qty = d(kg) if svc.basis == "PER_KG" else Decimal(1)
+
+        # Enforce service scope for CARTAGE and CARTAGE_FSC (exclude from AIRPORT_AIRPORT)
+        if code in {"CARTAGE", "CARTAGE_FSC"} and service_scope not in allowed_cartage_scopes:
+            continue
 
         # Determine the underlying BUY cost (if linked)
         buy_sum = ZERO
@@ -313,18 +334,19 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
 
         # Compute the SELL amount
         sell_amt = ZERO
-        if it.amount is not None:
-            unit_price = d(it.amount)
-            if svc.basis == "PER_KG":
-                sell_amt = unit_price * d(kg)
-            else:
-                sell_amt = unit_price
+        if svc.basis != "PERCENT_OF":
+            if it.amount is not None:
+                unit_price = d(it.amount)
+                if svc.basis == "PER_KG":
+                    sell_amt = unit_price * d(kg)
+                else:
+                    sell_amt = unit_price
 
-            # Apply min/max
-            if it.min_amount is not None:
-                sell_amt = max(sell_amt, d(it.min_amount))
-            if it.max_amount is not None:
-                sell_amt = min(sell_amt, d(it.max_amount))
+                # Apply min/max
+                if it.min_amount is not None:
+                    sell_amt = max(sell_amt, d(it.min_amount))
+                if it.max_amount is not None:
+                    sell_amt = min(sell_amt, d(it.max_amount))
 
         # Percent-of logic (e.g., Fuel % of Cartage)
         if svc.basis == "PERCENT_OF" and it.percent_of_service_code:
@@ -343,7 +365,11 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
                 pass  # already set from it.amount/min
             elif ln.mapping_type == "COST_PLUS_PCT":
                 pct = d(ln.mapping_value or ZERO)
+                # Apply margin
                 sell_amt = (buy_sum * (Decimal(1) + pct)).quantize(TWOPLACES)
+                # For Air Freight, round up to nearest 0.05 after margin
+                if svc.code == "AIR_FREIGHT":
+                    sell_amt = round_up_nearest_0_05(sell_amt)
             elif ln.mapping_type == "COST_PLUS_ABS":
                 inc = d(ln.mapping_value or ZERO)
                 sell_amt = (buy_sum + inc).quantize(TWOPLACES)
@@ -515,18 +541,21 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
     # 3) SELL destination services (PGK import/export) based on audience & direction
     sell_direction = payload.shipment_type  # SELL follows request direction
-    sell_card = Ratecard.objects.filter(
+    # Prefer SELL card in the requested sell currency; fall back to any currency
+    sell_qs_base = Ratecard.objects.filter(
         role="SELL",
         scope=scope,
         direction=sell_direction,
         audience=payload.audience,
-        currency=payload.sell_currency,
         effective_date__lte=ts.date(),
-    ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date())).first()
+    ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
+    sell_card = sell_qs_base.filter(currency=payload.sell_currency).first()
     if not sell_card:
-        raise ValueError("No SELL ratecard found for audience/currency.")
+        sell_card = sell_qs_base.first()
+    if not sell_card:
+        raise ValueError("No SELL ratecard found for audience.")
 
-    sell_lines = compute_sell_lines(sell_card, buy_context, chargeable_kg)
+    sell_lines = compute_sell_lines(sell_card, buy_context, chargeable_kg, payload.service_scope)
 
     # 4) Totals & taxes (sell lines)
     # Track FX usage to document CAF-on-FX behavior
