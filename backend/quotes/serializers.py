@@ -38,6 +38,8 @@ class QuoteSerializer(serializers.ModelSerializer):
         queryset=Client.objects.none(), source='client', write_only=True, required=False
     )
     pieces = ShipmentPieceSerializer(many=True, required=False)
+    # Backward-compatible, computed field: legacy "mode" (e.g. "air")
+    mode = serializers.SerializerMethodField(read_only=True)
 
     def get_fields(self):
         fields = super().get_fields()
@@ -56,7 +58,8 @@ class QuoteSerializer(serializers.ModelSerializer):
         model = Quote
         # List all fields, ensuring calculated ones are handled
         fields = [
-            'id', 'client', 'client_id', 'origin', 'destination', 'mode',
+            'id', 'client', 'client_id', 'origin', 'destination',
+            'shipment_type', 'service_scope', 'mode',
             'actual_weight_kg', 'volume_cbm', 'chargeable_weight_kg',
             'rate_used_per_kg', 'base_cost', 'margin_pct', 'total_sell',
             'created_at', 'pieces',
@@ -82,6 +85,14 @@ class QuoteSerializer(serializers.ModelSerializer):
                 data.pop('rate_used_per_kg', None)
         
         return data
+
+    def get_mode(self, obj):
+        """
+        Provide a legacy "mode" string for frontend compatibility.
+        Current model uses shipment_type/service_scope; UI expects a simple mode.
+        Default to 'air' given current rating logic is air freight oriented.
+        """
+        return 'air'
 
     # Field validators
     def validate_actual_weight_kg(self, value):

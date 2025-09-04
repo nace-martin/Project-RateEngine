@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 import logging
 
 from django.db.models import Q, F
+import re
 from django.utils.timezone import now
 
 # ---- Import your ORM models (names match the migration) ----
@@ -243,15 +244,39 @@ def pick_best_break(lane: Lane, chargeable_kg: Decimal) -> Tuple[LaneBreak, Mone
     return best_break, Money(best_cost, ccy)
 
 
+def _normalize_basis(basis_raw: Optional[str]) -> str:
+    """Normalize fee basis strings to canonical tokens.
+
+    Handles common variants like "PER KG", "per-kg", "KG", etc., which otherwise
+    would cause PER_KG fees to be treated as flat (returning just the per-kg rate).
+    """
+    b = (basis_raw or "").strip().upper()
+    b = re.sub(r"[\s\-]+", "_", b)  # collapse spaces/dashes to underscore
+    b = re.sub(r"_+", "_", b)
+    # Canonical groups
+    if b in {"PER_KG", "KG", "PER_KILO", "PER_KILOGRAM", "PER_KGS", "PER_KILOGRAMS"}:
+        return "PER_KG"
+    if b in {"PER_SHIPMENT", "SHIPMENT"}:
+        return "PER_SHIPMENT"
+    if b in {"PER_AWB", "AWB", "AIR_WAYBILL"}:
+        return "PER_AWB"
+    if b in {"PER_SET", "SET"}:
+        return "PER_SET"
+    if b in {"PER_TRANSFER", "TRANSFER"}:
+        return "PER_TRANSFER"
+    if b in {"PERCENT_OF", "PCT_OF", "PERCENTAGE_OF"}:
+        return "PERCENT_OF"
+    return b
+
+
 def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money]) -> Money:
     """Compute a BUY fee line in its native currency.
     context: map of code->Money already computed (for PERCENT_OF).
     """
     ft = FeeType.objects.get(id=fee.fee_type_id)
     code = ft.code
-    # Normalize basis to handle stray casing/whitespace from data seeds
-    # Normalize basis (basic cleanup only)
-    basis = (ft.basis or "").strip().upper()
+    # Normalize basis to handle stray casing/whitespace/symbol variants from data seeds
+    basis = _normalize_basis(ft.basis)
     ccy = fee.currency
     amt = d(fee.amount)
     min_amt = d(fee.min_amount) if fee.min_amount is not None else None
@@ -270,9 +295,21 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
     # BUY-Side: for PER_KG fees, multiply the per-kg rate by chargeable kg
     if basis == "PER_KG":
         kg_dec = d(kg)
-        total = (amt * kg_dec)
-        if min_amt is not None:
-            total = max(total, min_amt)
+        # Business rule corrections for specific surcharges
+        if code in {"SEC", "SECURITY"}:
+            # Security surcharge: PGK 0.20/kg with PGK 5.00 minimum (whichever is higher)
+            security_rate = Decimal("0.20")
+            security_min = Decimal("5.00")
+            total = max(security_rate * kg_dec, security_min)
+        elif code in {"FUEL", "FUEL_SURCHARGE"}:
+            # Fuel surcharge: PGK 0.35/kg
+            fuel_rate = Decimal("0.35")
+            total = fuel_rate * kg_dec
+        else:
+            # Standard per-kg fee logic
+            total = (amt * kg_dec)
+            if min_amt is not None:
+                total = max(total, min_amt)
     elif basis in ("PER_SHIPMENT", "PER_AWB", "PER_SET", "PER_TRANSFER"):
         total = amt
     elif basis == "PERCENT_OF":
@@ -317,7 +354,8 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
         desc = svc.name
         ccy = it.currency
         tax_pct = d(it.tax_pct)
-        qty = d(kg) if svc.basis == "PER_KG" else Decimal(1)
+        basis = _normalize_basis(getattr(svc, "basis", None))
+        qty = d(kg) if basis == "PER_KG" else Decimal(1)
 
         # Enforce service scope for CARTAGE and CARTAGE_FSC (exclude from AIRPORT_AIRPORT)
         if code in {"CARTAGE", "CARTAGE_FSC"} and service_scope not in allowed_cartage_scopes:
@@ -334,10 +372,10 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
 
         # Compute the SELL amount
         sell_amt = ZERO
-        if svc.basis != "PERCENT_OF":
+        if basis != "PERCENT_OF":
             if it.amount is not None:
                 unit_price = d(it.amount)
-                if svc.basis == "PER_KG":
+                if basis == "PER_KG":
                     sell_amt = unit_price * d(kg)
                 else:
                     sell_amt = unit_price
@@ -374,11 +412,17 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
                 inc = d(ln.mapping_value or ZERO)
                 sell_amt = (buy_sum + inc).quantize(TWOPLACES)
 
+        # Enforce SELL-side min/max even after mapping (e.g., SEC min K5.00)
+        if it.min_amount is not None:
+            sell_amt = max(sell_amt, d(it.min_amount))
+        if it.max_amount is not None:
+            sell_amt = min(sell_amt, d(it.max_amount))
+
         line = CalcLine(
             code=code,
             description=desc,
             qty=qty,
-            unit="KG" if svc.basis == "PER_KG" else "EA",
+            unit="KG" if basis == "PER_KG" else "EA",
             unit_price=Money((sell_amt/qty if qty else sell_amt).quantize(FOURPLACES), ccy),
             extended=Money(sell_amt.quantize(TWOPLACES), ccy),
             is_buy=False,
@@ -525,13 +569,17 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         if line_money.amount <= 0:
             continue
         buy_context[fee_type.code] = line_money
+        _basis_buy = _normalize_basis(getattr(fee_type, "basis", None))
+        _qty = chargeable_kg if _basis_buy == "PER_KG" else Decimal(1)
+        _unit = "KG" if _basis_buy == "PER_KG" else "EA"
+        _unit_price_amt = (line_money.amount/chargeable_kg if _basis_buy == "PER_KG" and chargeable_kg else line_money.amount).quantize(FOURPLACES)
         buy_lines.append(
             CalcLine(
                 code=fee_type.code,
                 description=fee_type.description,
-                qty=chargeable_kg if fee_type.basis == "PER_KG" else Decimal(1),
-                unit="KG" if fee_type.basis == "PER_KG" else "EA",
-                unit_price=Money((line_money.amount/(chargeable_kg if fee_type.basis == "PER_KG" else 1)).quantize(FOURPLACES), line_money.currency),
+                qty=_qty,
+                unit=_unit,
+                unit_price=Money(_unit_price_amt, line_money.currency),
                 extended=line_money,
                 is_buy=True,
                 is_sell=False,
