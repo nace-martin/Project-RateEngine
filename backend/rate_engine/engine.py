@@ -509,35 +509,15 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
     best = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
     lane, chargeable_kg, chosen_break, base_freight = best
-    # Validate monotonic breaks, log warnings but do not block pricing
-    lane_warnings = validate_break_monotonic(lane.id)
-    for w in lane_warnings:
-        logging.warning(f"Lane {lane.id} break validation: {w}")
     rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
 
-    # =================================================================
-    # START: NEW LOGIC FOR FLAT_PER_KG STRATEGY
-    # =================================================================
-    if rc_buy.rate_strategy == 'FLAT_PER_KG':
-        # For flat rates, recalculate base freight using the simple per_kg rate.
-        # The 'chosen_break' from pick_best_break is not relevant here.
-        flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code='FLAT').first()
-        if not flat_break:
-            raise ValueError(
-                f"Missing FLAT break for lane {lane.id} (ratecard {rc_buy.id}). "
-                f"Seed a LaneBreak with break_code='FLAT' for flat-per-kg strategy."
-            )
-        base_freight_amount = (d(flat_break.per_kg) * chargeable_kg).quantize(TWOPLACES)
-        base_freight = Money(base_freight_amount, rc_buy.currency)
-        chosen_break_code = 'FLAT'
-        # Clear lane warnings as monotonic checks don't apply to flat rates
-        lane_warnings = []
-    else:
-        # This is the existing logic for standard 'BREAKS' strategy
-        chosen_break_code = chosen_break.break_code
-    # =================================================================
-    # END: NEW LOGIC
-    # =================================================================
+    # Assign chosen_break_code from the chosen break object and validate breaks
+    chosen_break_code = chosen_break.break_code
+    lane_warnings = []
+    if rc_buy.rate_strategy != 'FLAT_PER_KG':
+        lane_warnings = validate_break_monotonic(lane.id)
+        for w in lane_warnings:
+            logging.warning(f"Lane {lane.id} break validation: {w}")
 
     # 2) BUY origin/tranship fees
     buy_lines: List[CalcLine] = []
@@ -800,20 +780,6 @@ def validate_break_monotonic(lane_id: int) -> List[str]:
             continue
         if last is not None and rows[k] > last:
             warnings.append(f"Per-kg for {k} ({rows[k]}) exceeds previous break ({last}) – check data.")
-        last = rows[k]
-    return warnings
-
-# Override with a clean implementation (fix malformed string in earlier definition)
-def validate_break_monotonic(lane_id: int) -> List[str]:
-    warnings: List[str] = []
-    order = ["N", "45", "100", "250", "500", "1000"]
-    rows = {b.break_code: d(b.per_kg or ZERO) for b in LaneBreak.objects.filter(lane_id=lane_id)}
-    last = None
-    for k in order:
-        if k not in rows:
-            continue
-        if last is not None and rows[k] > last:
-            warnings.append(f"Per-kg for {k} ({rows[k]}) exceeds previous break ({last}) — check data.")
         last = rows[k]
     return warnings
 
