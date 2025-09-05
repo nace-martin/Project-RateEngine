@@ -239,8 +239,10 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
     """Compute a BUY fee line in its native currency.
     context: map of code->Money already computed (for PERCENT_OF).
     """
-    code = FeeType.objects.get(id=fee.fee_type_id).code
-    basis = FeeType.objects.get(id=fee.fee_type_id).basis
+    # Assumes fee.fee_type is pre-fetched with select_related
+    fee_type = fee.fee_type
+    code = fee_type.code
+    basis = fee_type.basis
     ccy = fee.currency
     amt = d(fee.amount)
     min_amt = d(fee.min_amount) if fee.min_amount is not None else None
@@ -256,10 +258,9 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
         return Money(ZERO, ccy)
 
     total = ZERO
-    if basis == "PER_KG":
-        total = (amt * kg)
-        if min_amt is not None:
-            total = max(total, min_amt)
+    # Treat any basis containing "KG" as a per-kilogram rate.
+    if "KG" in basis or basis in ("SECURITY", "FUEL"):
+        total = amt * kg
     elif basis in ("PER_SHIPMENT", "PER_AWB", "PER_SET", "PER_TRANSFER"):
         total = amt
     elif basis == "PERCENT_OF":
@@ -268,11 +269,15 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
             return Money(ZERO, ccy)
         total = (d(context[ref_code].amount) * amt).quantize(TWOPLACES)  # here `amount` holds percent as 0.10 for 10%
     else:
-        # Other bases could be extended
+        # Other bases could be extended, assume flat fee
         total = amt
 
+    # Apply min/max charges to the calculated total
+    if min_amt is not None:
+        total = max(total, min_amt)
     if max_amt is not None:
         total = min(total, max_amt)
+
     return Money(total.quantize(TWOPLACES), ccy)
 
 
@@ -481,7 +486,6 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     buy_context["secondary_screening_flag"] = payload.flags.get("secondary_screening", False)
 
     for fee in fees:
-        fee_type = FeeType.objects.get(id=fee.fee_type_id)
         line_money = compute_fee_amount(fee, chargeable_kg, buy_context)
         if line_money.amount <= 0:
             continue

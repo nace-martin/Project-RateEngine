@@ -219,4 +219,65 @@ class RateEngineLogicTests(TestCase):
 
         # The first buy line is the freight.
         freight_line = result.buy_lines[0]
+        # The first buy line is the freight.
+        freight_line = result.buy_lines[0]
         self.assertEqual(freight_line.extended.amount, Decimal("150.00"))
+
+
+from rate_engine.engine import compute_fee_amount
+
+class FeeCalculationTests(TestCase):
+    def setUp(self):
+        """Set up a fee type and a ratecard fee for testing."""
+        provider = Provider.objects.create(name="Test Carrier", provider_type="AIRLINE")
+        ratecard = Ratecard.objects.create(
+            provider=provider,
+            name="Test Rate Card",
+            role="BUY",
+            scope="INTERNATIONAL",
+            direction="EXPORT",
+            currency="PGK",
+            source="TEST",
+            status="ACTIVE",
+            effective_date="2024-01-01",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+            meta={},
+        )
+        self.fee_type = FeeType.objects.create(
+            code="SEC",
+            description="Security Surcharge",
+            basis="SECURITY", # Intentionally using a non-standard basis to test the 'else' block
+            default_tax_pct=0
+        )
+        self.ratecard_fee = RatecardFee.objects.create(
+            fee_type=self.fee_type,
+            currency="PGK",
+            amount=Decimal("0.20"),  # K0.20 per kg
+            min_amount=Decimal("5.00"), # K5.00 minimum
+            ratecard=ratecard,
+            created_at="2024-01-01T00:00:00Z",
+            applies_if={},
+        )
+
+    def test_security_surcharge_above_min(self):
+        """Test calculation for a weight where the per-kg amount is > min charge."""
+        chargeable_kg = Decimal("120")
+        expected_amount = Decimal("24.00") # 120kg * 0.20/kg = 24.00
+
+        # We need to mock the fee_type being attached to the fee object
+        self.ratecard_fee.fee_type = self.fee_type
+
+        result = compute_fee_amount(self.ratecard_fee, chargeable_kg, {})
+        self.assertEqual(result.amount, expected_amount)
+
+    def test_security_surcharge_below_min(self):
+        """Test calculation for a weight where the per-kg amount is < min charge."""
+        chargeable_kg = Decimal("10")
+        expected_amount = Decimal("5.00")  # The minimum charge
+
+        # We need to mock the fee_type being attached to the fee object
+        self.ratecard_fee.fee_type = self.fee_type
+
+        result = compute_fee_amount(self.ratecard_fee, chargeable_kg, {})
+        self.assertEqual(result.amount, expected_amount)
