@@ -18,212 +18,159 @@ from rate_engine.models import (
     SellCostLinksSimple,
 )
 
-# Domestic Air Freight Rates (in PGK per KG)
-# All rates are Airport-to-Airport
+# Updated with the full list of actual domestic BUY rates
 DOMESTIC_RATES = {
     "POM": {
-        "LAE": "2.50", "HGU": "3.50", "MAG": "4.00", "WWK": "4.50",
-        "RAB": "5.00", "HKN": "5.50",
+        "GUR": "7.85", "BUA": "19.35", "DAU": "11.05", "GKA": "8.30",
+        "HKN": "11.55", "KVG": "17.65", "KIE": "20.45", "KOM": "14.00",
+        "UNG": "16.05", "CMU": "7.20", "LAE": "6.10", "LNV": "18.75",
+        "LSA": "8.00", "MAG": "8.75", "MAS": "13.25", "MDU": "9.50",
+        "HGU": "8.85", "PNP": "4.85", "RAB": "15.45", "TBG": "16.05",
+        "TIZ": "14.00", "TFI": "5.25", "VAI": "17.15", "WBM": "6.65",
+        "WWK": "13.75",
     },
     "LAE": {
-        "POM": "2.50", "HGU": "2.00", "MAG": "2.50", "WWK": "3.00",
-        "RAB": "3.50", "HKN": "4.00",
+        "GUR": "9.95", "BUA": "13.85", "DAU": "9.95", "GKA": "9.95",
+        "HKN": "11.05", "KVG": "12.75", "KIE": "15.45", "UNG": "16.05",
+        "CMU": "9.95", "LNV": "14.95", "MAG": "9.95", "MAS": "8.25",
+        "MDU": "11.05", "HGU": "9.95", "PNP": "8.25", "POM": "6.10",
+        "RAB": "11.60", "TBG": "17.15", "TIZ": "13.85", "VAI": "15.45",
+        "WBM": "11.05", "WWK": "12.10",
     },
 }
 
 class Command(BaseCommand):
-    help = "Seeds the database with initial domestic BUY rate data."
+    help = "Seeds the database with initial domestic BUY and SELL rate data."
 
     @transaction.atomic
     def handle(self, *args, **options):
-        self.stdout.write("Seeding domestic BUY rate data...")
+        self.stdout.write("Seeding domestic BUY and SELL rate data with actuals...")
 
-        # 1. Get or Create the Provider for Domestic Rates (e.g., a local carrier)
-        provider, _ = Providers.objects.get_or_create(
-            name="PNG Domestic Carrier",
-            defaults={"provider_type": "CARRIER"},
-        )
+        # =================================================================
+        # 1. SETUP BUY-SIDE (COSTS)
+        # =================================================================
+        provider, _ = Providers.objects.get_or_create(name="PNG Domestic Carrier")
 
-        # 2. Define and Create the Domestic BUY Rate Card
-        ratecard, created = Ratecards.objects.update_or_create(
+        rc_buy, _ = Ratecards.objects.update_or_create(
             name="PNG Domestic BUY Rates (Flat per KG)",
             defaults={
-                "provider": provider,
-                "role": "BUY",
-                "scope": "DOMESTIC",
-                "direction": "DOMESTIC",
-                "rate_strategy": "FLAT_PER_KG",
-                "currency": "PGK",
-                "source": "SEED",
-                "status": "PUBLISHED",
-                "effective_date": now().date(),
-                "notes": None,
-                "meta": {
-                    "d2d_available_between": ["POM-LAE", "LAE-POM"],
-                    "special_multipliers": {
-                        "EXPRESS": 2.0,
-                        "VALUABLE": 5.0,
-                        "LIVE_ANIMAL": 2.0,
-                        "OVERSIZE_250KG": 1.5,
-                    },
-                },
-                "created_at": now(),
-                "updated_at": now(),
-            },
-        )
-        if created:
-            self.stdout.write(self.style.SUCCESS(f'Created Ratecard: "{ratecard.name}"'))
-        else:
-            self.stdout.write(f'Ratecard "{ratecard.name}" already exists.')
-
-        # 3. Configure the Rate Card to use the correct dimensional factor
-        RatecardConfig.objects.update_or_create(
-            ratecard=ratecard,
-            defaults={
-                "dim_factor_kg_per_m3": Decimal("167.00"),  # Standard 1:6000
-                "rate_strategy": "FLAT_PER_KG",
-                "created_at": now(),
+                "provider": provider, "role": "BUY", "scope": "DOMESTIC",
+                "direction": "DOMESTIC", "rate_strategy": "FLAT_PER_KG",
+                "currency": "PGK", "status": "ACTIVE", "source": "SEEDER",
+                "effective_date": now().date(), "created_at": now(), "updated_at": now(),
+                 "meta": json.dumps({"d2d_available_between": ["POM-LAE", "LAE-POM"]}),
             }
         )
 
-        # 4. Create Lanes and the single "FLAT" break for each route
+        RatecardConfig.objects.update_or_create(
+            ratecard=rc_buy, defaults={"dim_factor_kg_per_m3": Decimal("167.00")}
+        )
+
         stations = {s.iata: s for s in Stations.objects.all()}
+        self.stdout.write("Updating domestic lanes and rates...")
         for origin_iata, destinations in DOMESTIC_RATES.items():
             for dest_iata, rate_per_kg in destinations.items():
                 if origin_iata not in stations or dest_iata not in stations:
-                    self.stdout.write(self.style.WARNING(f"Skipping {origin_iata}-{dest_iata}: Station not found."))
+                    self.stdout.write(self.style.WARNING(f"Skipping {origin_iata}-{dest_iata}: Station not found in database. Please seed stations first."))
                     continue
 
                 lane, _ = Lanes.objects.update_or_create(
-                    ratecard=ratecard,
-                    origin=stations[origin_iata],
-                    dest=stations[dest_iata],
-                    defaults={
-                        "airline": None,
-                        "is_direct": True,
-                        "via": None,
-                    }
+                    ratecard=rc_buy,
+                    origin=stations[origin_iata], dest=stations[dest_iata],
+                    defaults={"is_direct": True}
                 )
-
                 LaneBreaks.objects.update_or_create(
-                    lane=lane,
-                    break_code="FLAT",
-                    defaults={"per_kg": Decimal(rate_per_kg)}
+                    lane=lane, break_code="FLAT", defaults={"per_kg": Decimal(rate_per_kg)}
                 )
-        self.stdout.write(self.style.SUCCESS("Successfully created domestic lanes and flat rate breaks."))
+        self.stdout.write(self.style.SUCCESS("Finished updating domestic lanes and rates."))
 
-
-        # 5. Define and Create Domestic Surcharges (Fee Types and Fees)
-        fee_types_data = [
-            {"code": "DOC", "description": "Documentation Fee", "basis": "PER_SHIPMENT"},
-            {"code": "TERM", "description": "Terminal Fee", "basis": "PER_SHIPMENT"},
-            {"code": "SEC", "description": "Security Surcharge", "basis": "PER_KG"},
-            {"code": "FUEL", "description": "Fuel Surcharge", "basis": "PER_KG"},
-        ]
-        for ft_data in fee_types_data:
-            FeeTypes.objects.get_or_create(
-                code=ft_data["code"],
-                defaults={
-                    "description": ft_data["description"],
-                    "basis": ft_data["basis"],
-                    "default_tax_pct": Decimal("10.00"),
-                },
-            )
+        fee_types = {
+            "FREIGHT": FeeTypes.objects.get_or_create(code="FREIGHT", defaults={"name": "Base Freight", "basis": "PER_KG"})[0],
+            "DOC": FeeTypes.objects.get_or_create(code="DOC", defaults={"name": "Documentation Fee", "basis": "PER_SHIPMENT"})[0],
+            "TERM": FeeTypes.objects.get_or_create(code="TERM", defaults={"name": "Terminal Fee", "basis": "PER_SHIPMENT"})[0],
+            "SEC": FeeTypes.objects.get_or_create(code="SEC", defaults={"name": "Security Surcharge", "basis": "PER_KG"})[0],
+            "FUEL": FeeTypes.objects.get_or_create(code="FUEL", defaults={"name": "Fuel Surcharge", "basis": "PER_KG"})[0],
+        }
 
         fees_data = [
             {"code": "DOC", "amount": "35.00"},
             {"code": "TERM", "amount": "35.00"},
             {"code": "SEC", "amount": "0.20", "min_amount": "5.00"},
-            {"code": "FUEL", "amount": "0.25"},
+            {"code": "FUEL", "amount": "0.35"},
         ]
-
         for fee_data in fees_data:
-            fee_type = FeeTypes.objects.get(code=fee_data["code"])
             RatecardFees.objects.update_or_create(
-                ratecard=ratecard,
-                fee_type=fee_type,
+                ratecard=rc_buy, fee_type=fee_types[fee_data["code"]],
                 defaults={
                     "amount": Decimal(fee_data["amount"]),
-                    "min_amount": Decimal(fee_data["min_amount"]) if "min_amount" in fee_data else None,
-                    "currency": "PGK",
-                    "applies_if": {},
-                    "created_at": now(),
+                    "min_amount": Decimal(fee_data.get("min_amount", "0.00")),
+                    "currency": "PGK", "created_at": now()
                 }
             )
-        self.stdout.write(self.style.SUCCESS("Successfully created domestic surcharges."))
 
-        # 6. Create a simple DOMESTIC SELL menu linked to BUY costs (pass-through)
-        sell_card, _ = Ratecards.objects.update_or_create(
-            name="PGK Domestic SELL Menu",
+        # =================================================================
+        # 2. SETUP SELL-SIDE (PRICING)
+        # =================================================================
+        rc_sell, _ = Ratecards.objects.update_or_create(
+            name="PNG Domestic SELL Menu (PGK Local)",
             defaults={
-                "provider": provider,
-                "role": "SELL",
-                "scope": "DOMESTIC",
-                "direction": "DOMESTIC",
-                "audience": "PGK_LOCAL",
-                "currency": "PGK",
-                "source": "SEED",
-                "status": "PUBLISHED",
-                "effective_date": now().date(),
-                "meta": {},
-                "created_at": now(),
-                "updated_at": now(),
-            },
+                "role": "SELL", "scope": "DOMESTIC", "direction": "DOMESTIC",
+                "audience": "PGK_LOCAL", "currency": "PGK", "status": "ACTIVE",
+                "source": "SEEDER", "effective_date": now().date(), "created_at": now(),
+                "updated_at": now(), "meta": json.dumps({"rounding_rule": "NEAREST_0_05"})
+            }
         )
 
-        # Ensure services exist
-        svc_specs = [
-            ("AIR_FREIGHT", "Air Freight Charge", "PER_KG"),
-            ("DOC", "Documentation Fee", "PER_SHIPMENT"),
-            ("TERM", "Terminal Fee", "PER_SHIPMENT"),
-            ("SEC", "Security Surcharge", "PER_KG"),
-            ("FUEL", "Fuel Surcharge", "PER_KG"),
+        services = {
+            "AIR_FREIGHT": Services.objects.get_or_create(code="AIR_FREIGHT", defaults={"name": "Air Freight", "basis": "PER_KG"})[0],
+            "DOC_FEE": Services.objects.get_or_create(code="DOC_FEE", defaults={"name": "Documentation", "basis": "PER_SHIPMENT"})[0],
+            "TERMINAL_FEE": Services.objects.get_or_create(code="TERMINAL_FEE", defaults={"name": "Terminal Handling", "basis": "PER_SHIPMENT"})[0],
+            "SECURITY_FEE": Services.objects.get_or_create(code="SECURITY_FEE", defaults={"name": "Security Fee", "basis": "PER_KG"})[0],
+            "FUEL_SURCHARGE": Services.objects.get_or_create(code="FUEL_SURCHARGE", defaults={"name": "Fuel Surcharge", "basis": "PER_KG"})[0],
+            "CARTAGE": Services.objects.get_or_create(code="CARTAGE", defaults={"name": "Pickup/Delivery", "basis": "PER_KG"})[0],
+            "CARTAGE_FSC": Services.objects.get_or_create(code="CARTAGE_FSC", defaults={"name": "Cartage Fuel Surcharge", "basis": "PERCENT_OF"})[0],
+        }
+
+        sell_items_data = [
+            {"service": "AIR_FREIGHT", "tax_pct": "10.0"},
+            {"service": "DOC_FEE", "tax_pct": "10.0"},
+            {"service": "TERMINAL_FEE", "tax_pct": "10.0"},
+            {"service": "SECURITY_FEE", "tax_pct": "10.0"},
+            {"service": "FUEL_SURCHARGE", "tax_pct": "10.0"},
+            {"service": "CARTAGE", "amount": "0.80", "min_amount": "80.00", "tax_pct": "10.0"},
+            {"service": "CARTAGE_FSC", "amount": "0.10", "percent_of_service_code": "CARTAGE", "tax_pct": "10.0"}, # 10% of CARTAGE
         ]
-        svc_map = {}
-        for code, name, basis in svc_specs:
-            svc, _ = Services.objects.get_or_create(code=code, defaults={"name": name, "basis": basis})
-            svc_map[code] = svc
 
-        # Create service items on SELL card
-        item_map = {}
-        for code, name, basis in svc_specs:
+        sell_items = {}
+        for item_data in sell_items_data:
+            svc = services[item_data["service"]]
             item, _ = ServiceItems.objects.update_or_create(
-                ratecard=sell_card,
-                service=svc_map[code],
+                ratecard=rc_sell, service=svc,
                 defaults={
-                    "currency": "PGK",
-                    "amount": None,  # price set by mapping
-                    # Apply 10% GST on domestic SELL items
-                    "tax_pct": Decimal("10.00"),
-                    "conditions_json": {},
-                },
+                    "amount": Decimal(item_data.get("amount", "0.00")),
+                    "min_amount": Decimal(item_data.get("min_amount", "0.00")),
+                    "percent_of_service_code": item_data.get("percent_of_service_code"),
+                    "tax_pct": Decimal(item_data["tax_pct"]), "currency": "PGK"
+                }
             )
-            item_map[code] = item
+            sell_items[svc.code] = item
 
-        # Ensure a fee type exists for base freight to support mapping
-        FeeTypes.objects.get_or_create(
-            code="FREIGHT",
-            defaults={
-                "description": "Base Air Freight",
-                "basis": "PER_KG",
-                "default_tax_pct": Decimal("0.00"),
-            },
-        )
-
-        # Create mapping links: pass-through from BUY context to SELL items
-        def link(sell_code, buy_code, mapping_type="PASS_THROUGH"):
-            ft = FeeTypes.objects.get(code=buy_code)
+        # 3. LINK BUY COSTS TO SELL ITEMS
+        links_data = [
+            {"sell_code": "AIR_FREIGHT", "buy_code": "FREIGHT", "type": "COST_PLUS_PCT", "value": "0.18"},
+            {"sell_code": "DOC_FEE", "buy_code": "DOC", "type": "PASS_THROUGH"},
+            {"sell_code": "TERMINAL_FEE", "buy_code": "TERM", "type": "PASS_THROUGH"},
+            {"sell_code": "SECURITY_FEE", "buy_code": "SEC", "type": "PASS_THROUGH"},
+            {"sell_code": "FUEL_SURCHARGE", "buy_code": "FUEL", "type": "PASS_THROUGH"},
+        ]
+        for link_data in links_data:
             SellCostLinksSimple.objects.update_or_create(
-                sell_item=item_map[sell_code],
-                buy_fee_code=ft,
-                defaults={"mapping_type": mapping_type, "mapping_value": None},
+                sell_item=sell_items[link_data["sell_code"]],
+                defaults={
+                    "buy_fee_code": fee_types[link_data["buy_code"]],
+                    "mapping_type": link_data["type"],
+                    "mapping_value": Decimal(link_data.get("value", "0.00"))
+                }
             )
 
-        link("AIR_FREIGHT", "FREIGHT")
-        link("DOC", "DOC")
-        link("TERM", "TERM")
-        link("SEC", "SEC")
-        link("FUEL", "FUEL")
-
-        self.stdout.write(self.style.SUCCESS("Domestic SELL menu created with pass-through mappings."))
-        self.stdout.write(self.style.SUCCESS("Domestic BUY/SELL rate seeding complete."))
+        self.stdout.write(self.style.SUCCESS("Domestic BUY/SELL seeding complete with actual rates."))

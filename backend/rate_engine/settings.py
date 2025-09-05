@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework.authtoken',
+    'django_extensions',
     # Register the rate_engine app via its AppConfig (avoid duplicate label)
     "rate_engine.apps.RateEngineConfig",
 

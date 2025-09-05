@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { pngAirports } from "@/data/pngAirports";
 
 // The initial state for a single piece
 const initialPieceState: ShipmentPiece = {
@@ -30,9 +31,27 @@ export default function CreateQuotePage() {
   const [clientId, setClientId] = useState('');
   const [origin, setOrigin] = useState('');
   const [destination, setDestination] = useState('');
+  const [serviceScope, setServiceScope] = useState<'DOOR_DOOR' | 'DOOR_AIRPORT' | 'AIRPORT_DOOR' | 'AIRPORT_AIRPORT'>('AIRPORT_AIRPORT');
 
   // State to hold the array of shipment pieces
   const [pieces, setPieces] = useState<ShipmentPiece[]>([initialPieceState]);
+  const [calc, setCalc] = useState<any>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [calcError, setCalcError] = useState<string | null>(null);
+
+  // Determine PNG membership and shipment type automatically
+  const pngCodes = useMemo(() => new Set(pngAirports.map(a => a.code.toUpperCase())), []);
+  const computedShipmentType = useMemo<"IMPORT" | "EXPORT" | "DOMESTIC" | null>(() => {
+    if (!origin || !destination) return null;
+    const o = origin.toUpperCase();
+    const d = destination.toUpperCase();
+    const oIsPng = pngCodes.has(o);
+    const dIsPng = pngCodes.has(d);
+    if (oIsPng && dIsPng) return 'DOMESTIC';
+    if (oIsPng && !dIsPng) return 'EXPORT';
+    if (!oIsPng && dIsPng) return 'IMPORT';
+    return null; // both international or unknown
+  }, [origin, destination, pngCodes]);
 
   // --- FETCH CLIENTS (same as before) ---
   useEffect(() => {
@@ -139,12 +158,15 @@ export default function CreateQuotePage() {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const quoteData = {
-      client: clientId,
+    const quoteData: any = {
+      client_id: Number(clientId),
       origin: origin,
       destination: destination,
+      shipment_type: (computedShipmentType ?? 'DOMESTIC'),
+      service_scope: serviceScope,
+      // Retain mode for backward compatibility if backend expects it
       mode: 'air',
-      pieces: pieces.map(p => ({ // Send the cleaned array of pieces
+      pieces: pieces.map(p => ({
         quantity: Number(p.quantity),
         length_cm: Number(p.length_cm),
         width_cm: Number(p.width_cm),
@@ -173,6 +195,67 @@ export default function CreateQuotePage() {
     }
   };
 
+  const handleCalculate = async () => {
+    setCalcError(null);
+    setIsCalculating(true);
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || '';
+    const apiRoot = apiBase.replace(/\/api\/?$/, '');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+
+    if (!origin || !destination) {
+      setCalcError('Please select both origin and destination.');
+      setIsCalculating(false);
+      return;
+    }
+    if (!computedShipmentType) {
+      setCalcError('Unable to determine shipment type from selected airports.');
+      setIsCalculating(false);
+      return;
+    }
+
+    const payload = {
+      origin_iata: origin,
+      dest_iata: destination,
+      shipment_type: computedShipmentType,
+      service_scope: serviceScope,
+      audience: 'PGK_LOCAL',
+      sell_currency: 'PGK',
+      pieces: pieces.map(p => ({
+        weight_kg: String(p.weight_kg ?? '0'),
+        length_cm: String(p.length_cm ?? 0),
+        width_cm: String(p.width_cm ?? 0),
+        height_cm: String(p.height_cm ?? 0),
+      })),
+    };
+
+    try {
+      const res = await fetch(`${apiRoot}/quote/compute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Token ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        let msg = `Failed to calculate: ${res.status}`;
+        try {
+          const err = await res.json();
+          msg += ` ${JSON.stringify(err)}`;
+        } catch {}
+        setCalcError(msg);
+        return;
+      }
+      const data = await res.json();
+      setCalc(data);
+    } catch (e) {
+      console.error('Calculate error', e);
+      setCalcError('Unable to calculate quote. Check connection and try again.');
+    } finally {
+      setIsCalculating(false);
+    }
+  };
+
   return (
     <ProtectedRoute>
       <main className="container mx-auto p-8 space-y-6">
@@ -185,7 +268,7 @@ export default function CreateQuotePage() {
               <CardTitle>Main Details</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="client">Client</Label>
                   <Select id="client" value={clientId} onChange={(e) => setClientId(e.target.value)} required>
@@ -197,11 +280,40 @@ export default function CreateQuotePage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="origin">Origin</Label>
-                  <Input id="origin" value={origin} onChange={(e) => setOrigin(e.target.value)} required placeholder="e.g., BNE" />
+                  <Select id="origin" value={origin} onChange={(e) => setOrigin(e.target.value)} required>
+                    <option value="">Select Airport</option>
+                    {pngAirports.map((a) => (
+                      <option key={a.code} value={a.code}>
+                        {a.code} — {a.name}
+                      </option>
+                    ))}
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="destination">Destination</Label>
-                  <Input id="destination" value={destination} onChange={(e) => setDestination(e.target.value)} required placeholder="e.g., POM" />
+                  <Select id="destination" value={destination} onChange={(e) => setDestination(e.target.value)} required>
+                    <option value="">Select Airport</option>
+                    {pngAirports.map((a) => (
+                      <option key={a.code} value={a.code}>
+                        {a.code} — {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Shipment Type</Label>
+                  <div className="flex h-9 w-full items-center rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm">
+                    {computedShipmentType ?? '--'}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="serviceScope">Service Scope</Label>
+                  <Select id="serviceScope" value={serviceScope} onChange={(e) => setServiceScope(e.target.value as any)} required>
+                    <option value="AIRPORT_AIRPORT">Airport to Airport</option>
+                    <option value="DOOR_DOOR">Door to Door</option>
+                    <option value="DOOR_AIRPORT">Door to Airport</option>
+                    <option value="AIRPORT_DOOR">Airport to Door</option>
+                  </Select>
                 </div>
               </div>
             </CardContent>
@@ -233,7 +345,12 @@ export default function CreateQuotePage() {
 
           {/* --- Totals and Submission --- */}
           <Card>
-            <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-6 items-center p-6">
+            <CardContent className="grid grid-cols-1 md:grid-cols-5 gap-6 items-center p-6">
+              {calcError && (
+                <div className="md:col-span-5 w-full text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                  {calcError}
+                </div>
+              )}
               <div className="text-center">
                 <p className="text-sm text-muted-foreground">Total Gross Weight</p>
                 <p className="text-xl font-bold">{totals.totalGrossWeight} kg</p>
@@ -246,11 +363,69 @@ export default function CreateQuotePage() {
                 <p className="text-sm">Chargeable Weight</p>
                 <p className="text-2xl font-extrabold">{totals.chargeableWeight} kg</p>
               </div>
-              <Button type="submit" className="w-full" size="lg">
+              <div className="space-y-2 text-center">
+                <p className="text-sm text-muted-foreground">Estimated Sell</p>
+                <p className="text-xl font-bold">
+                  {calc?.totals?.sell_total?.amount ? `${calc.totals.sell_total.amount} ${calc.totals.sell_total.currency}` : '--'}
+                </p>
+              </div>
+              <Button type="button" onClick={handleCalculate} className="w-full" variant="secondary" size="lg" disabled={isCalculating}>
+                {isCalculating ? 'Calculating…' : 'Calculate'}
+              </Button>
+              <Button type="submit" className="w-full" size="lg" disabled={isCalculating}>
                 Calculate & Create Quote
               </Button>
             </CardContent>
           </Card>
+
+          {calc && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Quote Breakdown</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold mb-2">Sell Breakdown</h3>
+                  <div className="grid grid-cols-12 gap-2 text-sm font-medium text-muted-foreground px-2">
+                    <div className="col-span-2">Code</div>
+                    <div className="col-span-6">Description</div>
+                    <div className="col-span-1 text-right">Qty</div>
+                    <div className="col-span-1">Unit</div>
+                    <div className="col-span-1 text-right">Unit Price</div>
+                    <div className="col-span-1 text-right">Amount</div>
+                  </div>
+                  <div className="divide-y">
+                    {calc.sell_lines?.map((l: any, idx: number) => (
+                      <div key={`sell-${idx}`} className="grid grid-cols-12 gap-2 py-2 px-2 text-sm">
+                        <div className="col-span-2 truncate" title={l.code}>{l.code}</div>
+                        <div className="col-span-6 truncate" title={l.desc}>{l.desc}</div>
+                        <div className="col-span-1 text-right">{l.qty}</div>
+                        <div className="col-span-1">{l.unit}</div>
+                        <div className="col-span-1 text-right">{l.unit_price?.amount} {l.unit_price?.currency}</div>
+                        <div className="col-span-1 text-right font-medium">{l.amount?.amount} {l.amount?.currency}</div>
+                      </div>
+                    ))}
+                    {(!calc.sell_lines || calc.sell_lines.length === 0) && (
+                      <div className="text-sm text-muted-foreground px-2 py-3">No sell lines.</div>
+                    )}
+                  </div>
+                  <div className="flex justify-end mt-2 text-sm">
+                    <div className="font-semibold">Total Sell:&nbsp;</div>
+                    <div>{calc.totals?.sell_total?.amount} {calc.totals?.sell_total?.currency}</div>
+                  </div>
+                </div>
+
+                
+
+                <div className="flex justify-end gap-6 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Margin:</span>
+                    <span className="font-semibold">{calc.totals?.margin?.amount} {calc.totals?.margin?.currency}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </form>
       </main>
     </ProtectedRoute>

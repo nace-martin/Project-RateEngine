@@ -40,6 +40,14 @@ def seed_stations_forward(apps, schema_editor):
     Idempotent seed for 'stations' table.
     Works on PostgreSQL and SQLite. Assumes a UNIQUE constraint on stations.iata.
     """
+    # If the 'stations' table doesn't exist (e.g., during some test setups), skip seeding.
+    try:
+        existing = set(connection.introspection.table_names())
+    except Exception:
+        existing = set()
+    if 'stations' not in existing:
+        return
+
     vendor = connection.vendor
     with connection.cursor() as cur:
         if vendor == "postgresql":
@@ -66,6 +74,14 @@ def seed_stations_reverse(apps, schema_editor):
     Safe reverse: delete only the rows we inserted (by IATA code list).
     Won't touch any other stations you may have added later.
     """
+    # If table not present, nothing to reverse
+    try:
+        existing = set(connection.introspection.table_names())
+    except Exception:
+        existing = set()
+    if 'stations' not in existing:
+        return
+
     iatas = [row[0] for row in STATIONS]
     # Use vendor-agnostic parameterization
     placeholders = ", ".join(["%s"] * len(iatas)) if connection.vendor == "postgresql" else ", ".join(["?"] * len(iatas))
