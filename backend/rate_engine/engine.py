@@ -62,37 +62,6 @@ def round_up_nearest_0_05(amount: Decimal) -> Decimal:
     return (multiples * step).quantize(TWOPLACES)
 
 
-def calculate_chargeable_weight(pieces: List[Dict]) -> float:
-    """Calculate total chargeable weight for a shipment.
-
-    Implements the standard air freight rule from the Quoting Scenarios Matrix:
-    Chargeable = max(Actual vs Volumetric) per piece, summed across all pieces.
-
-    Inputs are dictionaries with keys: 'weight', 'length', 'width', 'height'.
-    Units: weight in kilograms; dimensions in centimeters. Volumetric divisor = 6000.
-
-    Returns the final chargeable weight as a float (kilograms).
-    """
-    def _to_float(v) -> float:
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return 0.0
-
-    divisor = 6000.0  # IATA standard for cm-based dimensions
-    total = 0.0
-    for p in pieces or []:
-        actual = _to_float(p.get("weight"))
-        length = _to_float(p.get("length"))
-        width = _to_float(p.get("width"))
-        height = _to_float(p.get("height"))
-
-        volumetric = (length * width * height) / divisor if (length and width and height) else 0.0
-        total += max(actual, volumetric)
-
-    return float(total)
-
-
 @dataclass
 class Piece:
     weight_kg: Decimal
@@ -192,6 +161,29 @@ class FxConverter:
 def compute_chargeable(weight_kg: Decimal, volume_m3: Decimal, dim_factor_kg_per_m3: Decimal) -> Decimal:
     vol_weight = (volume_m3 * dim_factor_kg_per_m3).quantize(FOURPLACES)
     return max(weight_kg, vol_weight)
+
+
+def calculate_chargeable_weight_per_piece(pieces: List[Piece], dim_factor_kg_per_m3: Decimal) -> Decimal:
+    """
+    Calculates chargeable weight by summing the greater of actual vs. volumetric
+    weight for each piece, as per IATA standards.
+    """
+    total_chargeable = ZERO
+    if not pieces:
+        return ZERO
+
+    for p in pieces:
+        actual_weight = p.weight_kg
+        # volume_m3() is a method on the Piece dataclass
+        volume_m3 = p.volume_m3()
+        volumetric_weight = (volume_m3 * dim_factor_kg_per_m3).quantize(FOURPLACES)
+
+        # Add the greater of the two for this piece to the total
+        total_chargeable += max(actual_weight, volumetric_weight)
+
+    # Round the final chargeable weight up to the next whole kilogram.
+    # Example: 150.1 kg -> 151 kg; 150.0 kg -> 150 kg
+    return total_chargeable.to_integral_value(rounding=ROUND_CEILING)
 
 
 def pick_best_break(lane: Lane, chargeable_kg: Decimal) -> Tuple[LaneBreak, Money]:
@@ -499,7 +491,8 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     for lane in lanes:
         cfg = RatecardConfig.objects.filter(ratecard_id=lane.ratecard_id).first()
         dim = d(cfg.dim_factor_kg_per_m3 if cfg else Decimal(167))
-        chargeable = compute_chargeable(payload.actual_weight, payload.volume_m3, dim)
+        # New logic: compute chargeable by summing per-piece max(actual, volumetric)
+        chargeable = calculate_chargeable_weight_per_piece(payload.pieces, dim)
 
         # Support FLAT_PER_KG lanes during option building
         rc_lane = lane.ratecard if hasattr(lane, "ratecard") else Ratecard.objects.get(id=lane.ratecard_id)
