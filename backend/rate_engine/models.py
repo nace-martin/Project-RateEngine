@@ -314,3 +314,42 @@ class QuoteTotals(models.Model):
     class Meta:
         managed = False
         db_table = 'quote_totals'
+
+
+# New models for multi-leg journeys
+class Routes(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    name = models.TextField(unique=True, help_text="e.g., Australia East Coast to Lae")
+    origin_country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 code, e.g., AU")
+    dest_country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 code, e.g., PG")
+    shipment_type = models.CharField(max_length=16, choices=[("IMPORT", "Import"), ("EXPORT", "Export"), ("DOMESTIC", "Domestic")])
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        managed = False
+        db_table = 'routes'
+        verbose_name_plural = "Routes"
+
+
+class RouteLegs(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    route = models.ForeignKey(Routes, models.CASCADE, related_name="legs")
+    sequence = models.PositiveIntegerField(help_text="Order of the leg in the journey, e.g., 1, 2, 3...")
+    origin = models.ForeignKey(Stations, models.PROTECT, related_name='+')
+    dest = models.ForeignKey(Stations, models.PROTECT, related_name='+')
+    
+    # Use this to find the correct BUY rate card (e.g., INTERNATIONAL, DOMESTIC)
+    leg_scope = models.CharField(max_length=32, default='INTERNATIONAL')
+    
+    # Use this to determine the type of service and find appropriate SELL fees
+    service_type = models.CharField(max_length=32, default='LINEHAUL', help_text="e.g., LINEHAUL, CLEARANCE, ONFORWARDING")
+
+    def __str__(self):
+        return f"{self.route.name} - Leg {self.sequence}: {self.origin.iata} to {self.dest.iata}"
+
+    class Meta:
+        managed = False
+        db_table = 'route_legs'
+        ordering = ['route', 'sequence']

@@ -38,6 +38,7 @@ from .models import (
     FeeTypes as FeeType, RatecardFees as RatecardFee, CartageLadders as CartageLadder,
     Services as Service, ServiceItems as ServiceItem, SellCostLinksSimple as SellCostLink,
     CurrencyRates as CurrencyRate, PricingPolicy, Organizations,
+    Routes, RouteLegs,
 )
 
 # --------------------------- Datatypes ---------------------------
@@ -453,132 +454,274 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     pol = PricingPolicy.objects.filter(audience=audience).first()
     fx = FxConverter(caf_on_fx=bool(pol.caf_on_fx if pol else True), caf_pct=caf_pct)
 
-    # 1) Choose BUY ratecards and lane
-    if payload.shipment_type in ["IMPORT", "EXPORT"]:
-        scope = "INTERNATIONAL"
-        buy_direction = "EXPORT" # International leg is always bought as export from origin
-    else:
-        scope = "DOMESTIC"
-        buy_direction = payload.shipment_type
+    # 1) BUY pricing: support multi-leg via Routes/RouteLegs when available
+    # Define sell scope for SELL card lookup regardless of routing mode
+    scope_for_sell = "INTERNATIONAL" if payload.shipment_type in ["IMPORT", "EXPORT"] else "DOMESTIC"
+    buy_direction = None  # for snapshot in single-leg mode
+    # Determine route based on origin/dest station countries and shipment type
+    route = None
+    try:
+        st_o = Station.objects.get(iata=payload.origin_iata)
+        st_d = Station.objects.get(iata=payload.dest_iata)
+        route = Routes.objects.filter(
+            origin_country=(st_o.country or "").upper(),
+            dest_country=(st_d.country or "").upper(),
+            shipment_type=payload.shipment_type,
+        ).first()
+    except Exception:
+        route = None
 
-    active_cards = Ratecard.objects.filter(
-        role="BUY",
-        scope=scope,
-        direction=buy_direction,
-        effective_date__lte=ts.date(),
-    ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
+    # Helper to build active BUY cards for a given scope/direction
+    def active_buy_cards(scope_val: str, direction_val: str):
+        qs = Ratecard.objects.filter(
+            role="BUY",
+            scope=scope_val,
+            direction=direction_val,
+            effective_date__lte=ts.date(),
+        ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
+        if provider_hint:
+            qs = qs.filter(provider_id=provider_hint)
+        return qs
 
-    if provider_hint:
-        active_cards = active_cards.filter(provider_id=provider_hint)
-
-    # Find all candidate lanes for origin/dest (respect airline/via hints if given)
-    candidate_lanes = (
-        Lane.objects
-        .filter(ratecard_id__in=active_cards.values_list("id", flat=True))
-        .filter(origin__iata=payload.origin_iata, dest__iata=payload.dest_iata)
-    )
-    if payload.airline_hint:
-        candidate_lanes = candidate_lanes.filter(airline=payload.airline_hint)
-    if payload.via_hint:
-        candidate_lanes = candidate_lanes.filter(via__iata=payload.via_hint)
-
-    lanes = list(candidate_lanes.select_related("ratecard"))
-    if not lanes:
-        raise ValueError("No BUY lanes available. Create an ad-hoc agent ratecard or adjust filters.")
-
-    # Compute chargeable per ratecard config (dim factor may differ per card)
-    buy_options = []
-    for lane in lanes:
-        cfg = RatecardConfig.objects.filter(ratecard_id=lane.ratecard_id).first()
-        dim = d(cfg.dim_factor_kg_per_m3 if cfg else Decimal(167))
-        # New logic: compute chargeable by summing per-piece max(actual, volumetric)
-        chargeable = calculate_chargeable_weight_per_piece(payload.pieces, dim)
-
-        # Support FLAT_PER_KG lanes during option building
-        rc_lane = lane.ratecard if hasattr(lane, "ratecard") else Ratecard.objects.get(id=lane.ratecard_id)
-        if getattr(rc_lane, "rate_strategy", None) == "FLAT_PER_KG":
-            flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code="FLAT").first()
-            if not flat_break:
-                # Skip lanes misconfigured for flat strategy
-                logging.warning(f"Lane {lane.id} marked FLAT_PER_KG but missing FLAT break; skipping.")
-                continue
-            base = Money((d(flat_break.per_kg) * chargeable).quantize(TWOPLACES), rc_lane.currency)
-            brk = flat_break
-        else:
-            brk, base = pick_best_break(lane, chargeable)
-
-        buy_options.append((lane, chargeable, brk, base))
-
-    # Pick cheapest base freight in its native currency converted to sell currency
-    def to_sell_ccy(m: Money) -> Decimal:
-        return FxConverter(caf_on_fx=True, caf_pct=caf_pct).convert(m, sell_currency).amount
-
-    best = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
-    lane, chargeable_kg, chosen_break, base_freight = best
-    rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
-
-    # Assign chosen_break_code from the chosen break object and validate breaks
-    chosen_break_code = chosen_break.break_code
-    lane_warnings = []
-    if rc_buy.rate_strategy != 'FLAT_PER_KG':
-        lane_warnings = validate_break_monotonic(lane.id)
-        for w in lane_warnings:
-            logging.warning(f"Lane {lane.id} break validation: {w}")
-
-    # 2) BUY origin/tranship fees
+    # Aggregates across all legs
     buy_lines: List[CalcLine] = []
-    buy_context: Dict[str, Money] = {}
+    # Temporary accumulator of BUY amounts before SELL mapping (code -> list[Money])
+    buy_context_lists: Dict[str, List[Money]] = {}
+    lane_warnings: List[str] = []
+    chosen_breaks: List[Dict] = []
+    per_leg_chargeables: List[Decimal] = []
+    first_rc_buy_id: Optional[int] = None
 
-    # Freight line (update description to use the correct break code)
-    buy_lines.append(
-        CalcLine(
-            code="FREIGHT",
-            description=f"Air freight {payload.origin_iata}->{payload.dest_iata} ({chosen_break_code})",
-            qty=chargeable_kg,
-            unit="KG",
-            unit_price=Money((base_freight.amount/chargeable_kg).quantize(FOURPLACES), base_freight.currency),
-            extended=base_freight,
-            is_buy=True,
-            is_sell=False,
-            source_ratecard_id=rc_buy.id,
+    def acc_context(code: str, money: Money):
+        if code not in buy_context_lists:
+            buy_context_lists[code] = []
+        buy_context_lists[code].append(money)
+
+    # Select direction defaulting logic
+    def derive_direction(scope_val: str) -> str:
+        if scope_val == "DOMESTIC":
+            return "DOMESTIC"
+        # INTERNATIONAL legs: BUY as EXPORT from the leg origin
+        return "EXPORT"
+
+    if route:
+        legs = list(RouteLegs.objects.filter(route_id=route.id).select_related("origin", "dest").order_by("sequence"))
+        if not legs:
+            raise ValueError("Configured route has no legs defined")
+
+        for leg in legs:
+            scope_val = (leg.leg_scope or "INTERNATIONAL").upper()
+            direction_val = derive_direction(scope_val)
+            cards = active_buy_cards(scope_val, direction_val)
+
+            candidate_lanes = (
+                Lane.objects
+                .filter(ratecard_id__in=cards.values_list("id", flat=True))
+                .filter(origin_id=leg.origin_id, dest_id=leg.dest_id)
+            )
+            if payload.airline_hint:
+                candidate_lanes = candidate_lanes.filter(airline=payload.airline_hint)
+            if payload.via_hint:
+                candidate_lanes = candidate_lanes.filter(via__iata=payload.via_hint)
+
+            lanes = list(candidate_lanes.select_related("ratecard"))
+            if not lanes:
+                raise ValueError(f"No BUY lanes available for route leg {leg.sequence}: {leg.origin.iata}->{leg.dest.iata}")
+
+            # Evaluate options per lane
+            buy_options = []
+            for lane in lanes:
+                cfg = RatecardConfig.objects.filter(ratecard_id=lane.ratecard_id).first()
+                dim = d(cfg.dim_factor_kg_per_m3 if cfg else Decimal(167))
+                chargeable = calculate_chargeable_weight_per_piece(payload.pieces, dim)
+
+                rc_lane = lane.ratecard if hasattr(lane, "ratecard") else Ratecard.objects.get(id=lane.ratecard_id)
+                if getattr(rc_lane, "rate_strategy", None) == "FLAT_PER_KG":
+                    flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code="FLAT").first()
+                    if not flat_break:
+                        logging.warning(f"Lane {lane.id} marked FLAT_PER_KG but missing FLAT break; skipping.")
+                        continue
+                    base = Money((d(flat_break.per_kg) * chargeable).quantize(TWOPLACES), rc_lane.currency)
+                    brk = flat_break
+                else:
+                    brk, base = pick_best_break(lane, chargeable)
+                buy_options.append((lane, chargeable, brk, base))
+
+            # Pick cheapest option for this leg in SELL currency to normalize comparison
+            def to_sell_ccy(m: Money) -> Decimal:
+                return FxConverter(caf_on_fx=True, caf_pct=caf_pct).convert(m, sell_currency).amount
+
+            best = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
+            lane, chargeable_kg, chosen_break, base_freight = best
+            per_leg_chargeables.append(chargeable_kg)
+            rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
+            if first_rc_buy_id is None:
+                first_rc_buy_id = rc_buy.id
+
+            chosen_breaks.append({
+                "leg": int(leg.sequence),
+                "lane_id": lane.id,
+                "break": chosen_break.break_code,
+                "currency": base_freight.currency,
+                "amount": str(base_freight.amount),
+            })
+
+            if rc_buy.rate_strategy != 'FLAT_PER_KG':
+                warns = validate_break_monotonic(lane.id)
+                lane_warnings.extend(warns)
+                for w in warns:
+                    logging.warning(f"Lane {lane.id} break validation: {w}")
+
+            # BUY freight line per leg
+            buy_lines.append(
+                CalcLine(
+                    code="FREIGHT",
+                    description=f"Leg {leg.sequence}: {leg.origin.iata}->{leg.dest.iata} ({chosen_break.break_code})",
+                    qty=chargeable_kg,
+                    unit="KG",
+                    unit_price=Money((base_freight.amount/chargeable_kg).quantize(FOURPLACES), base_freight.currency),
+                    extended=base_freight,
+                    is_buy=True,
+                    is_sell=False,
+                    source_ratecard_id=rc_buy.id,
+                    meta={"leg": int(leg.sequence), "scope": scope_val, "service_type": leg.service_type},
+                )
+            )
+            acc_context("FREIGHT", base_freight)
+
+            # BUY fees per leg
+            fees = RatecardFee.objects.filter(ratecard_id=rc_buy.id).select_related("fee_type")
+            leg_context: Dict[str, Money] = {"FREIGHT": base_freight, "secondary_screening_flag": payload.flags.get("secondary_screening", False)}
+            for fee in fees:
+                fee_type = FeeType.objects.get(id=fee.fee_type_id)
+                line_money = compute_fee_amount(fee, chargeable_kg, leg_context)
+                if line_money.amount <= 0:
+                    continue
+                leg_context[fee_type.code] = line_money
+                _basis_buy = _normalize_basis(getattr(fee_type, "basis", None))
+                _qty = chargeable_kg if _basis_buy == "PER_KG" else Decimal(1)
+                _unit = "KG" if _basis_buy == "PER_KG" else "EA"
+                _unit_price_amt = (line_money.amount/chargeable_kg if _basis_buy == "PER_KG" and chargeable_kg else line_money.amount).quantize(FOURPLACES)
+                buy_lines.append(
+                    CalcLine(
+                        code=fee_type.code,
+                        description=fee_type.description,
+                        qty=_qty,
+                        unit=_unit,
+                        unit_price=Money(_unit_price_amt, line_money.currency),
+                        extended=line_money,
+                        is_buy=True,
+                        is_sell=False,
+                        source_ratecard_id=rc_buy.id,
+                        meta={"leg": int(leg.sequence), "scope": scope_val, "service_type": leg.service_type},
+                    )
+                )
+                acc_context(fee_type.code, line_money)
+    else:
+        # Fallback to single-leg behaviour if no route is defined
+        if payload.shipment_type in ["IMPORT", "EXPORT"]:
+            scope_single = "INTERNATIONAL"
+            buy_direction = "EXPORT"  # International leg is always bought as export from origin
+        else:
+            scope_single = "DOMESTIC"
+            buy_direction = payload.shipment_type
+
+        active_cards = active_buy_cards(scope_single, buy_direction)
+
+        candidate_lanes = (
+            Lane.objects
+            .filter(ratecard_id__in=active_cards.values_list("id", flat=True))
+            .filter(origin__iata=payload.origin_iata, dest__iata=payload.dest_iata)
         )
-    )
-    buy_context["FREIGHT"] = base_freight
+        if payload.airline_hint:
+            candidate_lanes = candidate_lanes.filter(airline=payload.airline_hint)
+        if payload.via_hint:
+            candidate_lanes = candidate_lanes.filter(via__iata=payload.via_hint)
 
-    fees = RatecardFee.objects.filter(ratecard_id=rc_buy.id).select_related("fee_type")
-    # Seed runtime flags into context
-    buy_context["secondary_screening_flag"] = payload.flags.get("secondary_screening", False)
+        lanes = list(candidate_lanes.select_related("ratecard"))
+        if not lanes:
+            raise ValueError("No BUY lanes available. Create an ad-hoc agent ratecard or adjust filters.")
 
-    for fee in fees:
-        fee_type = FeeType.objects.get(id=fee.fee_type_id)
-        line_money = compute_fee_amount(fee, chargeable_kg, buy_context)
-        if line_money.amount <= 0:
-            continue
-        buy_context[fee_type.code] = line_money
-        _basis_buy = _normalize_basis(getattr(fee_type, "basis", None))
-        _qty = chargeable_kg if _basis_buy == "PER_KG" else Decimal(1)
-        _unit = "KG" if _basis_buy == "PER_KG" else "EA"
-        _unit_price_amt = (line_money.amount/chargeable_kg if _basis_buy == "PER_KG" and chargeable_kg else line_money.amount).quantize(FOURPLACES)
+        buy_options = []
+        for lane in lanes:
+            cfg = RatecardConfig.objects.filter(ratecard_id=lane.ratecard_id).first()
+            dim = d(cfg.dim_factor_kg_per_m3 if cfg else Decimal(167))
+            chargeable = calculate_chargeable_weight_per_piece(payload.pieces, dim)
+
+            rc_lane = lane.ratecard if hasattr(lane, "ratecard") else Ratecard.objects.get(id=lane.ratecard_id)
+            if getattr(rc_lane, "rate_strategy", None) == "FLAT_PER_KG":
+                flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code="FLAT").first()
+                if not flat_break:
+                    logging.warning(f"Lane {lane.id} marked FLAT_PER_KG but missing FLAT break; skipping.")
+                    continue
+                base = Money((d(flat_break.per_kg) * chargeable).quantize(TWOPLACES), rc_lane.currency)
+                brk = flat_break
+            else:
+                brk, base = pick_best_break(lane, chargeable)
+            buy_options.append((lane, chargeable, brk, base))
+
+        def to_sell_ccy(m: Money) -> Decimal:
+            return FxConverter(caf_on_fx=True, caf_pct=caf_pct).convert(m, sell_currency).amount
+
+        lane, chargeable_kg, chosen_break, base_freight = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
+        rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
+        first_rc_buy_id = rc_buy.id
+
+        if rc_buy.rate_strategy != 'FLAT_PER_KG':
+            warns = validate_break_monotonic(lane.id)
+            lane_warnings.extend(warns)
+            for w in warns:
+                logging.warning(f"Lane {lane.id} break validation: {w}")
+
+        # Freight
         buy_lines.append(
             CalcLine(
-                code=fee_type.code,
-                description=fee_type.description,
-                qty=_qty,
-                unit=_unit,
-                unit_price=Money(_unit_price_amt, line_money.currency),
-                extended=line_money,
+                code="FREIGHT",
+                description=f"Air freight {payload.origin_iata}->{payload.dest_iata} ({chosen_break.break_code})",
+                qty=chargeable_kg,
+                unit="KG",
+                unit_price=Money((base_freight.amount/chargeable_kg).quantize(FOURPLACES), base_freight.currency),
+                extended=base_freight,
                 is_buy=True,
                 is_sell=False,
                 source_ratecard_id=rc_buy.id,
             )
         )
+        acc_context("FREIGHT", base_freight)
+
+        fees = RatecardFee.objects.filter(ratecard_id=rc_buy.id).select_related("fee_type")
+        leg_context: Dict[str, Money] = {"FREIGHT": base_freight, "secondary_screening_flag": payload.flags.get("secondary_screening", False)}
+        for fee in fees:
+            fee_type = FeeType.objects.get(id=fee.fee_type_id)
+            line_money = compute_fee_amount(fee, chargeable_kg, leg_context)
+            if line_money.amount <= 0:
+                continue
+            leg_context[fee_type.code] = line_money
+            _basis_buy = _normalize_basis(getattr(fee_type, "basis", None))
+            _qty = chargeable_kg if _basis_buy == "PER_KG" else Decimal(1)
+            _unit = "KG" if _basis_buy == "PER_KG" else "EA"
+            _unit_price_amt = (line_money.amount/chargeable_kg if _basis_buy == "PER_KG" and chargeable_kg else line_money.amount).quantize(FOURPLACES)
+            buy_lines.append(
+                CalcLine(
+                    code=fee_type.code,
+                    description=fee_type.description,
+                    qty=_qty,
+                    unit=_unit,
+                    unit_price=Money(_unit_price_amt, line_money.currency),
+                    extended=line_money,
+                    is_buy=True,
+                    is_sell=False,
+                    source_ratecard_id=rc_buy.id,
+                )
+            )
+            acc_context(fee_type.code, line_money)
 
     # 3) SELL destination services (PGK/AUD/USD) based on audience & direction
     sell_direction = payload.shipment_type  # SELL follows request direction
     # Prefer SELL card in the requested sell currency; fall back to any currency
     sell_qs_base = Ratecard.objects.filter(
         role="SELL",
-        scope=scope,
+        scope=scope_for_sell,
         direction=sell_direction,
         audience=audience,
         effective_date__lte=ts.date(),
@@ -588,6 +731,19 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         sell_card = sell_qs_base.first()
     if not sell_card:
         raise ValueError("No SELL ratecard found for audience.")
+
+    # Build consolidated BUY context in SELL card currency for downstream SELL mapping
+    buy_context: Dict[str, Money] = {}
+    for code, monies in buy_context_lists.items():
+        total = ZERO
+        for m in monies:
+            total += fx.convert(m, sell_card.currency).amount
+        buy_context[code] = Money(total.quantize(TWOPLACES), sell_card.currency)
+
+    # For SELL KG-basis, use a representative chargeable weight
+    if per_leg_chargeables:
+        chargeable_kg = max(per_leg_chargeables)
+    # else in single-leg fallback, chargeable_kg already defined
 
     sell_lines = compute_sell_lines(sell_card, buy_context, chargeable_kg, payload.service_scope)
 
@@ -628,17 +784,24 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         "ts": ts.isoformat(),
         "shipment_type": payload.shipment_type,
         "service_scope": payload.service_scope,
-        "buy_ratecard_id": rc_buy.id,
+        # Backward-compat: expose first BUY ratecard id if available
+        "buy_ratecard_id": first_rc_buy_id,
         "sell_ratecard_id": sell_card.id,
-        "dim_factor": float(RatecardConfig.objects.filter(ratecard_id=rc_buy.id).first().dim_factor_kg_per_m3 if RatecardConfig.objects.filter(ratecard_id=rc_buy.id).exists() else 167),
+        # Dim factor reference (first leg if present)
+        "dim_factor": float(
+            RatecardConfig.objects.filter(ratecard_id=first_rc_buy_id).first().dim_factor_kg_per_m3
+            if (first_rc_buy_id and RatecardConfig.objects.filter(ratecard_id=first_rc_buy_id).exists()) else 167
+        ),
         # FX & CAF documentation
         "fx_caf_pct": float(caf_pct),
         "caf_on_fx": bool(fx.caf_on_fx),
         "fx_pairs_used": sorted(list(fx_pairs_used)),
         "chargeable_kg": float(chargeable_kg),
-        "chosen_break": chosen_break_code,
+        # Backward-compat: chosen_break for single-leg; legs_breaks for multi-leg
+        "chosen_break": (chosen_breaks[0]["break"] if chosen_breaks else None),
+        "legs_breaks": chosen_breaks,
         # Directional decoupling
-        "buy_direction": buy_direction,
+        "buy_direction": ("MULTI" if route else buy_direction),
         "sell_direction": sell_direction,
         # Organization context
         "org_id": payer_org.id,
@@ -646,6 +809,12 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         "sell_currency": sell_currency,
         # Data quality warnings (non-blocking)
         "break_warnings": lane_warnings,
+        # Route context (if used)
+        "route": ({
+            "id": int(route.id),
+            "name": route.name,
+            "shipment_type": route.shipment_type,
+        } if route else None),
     }
 
     return CalcResult(buy_lines=buy_lines, sell_lines=sell_lines, totals=totals, snapshot=snapshot)

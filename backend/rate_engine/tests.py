@@ -46,3 +46,180 @@ class ChargeableWeightTests(TestCase):
         p3 = Piece(weight_kg=Decimal("0.001"))
         total = calculate_chargeable_weight_per_piece([p1, p2, p3], dim_factor)
         self.assertEqual(total, Decimal("21"))
+
+
+class MultiLegRouteTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        # Create minimal schema for unmanaged tables: routes, route_legs
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS routes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE,
+                    origin_country CHAR(2) NOT NULL,
+                    dest_country CHAR(2) NOT NULL,
+                    shipment_type VARCHAR(16) NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_legs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    route_id INTEGER NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    origin_id INTEGER NOT NULL,
+                    dest_id INTEGER NOT NULL,
+                    leg_scope VARCHAR(32) NOT NULL,
+                    service_type VARCHAR(32) NOT NULL,
+                    FOREIGN KEY(route_id) REFERENCES routes(id) ON DELETE CASCADE,
+                    FOREIGN KEY(origin_id) REFERENCES stations(id),
+                    FOREIGN KEY(dest_id) REFERENCES stations(id)
+                );
+                """
+            )
+
+        # Seed core data used by engine
+        from django.utils.timezone import now
+        from .models import (
+            Providers, Stations, Ratecards, RatecardConfig, Lanes, LaneBreaks,
+            Services, ServiceItems, Organizations, CurrencyRates, Routes, RouteLegs,
+        )
+
+        # Ensure organizations has country_code column (older migration sets may lack it)
+        with connection.cursor() as cur:
+            cur.execute("PRAGMA table_info('organizations')")
+            cols = [row[1] for row in cur.fetchall()]  # cid, name, type, ...
+            if 'country_code' not in cols:
+                cur.execute("ALTER TABLE organizations ADD COLUMN country_code CHAR(2) DEFAULT 'PG'")
+
+        # Stations
+        bne, _ = Stations.objects.get_or_create(iata="BNE", defaults={"city": "Brisbane", "country": "AU"})
+        pom, _ = Stations.objects.get_or_create(iata="POM", defaults={"city": "Port Moresby", "country": "PG"})
+        lae, _ = Stations.objects.get_or_create(iata="LAE", defaults={"city": "Lae", "country": "PG"})
+
+        # Provider
+        prv = Providers.objects.create(name="Test Provider", provider_type="AIR")
+
+        today = now().date()
+
+        # BUY ratecards
+        rc_buy_int = Ratecards.objects.create(
+            provider=prv,
+            name="BUY INT",
+            role="BUY",
+            scope="INTERNATIONAL",
+            direction="EXPORT",
+            audience=None,
+            rate_strategy="BREAKS",
+            currency="AUD",
+            source="TEST",
+            status="ACTIVE",
+            effective_date=today,
+            expiry_date=None,
+            notes="",
+            meta={},
+            created_at=now(),
+            updated_at=now(),
+        )
+        RatecardConfig.objects.create(ratecard=rc_buy_int, dim_factor_kg_per_m3=Decimal("167"), rate_strategy="BREAKS", created_at=now())
+
+        rc_buy_dom = Ratecards.objects.create(
+            provider=prv,
+            name="BUY DOM",
+            role="BUY",
+            scope="DOMESTIC",
+            direction="DOMESTIC",
+            audience=None,
+            rate_strategy="BREAKS",
+            currency="PGK",
+            source="TEST",
+            status="ACTIVE",
+            effective_date=today,
+            expiry_date=None,
+            notes="",
+            meta={},
+            created_at=now(),
+            updated_at=now(),
+        )
+        RatecardConfig.objects.create(ratecard=rc_buy_dom, dim_factor_kg_per_m3=Decimal("167"), rate_strategy="BREAKS", created_at=now())
+
+        # Lanes and breaks
+        ln1 = Lanes.objects.create(ratecard=rc_buy_int, origin=bne, dest=pom, via=None, airline=None, is_direct=True)
+        LaneBreaks.objects.create(lane=ln1, break_code="N", per_kg=Decimal("2.00"))
+
+        ln2 = Lanes.objects.create(ratecard=rc_buy_dom, origin=pom, dest=lae, via=None, airline=None, is_direct=True)
+        LaneBreaks.objects.create(lane=ln2, break_code="N", per_kg=Decimal("1.00"))
+
+        # SELL ratecard (minimal) in PGK for IMPORT direction and audience=B2B
+        rc_sell = Ratecards.objects.create(
+            provider=prv,
+            name="SELL IMPORT PG",
+            role="SELL",
+            scope="INTERNATIONAL",
+            direction="IMPORT",
+            audience="B2B",
+            rate_strategy="BREAKS",
+            currency="PGK",
+            source="TEST",
+            status="ACTIVE",
+            effective_date=today,
+            expiry_date=None,
+            notes="",
+            meta={},
+            created_at=now(),
+            updated_at=now(),
+        )
+        # Minimal service to keep SELL logic happy (no items required)
+        Services.objects.create(code="AIR_FREIGHT", name="Air Freight", basis="PER_KG")
+        # No ServiceItems => no SELL lines, acceptable for this test
+
+        # FX: AUD->PGK
+        CurrencyRates.objects.create(as_of_ts=now(), base_ccy="AUD", quote_ccy="PGK", rate=Decimal("2.50"), source="TEST")
+
+        # Organization (PG) selects sell currency PGK and audience B2B
+        cls.org = Organizations.objects.create(
+            name="Test Org",
+            country_code="PG",
+            audience="B2B",
+            default_sell_currency="PGK",
+            gst_pct=Decimal("0.10"),
+            disbursement_min=None,
+            disbursement_cap=None,
+            notes="",
+        )
+
+        # Route and legs: AU -> PG (BNE->POM, POM->LAE)
+        cls.route = Routes.objects.create(name="AU to Lae", origin_country="AU", dest_country="PG", shipment_type="IMPORT")
+        RouteLegs.objects.create(route=cls.route, sequence=1, origin=bne, dest=pom, leg_scope="INTERNATIONAL", service_type="LINEHAUL")
+        RouteLegs.objects.create(route=cls.route, sequence=2, origin=pom, dest=lae, leg_scope="DOMESTIC", service_type="LINEHAUL")
+
+    def test_multi_leg_buy_aggregation(self):
+        from .engine import compute_quote, ShipmentInput
+
+        payload = ShipmentInput(
+            org_id=self.org.id,
+            origin_iata="BNE",
+            dest_iata="LAE",
+            shipment_type="IMPORT",
+            service_scope="AIRPORT_AIRPORT",
+            pieces=[Piece(weight_kg=Decimal("100"))],
+        )
+
+        res = compute_quote(payload)
+
+        # Expect two freight buy lines (one per leg)
+        freight_lines = [l for l in res.buy_lines if l.code == "FREIGHT" and l.is_buy]
+        self.assertEqual(len(freight_lines), 2)
+
+        # Totals with CAF-on-FX (6.5%): 200 AUD -> 200*2.5*1.065 = 532.50 PGK; + 100 PGK = 632.50 PGK
+        self.assertEqual(res.totals["buy_total"].currency, "PGK")
+        self.assertEqual(str(res.totals["buy_total"].amount), "632.50")
+
+        # Snapshot includes route and legs_breaks entries
+        self.assertIsNotNone(res.snapshot.get("route"))
+        self.assertEqual(len(res.snapshot.get("legs_breaks") or []), 2)
+        self.assertEqual(res.snapshot.get("chargeable_kg"), 100.0)
