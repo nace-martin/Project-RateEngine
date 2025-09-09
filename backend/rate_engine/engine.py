@@ -37,7 +37,7 @@ from .models import (
     Ratecards as Ratecard, RatecardConfig, Lanes as Lane, LaneBreaks as LaneBreak,
     FeeTypes as FeeType, RatecardFees as RatecardFee, CartageLadders as CartageLadder,
     Services as Service, ServiceItems as ServiceItem, SellCostLinksSimple as SellCostLink,
-    CurrencyRates as CurrencyRate, PricingPolicy,
+    CurrencyRates as CurrencyRate, PricingPolicy, Organizations,
 )
 
 # --------------------------- Datatypes ---------------------------
@@ -108,14 +108,13 @@ class Piece:
 
 @dataclass
 class ShipmentInput:
+    org_id: int  # Payer/Client organization id
     origin_iata: str
     dest_iata: str
     shipment_type: str
     service_scope: str
     airline_hint: Optional[str] = None
     via_hint: Optional[str] = None
-    audience: str = "PGK_LOCAL"  # drives SELL card
-    sell_currency: str = "PGK"
     pieces: List[Piece] = field(default_factory=list)
     # flags/conditions used by fees & SELL services
     flags: Dict[str, bool] = field(default_factory=dict)  # e.g., {"secondary_screening": True}
@@ -444,8 +443,22 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     """
     ts = now()
 
+    # 1. Resolve payer organization, audience, and sell currency
+    try:
+        payer_org = Organizations.objects.get(id=payload.org_id)
+    except Organizations.DoesNotExist:
+        raise ValueError("Invalid Payer/Organization ID.")
+
+    audience = payer_org.audience
+    if payer_org.country_code == 'PG':
+        sell_currency = 'PGK'
+    elif payer_org.country_code == 'AU':
+        sell_currency = 'AUD'
+    else:
+        sell_currency = 'USD'
+
     # Pricing policy (per audience)
-    pol = PricingPolicy.objects.filter(audience=payload.audience).first()
+    pol = PricingPolicy.objects.filter(audience=audience).first()
     fx = FxConverter(caf_on_fx=bool(pol.caf_on_fx if pol else True), caf_pct=caf_pct)
 
     # 1) Choose BUY ratecards and lane
@@ -505,7 +518,7 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
     # Pick cheapest base freight in its native currency converted to sell currency
     def to_sell_ccy(m: Money) -> Decimal:
-        return FxConverter(caf_on_fx=True, caf_pct=caf_pct).convert(m, payload.sell_currency).amount
+        return FxConverter(caf_on_fx=True, caf_pct=caf_pct).convert(m, sell_currency).amount
 
     best = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
     lane, chargeable_kg, chosen_break, base_freight = best
@@ -567,17 +580,17 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
             )
         )
 
-    # 3) SELL destination services (PGK import/export) based on audience & direction
+    # 3) SELL destination services (PGK/AUD/USD) based on audience & direction
     sell_direction = payload.shipment_type  # SELL follows request direction
     # Prefer SELL card in the requested sell currency; fall back to any currency
     sell_qs_base = Ratecard.objects.filter(
         role="SELL",
         scope=scope,
         direction=sell_direction,
-        audience=payload.audience,
+        audience=audience,
         effective_date__lte=ts.date(),
     ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
-    sell_card = sell_qs_base.filter(currency=payload.sell_currency).first()
+    sell_card = sell_qs_base.filter(currency=sell_currency).first()
     if not sell_card:
         sell_card = sell_qs_base.first()
     if not sell_card:
@@ -590,15 +603,15 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     fx_pairs_used = set()
 
     def convert_track(m: Money) -> Money:
-        if m.currency != payload.sell_currency:
-            fx_pairs_used.add(f"{m.currency}->{payload.sell_currency}")
-        return fx.convert(m, payload.sell_currency)
+        if m.currency != sell_currency:
+            fx_pairs_used.add(f"{m.currency}->{sell_currency}")
+        return fx.convert(m, sell_currency)
 
     # Convert BUY to sell currency for total
     total_buy_amount = ZERO
     for bl in buy_lines:
         total_buy_amount += convert_track(bl.extended).amount
-    total_buy = Money(total_buy_amount.quantize(TWOPLACES), payload.sell_currency)
+    total_buy = Money(total_buy_amount.quantize(TWOPLACES), sell_currency)
 
     tax_total = ZERO
     sell_sum = ZERO
@@ -610,10 +623,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         tax_total += tax
 
     totals = {
-        "buy_total": Money(total_buy.amount, payload.sell_currency),
-        "sell_total": Money(sell_sum.quantize(TWOPLACES), payload.sell_currency),
-        "tax_total": Money(Decimal(tax_total).quantize(TWOPLACES), payload.sell_currency),
-        "margin_abs": Money((sell_sum - total_buy.amount).quantize(TWOPLACES), payload.sell_currency),
+        "buy_total": Money(total_buy.amount, sell_currency),
+        "sell_total": Money(sell_sum.quantize(TWOPLACES), sell_currency),
+        "tax_total": Money(Decimal(tax_total).quantize(TWOPLACES), sell_currency),
+        "margin_abs": Money((sell_sum - total_buy.amount).quantize(TWOPLACES), sell_currency),
         "margin_pct": Money(((sell_sum - total_buy.amount) / (sell_sum or Decimal(1))).quantize(FOURPLACES), "%"),
     }
 
@@ -634,6 +647,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         # Directional decoupling
         "buy_direction": buy_direction,
         "sell_direction": sell_direction,
+        # Organization context
+        "org_id": payer_org.id,
+        "audience": audience,
+        "sell_currency": sell_currency,
         # Data quality warnings (non-blocking)
         "break_warnings": lane_warnings,
     }
@@ -663,8 +680,7 @@ class ComputeRequestSerializer(serializers.Serializer):
     service_scope = serializers.ChoiceField(
         choices=("DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR", "AIRPORT_AIRPORT")
     )
-    audience = serializers.ChoiceField(choices=("PGK_LOCAL","AUD_AGENT","USD_AGENT"))
-    sell_currency = serializers.CharField()
+    org_id = serializers.IntegerField()
     airline_hint = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     via_hint = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     pieces = PieceSerializer(many=True)
@@ -673,6 +689,12 @@ class ComputeRequestSerializer(serializers.Serializer):
     pallets = serializers.IntegerField(required=False)
     provider_hint = serializers.IntegerField(required=False)
     caf_pct = serializers.DecimalField(max_digits=6, decimal_places=4, required=False)
+
+    def validate_org_id(self, value: int):
+        """Ensure the payer organization exists before processing."""
+        if not Organizations.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Invalid Payer/Organization ID.")
+        return value
 
 
 class QuoteComputeView(views.APIView):
@@ -701,14 +723,13 @@ class QuoteComputeView(views.APIView):
         data = ser.validated_data
 
         shipment = ShipmentInput(
+            org_id=int(data["org_id"]),
             origin_iata=data["origin_iata"],
             dest_iata=data["dest_iata"],
             shipment_type=data["shipment_type"],
             service_scope=data["service_scope"],
             airline_hint=data.get("airline_hint") or None,
             via_hint=data.get("via_hint") or None,
-            audience=data["audience"],
-            sell_currency=data["sell_currency"],
             pieces=[Piece(**p) for p in data["pieces"]],
             flags=data.get("flags") or {},
             duties_value_sell_ccy=data.get("duties_value_sell_ccy") or ZERO,
@@ -723,22 +744,36 @@ class QuoteComputeView(views.APIView):
             )
         except ValueError:
             # Fallback when pricing data is not seeded: return empty breakdown with snapshot
-            zero = Money(ZERO, shipment.sell_currency)
+            # Try to derive fallback sell currency from org; default to USD
+            try:
+                payer_org = Organizations.objects.get(id=shipment.org_id)
+                if payer_org.country_code == 'PG':
+                    sc = 'PGK'
+                elif payer_org.country_code == 'AU':
+                    sc = 'AUD'
+                else:
+                    sc = 'USD'
+                aud = payer_org.audience
+            except Exception:
+                sc = 'USD'
+                aud = None
+            zero = Money(ZERO, sc)
             res = CalcResult(
                 buy_lines=[],
                 sell_lines=[],
                 totals={
                     "buy_total": zero,
                     "sell_total": zero,
-                    "margin": Money(ZERO, shipment.sell_currency),
+                    "margin": Money(ZERO, sc),
                 },
                 snapshot={
+                    "org_id": shipment.org_id,
                     "origin": shipment.origin_iata,
                     "destination": shipment.dest_iata,
                     "shipment_type": shipment.shipment_type,
                     "service_scope": shipment.service_scope,
-                    "audience": shipment.audience,
-                    "sell_currency": shipment.sell_currency,
+                    "audience": aud,
+                    "sell_currency": sc,
                     "actual_weight": str(shipment.actual_weight),
                     "volume_m3": str(shipment.volume_m3),
                 },
@@ -759,8 +794,8 @@ class QuoteComputeView(views.APIView):
             }
 
         body = {
-            "buy_lines": [present_line(l, shipment.sell_currency) for l in res.buy_lines],
-            "sell_lines": [present_line(l, shipment.sell_currency) for l in res.sell_lines],
+            "buy_lines": [present_line(l, res.totals["sell_total"].currency) for l in res.buy_lines],
+            "sell_lines": [present_line(l, res.totals["sell_total"].currency) for l in res.sell_lines],
             "totals": {k: {"amount": str(v.amount), "currency": v.currency} for k, v in res.totals.items()},
             "snapshot": res.snapshot,
         }

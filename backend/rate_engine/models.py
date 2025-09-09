@@ -226,6 +226,8 @@ class PricingPolicy(models.Model):
 class Organizations(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.TextField(unique=True)
+    # Add this field to drive currency logic
+    country_code = models.CharField(max_length=2, default='PG')  # e.g., PG, AU, US
     audience = models.TextField()
     default_sell_currency = models.TextField()
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2)
