@@ -203,12 +203,14 @@ class CurrencyRates(models.Model):
     base_ccy = models.TextField()
     quote_ccy = models.TextField()
     rate = models.DecimalField(max_digits=18, decimal_places=8)
+    # Distinguishes between TT 'BUY' and 'SELL' rates
+    rate_type = models.CharField(max_length=8, default='BUY', help_text="Distinguishes between TT 'BUY' and 'SELL' rates.")
     source = models.TextField(blank=True, null=True)
 
     class Meta:
         managed = False
         db_table = 'currency_rates'
-        unique_together = (('as_of_ts', 'base_ccy', 'quote_ccy'),)
+        unique_together = (('as_of_ts', 'base_ccy', 'quote_ccy', 'rate_type'),)
 
 
 class PricingPolicy(models.Model):
