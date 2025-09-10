@@ -37,6 +37,12 @@ class Ratecards(models.Model):
     scope = models.TextField()
     direction = models.TextField()
     audience = models.TextField(blank=True, null=True)
+    # Commodity code for the ratecard (e.g., GCR, DGR, LAR, PER)
+    commodity_code = models.CharField(
+        max_length=8,
+        default='GCR',
+        help_text="e.g., GCR, DGR, LAR, PER"
+    )
     # New field to specify pricing strategy for this ratecard
     rate_strategy = models.CharField(max_length=32, null=True, blank=True, default="BREAKS")
     currency = models.TextField()
@@ -325,6 +331,11 @@ class Routes(models.Model):
     origin_country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 code, e.g., AU")
     dest_country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 code, e.g., PG")
     shipment_type = models.CharField(max_length=16, choices=[("IMPORT", "Import"), ("EXPORT", "Export"), ("DOMESTIC", "Domestic")])
+    # If true, quotes on this route require manual rate sourcing
+    requires_manual_rate = models.BooleanField(
+        default=False,
+        help_text="If true, trigger manual rate request for all quotes on this route."
+    )
 
     def __str__(self):
         return self.name

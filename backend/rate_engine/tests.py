@@ -259,6 +259,9 @@ class MultiLegRouteTests(TestCase):
         with connection.cursor() as cur:
             # Postgres-friendly: add the column only if it doesn't exist
             cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country_code CHAR(2) DEFAULT 'PG'")
+            # Ensure new columns used by engine exist for unmanaged tables
+            cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS commodity_code VARCHAR(8) DEFAULT 'GCR'")
+            cur.execute("ALTER TABLE routes ADD COLUMN IF NOT EXISTS requires_manual_rate BOOLEAN DEFAULT FALSE")
 
         # Stations
         bne, _ = Stations.objects.get_or_create(iata="BNE", defaults={"city": "Brisbane", "country": "AU"})
@@ -496,3 +499,126 @@ class FxConverterTests(TestCase):
         r2 = fx.rate("PGK", "USD", at=now())
         self.assertEqual(r1, Decimal("2.50"))
         self.assertEqual(r2, Decimal("0.27000000"))
+
+
+class ManualTriggerTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        # Minimal schema and data to exercise compute_leg_cost manual checks
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stations (
+                    id BIGSERIAL PRIMARY KEY,
+                    iata TEXT UNIQUE,
+                    city TEXT,
+                    country TEXT
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS routes (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT UNIQUE,
+                    origin_country CHAR(2) NOT NULL,
+                    dest_country CHAR(2) NOT NULL,
+                    shipment_type VARCHAR(16) NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_legs (
+                    id BIGSERIAL PRIMARY KEY,
+                    route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    origin_id INTEGER NOT NULL REFERENCES stations(id),
+                    dest_id INTEGER NOT NULL REFERENCES stations(id),
+                    leg_scope VARCHAR(32) NOT NULL,
+                    service_type VARCHAR(32) NOT NULL
+                );
+                """
+            )
+            # Add new columns if not present
+            try:
+                cur.execute("ALTER TABLE routes ADD COLUMN IF NOT EXISTS requires_manual_rate BOOLEAN DEFAULT FALSE")
+            except Exception:
+                connection.rollback()
+
+        from .models import Stations as Station, Routes as Route, RouteLegs as RouteLeg
+
+        # Seed stations and simple route
+        cls.bne = Station.objects.create(iata="BNE", city="Brisbane", country="AU")
+        cls.lae = Station.objects.create(iata="LAE", city="Lae", country="PG")
+        cls.route = Route.objects.create(name="AU->PG", origin_country="AU", dest_country="PG", shipment_type="IMPORT")
+        cls.leg = RouteLeg.objects.create(route=cls.route, sequence=1, origin=cls.bne, dest=cls.lae, leg_scope="INTERNATIONAL", service_type="LINEHAUL")
+
+    def _make_payload(self, **overrides):
+        from .engine import ShipmentInput, Piece
+        base = dict(
+            org_id=1,
+            origin_iata="BNE",
+            dest_iata="LAE",
+            shipment_type="IMPORT",
+            service_scope="AIRPORT_AIRPORT",
+            pieces=[Piece(weight_kg=Decimal("100"))],
+            commodity_code="GCR",
+            is_urgent=False,
+        )
+        base.update(overrides)
+        return ShipmentInput(**base)
+
+    def _run_leg(self, payload):
+        from .engine import compute_leg_cost, FxConverter
+        return compute_leg_cost(
+            leg=self.leg,
+            chargeable_kg=Decimal("100"),
+            shipment_payload=payload,
+            fx=FxConverter(caf_on_fx=True, caf_pct=Decimal("0.065")),
+            sell_currency="PGK",
+            ts=now(),
+        )
+
+    def test_non_gcr_triggers_manual(self):
+        payload = self._make_payload(commodity_code="DGR")
+        lines, ctx, is_manual, reason = self._run_leg(payload)
+        self.assertTrue(is_manual)
+        self.assertIn("Specific Cargo", reason)
+        self.assertTrue(any(l.code == "FREIGHT_MANUAL_RATE" for l in lines))
+        # Ensure meta marks manual
+        m = next(l.meta for l in lines if l.code == "FREIGHT_MANUAL_RATE")
+        self.assertTrue(m.get("manual_rate_required"))
+
+    def test_urgent_triggers_manual(self):
+        payload = self._make_payload(is_urgent=True)
+        lines, ctx, is_manual, reason = self._run_leg(payload)
+        self.assertTrue(is_manual)
+        self.assertIn("Urgent", reason)
+        self.assertTrue(any(l.code == "FREIGHT_MANUAL_RATE" for l in lines))
+
+    def test_route_flag_triggers_manual(self):
+        # Flip the route flag on
+        from .models import Routes as Route
+        r = Route.objects.get(id=self.route.id)
+        # Direct SQL update in case unmanaged model ignores save side-effects
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute("UPDATE routes SET requires_manual_rate = TRUE WHERE id = %s", [r.id])
+
+        payload = self._make_payload()
+        # Ensure our in-memory leg reflects the flag to avoid lane lookups
+        from .models import RouteLegs as RouteLeg
+        self.leg = RouteLeg.objects.get(id=self.leg.id)
+        # Set attribute defensively (unmanaged models may not refresh relations immediately)
+        if hasattr(self.leg, 'route'):
+            try:
+                self.leg.route.requires_manual_rate = True
+            except Exception:
+                pass
+
+        lines, ctx, is_manual, reason = self._run_leg(payload)
+        self.assertTrue(is_manual)
+        self.assertIn("Route flagged", reason)
+        self.assertTrue(any(l.code == "FREIGHT_MANUAL_RATE" for l in lines))
