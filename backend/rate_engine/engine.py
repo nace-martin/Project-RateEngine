@@ -817,7 +817,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     # For SELL KG-basis, use a representative chargeable weight
     if per_leg_chargeables:
         chargeable_kg = max(per_leg_chargeables)
-    # else in single-leg fallback, chargeable_kg already defined
+    else:
+        # In manual or non-freight scenarios where no per-leg FREIGHT was produced,
+        # fall back to computing chargeable weight from the request pieces.
+        chargeable_kg = calculate_chargeable_weight_per_piece(payload.pieces, Decimal(167))
 
     sell_lines = compute_sell_lines(sell_card, buy_context, chargeable_kg, payload.service_scope)
 
