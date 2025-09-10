@@ -23,6 +23,4 @@ urlpatterns = [
     path('api/', include('accounts.urls')), # Add accounts URLs
     # API endpoints
     path("api/quote/compute", QuoteComputeView.as_view(), name="compute-quote"),
-    # Backward-compatible path kept for now
-    path("quote/compute", QuoteComputeView.as_view()),
 ]
