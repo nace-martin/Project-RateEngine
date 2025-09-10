@@ -3,6 +3,8 @@ from decimal import Decimal
 from django.test import TestCase
 
 from .engine import Piece, calculate_chargeable_weight_per_piece, ZERO
+from .engine import FxConverter
+from django.utils.timezone import now
 
 
 class ChargeableWeightTests(TestCase):
@@ -283,3 +285,35 @@ class MultiLegRouteTests(TestCase):
         expected_sell_amount = Decimal("790.65")
         self.assertEqual(sell_air.extended.amount, expected_sell_amount)
         self.assertEqual(sell_air.extended.currency, "PGK")
+
+
+class FxConverterTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        from .models import CurrencyRates
+        # Ensure we have both BUY and SELL sample rates
+        CurrencyRates.objects.create(
+            as_of_ts=now(), base_ccy="AUD", quote_ccy="PGK", rate=Decimal("2.50"), rate_type="BUY", source="TEST"
+        )
+        CurrencyRates.objects.create(
+            as_of_ts=now(), base_ccy="PGK", quote_ccy="USD", rate=Decimal("0.27000000"), rate_type="SELL", source="TEST"
+        )
+
+    def test_rate_to_pgk_uses_buy_and_subtracts_caf(self):
+        fx = FxConverter(caf_on_fx=True, caf_pct=Decimal("0.10"))
+        r = fx.rate("AUD", "PGK", at=now())
+        # BUY 2.50 with CAF 10% subtracted => 2.25
+        self.assertEqual(r, Decimal("2.25"))
+
+    def test_rate_from_pgk_uses_sell_and_adds_caf(self):
+        fx = FxConverter(caf_on_fx=True, caf_pct=Decimal("0.10"))
+        r = fx.rate("PGK", "USD", at=now())
+        # SELL 0.27 with CAF 10% added => 0.29700000
+        self.assertEqual(r, Decimal("0.29700000"))
+
+    def test_rate_caf_disabled_returns_raw(self):
+        fx = FxConverter(caf_on_fx=False, caf_pct=Decimal("0.15"))
+        r1 = fx.rate("AUD", "PGK", at=now())
+        r2 = fx.rate("PGK", "USD", at=now())
+        self.assertEqual(r1, Decimal("2.50"))
+        self.assertEqual(r2, Decimal("0.27000000"))
