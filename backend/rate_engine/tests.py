@@ -53,36 +53,199 @@ class ChargeableWeightTests(TestCase):
 class MultiLegRouteTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        # Create minimal schema for unmanaged tables: routes, route_legs
+        # Create minimal schema for unmanaged tables used in tests (PostgreSQL-compatible)
         from django.db import connection
         with connection.cursor() as cur:
-            cur.execute(
+            ddls = [
+                # Core reference tables
+                """
+                CREATE TABLE IF NOT EXISTS providers (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT UNIQUE,
+                    provider_type TEXT NOT NULL
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS stations (
+                    id BIGSERIAL PRIMARY KEY,
+                    iata TEXT UNIQUE,
+                    city TEXT,
+                    country TEXT
+                );
+                """,
+                # Ratecard-related tables
+                """
+                CREATE TABLE IF NOT EXISTS ratecards (
+                    id BIGSERIAL PRIMARY KEY,
+                    provider_id INTEGER REFERENCES providers(id),
+                    name TEXT,
+                    role TEXT,
+                    scope TEXT,
+                    direction TEXT,
+                    audience TEXT,
+                    rate_strategy VARCHAR(32),
+                    currency TEXT,
+                    source TEXT,
+                    status TEXT,
+                    effective_date DATE,
+                    expiry_date DATE,
+                    notes TEXT,
+                    meta JSONB,
+                    created_at TIMESTAMP,
+                    updated_at TIMESTAMP
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ratecard_config (
+                    id BIGSERIAL PRIMARY KEY,
+                    ratecard_id INTEGER UNIQUE REFERENCES ratecards(id),
+                    dim_factor_kg_per_m3 NUMERIC(8,2),
+                    rate_strategy TEXT,
+                    created_at TIMESTAMP
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS lanes (
+                    id BIGSERIAL PRIMARY KEY,
+                    ratecard_id INTEGER REFERENCES ratecards(id),
+                    origin_id INTEGER REFERENCES stations(id),
+                    dest_id INTEGER REFERENCES stations(id),
+                    via_id INTEGER REFERENCES stations(id),
+                    airline TEXT,
+                    is_direct BOOLEAN
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS lane_breaks (
+                    id BIGSERIAL PRIMARY KEY,
+                    lane_id INTEGER REFERENCES lanes(id),
+                    break_code TEXT,
+                    per_kg NUMERIC(12,4),
+                    min_charge NUMERIC(12,2)
+                );
+                """,
+                # Fees & services
+                """
+                CREATE TABLE IF NOT EXISTS fee_types (
+                    id BIGSERIAL PRIMARY KEY,
+                    code TEXT UNIQUE,
+                    description TEXT,
+                    basis TEXT,
+                    default_tax_pct NUMERIC(5,2)
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ratecard_fees (
+                    id BIGSERIAL PRIMARY KEY,
+                    ratecard_id INTEGER REFERENCES ratecards(id),
+                    fee_type_id INTEGER REFERENCES fee_types(id),
+                    currency TEXT,
+                    amount NUMERIC(12,4),
+                    min_amount NUMERIC(12,2),
+                    max_amount NUMERIC(12,2),
+                    percent_of_code TEXT,
+                    per_kg_threshold NUMERIC(12,2),
+                    applies_if JSONB,
+                    notes TEXT,
+                    created_at TIMESTAMP
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS services (
+                    id BIGSERIAL PRIMARY KEY,
+                    code TEXT UNIQUE,
+                    name TEXT,
+                    basis TEXT
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS service_items (
+                    id BIGSERIAL PRIMARY KEY,
+                    ratecard_id INTEGER REFERENCES ratecards(id),
+                    service_id INTEGER REFERENCES services(id),
+                    currency TEXT,
+                    amount NUMERIC(12,4),
+                    min_amount NUMERIC(12,2),
+                    max_amount NUMERIC(12,2),
+                    percent_of_service_code TEXT,
+                    tax_pct NUMERIC(5,2),
+                    item_code TEXT,
+                    conditions_json JSONB
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS sell_cost_links_simple (
+                    id BIGSERIAL PRIMARY KEY,
+                    sell_item_id INTEGER REFERENCES service_items(id),
+                    buy_fee_code TEXT,
+                    mapping_type TEXT,
+                    mapping_value NUMERIC(12,4)
+                );
+                """,
+                # Organizations and FX
+                """
+                CREATE TABLE IF NOT EXISTS organizations (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT UNIQUE,
+                    country_code CHAR(2) DEFAULT 'PG',
+                    audience TEXT,
+                    default_sell_currency TEXT,
+                    gst_pct NUMERIC(5,2),
+                    disbursement_min NUMERIC(12,2),
+                    disbursement_cap NUMERIC(12,2),
+                    notes TEXT
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS currency_rates (
+                    id BIGSERIAL PRIMARY KEY,
+                    as_of_ts TIMESTAMP,
+                    base_ccy TEXT,
+                    quote_ccy TEXT,
+                    rate NUMERIC(18,8),
+                    rate_type VARCHAR(8) DEFAULT 'BUY',
+                    source TEXT
+                );
+                """,
+                # Pricing policy
+                """
+                CREATE TABLE IF NOT EXISTS pricing_policy (
+                    id BIGSERIAL PRIMARY KEY,
+                    audience TEXT UNIQUE,
+                    caf_on_fx BOOLEAN,
+                    gst_applies BOOLEAN,
+                    gst_pct NUMERIC(5,2)
+                );
+                """,
+                # Routing tables
                 """
                 CREATE TABLE IF NOT EXISTS routes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id BIGSERIAL PRIMARY KEY,
                     name TEXT UNIQUE,
                     origin_country CHAR(2) NOT NULL,
                     dest_country CHAR(2) NOT NULL,
                     shipment_type VARCHAR(16) NOT NULL
                 );
-                """
-            )
-            cur.execute(
+                """,
                 """
                 CREATE TABLE IF NOT EXISTS route_legs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    route_id INTEGER NOT NULL,
+                    id BIGSERIAL PRIMARY KEY,
+                    route_id INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
                     sequence INTEGER NOT NULL,
-                    origin_id INTEGER NOT NULL,
-                    dest_id INTEGER NOT NULL,
+                    origin_id INTEGER NOT NULL REFERENCES stations(id),
+                    dest_id INTEGER NOT NULL REFERENCES stations(id),
                     leg_scope VARCHAR(32) NOT NULL,
-                    service_type VARCHAR(32) NOT NULL,
-                    FOREIGN KEY(route_id) REFERENCES routes(id) ON DELETE CASCADE,
-                    FOREIGN KEY(origin_id) REFERENCES stations(id),
-                    FOREIGN KEY(dest_id) REFERENCES stations(id)
+                    service_type VARCHAR(32) NOT NULL
                 );
-                """
-            )
+                """,
+            ]
+            for sql in ddls:
+                try:
+                    cur.execute(sql)
+                except Exception:
+                    # If a statement fails, rollback and continue; tables may already exist
+                    connection.rollback()
+                    continue
 
         # Seed core data used by engine
         from django.utils.timezone import now
@@ -92,11 +255,10 @@ class MultiLegRouteTests(TestCase):
         )
 
         # Ensure organizations has country_code column (older migration sets may lack it)
+        # Use a DB-agnostic approach: try to add the column and ignore if it already exists.
         with connection.cursor() as cur:
-            cur.execute("PRAGMA table_info('organizations')")
-            cols = [row[1] for row in cur.fetchall()]  # cid, name, type, ...
-            if 'country_code' not in cols:
-                cur.execute("ALTER TABLE organizations ADD COLUMN country_code CHAR(2) DEFAULT 'PG'")
+            # Postgres-friendly: add the column only if it doesn't exist
+            cur.execute("ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country_code CHAR(2) DEFAULT 'PG'")
 
         # Stations
         bne, _ = Stations.objects.get_or_create(iata="BNE", defaults={"city": "Brisbane", "country": "AU"})
@@ -219,9 +381,10 @@ class MultiLegRouteTests(TestCase):
         freight_lines = [l for l in res.buy_lines if l.code == "FREIGHT" and l.is_buy]
         self.assertEqual(len(freight_lines), 2)
 
-        # Totals with CAF-on-FX (6.5%): 200 AUD -> 200*2.5*1.065 = 532.50 PGK; + 100 PGK = 632.50 PGK
+        # Totals with directional CAF-on-FX (6.5% subtract to PGK):
+        # 200 AUD -> 200 * (2.50 * (1 - 0.065)) = 467.50 PGK; + 100 PGK = 567.50 PGK
         self.assertEqual(res.totals["buy_total"].currency, "PGK")
-        self.assertEqual(str(res.totals["buy_total"].amount), "632.50")
+        self.assertEqual(str(res.totals["buy_total"].amount), "567.50")
 
         # Snapshot includes route and legs_breaks entries
         self.assertIsNotNone(res.snapshot.get("route"))
@@ -280,9 +443,9 @@ class MultiLegRouteTests(TestCase):
         sell_air = next((line for line in result.sell_lines if line.code == "AIR_FREIGHT"), None)
         self.assertIsNotNone(sell_air, "SELL line for AIR_FREIGHT should exist.")
 
-        # BUY total freight across legs is 632.50 PGK (per previous test).
-        # COST_PLUS_PCT 25% => 632.50 * 1.25 = 790.625, then rounded up to nearest 0.05 => 790.65
-        expected_sell_amount = Decimal("790.65")
+        # BUY total freight across legs is 567.50 PGK (per previous test).
+        # COST_PLUS_PCT 25% => 567.50 * 1.25 = 709.375, then rounded up to nearest 0.05 => 709.40
+        expected_sell_amount = Decimal("709.40")
         self.assertEqual(sell_air.extended.amount, expected_sell_amount)
         self.assertEqual(sell_air.extended.currency, "PGK")
 
@@ -290,6 +453,22 @@ class MultiLegRouteTests(TestCase):
 class FxConverterTests(TestCase):
     @classmethod
     def setUpTestData(cls):
+        from django.db import connection
+        # Ensure currency_rates exists for unmanaged model on test DB
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS currency_rates (
+                    id BIGSERIAL PRIMARY KEY,
+                    as_of_ts TIMESTAMP,
+                    base_ccy TEXT,
+                    quote_ccy TEXT,
+                    rate NUMERIC(18,8),
+                    rate_type VARCHAR(8) DEFAULT 'BUY',
+                    source TEXT
+                );
+                """
+            )
         from .models import CurrencyRates
         # Ensure we have both BUY and SELL sample rates
         CurrencyRates.objects.create(

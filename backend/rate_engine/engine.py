@@ -201,7 +201,7 @@ def compute_chargeable(weight_kg: Decimal, volume_m3: Decimal, dim_factor_kg_per
 def calculate_chargeable_weight_per_piece(pieces: List[Piece], dim_factor_kg_per_m3: Decimal) -> Decimal:
     """
     Calculates chargeable weight by summing the greater of actual vs. volumetric
-    weight for each piece, as per IATA standards.
+    weight for each piece. The final result is rounded up to the next whole kg.
     """
     total_chargeable = ZERO
     if not pieces:
