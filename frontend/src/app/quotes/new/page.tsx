@@ -199,7 +199,6 @@ export default function CreateQuotePage() {
     setCalcError(null);
     setIsCalculating(true);
     const apiBase = process.env.NEXT_PUBLIC_API_BASE || '';
-    const apiRoot = apiBase.replace(/\/api\/?$/, '');
     const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
 
     if (!origin || !destination) {
@@ -229,7 +228,8 @@ export default function CreateQuotePage() {
     };
 
     try {
-      const res = await fetch(`${apiRoot}/quote/compute`, {
+      const base = apiBase.replace(/\/$/, '');
+      const res = await fetch(`${base}/quote/compute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

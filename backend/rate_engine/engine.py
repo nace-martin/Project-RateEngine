@@ -3,7 +3,7 @@ RateEngine MVP – Compute Service (Django/DRF skeleton)
 
 This module implements the minimal pricing engine we designed. It relies on the
 SQL schema shipped in `mvp_migration.sql`. You can drop this file into your Django
-project (e.g., app `pricing/engine.py`) and wire the DRF view to `/quote/compute`.
+project (e.g., app `pricing/engine.py`) and wire the DRF view to `/api/quote/compute`.
 
 Scope (MVP):
 - BUY pricing for International/Domestic lanes (PX, Maersk, EFM-BNE, Ad-hoc agents)

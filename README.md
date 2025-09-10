@@ -77,7 +77,7 @@ To run locally, use two terminals.
   ```
 - Compute quote (requires token):
   ```bash
-  curl -X POST http://127.0.0.1:8000/quote/compute \
+  curl -X POST http://127.0.0.1:8000/api/quote/compute \
     -H "Authorization: Token YOUR_TOKEN" -H "Content-Type: application/json" \
     -d '{"org_id":1,"origin_iata":"SYD","dest_iata":"POM","shipment_type":"EXPORT","service_scope":"AIRPORT_AIRPORT","pieces":[{"weight_kg":"10"}]}'
   ```
