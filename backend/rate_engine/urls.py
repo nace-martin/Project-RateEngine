@@ -21,5 +21,8 @@ from rate_engine.engine import QuoteComputeView
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('accounts.urls')), # Add accounts URLs
-    path("quote/compute", QuoteComputeView.as_view(), name="compute-quote"),
+    # API endpoints
+    path("api/quote/compute", QuoteComputeView.as_view(), name="compute-quote"),
+    # Backward-compatible path kept for now
+    path("quote/compute", QuoteComputeView.as_view()),
 ]
