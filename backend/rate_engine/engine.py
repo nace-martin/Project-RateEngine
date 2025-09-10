@@ -142,19 +142,47 @@ class FxConverter:
         self.caf_pct = caf_pct
 
     def rate(self, base_ccy: str, quote_ccy: str, at: Optional[datetime] = None) -> Decimal:
-        """Fetch latest FX rate base->quote (e.g., AUD->PGK)."""
+        """
+        Fetch latest FX rate base->quote with direction-aware logic for TT Buy/Sell rates and CAF.
+        """
         at = at or now()
+
+        # Direction-aware logic for PNG Kina contexts
+        if quote_ccy == 'PGK':
+            # Converting FCY -> PGK uses bank BUY rate
+            rate_type_to_fetch = 'BUY'
+            is_to_pgk = True
+        else:
+            # Converting PGK -> FCY uses bank SELL rate
+            rate_type_to_fetch = 'SELL'
+            is_to_pgk = False
+
         row = (
             CurrencyRate.objects
-            .filter(base_ccy=base_ccy, quote_ccy=quote_ccy, as_of_ts__lte=at)
+            .filter(
+                base_ccy=base_ccy,
+                quote_ccy=quote_ccy,
+                as_of_ts__lte=at,
+                rate_type=rate_type_to_fetch,
+            )
             .order_by("-as_of_ts")
             .first()
         )
         if not row:
-            raise ValueError(f"No FX rate {base_ccy}->{quote_ccy} available")
+            raise ValueError(f"No FX rate {base_ccy}->{quote_ccy} (Type: {rate_type_to_fetch}) available")
+
         r = d(row.rate)
-        # Apply CAF as a reduction for a more conservative FX when enabled
-        return r * (Decimal("1.0") - self.caf_pct) if self.caf_on_fx else r
+
+        # Apply CAF directionally if enabled
+        if self.caf_on_fx:
+            if is_to_pgk:
+                # FCY -> PGK: subtract CAF for conservative rate
+                return r * (Decimal("1.0") - self.caf_pct)
+            else:
+                # PGK -> FCY: add CAF
+                return r * (Decimal("1.0") + self.caf_pct)
+        else:
+            return r
 
     def convert(self, money: Money, to_ccy: str) -> Money:
         if money.currency == to_ccy:
