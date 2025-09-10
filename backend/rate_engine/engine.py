@@ -63,6 +63,11 @@ def round_up_nearest_0_05(amount: Decimal) -> Decimal:
     return (multiples * step).quantize(TWOPLACES)
 
 
+def round_up_to_next_whole(amount: Decimal) -> Decimal:
+    """Rounds a decimal amount up to the next whole number (e.g., 315.79 -> 316.00)."""
+    return amount.to_integral_value(rounding=ROUND_CEILING)
+
+
 @dataclass
 class Piece:
     weight_kg: Decimal
@@ -148,7 +153,8 @@ class FxConverter:
         if not row:
             raise ValueError(f"No FX rate {base_ccy}->{quote_ccy} available")
         r = d(row.rate)
-        return r * (Decimal("1.0") + self.caf_pct) if self.caf_on_fx else r
+        # Apply CAF as a reduction for a more conservative FX when enabled
+        return r * (Decimal("1.0") - self.caf_pct) if self.caf_on_fx else r
 
     def convert(self, money: Money, to_ccy: str) -> Money:
         if money.currency == to_ccy:
@@ -771,12 +777,18 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         sell_sum += sell_amt + tax
         tax_total += tax
 
+    # Apply margin before final rounding
+    sell_sum_before_rounding = sell_sum.quantize(TWOPLACES)
+
+    # Final rounding rule: round up total SELL to next whole
+    final_sell_total = round_up_to_next_whole(sell_sum_before_rounding)
+
     totals = {
         "buy_total": Money(total_buy.amount, sell_currency),
-        "sell_total": Money(sell_sum.quantize(TWOPLACES), sell_currency),
+        "sell_total": Money(final_sell_total, sell_currency),
         "tax_total": Money(Decimal(tax_total).quantize(TWOPLACES), sell_currency),
-        "margin_abs": Money((sell_sum - total_buy.amount).quantize(TWOPLACES), sell_currency),
-        "margin_pct": Money(((sell_sum - total_buy.amount) / (sell_sum or Decimal(1))).quantize(FOURPLACES), "%"),
+        "margin_abs": Money((final_sell_total - total_buy.amount).quantize(TWOPLACES), sell_currency),
+        "margin_pct": Money(((final_sell_total - total_buy.amount) / (final_sell_total or Decimal(1))).quantize(FOURPLACES), "%"),
     }
 
     # 5) Snapshot

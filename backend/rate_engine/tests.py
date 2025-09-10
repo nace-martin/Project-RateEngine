@@ -173,6 +173,8 @@ class MultiLegRouteTests(TestCase):
             created_at=now(),
             updated_at=now(),
         )
+        # Expose for tests
+        cls.sell_card_pgk = rc_sell
         # Minimal service to keep SELL logic happy (no items required)
         Services.objects.create(code="AIR_FREIGHT", name="Air Freight", basis="PER_KG")
         # No ServiceItems => no SELL lines, acceptable for this test
@@ -223,3 +225,61 @@ class MultiLegRouteTests(TestCase):
         self.assertIsNotNone(res.snapshot.get("route"))
         self.assertEqual(len(res.snapshot.get("legs_breaks") or []), 2)
         self.assertEqual(res.snapshot.get("chargeable_kg"), 100.0)
+
+    def test_sell_mapping_cost_plus_for_multi_leg_freight(self):
+        """
+        Validates that a COST_PLUS_PCT SELL rule correctly applies its margin
+        to the SUM of the BUY freight costs from all legs.
+        """
+        from .engine import compute_quote, ShipmentInput
+        from .models import (
+            Services as Service,
+            ServiceItems as ServiceItem,
+            FeeTypes as FeeType,
+            SellCostLinksSimple as SellCostLink,
+        )
+
+        # 1) SELL ServiceItem for AIR_FREIGHT (PGK currency)
+        air_freight_service, _ = Service.objects.get_or_create(
+            code="AIR_FREIGHT", defaults={"name": "Air Freight", "basis": "PER_KG"}
+        )
+        sell_item = ServiceItem.objects.create(
+            ratecard=self.sell_card_pgk,
+            service=air_freight_service,
+            currency="PGK",
+            tax_pct=Decimal("0.00"),
+            conditions_json={},
+        )
+
+        # 2) Link SELL item to aggregated BUY freight with 25% margin
+        freight_fee_type, _ = FeeType.objects.get_or_create(
+            code="FREIGHT",
+            defaults={"description": "Generic Freight Cost", "basis": "VARIES", "default_tax_pct": Decimal("0")},
+        )
+        SellCostLink.objects.create(
+            sell_item=sell_item,
+            buy_fee_code=freight_fee_type,
+            mapping_type="COST_PLUS_PCT",
+            mapping_value=Decimal("0.25"),  # 25% margin
+        )
+
+        # 3) Execute compute
+        payload = ShipmentInput(
+            org_id=self.org.id,
+            origin_iata="BNE",
+            dest_iata="LAE",
+            shipment_type="IMPORT",
+            service_scope="AIRPORT_AIRPORT",
+            pieces=[Piece(weight_kg=Decimal("100"))],
+        )
+        result = compute_quote(payload)
+
+        # 4) Assert SELL line exists and amount is correct
+        sell_air = next((line for line in result.sell_lines if line.code == "AIR_FREIGHT"), None)
+        self.assertIsNotNone(sell_air, "SELL line for AIR_FREIGHT should exist.")
+
+        # BUY total freight across legs is 632.50 PGK (per previous test).
+        # COST_PLUS_PCT 25% => 632.50 * 1.25 = 790.625, then rounded up to nearest 0.05 => 790.65
+        expected_sell_amount = Decimal("790.65")
+        self.assertEqual(sell_air.extended.amount, expected_sell_amount)
+        self.assertEqual(sell_air.extended.currency, "PGK")
