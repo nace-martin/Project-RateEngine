@@ -40,7 +40,17 @@ To run locally, use two terminals.
    ```bash
    pip install -r requirements.txt
    ```
-4. Configure database (Postgres required):
+4. (Recommended) Create a .env from example and configure DB:
+   ```bash
+   # From repo root
+   copy .env.example .env   # Windows
+   # or
+   cp .env.example .env     # Unix/macOS
+   # then edit .env and set DATABASE_URL
+   ```
+   The backend automatically loads variables from `.env` at startup.
+
+   Alternatively, set the environment variable directly:
    ```bash
    # Windows (PowerShell)
    $env:DATABASE_URL = "postgres://USER:PASSWORD@HOST:PORT/DBNAME"

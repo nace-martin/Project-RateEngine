@@ -11,9 +11,14 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+from dotenv import load_dotenv, find_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from a .env file if present.
+# Uses search from current working directory upward for robustness.
+load_dotenv(find_dotenv(usecwd=True))
 
 
 # Quick-start development settings - unsuitable for production
