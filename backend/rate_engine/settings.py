@@ -101,9 +101,15 @@ if not DATABASE_URL:
         "DATABASE_URL must be set to a PostgreSQL connection string."
     )
 
-DATABASES = {
-    "default": dj_database_url.parse(DATABASE_URL, conn_max_age=600),
-}
+# Enforce Postgres-only URLs
+db_cfg = dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+engine = (db_cfg.get("ENGINE") or "").lower()
+if "postgresql" not in engine:
+    raise ImproperlyConfigured(
+        "DATABASE_URL must use Postgres (e.g., postgres:// or postgresql://)."
+    )
+
+DATABASES = {"default": db_cfg}
 
 
 # Password validation
