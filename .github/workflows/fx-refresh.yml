@@ -1,0 +1,27 @@
+name: FX Refresh (BSP)
+
+on:
+  schedule:
+    - cron: "0 22 * * 1-5"
+    - cron: "0 23 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/fx/refresh
+        env:
+          FX_REFRESH_URL: ${{ secrets.FX_REFRESH_URL }}
+          FX_REFRESH_TOKEN: ${{ secrets.FX_REFRESH_TOKEN }}
+        run: |
+          BODY='{"pairs":["USD:PGK","PGK:USD","AUD:PGK","PGK:AUD"],"provider":"bsp_html"}'
+          HTTP_STATUS=$(curl -sS -o resp.json -w "%{http_code}" \
+            -X POST "$FX_REFRESH_URL" \
+            -H "Authorization: Bearer $FX_REFRESH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          echo "HTTP $HTTP_STATUS"
+          cat resp.json || true
+          test "$HTTP_STATUS" -ge 200 -a "$HTTP_STATUS" -lt 300
+

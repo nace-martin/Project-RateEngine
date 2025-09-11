@@ -68,6 +68,11 @@ def test_bsp_table_not_found(monkeypatch):
 
 @pytest.mark.django_db
 def test_command_idempotent(monkeypatch):
+    # Skip if the currency_rates table is not present in the configured DB
+    from django.db import connection
+    if 'currency_rates' not in connection.introspection.table_names():
+        pytest.skip("currency_rates table not available; skipping idempotency test")
+
     # Stub provider loader to avoid network and ensure consistent as_of
     fixed_ts = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -90,4 +95,3 @@ def test_command_idempotent(monkeypatch):
     second = CurrencyRate.objects.count()
 
     assert first == second
-

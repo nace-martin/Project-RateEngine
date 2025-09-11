@@ -92,3 +92,36 @@ To run locally, use two terminals.
     -d '{"org_id":1,"origin_iata":"SYD","dest_iata":"POM","shipment_type":"EXPORT","service_scope":"AIRPORT_AIRPORT","pieces":[{"weight_kg":"10"}]}'
   ```
 - CORS: Frontend allowed origins are `http://localhost:3000` and `http://127.0.0.1:3000` (see `backend/rate_engine/settings.py`). Update there for other hosts.
+
+## CI: FX Refresh Workflow
+
+- Workflow: `.github/workflows/fx-refresh.yml` calls `POST /api/fx/refresh` twice on weekdays near 9:00am Sydney (DST-safe):
+  - Cron: `0 22 * * 1-5` and `0 23 * * 1-5` (UTC)
+- Request body (example):
+  - `{"pairs":["USD:PGK","PGK:USD","AUD:PGK","PGK:AUD"],"provider":"bsp_html"}`
+- Required GitHub Secrets:
+  - `FX_REFRESH_URL` e.g., `https://yourdomain/api/fx/refresh`
+  - `FX_REFRESH_TOKEN` bearer token mapped to a Manager/Finance identity
+- Auth header:
+  - The workflow uses `Authorization: Bearer <token>`. If calling Django directly, switch to `Authorization: Token <key>` (DRF TokenAuth), or place the API behind a gateway that translates Bearer→Token.
+- Manual run: trigger via “Run workflow” (workflow_dispatch) to verify 200 OK and summary payload.
+
+## FX Configuration & Troubleshooting
+
+- Env vars (optional, with defaults):
+  - `FX_STALE_HOURS` (default `24`): Warn if latest stored rate for a pair is older than this (hours). Included as `fx_age_hours` in API response when available.
+  - `FX_ANOMALY_PCT` (default `0.05`): Warn if absolute change vs previous rate exceeds this fraction (e.g., `0.05` = 5%).
+  - `BSP_FX_URL`: Override BSP rates URL if needed.
+  - `FX_MID_RATES`: JSON mid-rate table for Env fallback, e.g. `{ "USD": { "PGK": 3.75 }, "PGK": { "USD": 0.2667 } }`.
+
+- Resilience behavior:
+  - BSP scrape failure (network/HTML) falls back to Env provider automatically and logs a clear WARN.
+  - Staleness and anomaly checks run for both API and CLI refresh paths.
+
+- Verify end‑to‑end locally:
+  - Backend deps: `cd backend && pip install -r requirements.txt`
+  - Migrations: `python manage.py migrate`
+  - CLI (BSP, default): `python manage.py fetch_fx --pairs USD:PGK,PGK:USD`
+  - CLI (force fallback): set `BSP_FX_URL=http://127.0.0.1:1` to simulate failure; rerun and observe WARN + ENV usage.
+  - API: `curl -X POST "$API/fx/refresh" -H "Authorization: Token <key>" -H "Content-Type: application/json" -d '{"pairs":["USD:PGK","PGK:USD"],"provider":"bsp_html"}'`
+  - Tests: `pytest -q` (ensure `DATABASE_URL` points to Postgres).
