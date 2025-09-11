@@ -5,7 +5,8 @@ from typing import List, Tuple
 
 from django.core.management.base import BaseCommand, CommandError
 
-from rate_engine.fx import EnvProvider, BspHtmlProvider, refresh_fx
+from rate_engine.fx import EnvProvider, refresh_fx, upsert_rate
+from rate_engine.fx_providers import load as load_provider
 
 
 def parse_pairs(arg: str) -> List[Tuple[str, str]]:
@@ -28,7 +29,7 @@ class Command(BaseCommand):
         parser.add_argument("--pairs", type=str, help="Comma-separated pairs BASE:QUOTE, e.g., USD:PGK,PGK:USD")
         parser.add_argument("--spread-bps", type=int, default=100, help="Spread in basis points applied to mid")
         parser.add_argument("--caf-pct", type=str, default="0.065", help="CAF percentage, e.g., 0.065 for 6.5%")
-        parser.add_argument("--provider", type=str, choices=["env", "bsp-html"], default="env", help="FX provider to use")
+        parser.add_argument("--provider", type=str, default="env", help="FX provider to use (env|bsp_html|bsp|bank_bsp)")
 
     def handle(self, *args, **options):
         pairs_arg = options.get("pairs")
@@ -39,12 +40,19 @@ class Command(BaseCommand):
         spread_bps: int = options["spread_bps"]
         caf_pct = Decimal(options["caf_pct"])
 
-        provider_name: str = options["provider"]
-        if provider_name == "bsp-html":
-            provider = BspHtmlProvider()
-            summary = refresh_fx(pairs, provider, source_label="bsp_html")
+        provider_name: str = (options["provider"] or "env").strip().lower()
+
+        if provider_name in {"bsp_html", "bsp", "bank_bsp"}:
+            provider = load_provider(provider_name)
+            # Provider implements fetch(pairs: list[str]) -> list[RateRow]
+            rows = provider.fetch([f"{b}:{q}" for (b, q) in pairs])
+            for r in rows:
+                upsert_rate(r.as_of_ts, r.base_ccy, r.quote_ccy, r.rate, r.rate_type, r.source)
+                self.stdout.write(self.style.SUCCESS(
+                    f"Saved {r.base_ccy}->{r.quote_ccy} {r.rate_type} {r.rate} @ {r.as_of_ts.isoformat()} [{r.source}]"
+                ))
         else:
             provider = EnvProvider()
             summary = refresh_fx(pairs, provider, spread_bps=spread_bps, caf_pct=caf_pct, source_label="ENV")
-        for row in summary:
-            self.stdout.write(self.style.SUCCESS(f"Saved {row['pair']} @ {row['as_of']} mid={row['mid']} buy={row['buy']} sell={row['sell']}"))
+            for row in summary:
+                self.stdout.write(self.style.SUCCESS(f"Saved {row['pair']} @ {row['as_of']} mid={row['mid']} buy={row['buy']} sell={row['sell']}"))

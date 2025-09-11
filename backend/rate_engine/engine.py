@@ -914,7 +914,8 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 from rest_framework import serializers, views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .fx import EnvProvider, BspHtmlProvider, refresh_fx
+from .fx import EnvProvider, refresh_fx, upsert_rate
+from .fx_providers import load as load_fx_provider
 
 
 class PieceSerializer(serializers.Serializer):
@@ -1251,13 +1252,25 @@ class FxRefreshView(views.APIView):
             pairs.append((b.strip().upper(), q.strip().upper()))
 
         provider_name = (request.data.get("provider") or "env").strip().lower()
-        if provider_name == "bsp-html":
-            provider = BspHtmlProvider()
-            summary = refresh_fx(pairs, provider, source_label="bsp_html")
+        if provider_name in {"bsp_html", "bsp", "bank_bsp"}:
+            provider = load_fx_provider(provider_name)
+            rows = provider.fetch([f"{b}:{q}" for (b, q) in pairs])
+            summary = []
+            for r in rows:
+                upsert_rate(r.as_of_ts, r.base_ccy, r.quote_ccy, r.rate, r.rate_type, r.source)
+                summary.append({
+                    "pair": f"{r.base_ccy}->{r.quote_ccy}",
+                    "as_of": r.as_of_ts.isoformat(),
+                    "mid": None,
+                    "buy": str(r.rate) if r.rate_type == "BUY" else None,
+                    "sell": str(r.rate) if r.rate_type == "SELL" else None,
+                    "source": r.source,
+                })
+            return Response({"updated": summary}, status=status.HTTP_200_OK)
         else:
             provider = EnvProvider()
             summary = refresh_fx(pairs, provider, spread_bps=spread_bps, caf_pct=caf_pct, source_label="ENV")
-        return Response({"updated": summary}, status=status.HTTP_200_OK)
+            return Response({"updated": summary}, status=status.HTTP_200_OK)
 
 
 # -------------------------- Validation --------------------------
