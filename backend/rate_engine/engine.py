@@ -913,6 +913,8 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
 from rest_framework import serializers, views, status
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .fx import EnvProvider, refresh_fx
 
 
 class PieceSerializer(serializers.Serializer):
@@ -1219,6 +1221,38 @@ class OrganizationsListView(views.APIView):
     def get(self, request):
         rows = Organizations.objects.all().order_by("name").values("id", "name")
         return Response(list(rows), status=status.HTTP_200_OK)
+
+
+class FxRefreshView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        role = getattr(user, "role", "")
+        if role not in ("manager", "finance"):
+            return Response({"detail": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        pairs_arg = request.data.get("pairs")
+        spread_bps = int(request.data.get("spread_bps", 100))
+        caf_pct = d(request.data.get("caf_pct", "0.065"))
+
+        if not pairs_arg:
+            return Response({"detail": "pairs is required, e.g., ['USD:PGK','PGK:USD']"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if isinstance(pairs_arg, str):
+            parts = [p.strip() for p in pairs_arg.split(',') if p.strip()]
+        else:
+            parts = list(pairs_arg)
+        pairs = []
+        for p in parts:
+            if ":" not in p:
+                return Response({"detail": f"Invalid pair '{p}'. Use BASE:QUOTE"}, status=status.HTTP_400_BAD_REQUEST)
+            b, q = p.split(":", 1)
+            pairs.append((b.strip().upper(), q.strip().upper()))
+
+        provider = EnvProvider()
+        summary = refresh_fx(pairs, provider, spread_bps=spread_bps, caf_pct=caf_pct, source_label="ENV")
+        return Response({"updated": summary}, status=status.HTTP_200_OK)
 
 
 # -------------------------- Validation --------------------------

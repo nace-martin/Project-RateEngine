@@ -16,7 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include # Make sure 'include' is imported
-from rate_engine.engine import QuoteComputeView, QuoteDetailView, QuoteListView, OrganizationsListView
+from rate_engine.engine import QuoteComputeView, QuoteDetailView, QuoteListView, OrganizationsListView, FxRefreshView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -26,4 +26,5 @@ urlpatterns = [
     path("api/quotes/", QuoteListView.as_view(), name="quotes-list"),
     path("api/quotes/<int:quote_id>/", QuoteDetailView.as_view(), name="quotes-detail"),
     path("api/organizations/", OrganizationsListView.as_view(), name="organizations-list"),
+    path("api/fx/refresh", FxRefreshView.as_view(), name="fx-refresh"),
 ]
