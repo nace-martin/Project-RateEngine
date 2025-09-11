@@ -74,9 +74,7 @@ class BspHtmlProvider:
                 tt_sell = d(tt_sell_txt)
             except Exception:
                 continue
-            # Skip zeros
-            if tt_buy == Decimal("0.0000") or tt_sell == Decimal("0.0000"):
-                continue
+            # Keep zeros; decision to skip is made per-direction in fetch()
             rates[code] = {"TT_BUY": tt_buy, "TT_SELL": tt_sell}
         return rates
 
@@ -90,18 +88,19 @@ class BspHtmlProvider:
                 continue
             base, quote = [p.strip().upper() for p in pair.split(":", 1)]
             if base == "PGK" and quote in table:
-                tt_buy = self._round4(table[quote]["TT_BUY"])  # FCY per PGK
-                tt_sell = self._round4(table[quote]["TT_SELL"])  # FCY per PGK
-                out.append(RateRow(as_of, base, quote, tt_buy, "BUY", "bsp_html"))
-                out.append(RateRow(as_of, base, quote, tt_sell, "SELL", "bsp_html"))
+                raw_buy = table[quote]["TT_BUY"]; raw_sell = table[quote]["TT_SELL"]
+                if raw_buy != Decimal("0.0000"):
+                    out.append(RateRow(as_of, base, quote, self._round4(raw_buy), "BUY", "bsp_html"))
+                if raw_sell != Decimal("0.0000"):
+                    out.append(RateRow(as_of, base, quote, self._round4(raw_sell), "SELL", "bsp_html"))
             elif quote == "PGK" and base in table:
                 # Invert
                 buy_raw = table[base]["TT_BUY"]
                 sell_raw = table[base]["TT_SELL"]
-                if buy_raw and sell_raw:
+                if buy_raw and buy_raw != Decimal("0.0000"):
                     inv_buy = self._round4(Decimal(1) / buy_raw)
-                    inv_sell = self._round4(Decimal(1) / sell_raw)
                     out.append(RateRow(as_of, base, quote, inv_buy, "BUY", "bsp_html"))
+                if sell_raw and sell_raw != Decimal("0.0000"):
+                    inv_sell = self._round4(Decimal(1) / sell_raw)
                     out.append(RateRow(as_of, base, quote, inv_sell, "SELL", "bsp_html"))
         return out
-
