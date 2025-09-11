@@ -1,7 +1,0 @@
-secrets/serviceAccountKey.json
-.secrets.baseline
-detect-secrets-report.json
-gitleaks-report.json
-final-gitleaks-report.json
-sweep-report.json
-bad-blobs-by-name.txt

@@ -50,6 +50,11 @@ To run locally, use two terminals.
    ```
    The backend automatically loads variables from `.env` at startup.
 
+   SECRET_KEY note:
+   - Always set `SECRET_KEY` in production.
+   - If omitted locally, the app uses a dev-only insecure default and logs a warning.
+   - Generate a strong key: `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
+
    Alternatively, set the environment variable directly:
    ```bash
    # Windows (PowerShell)
@@ -76,6 +81,7 @@ To run locally, use two terminals.
    npm run dev
    ```
    Frontend runs at http://localhost:3000.
+   If needed, copy `frontend/.env.local.example` to `frontend/.env.local` to set `NEXT_PUBLIC_API_BASE`.
 
 ## Verify Backend & CORS
 
