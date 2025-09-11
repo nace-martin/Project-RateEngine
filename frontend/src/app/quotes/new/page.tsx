@@ -45,7 +45,15 @@ export default function NewQuotePage() {
   useEffect(() => {
     async function fetchOrganizations() {
       try {
-        const response = await fetch('http://localhost:8000/api/organizations/');
+        const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+        const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+        if (!apiBase) throw new Error('API configuration error');
+
+        const response = await fetch(`${apiBase}/organizations/`, {
+          headers: {
+            ...(token ? { 'Authorization': `Token ${token}` } : {}),
+          },
+        });
         if (!response.ok) throw new Error('Failed to fetch organizations');
         const data = await response.json();
         setOrganizations(data);
@@ -90,9 +98,16 @@ export default function NewQuotePage() {
     };
 
     try {
-      const response = await fetch('http://localhost:8000/api/quote/compute', {
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+      if (!apiBase) throw new Error('API configuration error');
+
+      const response = await fetch(`${apiBase}/quote/compute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Token ${token}` } : {}),
+        },
         body: JSON.stringify(payload),
       });
 
@@ -187,10 +202,10 @@ export default function NewQuotePage() {
               <Label>Pieces</Label>
               {pieces.map((piece, index) => (
                 <div key={index} className="flex items-center gap-2 p-2 border rounded-md">
-                  <Input type="number" placeholder="Weight (kg)" value={piece.weight_kg} onChange={(e) => handlePieceChange(index, 'weight_kg', e.target.value)} className="w-24" required />
-                  <Input type="number" placeholder="L (cm)" value={piece.length_cm} onChange={(e) => handlePieceChange(index, 'length_cm', e.target.value)} />
-                  <Input type="number" placeholder="W (cm)" value={piece.width_cm} onChange={(e) => handlePieceChange(index, 'width_cm', e.target.value)} />
-                  <Input type="number" placeholder="H (cm)" value={piece.height_cm} onChange={(e) => handlePieceChange(index, 'height_cm', e.target.value)} />
+                  <Input type="number" placeholder="Weight (kg)" value={piece.weight_kg ?? ''} onChange={(e) => handlePieceChange(index, 'weight_kg', e.target.value)} className="w-24" required />
+                  <Input type="number" placeholder="L (cm)" value={piece.length_cm ?? ''} onChange={(e) => handlePieceChange(index, 'length_cm', e.target.value)} />
+                  <Input type="number" placeholder="W (cm)" value={piece.width_cm ?? ''} onChange={(e) => handlePieceChange(index, 'width_cm', e.target.value)} />
+                  <Input type="number" placeholder="H (cm)" value={piece.height_cm ?? ''} onChange={(e) => handlePieceChange(index, 'height_cm', e.target.value)} />
                 </div>
               ))}
               <div className="flex justify-between items-center">

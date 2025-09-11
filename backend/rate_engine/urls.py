@@ -16,11 +16,14 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include # Make sure 'include' is imported
-from rate_engine.engine import QuoteComputeView
+from rate_engine.engine import QuoteComputeView, QuoteDetailView, QuoteListView, OrganizationsListView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('accounts.urls')), # Add accounts URLs
     # API endpoints
     path("api/quote/compute", QuoteComputeView.as_view(), name="compute-quote"),
+    path("api/quotes/", QuoteListView.as_view(), name="quotes-list"),
+    path("api/quotes/<int:quote_id>/", QuoteDetailView.as_view(), name="quotes-detail"),
+    path("api/organizations/", OrganizationsListView.as_view(), name="organizations-list"),
 ]

@@ -27,7 +27,9 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 import logging
 
+from django.db import transaction
 from django.db.models import Q, F
+from django.shortcuts import get_object_or_404
 import re
 from django.utils.timezone import now
 
@@ -37,7 +39,7 @@ from .models import (
     Ratecards as Ratecard, RatecardConfig, Lanes as Lane, LaneBreaks as LaneBreak,
     FeeTypes as FeeType, RatecardFees as RatecardFee, CartageLadders as CartageLadder,
     Services as Service, ServiceItems as ServiceItem, SellCostLinksSimple as SellCostLink,
-    CurrencyRates as CurrencyRate, PricingPolicy, Organizations,
+    CurrencyRates as CurrencyRate, PricingPolicy, Organizations, Quotes, QuoteLines,
     Routes, RouteLegs,
 )
 
@@ -1065,7 +1067,158 @@ class QuoteComputeView(views.APIView):
             "totals": {k: {"amount": str(v.amount), "currency": v.currency} for k, v in res.totals.items()},
             "snapshot": res.snapshot,
         }
+        # Add a simple status string for UI compatibility
+        try:
+            body["status"] = "MANUAL_RATE_REQUIRED" if bool(res.snapshot.get("manual_rate_required")) else "COMPLETE"
+        except Exception:
+            body["status"] = "COMPLETE"
+
+        # Persist quote and lines (best-effort; do not break compute on DB failure)
+        try:
+            with transaction.atomic():
+                org = Organizations.objects.get(id=shipment.org_id)
+                status_str = 'PENDING_RATE' if (bool(res.snapshot.get('manual_rate_required')) or len(res.sell_lines) == 0) else 'COMPLETE'
+                quote = Quotes.objects.create(
+                    organization=org,
+                    status=status_str,
+                    request_snapshot=payload,
+                    buy_total=res.totals["buy_total"].amount,
+                    sell_total=res.totals["sell_total"].amount,
+                    currency=res.totals["sell_total"].currency,
+                )
+
+                def save_line(cl: CalcLine):
+                    QuoteLines.objects.create(
+                        quote=quote,
+                        code=cl.code,
+                        description=cl.description,
+                        is_buy=cl.is_buy,
+                        is_sell=cl.is_sell,
+                        qty=cl.qty,
+                        unit=cl.unit,
+                        unit_price=cl.unit_price.amount,
+                        extended_price=cl.extended.amount,
+                        currency=cl.extended.currency,
+                        manual_rate_required=bool((getattr(cl, 'meta', {}) or {}).get('manual_rate_required', False)),
+                    )
+
+                for l in res.buy_lines:
+                    save_line(l)
+                for l in res.sell_lines:
+                    save_line(l)
+
+                body["quote_id"] = quote.id
+        except Exception as e:
+            logging.exception("Quote persistence failed: %s", e)
+
         return Response(body, status=status.HTTP_200_OK)
+
+
+class QuoteDetailView(views.APIView):
+    def get(self, request, quote_id: int):
+        q = get_object_or_404(Quotes.objects.select_related("organization").prefetch_related("lines"), pk=quote_id)
+
+        def serialize_line(l: QuoteLines) -> Dict:
+            return {
+                "code": l.code,
+                "desc": l.description,
+                "qty": str(l.qty),
+                "unit": l.unit,
+                "unit_price": {"amount": str(l.unit_price), "currency": l.currency},
+                "amount": {"amount": str(l.extended_price), "currency": l.currency},
+                "is_buy": l.is_buy,
+                "is_sell": l.is_sell,
+                "manual_rate_required": bool(l.manual_rate_required),
+            }
+
+        lines = list(q.lines.all())
+        body = {
+            "quote_id": q.id,
+            "status": q.status,
+            "currency": q.currency,
+            "totals": {
+                "buy_total": {"amount": str(q.buy_total), "currency": q.currency},
+                "sell_total": {"amount": str(q.sell_total), "currency": q.currency},
+            },
+            "snapshot": q.request_snapshot,
+            "created_at": q.created_at.isoformat(),
+            "updated_at": q.updated_at.isoformat(),
+            "buy_lines": [serialize_line(l) for l in lines if l.is_buy],
+            "sell_lines": [serialize_line(l) for l in lines if l.is_sell],
+        }
+        return Response(body, status=status.HTTP_200_OK)
+
+
+class QuoteListView(views.APIView):
+    def get(self, request):
+        qs = Quotes.objects.select_related("organization").order_by("-created_at")
+        org_id = request.query_params.get("org_id")
+        status_filter = request.query_params.get("status")
+        if org_id:
+            try:
+                qs = qs.filter(organization_id=int(org_id))
+            except ValueError:
+                pass
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        # Build array payload matching frontend Quote type
+        items = []
+        for q in qs[:200]:  # simple cap
+            snap = q.request_snapshot if isinstance(q.request_snapshot, dict) else {}
+            pieces = snap.get("pieces") or []
+            # Compute actual and volume
+            actual = ZERO
+            volume = ZERO
+            for p in pieces:
+                try:
+                    w = d(p.get("weight_kg", 0))
+                    l = d(p.get("length_cm", 0))
+                    w_cm = d(p.get("width_cm", 0))
+                    h = d(p.get("height_cm", 0))
+                except Exception:
+                    w = ZERO; l = ZERO; w_cm = ZERO; h = ZERO
+                actual += w
+                if l and w_cm and h:
+                    volume += (l * w_cm * h) / Decimal(1_000_000)
+            # Chargeable using default 167 if dims provided
+            dim_factor = Decimal(167)
+            chargeable = max(actual, (volume * dim_factor).quantize(FOURPLACES))
+
+            # Client projection (using Organization)
+            org = q.organization
+            client_obj = {
+                "id": org.id,
+                "name": org.name,
+                "email": "",
+                "phone": "",
+                "org_type": org.audience,
+                "created_at": q.created_at.isoformat(),
+            }
+
+            items.append({
+                "id": q.id,
+                "client": client_obj,
+                "origin": snap.get("origin_iata") or snap.get("origin") or "",
+                "destination": snap.get("dest_iata") or snap.get("destination") or "",
+                "mode": snap.get("shipment_type") or "",
+                "actual_weight_kg": str(actual.quantize(FOURPLACES)),
+                "volume_cbm": str(volume.quantize(FOURPLACES)),
+                "chargeable_weight_kg": str(chargeable.quantize(FOURPLACES)),
+                "rate_used_per_kg": "",
+                "base_cost": str(Decimal(q.buy_total).quantize(TWOPLACES)),
+                "margin_pct": str(((d(q.sell_total) - d(q.buy_total)) / (d(q.sell_total) or Decimal(1)) * Decimal(100)).quantize(FOURPLACES)),
+                "total_sell": str(Decimal(q.sell_total).quantize(TWOPLACES)),
+                "created_at": q.created_at.isoformat(),
+            })
+
+        return Response(items, status=status.HTTP_200_OK)
+
+
+class OrganizationsListView(views.APIView):
+    def get(self, request):
+        rows = Organizations.objects.all().order_by("name").values("id", "name")
+        return Response(list(rows), status=status.HTTP_200_OK)
 
 
 # -------------------------- Validation --------------------------

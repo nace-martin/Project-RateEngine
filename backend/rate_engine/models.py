@@ -275,39 +275,41 @@ class Sites(models.Model):
 
 
 class Quotes(models.Model):
-    id = models.UUIDField(primary_key=True)
-    org = models.ForeignKey(Organizations, models.DO_NOTHING)
-    sell_currency = models.TextField()
-    audience = models.TextField()
-    incoterms = models.TextField(blank=True, null=True)
-    created_ts = models.DateTimeField()
-    status = models.TextField()
-    meta = models.JSONField()
+    id = models.BigAutoField(primary_key=True)
+    organization = models.ForeignKey(Organizations, models.PROTECT)
+    status = models.CharField(max_length=32, default='COMPLETE', help_text="e.g., COMPLETE, PENDING_RATE, EXPIRED")
+    # Store the original request payload for reference
+    request_snapshot = models.JSONField()
+    # Store the calculated totals
+    buy_total = models.DecimalField(max_digits=14, decimal_places=2)
+    sell_total = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        managed = False
-        db_table = 'quotes'
+        managed = True
+        db_table = 'quotes_v2'
 
 
 class QuoteLines(models.Model):
     id = models.BigAutoField(primary_key=True)
-    quote = models.ForeignKey(Quotes, models.DO_NOTHING)
-    code = models.TextField()
+    quote = models.ForeignKey(Quotes, models.CASCADE, related_name='lines')
+    code = models.CharField(max_length=64)
     description = models.TextField()
-    qty = models.DecimalField(max_digits=12, decimal_places=3)
-    unit = models.TextField()
-    unit_price = models.DecimalField(max_digits=12, decimal_places=4)
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
-    currency = models.TextField()
-    tax_pct = models.DecimalField(max_digits=5, decimal_places=2)
     is_buy = models.BooleanField()
     is_sell = models.BooleanField()
-    source_ratecard_id = models.BigIntegerField(blank=True, null=True)
-    computed_json = models.JSONField()
+    qty = models.DecimalField(max_digits=12, decimal_places=3)
+    unit = models.CharField(max_length=16)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=4)
+    extended_price = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    # Add a field to flag lines that need manual input
+    manual_rate_required = models.BooleanField(default=False)
 
     class Meta:
-        managed = False
-        db_table = 'quote_lines'
+        managed = True
+        db_table = 'quote_lines_v2'
 
 
 class QuoteTotals(models.Model):
