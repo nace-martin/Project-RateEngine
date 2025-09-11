@@ -2,7 +2,7 @@ from django.contrib import admin, messages
 from .models import (
     Providers, Stations, Ratecards, RatecardConfig, Lanes, LaneBreaks,
     FeeTypes, RatecardFees, Services, ServiceItems, SellCostLinksSimple,
-    CurrencyRates, PricingPolicy,
+    CurrencyRates, PricingPolicy, Organizations,
 )
 from .engine import validate_break_monotonic
 
@@ -86,3 +86,10 @@ class CurrencyRatesAdmin(ReadOnlyAdmin):
 class PricingPolicyAdmin(ReadOnlyAdmin):
     list_display = ("id","audience","caf_on_fx","gst_applies","gst_pct")
     list_filter  = ("audience",)
+
+
+@admin.register(Organizations)
+class OrganizationsAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "audience", "default_sell_currency", "country_code")
+    list_filter = ("audience", "default_sell_currency", "country_code")
+    search_fields = ("name",)
