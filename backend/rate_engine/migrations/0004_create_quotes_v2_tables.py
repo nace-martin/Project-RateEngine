@@ -7,7 +7,7 @@ def create_quotes_v2_tables(apps, schema_editor):
     class QuotesV2(models.Model):
         id = models.BigAutoField(primary_key=True)
         organization = models.ForeignKey(
-            'rate_engine.Organizations', on_delete=models.PROTECT
+            'rate_engine.Organizations', on_delete=models.PROTECT, db_constraint=False
         )
         status = models.CharField(max_length=32, default='COMPLETE')
         request_snapshot = models.JSONField()
@@ -18,7 +18,7 @@ def create_quotes_v2_tables(apps, schema_editor):
         updated_at = models.DateTimeField(auto_now=True)
 
         class Meta:
-            app_label = 'rate_engine'
+            app_label = 'rate_engine_tmp'
             db_table = 'quotes_v2'
 
     class QuoteLinesV2(models.Model):
@@ -38,7 +38,7 @@ def create_quotes_v2_tables(apps, schema_editor):
         manual_rate_required = models.BooleanField(default=False)
 
         class Meta:
-            app_label = 'rate_engine'
+            app_label = 'rate_engine_tmp'
             db_table = 'quote_lines_v2'
 
     if 'quotes_v2' not in existing:
@@ -67,4 +67,3 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunPython(create_quotes_v2_tables, reverse_code=drop_quotes_v2_tables),
     ]
-
