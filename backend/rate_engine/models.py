@@ -289,7 +289,8 @@ class Quotes(models.Model):
 
     class Meta:
         managed = True
-        db_table = 'quotes_v2'
+        db_table = 'quotes'
+        verbose_name_plural = 'Quotes'
 
 
 class QuoteLines(models.Model):
@@ -309,22 +310,8 @@ class QuoteLines(models.Model):
 
     class Meta:
         managed = True
-        db_table = 'quote_lines_v2'
-
-
-class QuoteTotals(models.Model):
-    id = models.BigAutoField(primary_key=True)
-    quote = models.OneToOneField(Quotes, models.DO_NOTHING)
-    buy_total = models.DecimalField(max_digits=14, decimal_places=2)
-    sell_total = models.DecimalField(max_digits=14, decimal_places=2)
-    tax_total = models.DecimalField(max_digits=14, decimal_places=2)
-    margin_abs = models.DecimalField(max_digits=14, decimal_places=2)
-    margin_pct = models.DecimalField(max_digits=7, decimal_places=3)
-
-    class Meta:
-        managed = False
-        db_table = 'quote_totals'
-
+        db_table = 'quote_lines'
+        ordering = ['id']
 
 # New models for multi-leg journeys
 class Routes(models.Model):

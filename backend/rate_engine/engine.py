@@ -968,6 +968,7 @@ class ComputeRequestSerializer(serializers.Serializer):
 
 
 class QuoteComputeView(views.APIView):
+    @transaction.atomic
     def post(self, request):
         # Normalize legacy piece keys (weight/length/width/height -> *_kg/_cm)
         incoming = request.data
@@ -1009,113 +1010,64 @@ class QuoteComputeView(views.APIView):
         )
 
         try:
-            res = compute_quote(
+            # 1. Run the rating engine to get the calculation result
+            calc_result = compute_quote(
                 shipment,
                 provider_hint=data.get("provider_hint"),
                 caf_pct=d(data.get("caf_pct") or Decimal("0.065")),
             )
-        except ValueError:
-            # Fallback when pricing data is not seeded: return empty breakdown with snapshot
-            # Try to derive fallback sell currency from org; default to USD
-            try:
-                payer_org = Organizations.objects.get(id=shipment.org_id)
-                if payer_org.country_code == 'PG':
-                    sc = 'PGK'
-                elif payer_org.country_code == 'AU':
-                    sc = 'AUD'
-                else:
-                    sc = 'USD'
-                aud = payer_org.audience
-            except Exception:
-                sc = 'USD'
-                aud = None
-            zero = Money(ZERO, sc)
-            res = CalcResult(
-                buy_lines=[],
-                sell_lines=[],
-                totals={
-                    "buy_total": zero,
-                    "sell_total": zero,
-                    "margin": Money(ZERO, sc),
-                },
-                snapshot={
-                    "org_id": shipment.org_id,
-                    "origin": shipment.origin_iata,
-                    "destination": shipment.dest_iata,
-                    "shipment_type": shipment.shipment_type,
-                    "service_scope": shipment.service_scope,
-                    "audience": aud,
-                    "sell_currency": sc,
-                    "actual_weight": str(shipment.actual_weight),
-                    "volume_m3": str(shipment.volume_m3),
-                },
+
+            is_manual = calc_result.snapshot.get("manual_rate_required", False)
+            status_str = 'PENDING_RATE' if is_manual else 'COMPLETE'
+            totals = calc_result.totals
+
+            # 2. Create the main Quote record
+            new_quote = Quotes.objects.create(
+                organization_id=shipment.org_id,
+                status=status_str,
+                request_snapshot=data,  # Save the original request
+                buy_total=totals.get('buy_total', Money(ZERO, 'USD')).amount,
+                sell_total=totals.get('sell_total', Money(ZERO, 'USD')).amount,
+                currency=totals.get('sell_total', Money(ZERO, 'USD')).currency,
             )
 
-        def present_line(cl: CalcLine, fx_to: str) -> Dict:
-            return {
-                "code": cl.code,
-                "desc": cl.description,
-                "qty": str(cl.qty),
-                "unit": cl.unit,
-                "unit_price": {"amount": str(cl.unit_price.amount), "currency": cl.unit_price.currency},
-                "amount": {"amount": str(cl.extended.amount), "currency": cl.extended.currency},
-                "is_buy": cl.is_buy,
-                "is_sell": cl.is_sell,
-                "tax_pct": str(cl.tax_pct),
-                "source_ratecard_id": cl.source_ratecard_id,
-            }
-
-        body = {
-            "buy_lines": [present_line(l, res.totals["sell_total"].currency) for l in res.buy_lines],
-            "sell_lines": [present_line(l, res.totals["sell_total"].currency) for l in res.sell_lines],
-            "totals": {k: {"amount": str(v.amount), "currency": v.currency} for k, v in res.totals.items()},
-            "snapshot": res.snapshot,
-        }
-        # Add a simple status string for UI compatibility
-        try:
-            body["status"] = "MANUAL_RATE_REQUIRED" if bool(res.snapshot.get("manual_rate_required")) else "COMPLETE"
-        except Exception:
-            body["status"] = "COMPLETE"
-
-        # Persist quote and lines (best-effort; do not break compute on DB failure)
-        try:
-            with transaction.atomic():
-                org = Organizations.objects.get(id=shipment.org_id)
-                status_str = 'PENDING_RATE' if (bool(res.snapshot.get('manual_rate_required')) or len(res.sell_lines) == 0) else 'COMPLETE'
-                quote = Quotes.objects.create(
-                    organization=org,
-                    status=status_str,
-                    request_snapshot=payload,
-                    buy_total=res.totals["buy_total"].amount,
-                    sell_total=res.totals["sell_total"].amount,
-                    currency=res.totals["sell_total"].currency,
+            # 3. Create the QuoteLines for the new Quote
+            lines_to_create = []
+            all_lines = calc_result.buy_lines + calc_result.sell_lines
+            for line in all_lines:
+                lines_to_create.append(
+                    QuoteLines(
+                        quote=new_quote,
+                        code=line.code,
+                        description=line.description,
+                        is_buy=line.is_buy,
+                        is_sell=line.is_sell,
+                        qty=line.qty,
+                        unit=line.unit,
+                        unit_price=line.unit_price.amount,
+                        extended_price=line.extended.amount,
+                        currency=line.extended.currency,
+                        manual_rate_required=getattr(line, 'meta', {}).get("manual_rate_required", False),
+                    )
                 )
 
-                def save_line(cl: CalcLine):
-                    QuoteLines.objects.create(
-                        quote=quote,
-                        code=cl.code,
-                        description=cl.description,
-                        is_buy=cl.is_buy,
-                        is_sell=cl.is_sell,
-                        qty=cl.qty,
-                        unit=cl.unit,
-                        unit_price=cl.unit_price.amount,
-                        extended_price=cl.extended.amount,
-                        currency=cl.extended.currency,
-                        manual_rate_required=bool((getattr(cl, 'meta', {}) or {}).get('manual_rate_required', False)),
-                    )
+            QuoteLines.objects.bulk_create(lines_to_create)
 
-                for l in res.buy_lines:
-                    save_line(l)
-                for l in res.sell_lines:
-                    save_line(l)
+            # 4. Return the ID of the new quote
+            response_data = {
+                "quote_id": new_quote.id,
+                "status": status_str,
+                "sell_total": {
+                    "amount": str(new_quote.sell_total),
+                    "currency": new_quote.currency,
+                },
+                "manual_reasons": calc_result.snapshot.get("manual_reasons", []),
+            }
+            return Response(response_data, status=status.HTTP_201_CREATED)
 
-                body["quote_id"] = quote.id
-        except Exception as e:
-            logging.exception("Quote persistence failed: %s", e)
-
-        return Response(body, status=status.HTTP_200_OK)
+        except ValueError as e:
+            # If the engine fails (e.g., no route found), return an error
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class QuoteDetailView(views.APIView):
