@@ -29,7 +29,7 @@ class Command(BaseCommand):
         parser.add_argument("--pairs", type=str, help="Comma-separated pairs BASE:QUOTE, e.g., USD:PGK,PGK:USD")
         parser.add_argument("--spread-bps", type=int, default=100, help="Spread in basis points applied to mid")
         parser.add_argument("--caf-pct", type=str, default="0.065", help="CAF percentage, e.g., 0.065 for 6.5%")
-        parser.add_argument("--provider", type=str, default="env", help="FX provider to use (env|bsp_html|bsp|bank_bsp)")
+        parser.add_argument("--provider", type=str, default="bsp_html", help="FX provider to use (bsp_html|bsp|bank_bsp|env)")
 
     def handle(self, *args, **options):
         pairs_arg = options.get("pairs")
@@ -40,7 +40,7 @@ class Command(BaseCommand):
         spread_bps: int = options["spread_bps"]
         caf_pct = Decimal(options["caf_pct"])
 
-        provider_name: str = (options["provider"] or "env").strip().lower()
+        provider_name: str = (options["provider"] or "bsp_html").strip().lower()
 
         if provider_name in {"bsp_html", "bsp", "bank_bsp"}:
             provider = load_provider(provider_name)

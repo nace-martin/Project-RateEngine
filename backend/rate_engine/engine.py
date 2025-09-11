@@ -1251,7 +1251,7 @@ class FxRefreshView(views.APIView):
             b, q = p.split(":", 1)
             pairs.append((b.strip().upper(), q.strip().upper()))
 
-        provider_name = (request.data.get("provider") or "env").strip().lower()
+        provider_name = (request.data.get("provider") or "bsp_html").strip().lower()
         if provider_name in {"bsp_html", "bsp", "bank_bsp"}:
             provider = load_fx_provider(provider_name)
             rows = provider.fetch([f"{b}:{q}" for (b, q) in pairs])
