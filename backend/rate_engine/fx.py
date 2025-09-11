@@ -65,6 +65,90 @@ class EnvProvider(FXProvider):
         return MidRate(base=base, quote=quote, rate=r, as_of=self.as_of)
 
 
+@dataclass
+class TTRate:
+    base: str
+    quote: str
+    tt_buy: Decimal
+    tt_sell: Decimal
+    as_of: datetime
+
+
+class BspHtmlProvider:
+    """
+    Scrapes BSP public FX page. BSP publishes foreign per 1 PGK for TT BUY/SELL.
+    For requested pairs:
+      - PGK:FCY -> BUY = TT_BUY, SELL = TT_SELL (no inversion)
+      - FCY:PGK -> BUY = 1/TT_BUY, SELL = 1/TT_SELL (invert)
+    """
+
+    def __init__(self, url: str | None = None, as_of: datetime | None = None):
+        self.url = url or os.environ.get(
+            "BSP_FX_URL",
+            "https://www.bsp.com.pg/Personal-Banking/Foreign-Exchange/Exchange-Rates/",
+        )
+        self.as_of = as_of or now()
+
+    def _fetch_html(self) -> str:
+        import urllib.request
+        with urllib.request.urlopen(self.url, timeout=15) as resp:  # nosec B310
+            return resp.read().decode("utf-8", errors="ignore")
+
+    @staticmethod
+    def _parse_table(html: str) -> Dict[str, Tuple[Decimal, Decimal]]:
+        """
+        Return mapping currency_code -> (tt_buy, tt_sell). Skips 0.0000.
+        Tries to be liberal with HTML using regex.
+        """
+        import re
+
+        # Normalize whitespace
+        text = re.sub(r"\s+", " ", html)
+
+        # Heuristic: find rows that contain a 3-letter code and two decimal numbers
+        row_re = re.compile(
+            r"(?i)>([A-Z]{3})<[^>]*>.*?TT\s*Buy[^<]*<|>([A-Z]{3})<",
+        )
+
+        # Simpler approach: find sequences like CODE ... (\d+\.\d{1,6}) ... (\d+\.\d{1,6}) in a row
+        # We'll scan by each occurrence of a currency code and then look ahead for two numbers.
+        code_re = re.compile(r"(?i)>([A-Z]{3})<")
+        num_re = re.compile(r"(\d+\.\d{1,6})")
+
+        table: Dict[str, Tuple[Decimal, Decimal]] = {}
+        for m in code_re.finditer(text):
+            code = m.group(1).upper()
+            # Skip PGK as it's the base
+            if code == "PGK":
+                continue
+            tail = text[m.end(): m.end() + 400]  # look ahead
+            nums = num_re.findall(tail)
+            if len(nums) >= 2:
+                buy_v = d(nums[0])
+                sell_v = d(nums[1])
+                if buy_v == Decimal("0.0000") or sell_v == Decimal("0.0000"):
+                    continue
+                table[code] = (buy_v, sell_v)
+        return table
+
+    def get_tt_rates(self, base: str, quote: str) -> TTRate:
+        html = self._fetch_html()
+        table = self._parse_table(html)
+        base_u = base.upper(); quote_u = quote.upper()
+
+        if base_u == "PGK" and quote_u in table:
+            buy, sell = table[quote_u]
+            return TTRate(base=base_u, quote=quote_u, tt_buy=buy, tt_sell=sell, as_of=self.as_of)
+        if quote_u == "PGK" and base_u in table:
+            buy, sell = table[base_u]
+            # Invert for FCY:PGK pair
+            inv_buy = (Decimal(1) / buy) if buy else Decimal(0)
+            inv_sell = (Decimal(1) / sell) if sell else Decimal(0)
+            return TTRate(base=base_u, quote=quote_u, tt_buy=inv_buy, tt_sell=inv_sell, as_of=self.as_of)
+
+        raise ValueError(f"Pair not supported by BSP table: {base_u}:{quote_u}")
+
+
 def compute_tt_buy_sell(mid: Decimal, spread_bps: int, caf_pct: Decimal) -> Tuple[Decimal, Decimal]:
     """
     Returns (buy_rate, sell_rate) as Decimals.
@@ -102,9 +186,27 @@ def refresh_fx(
     """
     results: List[Dict] = []
     for base, quote in pairs:
+        # If provider exposes TT directly (e.g., BSP), use it
+        if hasattr(provider, "get_tt_rates"):
+            tr = getattr(provider, "get_tt_rates")(base, quote)
+            # Skip if TT values are zero
+            if tr.tt_buy == Decimal("0.0000") or tr.tt_sell == Decimal("0.0000"):
+                continue
+            upsert_rate(tr.as_of, tr.base, tr.quote, tr.tt_buy, "BUY", source_label)
+            upsert_rate(tr.as_of, tr.base, tr.quote, tr.tt_sell, "SELL", source_label)
+            results.append({
+                "pair": f"{tr.base}->{tr.quote}",
+                "as_of": tr.as_of.isoformat(),
+                "mid": None,
+                "buy": str(tr.tt_buy),
+                "sell": str(tr.tt_sell),
+                "source": source_label,
+            })
+            continue
+
+        # Fallback: mid + spread/CAF
         mr = provider.get_mid_rate(base, quote)
         buy, sell = compute_tt_buy_sell(mr.rate, spread_bps, caf_pct)
-        # Persist both types for the same base->quote
         upsert_rate(mr.as_of, mr.base, mr.quote, buy, "BUY", source_label)
         upsert_rate(mr.as_of, mr.base, mr.quote, sell, "SELL", source_label)
         results.append({
@@ -116,4 +218,3 @@ def refresh_fx(
             "source": source_label,
         })
     return results
-

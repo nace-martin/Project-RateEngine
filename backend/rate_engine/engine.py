@@ -914,7 +914,7 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 from rest_framework import serializers, views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from .fx import EnvProvider, refresh_fx
+from .fx import EnvProvider, BspHtmlProvider, refresh_fx
 
 
 class PieceSerializer(serializers.Serializer):
@@ -1250,8 +1250,13 @@ class FxRefreshView(views.APIView):
             b, q = p.split(":", 1)
             pairs.append((b.strip().upper(), q.strip().upper()))
 
-        provider = EnvProvider()
-        summary = refresh_fx(pairs, provider, spread_bps=spread_bps, caf_pct=caf_pct, source_label="ENV")
+        provider_name = (request.data.get("provider") or "env").strip().lower()
+        if provider_name == "bsp-html":
+            provider = BspHtmlProvider()
+            summary = refresh_fx(pairs, provider, source_label="bsp_html")
+        else:
+            provider = EnvProvider()
+            summary = refresh_fx(pairs, provider, spread_bps=spread_bps, caf_pct=caf_pct, source_label="ENV")
         return Response({"updated": summary}, status=status.HTTP_200_OK)
 
 
