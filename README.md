@@ -130,6 +130,17 @@ To run locally, use two terminals.
   - Unix/macOS: `./scripts/test_backend.sh`
   - Windows PowerShell: `./scripts/test_backend.ps1`
 
+### Makefile Shortcuts (repo root)
+
+- `make db-up` — start Postgres via Docker Compose (prints `DATABASE_URL`).
+- `make db-down` — stop Compose services.
+- `make db-logs` — tail Postgres logs.
+- `make backend-install` — create venv and install backend deps.
+- `make backend-run` — run Django dev server.
+- `make test-backend` — run backend migrations and tests.
+- `make frontend-install` — install frontend deps.
+- `make frontend-dev` — start Next.js dev server.
+
 Notes:
 - The `rate_engine` app maps to an existing schema (`managed=False`); tests that depend on those tables will be skipped if the schema is missing.
 - The `accounts` app (including `OrganizationMembership`) is managed by Django and will be migrated automatically.
