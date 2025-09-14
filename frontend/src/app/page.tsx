@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Client } from '@/lib/types';
+import { extractErrorFromResponse } from '@/lib/utils';
 import ProtectedRoute from '@/components/protected-route';
 import { useAuth } from '@/context/auth-context';
 
@@ -22,7 +23,7 @@ export default function HomePage() {
 
       try {
         const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
-        const res = await fetch(`${apiBase}/clients/`, {
+        const res = await fetch(`${apiBase}/organizations/`, {
           headers: {
             ...(token ? { Authorization: `Token ${token}` } : {}),
             'Content-Type': 'application/json',
@@ -31,11 +32,20 @@ export default function HomePage() {
         });
 
         if (!res.ok) {
-          setError(`Failed to fetch clients: ${res.status}`);
+          const msg = await extractErrorFromResponse(res, 'Failed to fetch clients');
+          setError(msg);
           setClients([]);
         } else {
           const data = await res.json();
-          setClients(Array.isArray(data) ? data : []);
+          const items: Client[] = (Array.isArray(data) ? data : []).map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            email: row.email ?? '',
+            phone: row.phone ?? '',
+            org_type: row.org_type ?? row.audience ?? '',
+            created_at: row.created_at ?? '',
+          }));
+          setClients(items);
         }
       } catch (e: any) {
         setError(e?.message || 'Unexpected error fetching clients');

@@ -42,6 +42,12 @@ from .models import (
     CurrencyRates as CurrencyRate, PricingPolicy, Organizations, Quotes, QuoteLines,
     Routes, RouteLegs,
 )
+from accounts.models import OrganizationMembership
+
+# Quote status values shared with frontend
+class QuoteStatus:
+    COMPLETE = "COMPLETE"
+    PENDING_RATE = "PENDING_RATE"
 
 # --------------------------- Datatypes ---------------------------
 
@@ -913,6 +919,7 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
 from rest_framework import serializers, views, status
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 import os
 from .fx import EnvProvider, compute_tt_buy_sell, upsert_rate
@@ -968,6 +975,7 @@ class ComputeRequestSerializer(serializers.Serializer):
 
 
 class QuoteComputeView(views.APIView):
+    permission_classes = [IsAuthenticated]
     @transaction.atomic
     def post(self, request):
         # Normalize legacy piece keys (weight/length/width/height -> *_kg/_cm)
@@ -992,6 +1000,21 @@ class QuoteComputeView(views.APIView):
         ser = ComputeRequestSerializer(data=payload)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
+
+        # -------- Organization authorization check --------
+        org_id = int(data["org_id"])
+        user = request.user
+        user_role = getattr(user, "role", "")
+
+        def is_authorized_for_org(user, org_id: int) -> bool:
+            # Managers and Finance can quote for any organization
+            if user_role in ("manager", "finance"):
+                return True
+            # Check explicit per-organization membership
+            return OrganizationMembership.objects.filter(user=user, organization_id=org_id, can_quote=True).exists()
+
+        if not is_authorized_for_org(user, org_id):
+            return Response({"detail": "Forbidden for organization"}, status=status.HTTP_403_FORBIDDEN)
 
         shipment = ShipmentInput(
             org_id=int(data["org_id"]),
@@ -1018,7 +1041,8 @@ class QuoteComputeView(views.APIView):
             )
 
             is_manual = calc_result.snapshot.get("manual_rate_required", False)
-            status_str = 'PENDING_RATE' if is_manual else 'COMPLETE'
+            # Allowable statuses: QuoteStatus.PENDING_RATE | QuoteStatus.COMPLETE
+            status_str = QuoteStatus.PENDING_RATE if is_manual else QuoteStatus.COMPLETE
             totals = calc_result.totals
 
             # 2. Create the main Quote record
@@ -1066,8 +1090,8 @@ class QuoteComputeView(views.APIView):
             return Response(response_data, status=status.HTTP_201_CREATED)
 
         except ValueError as e:
-            # If the engine fails (e.g., no route found), return an error
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            # If the engine fails (e.g., no route found), use DRF 'detail' error shape
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class QuoteDetailView(views.APIView):
@@ -1087,9 +1111,55 @@ class QuoteDetailView(views.APIView):
                 "manual_rate_required": bool(l.manual_rate_required),
             }
 
+        # Compute projections to match list endpoint and frontend expectations
+        snap = q.request_snapshot if isinstance(q.request_snapshot, dict) else {}
+        pieces = snap.get("pieces") or []
+        actual = ZERO
+        volume = ZERO
+        for p in pieces:
+            try:
+                w = d(p.get("weight_kg", 0))
+                l = d(p.get("length_cm", 0))
+                w_cm = d(p.get("width_cm", 0))
+                h = d(p.get("height_cm", 0))
+            except Exception:
+                w = ZERO; l = ZERO; w_cm = ZERO; h = ZERO
+            actual += w
+            if l and w_cm and h:
+                volume += (l * w_cm * h) / Decimal(1_000_000)
+        dim_factor = Decimal(167)
+        chargeable = max(actual, (volume * dim_factor).quantize(FOURPLACES))
+
+        org = q.organization
+        client_obj = {
+            "id": org.id,
+            "name": org.name,
+            "email": "",
+            "phone": "",
+            "org_type": org.audience,
+            "created_at": q.created_at.isoformat(),
+        }
+
+        # Primary detail payload consistent with list items
+        detail = {
+            "id": q.id,
+            "client": client_obj,
+            "origin": snap.get("origin_iata") or snap.get("origin") or "",
+            "destination": snap.get("dest_iata") or snap.get("destination") or "",
+            "mode": snap.get("shipment_type") or "",
+            "actual_weight_kg": str(actual.quantize(FOURPLACES)),
+            "volume_cbm": str(volume.quantize(FOURPLACES)),
+            "chargeable_weight_kg": str(chargeable.quantize(FOURPLACES)),
+            "rate_used_per_kg": "",
+            "base_cost": str(Decimal(q.buy_total).quantize(TWOPLACES)),
+            "margin_pct": str(((d(q.sell_total) - d(q.buy_total)) / (d(q.sell_total) or Decimal(1)) * Decimal(100)).quantize(FOURPLACES)),
+            "total_sell": str(Decimal(q.sell_total).quantize(TWOPLACES)),
+            "created_at": q.created_at.isoformat(),
+        }
+
+        # Include detailed fields for advanced views without breaking the UI
         lines = list(q.lines.all())
-        body = {
-            "quote_id": q.id,
+        extra = {
             "status": q.status,
             "currency": q.currency,
             "totals": {
@@ -1097,12 +1167,12 @@ class QuoteDetailView(views.APIView):
                 "sell_total": {"amount": str(q.sell_total), "currency": q.currency},
             },
             "snapshot": q.request_snapshot,
-            "created_at": q.created_at.isoformat(),
             "updated_at": q.updated_at.isoformat(),
             "buy_lines": [serialize_line(l) for l in lines if l.is_buy],
             "sell_lines": [serialize_line(l) for l in lines if l.is_sell],
         }
-        return Response(body, status=status.HTTP_200_OK)
+
+        return Response({**detail, **extra}, status=status.HTTP_200_OK)
 
 
 class QuoteListView(views.APIView):
@@ -1118,9 +1188,18 @@ class QuoteListView(views.APIView):
         if status_filter:
             qs = qs.filter(status=status_filter)
 
-        # Build array payload matching frontend Quote type
+        # Paginate first to avoid processing entire set
+        class StandardResultsSetPagination(PageNumberPagination):
+            page_size = 25
+            page_size_query_param = 'page_size'
+            max_page_size = 100
+
+        paginator = StandardResultsSetPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
+
+        # Build array payload matching frontend Quote type for current page
         items = []
-        for q in qs[:200]:  # simple cap
+        for q in page:
             snap = q.request_snapshot if isinstance(q.request_snapshot, dict) else {}
             pieces = snap.get("pieces") or []
             # Compute actual and volume
@@ -1158,6 +1237,7 @@ class QuoteListView(views.APIView):
                 "origin": snap.get("origin_iata") or snap.get("origin") or "",
                 "destination": snap.get("dest_iata") or snap.get("destination") or "",
                 "mode": snap.get("shipment_type") or "",
+                "status": q.status,
                 "actual_weight_kg": str(actual.quantize(FOURPLACES)),
                 "volume_cbm": str(volume.quantize(FOURPLACES)),
                 "chargeable_weight_kg": str(chargeable.quantize(FOURPLACES)),
@@ -1168,7 +1248,7 @@ class QuoteListView(views.APIView):
                 "created_at": q.created_at.isoformat(),
             })
 
-        return Response(items, status=status.HTTP_200_OK)
+        return paginator.get_paginated_response(items)
 
 
 class OrganizationsListView(views.APIView):

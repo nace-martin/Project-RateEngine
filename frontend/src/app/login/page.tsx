@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { extractErrorFromResponse } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
 
 export default function LoginPage() {
@@ -35,8 +36,8 @@ export default function LoginPage() {
         // Redirect to the quotes page
         router.push('/quotes');
       } else {
-        const errorData = await response.json();
-        setError(errorData.detail || errorData.error || 'Login failed');
+        const message = await extractErrorFromResponse(response, 'Login failed');
+        setError(message);
       }
     } catch (err) {
       setError('An error occurred during login');

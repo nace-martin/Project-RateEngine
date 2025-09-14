@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { QuoteStatus, ComputeQuoteResponse, Money } from '@/lib/types';
+import { extractErrorMessage, extractErrorFromResponse } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,7 +39,7 @@ export default function NewQuotePage() {
   const [commodityCode, setCommodityCode] = useState('GCR');
   const [isUrgent, setIsUrgent] = useState(false);
   const [pieces, setPieces] = useState<Piece[]>([{ weight_kg: '' }]);
-  const [quoteResult, setQuoteResult] = useState<any>(null);
+  const [quoteResult, setQuoteResult] = useState<ComputeQuoteResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +56,11 @@ export default function NewQuotePage() {
             ...(token ? { 'Authorization': `Token ${token}` } : {}),
           },
         });
-        if (!response.ok) throw new Error('Failed to fetch organizations');
+        if (!response.ok) {
+          const msg = await extractErrorFromResponse(response, 'Failed to fetch organizations');
+          setError(msg);
+          return;
+        }
         const data = await response.json();
         setOrganizations(data);
       } catch (err) {
@@ -111,13 +117,13 @@ export default function NewQuotePage() {
         body: JSON.stringify(payload),
       });
 
-      const result = await response.json();
+      let data: any = null;
+      try { data = await response.json(); } catch {}
       if (!response.ok) {
-        // Handle validation errors from Django Rest Framework
-        const errorMsg = Object.values(result).flat().join(' ') || 'Failed to compute quote';
+        const errorMsg = extractErrorMessage(data, 'Failed to compute quote');
         throw new Error(errorMsg);
       }
-      setQuoteResult(result);
+      setQuoteResult(data as ComputeQuoteResponse);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
     } finally {
@@ -130,7 +136,8 @@ export default function NewQuotePage() {
     if (error) return <p className="text-red-500">{error}</p>;
     if (!quoteResult) return <p>Enter shipment details and click "Get Quote".</p>;
 
-    if (quoteResult.status === 'MANUAL_RATE_REQUIRED') {
+    // Status values standardized by backend: see QuoteStatus enum
+    if (quoteResult.status === QuoteStatus.PENDING_RATE) {
       return (
         <Alert>
           <AlertTitle>Manual Quote Required</AlertTitle>
@@ -142,10 +149,16 @@ export default function NewQuotePage() {
       );
     }
 
+    const sell: Money | undefined = quoteResult.sell_total ?? quoteResult.totals?.sell_total;
+
     return (
       <div className="space-y-4">
         <h3 className="text-2xl font-bold">
-          Total Sell Price: {quoteResult.totals.sell_total.amount} {quoteResult.totals.sell_total.currency}
+          {sell ? (
+            <>Total Sell Price: {sell.amount} {sell.currency}</>
+          ) : (
+            <>Quote Created: #{quoteResult.quote_id}</>
+          )}
         </h3>
         <details>
           <summary>View Full Breakdown</summary>

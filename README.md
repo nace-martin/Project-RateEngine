@@ -99,6 +99,24 @@ To run locally, use two terminals.
   ```
 - CORS: Frontend allowed origins are `http://localhost:3000` and `http://127.0.0.1:3000` (see `backend/rate_engine/settings.py`). Update there for other hosts.
 
+### API Error Format
+
+- All error responses use the DRF convention: a JSON object with a single `detail` key.
+- Examples:
+  - `{"detail": "Invalid credentials"}` (401)
+  - `{"detail": "Invalid JSON"}` (400)
+  - `{"detail": "Forbidden"}` (403)
+  - Validation errors from DRF serializers may return a field-keyed object; handle those per field.
+
+### Authorization Policy
+
+- Authentication: DRF TokenAuth is required for protected endpoints (e.g., `/api/quote/compute`).
+- Compute permissions:
+  - `manager` and `finance` roles may quote for any organization.
+  - `sales` may quote only for organizations where they have an explicit membership (`accounts.OrganizationMembership`) with `can_quote=True`.
+  - Unauthorized org access returns `403` with `{ "detail": "Forbidden for organization" }`.
+  - You can adjust this policy in `QuoteComputeView` if your org/user model differs.
+
 ## CI: FX Refresh Workflow
 
 - Workflow: `.github/workflows/fx-refresh.yml` calls `POST /api/fx/refresh` twice on weekdays near 9:00am Sydney (DST-safe):

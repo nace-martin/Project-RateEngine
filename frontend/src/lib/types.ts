@@ -14,6 +14,7 @@ export interface Quote {
   origin: string;
   destination: string;
   mode: string;
+  status?: QuoteStatus;
   actual_weight_kg: string;
   volume_cbm: string;
   chargeable_weight_kg: string;
@@ -22,6 +23,28 @@ export interface Quote {
   margin_pct: string;
   total_sell: string; // We'll use string for decimals for now
   created_at: string;
+}
+
+// Quote/compute status values returned by backend
+export enum QuoteStatus {
+  COMPLETE = 'COMPLETE',
+  PENDING_RATE = 'PENDING_RATE',
+}
+
+// Minimal money shape used across API responses
+export interface Money {
+  amount: string;
+  currency: string;
+}
+
+// Response shape from POST /api/quote/compute
+// Backend currently returns either top-level sell_total or totals.sell_total
+export interface ComputeQuoteResponse {
+  quote_id: number;
+  status: QuoteStatus;
+  manual_reasons?: string[];
+  sell_total?: Money;
+  totals?: { sell_total: Money };
 }
 
 export interface ShipmentPiece {

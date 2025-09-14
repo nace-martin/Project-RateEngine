@@ -1,6 +1,66 @@
 from decimal import Decimal
 
 from django.test import TestCase
+from rest_framework.test import APIClient
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+from rate_engine.models import Organizations
+from accounts.models import OrganizationMembership
+
+
+class ComputeAuthTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.User = get_user_model()
+
+        # Create users with roles
+        self.manager = self.User.objects.create_user(username='manager_user', password='pass', role='manager', email='manager@example.com')
+        self.finance = self.User.objects.create_user(username='finance_user', password='pass', role='finance', email='finance@example.com')
+        self.sales = self.User.objects.create_user(username='sales_user', password='pass', role='sales', email='sales@example.com')
+
+        # Try to find or create a simple organization for testing
+        org = Organizations.objects.order_by('id').first()
+        if not org:
+            # If schema is available with managed=False, this save will work when table exists
+            org = Organizations.objects.create(name=f"Test Org {timezone.now().timestamp()}", audience='b2b', default_sell_currency='PGK', gst_pct='0.00', country_code='PG')
+        self.org = org
+
+        # Minimal valid compute payload (engine may still reject, which is fine for auth tests)
+        self.payload = {
+            "org_id": self.org.id,
+            "origin_iata": "BNE",
+            "dest_iata": "LAE",
+            "shipment_type": "IMPORT",
+            "service_scope": "AIRPORT_AIRPORT",
+            "pieces": [{"weight_kg": "1"}],
+        }
+
+    def _auth(self, user):
+        self.client.force_authenticate(user=user)
+
+    def test_manager_authorized(self):
+        self._auth(self.manager)
+        res = self.client.post('/api/quote/compute', data=self.payload, format='json')
+        # Authorization should pass; engine may return 201 or 400 depending on data
+        self.assertNotEqual(res.status_code, 403)
+
+    def test_sales_unauthorized_without_membership(self):
+        self._auth(self.sales)
+        res = self.client.post('/api/quote/compute', data=self.payload, format='json')
+        self.assertEqual(res.status_code, 403)
+
+    def test_sales_authorized_with_membership(self):
+        # Link sales user to org via explicit membership with can_quote
+        OrganizationMembership.objects.create(user=self.sales, organization_id=self.org.id, role='sales', can_quote=True)
+        self._auth(self.sales)
+        res = self.client.post('/api/quote/compute', data=self.payload, format='json')
+        self.assertNotEqual(res.status_code, 403)
+
+    def test_sales_forbidden_with_membership_without_quote(self):
+        OrganizationMembership.objects.create(user=self.sales, organization_id=self.org.id, role='sales', can_quote=False)
+        self._auth(self.sales)
+        res = self.client.post('/api/quote/compute', data=self.payload, format='json')
+        self.assertEqual(res.status_code, 403)
 
 from .engine import Piece, calculate_chargeable_weight_per_piece, ZERO
 from .engine import FxConverter

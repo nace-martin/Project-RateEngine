@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
 import ProtectedRoute from '@/components/protected-route';
+import { extractErrorFromResponse } from '@/lib/utils';
 
 interface QuoteDetail {
   id: number;
@@ -56,7 +57,10 @@ export default function QuoteDetailPage() {
           },
           cache: 'no-store',
         });
-        if (!res.ok) throw new Error(`Failed to fetch quote. Status: ${res.status}`);
+        if (!res.ok) {
+          const msg = await extractErrorFromResponse(res, 'Failed to fetch quote');
+          throw new Error(msg);
+        }
         const data = await res.json();
         setQuote(data);
       } catch (err) {
@@ -152,4 +156,3 @@ export default function QuoteDetailPage() {
     </ProtectedRoute>
   );
 }
-

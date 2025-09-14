@@ -16,7 +16,13 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include # Make sure 'include' is imported
-from rate_engine.engine import QuoteComputeView, QuoteDetailView, QuoteListView, OrganizationsListView, FxRefreshView
+from rate_engine.engine import (
+    QuoteComputeView,
+    QuoteDetailView,
+    QuoteListView,
+    OrganizationsListView,
+    FxRefreshView,
+)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
