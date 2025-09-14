@@ -37,6 +37,8 @@ export default function NewQuotePage() {
   const [origin, setOrigin] = useState('BNE');
   const [destination, setDestination] = useState('LAE');
   const [commodityCode, setCommodityCode] = useState('GCR');
+  const [serviceScope, setServiceScope] = useState('AIRPORT_AIRPORT');
+  const [incoterm, setIncoterm] = useState('DAP');
   const [isUrgent, setIsUrgent] = useState(false);
   const [pieces, setPieces] = useState<Piece[]>([{ weight_kg: '' }]);
   const [quoteResult, setQuoteResult] = useState<ComputeQuoteResponse | null>(null);
@@ -91,7 +93,8 @@ export default function NewQuotePage() {
       origin_iata: origin,
       dest_iata: destination,
       shipment_type: "IMPORT",
-      service_scope: "AIRPORT_AIRPORT",
+      service_scope: serviceScope,
+      incoterm: incoterm,
       commodity_code: commodityCode,
       is_urgent: isUrgent,
       pieces: pieces.map(p => ({
@@ -243,6 +246,31 @@ export default function NewQuotePage() {
                             <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
                         ))}
                     </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="incoterm">Incoterms</Label>
+                <Select value={incoterm} onValueChange={setIncoterm}>
+                  <SelectTrigger id="incoterm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="DAP">DAP (Delivered at Place)</SelectItem>
+                    <SelectItem value="EXW">EXW (Ex Works)</SelectItem>
+                    <SelectItem value="FOB">FOB (Free on Board)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="serviceScope">Service Scope</Label>
+                <Select value={serviceScope} onValueChange={setServiceScope}>
+                  <SelectTrigger id="serviceScope"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="AIRPORT_AIRPORT">Airport to Airport</SelectItem>
+                    <SelectItem value="AIRPORT_DOOR">Airport to Door</SelectItem>
+                    <SelectItem value="DOOR_AIRPORT">Door to Airport</SelectItem>
+                    <SelectItem value="DOOR_DOOR">Door to Door</SelectItem>
+                  </SelectContent>
                 </Select>
               </div>
 
