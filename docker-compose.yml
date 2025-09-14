@@ -1,0 +1,24 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: rateengine_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rateengine
+      POSTGRES_USER: rateengine
+      POSTGRES_PASSWORD: rateengine
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rateengine -d rateengine"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:
+

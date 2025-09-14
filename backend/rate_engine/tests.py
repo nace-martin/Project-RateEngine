@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rate_engine.models import Organizations
 from accounts.models import OrganizationMembership
+from django.db.utils import ProgrammingError, OperationalError
 
 
 class ComputeAuthTests(TestCase):
@@ -19,11 +20,15 @@ class ComputeAuthTests(TestCase):
         self.sales = self.User.objects.create_user(username='sales_user', password='pass', role='sales', email='sales@example.com')
 
         # Try to find or create a simple organization for testing
-        org = Organizations.objects.order_by('id').first()
-        if not org:
-            # If schema is available with managed=False, this save will work when table exists
-            org = Organizations.objects.create(name=f"Test Org {timezone.now().timestamp()}", audience='b2b', default_sell_currency='PGK', gst_pct='0.00', country_code='PG')
-        self.org = org
+        try:
+            org = Organizations.objects.order_by('id').first()
+            if not org:
+                # If schema is available with managed=False, this save will work when table exists
+                org = Organizations.objects.create(name=f"Test Org {timezone.now().timestamp()}", audience='b2b', default_sell_currency='PGK', gst_pct='0.00', country_code='PG')
+            self.org = org
+        except (ProgrammingError, OperationalError):
+            # Managed=False tables not present in this DB -> skip these auth tests
+            self.skipTest('Organizations schema not available; load schema to run auth tests')
 
         # Minimal valid compute payload (engine may still reject, which is fine for auth tests)
         self.payload = {
