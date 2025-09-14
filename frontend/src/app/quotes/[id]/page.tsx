@@ -139,7 +139,15 @@ export default function QuoteDetailPage() {
                 }).format(Number(quote.base_cost ?? 0))}
               />
             )}
-            <DetailRow label="Margin" value={`${quote.margin_pct}%`} />
+            <DetailRow label="Margin %" value={`${quote.margin_pct}%`} />
+            <DetailRow
+              label="Margin Amount"
+              value={Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'PGK',
+                maximumFractionDigits: 2,
+              }).format(Math.max(0, Number(quote.total_sell ?? 0) - Number(quote.base_cost ?? 0)))}
+            />
             <div className="py-4 px-4 bg-gray-50 flex justify-between items-center">
               <dt className="text-lg font-bold text-gray-800">Total Sell Price</dt>
               <dd className="text-xl font-bold text-blue-600">

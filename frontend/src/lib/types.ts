@@ -44,7 +44,14 @@ export interface ComputeQuoteResponse {
   status: QuoteStatus;
   manual_reasons?: string[];
   sell_total?: Money;
-  totals?: { sell_total: Money };
+  totals?: {
+    sell_total: Money;
+    buy_total?: Money;
+    tax_total?: Money;
+    margin_abs?: Money;
+    // margin_pct uses currency '%'
+    margin_pct?: Money;
+  };
 }
 
 export interface ShipmentPiece {

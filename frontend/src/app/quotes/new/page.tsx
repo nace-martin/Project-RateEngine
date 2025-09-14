@@ -150,6 +150,10 @@ export default function NewQuotePage() {
     }
 
     const sell: Money | undefined = quoteResult.sell_total ?? quoteResult.totals?.sell_total;
+    const buy: Money | undefined = quoteResult.totals?.buy_total;
+    const tax: Money | undefined = quoteResult.totals?.tax_total;
+    const marginAbs: Money | undefined = quoteResult.totals?.margin_abs;
+    const marginPct: Money | undefined = quoteResult.totals?.margin_pct;
 
     return (
       <div className="space-y-4">
@@ -160,6 +164,36 @@ export default function NewQuotePage() {
             <>Quote Created: #{quoteResult.quote_id}</>
           )}
         </h3>
+
+        {sell && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            {buy && (
+              <div className="flex justify-between border rounded-md p-2">
+                <span className="text-gray-600">Buy Total (COGS)</span>
+                <span className="font-medium">{buy.amount} {buy.currency}</span>
+              </div>
+            )}
+            {tax && (
+              <div className="flex justify-between border rounded-md p-2">
+                <span className="text-gray-600">Tax Total</span>
+                <span className="font-medium">{tax.amount} {tax.currency}</span>
+              </div>
+            )}
+            {marginAbs && (
+              <div className="flex justify-between border rounded-md p-2">
+                <span className="text-gray-600">Margin Amount</span>
+                <span className="font-medium">{marginAbs.amount} {marginAbs.currency}</span>
+              </div>
+            )}
+            {marginPct && (
+              <div className="flex justify-between border rounded-md p-2">
+                <span className="text-gray-600">Margin %</span>
+                <span className="font-medium">{marginPct.amount} {marginPct.currency}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <details>
           <summary>View Full Breakdown</summary>
           <pre className="bg-gray-100 p-2 rounded-md text-sm overflow-auto mt-2">

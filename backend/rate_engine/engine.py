@@ -1077,13 +1077,31 @@ class QuoteComputeView(views.APIView):
 
             QuoteLines.objects.bulk_create(lines_to_create)
 
-            # 4. Return the ID of the new quote
+            # 4. Return the ID of the new quote with totals wrapped for frontend
             response_data = {
                 "quote_id": new_quote.id,
                 "status": status_str,
-                "sell_total": {
-                    "amount": str(new_quote.sell_total),
-                    "currency": new_quote.currency,
+                "totals": {
+                    "sell_total": {
+                        "amount": str(totals["sell_total"].amount),
+                        "currency": totals["sell_total"].currency,
+                    },
+                    "buy_total": {
+                        "amount": str(totals["buy_total"].amount),
+                        "currency": totals["buy_total"].currency,
+                    },
+                    "tax_total": {
+                        "amount": str(totals["tax_total"].amount),
+                        "currency": totals["tax_total"].currency,
+                    },
+                    "margin_abs": {
+                        "amount": str(totals["margin_abs"].amount),
+                        "currency": totals["margin_abs"].currency,
+                    },
+                    "margin_pct": {
+                        "amount": str(totals["margin_pct"].amount),
+                        "currency": totals["margin_pct"].currency,
+                    },
                 },
                 "manual_reasons": calc_result.snapshot.get("manual_reasons", []),
             }
@@ -1159,12 +1177,20 @@ class QuoteDetailView(views.APIView):
 
         # Include detailed fields for advanced views without breaking the UI
         lines = list(q.lines.all())
+        # Precompute margins for totals in detail response
+        _buy = d(q.buy_total)
+        _sell = d(q.sell_total)
+        _margin_abs = (_sell - _buy).quantize(TWOPLACES)
+        _margin_pct = ((_sell - _buy) / (_sell or Decimal(1))).quantize(FOURPLACES)
+
         extra = {
             "status": q.status,
             "currency": q.currency,
             "totals": {
                 "buy_total": {"amount": str(q.buy_total), "currency": q.currency},
                 "sell_total": {"amount": str(q.sell_total), "currency": q.currency},
+                "margin_abs": {"amount": str(_margin_abs), "currency": q.currency},
+                "margin_pct": {"amount": str(_margin_pct), "currency": "%"},
             },
             "snapshot": q.request_snapshot,
             "updated_at": q.updated_at.isoformat(),

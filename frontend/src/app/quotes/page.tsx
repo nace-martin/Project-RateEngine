@@ -177,7 +177,10 @@ export default function QuotesListPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Weight (kg)</th>
                   {canViewCOGS() && (
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Base Cost</th>
+                    <>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Base Cost</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Margin Amt</th>
+                    </>
                   )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Sell</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
@@ -195,13 +198,22 @@ export default function QuotesListPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.chargeable_weight_kg}</td>
                     {canViewCOGS() && (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {Intl.NumberFormat('en-US', {
-                          style: 'currency',
-                          currency: 'PGK',
-                          maximumFractionDigits: 2,
-                        }).format(Number(quote.base_cost ?? 0))}
-                      </td>
+                      <>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {Intl.NumberFormat('en-US', {
+                            style: 'currency',
+                            currency: 'PGK',
+                            maximumFractionDigits: 2,
+                          }).format(Number(quote.base_cost ?? 0))}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {Intl.NumberFormat('en-US', {
+                            style: 'currency',
+                            currency: 'PGK',
+                            maximumFractionDigits: 2,
+                          }).format(Math.max(0, Number(quote.total_sell ?? 0) - Number(quote.base_cost ?? 0)))}
+                        </td>
+                      </>
                     )}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {Intl.NumberFormat('en-US', {
