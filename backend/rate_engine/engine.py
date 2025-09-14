@@ -1091,7 +1091,9 @@ class QuoteComputeView(views.APIView):
             new_quote = Quotes.objects.create(
                 organization_id=shipment.org_id,
                 status=status_str,
-                request_snapshot=data,  # Save the original request
+                # Store the original incoming payload (JSON-serializable),
+                # not the validated data which contains Decimals.
+                request_snapshot=payload,
                 buy_total=totals.get('buy_total', Money(ZERO, 'USD')).amount,
                 sell_total=totals.get('sell_total', Money(ZERO, 'USD')).amount,
                 currency=totals.get('sell_total', Money(ZERO, 'USD')).currency,
