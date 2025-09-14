@@ -284,6 +284,8 @@ class Quotes(models.Model):
     buy_total = models.DecimalField(max_digits=14, decimal_places=2)
     sell_total = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3)
+    # New: Selected Incoterm for this quote (e.g., DAP, EXW)
+    incoterm = models.CharField(max_length=16, blank=True, null=True, help_text="e.g., DAP, EXW")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

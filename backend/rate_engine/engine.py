@@ -96,6 +96,7 @@ class ShipmentInput:
     dest_iata: str
     shipment_type: str
     service_scope: str
+    incoterm: Optional[str] = None
     # New optional inputs
     commodity_code: str = "GCR"  # e.g., GCR, DGR, LAR, PER
     is_urgent: bool = False
@@ -534,8 +535,31 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
     )
     links = {l.sell_item_id: l for l in SellCostLink.objects.filter(sell_item_id__in=[i.id for i in items])}
 
-    # SELL-Side: CARTAGE and CARTAGE_FSC apply only to these scopes
-    allowed_cartage_scopes = {"DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR"}
+    # Determine which sides require door services (cartage and clearance)
+    needs_origin_services = service_scope in {"DOOR_AIRPORT", "DOOR_DOOR"}
+    needs_dest_services = service_scope in {"AIRPORT_DOOR", "DOOR_DOOR"}
+
+    # Common service code groups for flexible matching against seeded data
+    cartage_origin_codes = {"CARTAGE_PICKUP", "CARTAGE_ORIGIN", "ORIGIN_CARTAGE", "PICKUP", "CARTAGE"}
+    cartage_dest_codes = {"CARTAGE_DELIVERY", "CARTAGE_DEST", "DEST_CARTAGE", "DELIVERY", "CARTAGE"}
+    clearance_origin_codes = {"CUSTOMS_CLEARANCE_ORIGIN", "CUSTOMS_ORIGIN", "EXPORT_CLEARANCE", "ORIGIN_CLEARANCE"}
+    clearance_dest_codes = {"CUSTOMS_CLEARANCE_DEST", "CUSTOMS_CLEARANCE", "CUSTOMS_DEST", "IMPORT_CLEARANCE", "DEST_CLEARANCE"}
+
+    def include_service_by_scope(code: str) -> bool:
+        """Return True if a SELL service code should be included for the selected scope."""
+        uc = (code or "").upper()
+        # Origin cartage/clearance only if door at origin
+        if uc in cartage_origin_codes and not needs_origin_services:
+            return False
+        if uc in clearance_origin_codes and not needs_origin_services:
+            return False
+        # Destination cartage/clearance only if door at destination
+        if uc in cartage_dest_codes and not needs_dest_services:
+            return False
+        if uc in clearance_dest_codes and not needs_dest_services:
+            return False
+        # Default include
+        return True
 
     for it in items:
         svc = it.service
@@ -546,8 +570,11 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
         basis = _normalize_basis(getattr(svc, "basis", None))
         qty = d(kg) if basis == "PER_KG" else Decimal(1)
 
-        # Enforce service scope for CARTAGE and CARTAGE_FSC (exclude from AIRPORT_AIRPORT)
-        if code in {"CARTAGE", "CARTAGE_FSC"} and service_scope not in allowed_cartage_scopes:
+        # Scope gating for door-related services (cartage and customs clearance)
+        if not include_service_by_scope(code):
+            continue
+        # Optional: if a separate FSC for cartage is present, include it only when either side needs cartage
+        if code == "CARTAGE_FSC" and not (needs_origin_services or needs_dest_services):
             continue
 
         # Determine the underlying BUY cost (if linked)
@@ -652,6 +679,19 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     fx = FxConverter(caf_on_fx=bool(pol.caf_on_fx if pol else True), caf_pct=caf_pct)
 
     # 1) BUY pricing: support multi-leg via Routes/RouteLegs when available
+
+    # TODO: Implement logic for Incoterm-based fee inclusion.
+    # Example scaffolding to guide future implementation:
+    # if (payload.incoterm or '').upper() == 'DAP':
+    #     # Ensure destination-side charges are included regardless of provider defaults
+    #     # e.g., enforce DEST cartage/clearance if scope implies door or if DAP mandates it
+    #     pass
+    # elif (payload.incoterm or '').upper() == 'EXW':
+    #     # Typically buyer handles export; may exclude origin services from SELL
+    #     pass
+    # elif (payload.incoterm or '').upper() == 'FOB':
+    #     # Seller covers origin charges to onboard; adjust SELL mapping accordingly
+    #     pass
     # Define sell scope for SELL card lookup regardless of routing mode
     scope_for_sell = "INTERNATIONAL" if payload.shipment_type in ["IMPORT", "EXPORT"] else "DOMESTIC"
     buy_direction = None  # for snapshot in single-leg mode
@@ -940,6 +980,7 @@ class ComputeRequestSerializer(serializers.Serializer):
     service_scope = serializers.ChoiceField(
         choices=("DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR", "AIRPORT_AIRPORT")
     )
+    incoterm = serializers.CharField(required=False, allow_null=True, allow_blank=True, max_length=16)
     org_id = serializers.IntegerField()
     # New optional inputs
     commodity_code = serializers.CharField(required=False, max_length=8, default='GCR')
@@ -1022,6 +1063,7 @@ class QuoteComputeView(views.APIView):
             dest_iata=data["dest_iata"],
             shipment_type=data["shipment_type"],
             service_scope=data["service_scope"],
+            incoterm=(data.get("incoterm") or None),
             commodity_code=data.get("commodity_code", "GCR"),
             is_urgent=bool(data.get("is_urgent", False)),
             airline_hint=data.get("airline_hint") or None,
@@ -1053,6 +1095,7 @@ class QuoteComputeView(views.APIView):
                 buy_total=totals.get('buy_total', Money(ZERO, 'USD')).amount,
                 sell_total=totals.get('sell_total', Money(ZERO, 'USD')).amount,
                 currency=totals.get('sell_total', Money(ZERO, 'USD')).currency,
+                incoterm=shipment.incoterm,
             )
 
             # 3. Create the QuoteLines for the new Quote
