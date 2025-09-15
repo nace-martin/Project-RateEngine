@@ -300,8 +300,10 @@ class QuoteLines(models.Model):
     quote = models.ForeignKey(Quotes, models.CASCADE, related_name='lines')
     code = models.CharField(max_length=64)
     description = models.TextField()
-    is_buy = models.BooleanField()
-    is_sell = models.BooleanField()
+    line_type = models.CharField(
+        max_length=4,
+        choices=[("BUY", "Buy"), ("SELL", "Sell")],
+    )
     qty = models.DecimalField(max_digits=12, decimal_places=3)
     unit = models.CharField(max_length=16)
     unit_price = models.DecimalField(max_digits=12, decimal_places=4)
