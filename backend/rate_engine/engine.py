@@ -40,7 +40,7 @@ from .models import (
     FeeTypes as FeeType, RatecardFees as RatecardFee, CartageLadders as CartageLadder,
     Services as Service, ServiceItems as ServiceItem, SellCostLinksSimple as SellCostLink,
     CurrencyRates as CurrencyRate, PricingPolicy, Organizations, Quotes, QuoteLines,
-    Routes, RouteLegs,
+    Routes, RouteLegs, Direction,
 )
 from accounts.models import OrganizationMembership
 
@@ -976,7 +976,7 @@ class PieceSerializer(serializers.Serializer):
 class ComputeRequestSerializer(serializers.Serializer):
     origin_iata = serializers.CharField()
     dest_iata = serializers.CharField()
-    shipment_type = serializers.ChoiceField(choices=("IMPORT", "EXPORT", "DOMESTIC"))
+    shipment_type = serializers.ChoiceField(choices=Direction.choices)
     service_scope = serializers.ChoiceField(
         choices=("DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR", "AIRPORT_AIRPORT")
     )

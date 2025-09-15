@@ -8,10 +8,36 @@
 from django.db import models
 
 
+class ProviderType(models.TextChoices):
+    """Enumeration of provider types."""
+    AIR = "AIR", "Air"
+    AGENT = "AGENT", "Agent"
+    CARRIER = "CARRIER", "Carrier"
+
+
+class RatecardRole(models.TextChoices):
+    """Role of the ratecard in the pricing flow."""
+    BUY = "BUY", "Buy"
+    SELL = "SELL", "Sell"
+
+
+class Scope(models.TextChoices):
+    """Geographic scope for which a ratecard applies."""
+    INTERNATIONAL = "INTERNATIONAL", "International"
+    DOMESTIC = "DOMESTIC", "Domestic"
+
+
+class Direction(models.TextChoices):
+    """Traffic direction covered by a ratecard."""
+    IMPORT = "IMPORT", "Import"
+    EXPORT = "EXPORT", "Export"
+    DOMESTIC = "DOMESTIC", "Domestic"
+
+
 class Providers(models.Model):
     id = models.BigAutoField(primary_key=True)
     name = models.TextField(unique=True)
-    provider_type = models.TextField()
+    provider_type = models.CharField(max_length=16, choices=ProviderType.choices)
 
     class Meta:
         managed = False
@@ -33,9 +59,9 @@ class Ratecards(models.Model):
     id = models.BigAutoField(primary_key=True)
     provider = models.ForeignKey(Providers, models.DO_NOTHING)
     name = models.TextField()
-    role = models.TextField()
-    scope = models.TextField()
-    direction = models.TextField()
+    role = models.CharField(max_length=16, choices=RatecardRole.choices)
+    scope = models.CharField(max_length=16, choices=Scope.choices)
+    direction = models.CharField(max_length=16, choices=Direction.choices)
     audience = models.TextField(blank=True, null=True)
     # Commodity code for the ratecard (e.g., GCR, DGR, LAR, PER)
     commodity_code = models.CharField(
