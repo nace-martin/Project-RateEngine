@@ -131,8 +131,7 @@ class CalcLine:
     unit: str
     unit_price: Money
     extended: Money
-    is_buy: bool
-    is_sell: bool
+    line_type: str  # 'BUY' or 'SELL'
     tax_pct: Decimal = ZERO
     source_ratecard_id: Optional[int] = None
     meta: Dict = field(default_factory=dict)
@@ -439,8 +438,7 @@ def compute_leg_cost(
                 unit="KG",
                 unit_price=placeholder_freight,
                 extended=placeholder_freight,
-                is_buy=True,
-                is_sell=False,
+                line_type="BUY",
                 source_ratecard_id=None,
                 meta={"manual_rate_required": True, "reason": manual_reason, "leg": int(getattr(leg, 'sequence', 0) or 0)},
             )
@@ -484,8 +482,7 @@ def compute_leg_cost(
             unit="KG",
             unit_price=Money((base_freight.amount/(chosen_chargeable_kg or Decimal(1))).quantize(FOURPLACES), base_freight.currency),
             extended=base_freight,
-            is_buy=True,
-            is_sell=False,
+            line_type="BUY",
             source_ratecard_id=rc_buy.id,
             meta={"leg": int(getattr(leg, 'sequence', 0) or 0), "scope": leg.leg_scope, "service_type": leg.service_type, "break": chosen_break.break_code},
         )
@@ -514,8 +511,7 @@ def compute_leg_cost(
                 unit=_unit,
                 unit_price=Money(_unit_price_amt, line_money.currency),
                 extended=line_money,
-                is_buy=True,
-                is_sell=False,
+                line_type="BUY",
                 source_ratecard_id=rc_buy.id,
                 meta={"leg": int(getattr(leg, 'sequence', 0) or 0), "scope": leg.leg_scope, "service_type": leg.service_type},
             )
@@ -605,7 +601,7 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
         # Percent-of logic (e.g., Fuel % of Cartage)
         if svc.basis == "PERCENT_OF" and it.percent_of_service_code:
             ref = it.percent_of_service_code
-            ref_line = next((l for l in lines if l.code == ref and l.is_sell), None)
+            ref_line = next((l for l in lines if l.code == ref and l.line_type == "SELL"), None)
             if ref_line:
                 pct = d(it.amount or ZERO)  # amount stores fraction e.g. 0.10
                 sell_amt = (ref_line.extended.amount * pct).quantize(TWOPLACES)
@@ -641,8 +637,7 @@ def compute_sell_lines(sell_card: Ratecard, buy_context: Dict[str, Money], kg: D
             unit="KG" if basis == "PER_KG" else "EA",
             unit_price=Money((sell_amt/qty if qty else sell_amt).quantize(FOURPLACES), ccy),
             extended=Money(sell_amt.quantize(TWOPLACES), ccy),
-            is_buy=False,
-            is_sell=True,
+            line_type="SELL",
             tax_pct=tax_pct,
             source_ratecard_id=sell_card.id,
         )
@@ -1107,8 +1102,7 @@ class QuoteComputeView(views.APIView):
                         quote=new_quote,
                         code=line.code,
                         description=line.description,
-                        is_buy=line.is_buy,
-                        is_sell=line.is_sell,
+                        line_type=line.line_type,
                         qty=line.qty,
                         unit=line.unit,
                         unit_price=line.unit_price.amount,
@@ -1167,8 +1161,7 @@ class QuoteDetailView(views.APIView):
                 "unit": l.unit,
                 "unit_price": {"amount": str(l.unit_price), "currency": l.currency},
                 "amount": {"amount": str(l.extended_price), "currency": l.currency},
-                "is_buy": l.is_buy,
-                "is_sell": l.is_sell,
+                "line_type": l.line_type,
                 "manual_rate_required": bool(l.manual_rate_required),
             }
 
@@ -1237,8 +1230,8 @@ class QuoteDetailView(views.APIView):
             },
             "snapshot": q.request_snapshot,
             "updated_at": q.updated_at.isoformat(),
-            "buy_lines": [serialize_line(l) for l in lines if l.is_buy],
-            "sell_lines": [serialize_line(l) for l in lines if l.is_sell],
+            "buy_lines": [serialize_line(l) for l in lines if l.line_type == "BUY"],
+            "sell_lines": [serialize_line(l) for l in lines if l.line_type == "SELL"],
         }
 
         return Response({**detail, **extra}, status=status.HTTP_200_OK)

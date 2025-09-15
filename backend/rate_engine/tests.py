@@ -440,7 +440,7 @@ class MultiLegRouteTests(TestCase):
         res = compute_quote(payload)
 
         # Expect two freight buy lines (one per leg)
-        freight_lines = [l for l in res.buy_lines if l.code == "FREIGHT" and l.is_buy]
+        freight_lines = [l for l in res.buy_lines if l.code == "FREIGHT" and l.line_type == "BUY"]
         self.assertEqual(len(freight_lines), 2)
 
         # Totals with directional CAF-on-FX (6.5% subtract to PGK):
