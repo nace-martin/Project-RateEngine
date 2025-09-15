@@ -117,8 +117,9 @@ def add_sell_cost_link(sell_item, buy_fee_code, mapping_type, mapping_value=None
 
 def ensure_fx(base, quote, rate, source="manual"):
     CurrencyRates.objects.update_or_create(
-        base_ccy=base, quote_ccy=quote,
-        defaults={"rate": rate, "as_of_ts": now(), "source": source}
+        base_ccy=base.upper(),
+        quote_ccy=quote.upper(),
+        defaults={"rate": rate, "as_of_ts": now(), "source": source},
     )
 
 def ensure_policy(audience, *, caf_on_fx=True, gst_applies=True, gst_pct=10):

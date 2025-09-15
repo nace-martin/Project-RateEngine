@@ -5,7 +5,14 @@
 #   * Make sure each ForeignKey and OneToOneField has `on_delete` set to the desired behavior
 #   * Remove `managed = False` lines if you wish to allow Django to create, modify, and delete the table
 # Feel free to rename the models, but don't rename db_table values or field names.
+from django.core.validators import RegexValidator
 from django.db import models
+
+
+CURRENCY_CODE_VALIDATOR = RegexValidator(
+    r"^[A-Z]{3}$",
+    "Must be a 3-letter uppercase ISO currency code.",
+)
 
 
 class Providers(models.Model):
@@ -45,7 +52,10 @@ class Ratecards(models.Model):
     )
     # New field to specify pricing strategy for this ratecard
     rate_strategy = models.CharField(max_length=32, null=True, blank=True, default="BREAKS")
-    currency = models.TextField()
+    currency = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     source = models.TextField()
     status = models.TextField()
     effective_date = models.DateField()
@@ -118,7 +128,10 @@ class RatecardFees(models.Model):
     id = models.BigAutoField(primary_key=True)
     ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
     fee_type = models.ForeignKey(FeeTypes, models.DO_NOTHING)
-    currency = models.TextField()
+    currency = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=4)
     min_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     max_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
@@ -177,7 +190,10 @@ class ServiceItems(models.Model):
     id = models.BigAutoField(primary_key=True)
     ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
     service = models.ForeignKey(Services, models.DO_NOTHING)
-    currency = models.TextField()
+    currency = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
     min_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     max_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
@@ -206,8 +222,14 @@ class SellCostLinksSimple(models.Model):
 class CurrencyRates(models.Model):
     id = models.BigAutoField(primary_key=True)
     as_of_ts = models.DateTimeField()
-    base_ccy = models.TextField()
-    quote_ccy = models.TextField()
+    base_ccy = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
+    quote_ccy = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     rate = models.DecimalField(max_digits=18, decimal_places=8)
     # Distinguishes between TT 'BUY' and 'SELL' rates
     rate_type = models.CharField(max_length=8, default='BUY', help_text="Distinguishes between TT 'BUY' and 'SELL' rates.")
@@ -217,6 +239,9 @@ class CurrencyRates(models.Model):
         managed = False
         db_table = 'currency_rates'
         unique_together = (('as_of_ts', 'base_ccy', 'quote_ccy', 'rate_type'),)
+        indexes = [
+            models.Index(fields=['base_ccy', 'quote_ccy', 'rate_type', 'as_of_ts'])
+        ]
 
 
 class PricingPolicy(models.Model):
@@ -237,7 +262,10 @@ class Organizations(models.Model):
     # Add this field to drive currency logic
     country_code = models.CharField(max_length=2, default='PG')  # e.g., PG, AU, US
     audience = models.TextField()
-    default_sell_currency = models.TextField()
+    default_sell_currency = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2)
     disbursement_min = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     disbursement_cap = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
@@ -283,7 +311,10 @@ class Quotes(models.Model):
     # Store the calculated totals
     buy_total = models.DecimalField(max_digits=14, decimal_places=2)
     sell_total = models.DecimalField(max_digits=14, decimal_places=2)
-    currency = models.CharField(max_length=3)
+    currency = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     # New: Selected Incoterm for this quote (e.g., DAP, EXW)
     incoterm = models.CharField(max_length=16, blank=True, null=True, help_text="e.g., DAP, EXW")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -306,7 +337,10 @@ class QuoteLines(models.Model):
     unit = models.CharField(max_length=16)
     unit_price = models.DecimalField(max_digits=12, decimal_places=4)
     extended_price = models.DecimalField(max_digits=12, decimal_places=2)
-    currency = models.CharField(max_length=3)
+    currency = models.CharField(
+        max_length=3,
+        validators=[CURRENCY_CODE_VALIDATOR],
+    )
     # Add a field to flag lines that need manual input
     manual_rate_required = models.BooleanField(default=False)
 

@@ -162,11 +162,13 @@ def compute_tt_buy_sell(mid: Decimal, spread_bps: int, caf_pct: Decimal) -> Tupl
     return buy, sell
 
 
-def upsert_rate(as_of: datetime, base: str, quote: str, rate: Decimal, rate_type: str, source: str) -> None:
+def upsert_rate(
+    as_of: datetime, base: str, quote: str, rate: Decimal, rate_type: str, source: str
+) -> None:
     CurrencyRates.objects.update_or_create(
         as_of_ts=as_of,
-        base_ccy=base,
-        quote_ccy=quote,
+        base_ccy=base.upper(),
+        quote_ccy=quote.upper(),
         rate_type=rate_type,
         defaults={"rate": d(rate), "source": source},
     )
