@@ -14,7 +14,7 @@ class Providers(models.Model):
     provider_type = models.TextField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'providers'
 
 
@@ -25,13 +25,13 @@ class Stations(models.Model):
     country = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'stations'
 
 
 class Ratecards(models.Model):
     id = models.BigAutoField(primary_key=True)
-    provider = models.ForeignKey(Providers, models.DO_NOTHING)
+    provider = models.ForeignKey(Providers, on_delete=models.PROTECT)
     name = models.TextField()
     role = models.TextField()
     scope = models.TextField()
@@ -56,48 +56,54 @@ class Ratecards(models.Model):
     updated_at = models.DateTimeField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'ratecards'
         unique_together = (('provider', 'name', 'effective_date'),)
 
 
 class RatecardConfig(models.Model):
     id = models.BigAutoField(primary_key=True)
-    ratecard = models.OneToOneField(Ratecards, models.DO_NOTHING)
+    ratecard = models.OneToOneField(Ratecards, on_delete=models.CASCADE)
     dim_factor_kg_per_m3 = models.DecimalField(max_digits=8, decimal_places=2)
     rate_strategy = models.TextField()
     created_at = models.DateTimeField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'ratecard_config'
 
 
 class Lanes(models.Model):
     id = models.BigAutoField(primary_key=True)
-    ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
-    origin = models.ForeignKey(Stations, models.DO_NOTHING)
-    dest = models.ForeignKey(Stations, models.DO_NOTHING, related_name='lanes_dest_set')
-    via = models.ForeignKey(Stations, models.DO_NOTHING, related_name='lanes_via_set', blank=True, null=True)
+    ratecard = models.ForeignKey(Ratecards, on_delete=models.CASCADE)
+    origin = models.ForeignKey(Stations, on_delete=models.PROTECT)
+    dest = models.ForeignKey(Stations, on_delete=models.PROTECT, related_name='lanes_dest_set')
+    via = models.ForeignKey(
+        Stations,
+        on_delete=models.SET_NULL,
+        related_name='lanes_via_set',
+        blank=True,
+        null=True,
+    )
     airline = models.TextField(blank=True, null=True)
     is_direct = models.BooleanField()
 
     # A unique constraint could not be introspected.
     class Meta:
-        managed = False
+        managed = True
         db_table = 'lanes'
         unique_together = (('ratecard', 'origin', 'dest'),)
 
 
 class LaneBreaks(models.Model):
     id = models.BigAutoField(primary_key=True)
-    lane = models.ForeignKey(Lanes, models.DO_NOTHING)
+    lane = models.ForeignKey(Lanes, on_delete=models.CASCADE)
     break_code = models.TextField()
     per_kg = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
     min_charge = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'lane_breaks'
         unique_together = (('lane', 'break_code'),)
 
@@ -110,14 +116,14 @@ class FeeTypes(models.Model):
     default_tax_pct = models.DecimalField(max_digits=5, decimal_places=2)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'fee_types'
 
 
 class RatecardFees(models.Model):
     id = models.BigAutoField(primary_key=True)
-    ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
-    fee_type = models.ForeignKey(FeeTypes, models.DO_NOTHING)
+    ratecard = models.ForeignKey(Ratecards, on_delete=models.CASCADE)
+    fee_type = models.ForeignKey(FeeTypes, on_delete=models.PROTECT)
     currency = models.TextField()
     amount = models.DecimalField(max_digits=12, decimal_places=4)
     min_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
@@ -129,27 +135,27 @@ class RatecardFees(models.Model):
     created_at = models.DateTimeField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'ratecard_fees'
 
 
 class CartageLadders(models.Model):
     id = models.BigAutoField(primary_key=True)
-    ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
+    ratecard = models.ForeignKey(Ratecards, on_delete=models.CASCADE)
     min_weight_kg = models.DecimalField(max_digits=12, decimal_places=2)
     max_weight_kg = models.DecimalField(max_digits=12, decimal_places=2)
     rate_per_kg = models.DecimalField(max_digits=12, decimal_places=4)
     min_charge = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'cartage_ladders'
         unique_together = (('ratecard', 'min_weight_kg', 'max_weight_kg'),)
 
 
 class StorageTiers(models.Model):
     id = models.BigAutoField(primary_key=True)
-    ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
+    ratecard = models.ForeignKey(Ratecards, on_delete=models.CASCADE)
     group_code = models.TextField()
     week_from = models.SmallIntegerField()
     week_to = models.SmallIntegerField()
@@ -158,7 +164,7 @@ class StorageTiers(models.Model):
     notes = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'storage_tiers'
 
 
@@ -169,14 +175,14 @@ class Services(models.Model):
     basis = models.TextField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'services'
 
 
 class ServiceItems(models.Model):
     id = models.BigAutoField(primary_key=True)
-    ratecard = models.ForeignKey(Ratecards, models.DO_NOTHING)
-    service = models.ForeignKey(Services, models.DO_NOTHING)
+    ratecard = models.ForeignKey(Ratecards, on_delete=models.CASCADE)
+    service = models.ForeignKey(Services, on_delete=models.PROTECT)
     currency = models.TextField()
     amount = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
     min_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
@@ -187,19 +193,24 @@ class ServiceItems(models.Model):
     conditions_json = models.JSONField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'service_items'
 
 
 class SellCostLinksSimple(models.Model):
     id = models.BigAutoField(primary_key=True)
-    sell_item = models.ForeignKey(ServiceItems, models.DO_NOTHING)
-    buy_fee_code = models.ForeignKey(FeeTypes, models.DO_NOTHING, db_column='buy_fee_code', to_field='code')
+    sell_item = models.ForeignKey(ServiceItems, on_delete=models.CASCADE)
+    buy_fee_code = models.ForeignKey(
+        FeeTypes,
+        on_delete=models.PROTECT,
+        db_column='buy_fee_code',
+        to_field='code',
+    )
     mapping_type = models.TextField()
     mapping_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'sell_cost_links_simple'
 
 
@@ -214,7 +225,7 @@ class CurrencyRates(models.Model):
     source = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'currency_rates'
         unique_together = (('as_of_ts', 'base_ccy', 'quote_ccy', 'rate_type'),)
 
@@ -227,7 +238,7 @@ class PricingPolicy(models.Model):
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'pricing_policy'
 
 
@@ -244,25 +255,25 @@ class Organizations(models.Model):
     notes = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'organizations'
 
 
 class Contacts(models.Model):
     id = models.BigAutoField(primary_key=True)
-    org = models.ForeignKey(Organizations, models.DO_NOTHING)
+    org = models.ForeignKey(Organizations, on_delete=models.CASCADE)
     name = models.TextField()
     email = models.TextField(blank=True, null=True)
     phone = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'contacts'
 
 
 class Sites(models.Model):
     id = models.BigAutoField(primary_key=True)
-    org = models.ForeignKey(Organizations, models.DO_NOTHING)
+    org = models.ForeignKey(Organizations, on_delete=models.CASCADE)
     label = models.TextField()
     address = models.TextField()
     city = models.TextField(blank=True, null=True)
@@ -270,7 +281,7 @@ class Sites(models.Model):
     country = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'sites'
 
 
@@ -332,7 +343,7 @@ class Routes(models.Model):
         return self.name
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'routes'
         verbose_name_plural = "Routes"
 
@@ -354,6 +365,6 @@ class RouteLegs(models.Model):
         return f"{self.route.name} - Leg {self.sequence}: {self.origin.iata} to {self.dest.iata}"
 
     class Meta:
-        managed = False
+        managed = True
         db_table = 'route_legs'
         ordering = ['route', 'sequence']
