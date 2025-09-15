@@ -354,10 +354,8 @@ class MultiLegRouteTests(TestCase):
             expiry_date=None,
             notes="",
             meta={},
-            created_at=now(),
-            updated_at=now(),
         )
-        RatecardConfig.objects.create(ratecard=rc_buy_int, dim_factor_kg_per_m3=Decimal("167"), rate_strategy="BREAKS", created_at=now())
+        RatecardConfig.objects.create(ratecard=rc_buy_int, dim_factor_kg_per_m3=Decimal("167"), rate_strategy="BREAKS")
 
         rc_buy_dom = Ratecards.objects.create(
             provider=prv,
@@ -374,10 +372,8 @@ class MultiLegRouteTests(TestCase):
             expiry_date=None,
             notes="",
             meta={},
-            created_at=now(),
-            updated_at=now(),
         )
-        RatecardConfig.objects.create(ratecard=rc_buy_dom, dim_factor_kg_per_m3=Decimal("167"), rate_strategy="BREAKS", created_at=now())
+        RatecardConfig.objects.create(ratecard=rc_buy_dom, dim_factor_kg_per_m3=Decimal("167"), rate_strategy="BREAKS")
 
         # Lanes and breaks
         ln1 = Lanes.objects.create(ratecard=rc_buy_int, origin=bne, dest=pom, via=None, airline=None, is_direct=True)
@@ -402,8 +398,6 @@ class MultiLegRouteTests(TestCase):
             expiry_date=None,
             notes="",
             meta={},
-            created_at=now(),
-            updated_at=now(),
         )
         # Expose for tests
         cls.sell_card_pgk = rc_sell

@@ -52,8 +52,8 @@ class Ratecards(models.Model):
     expiry_date = models.DateField(blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
     meta = models.JSONField()
-    created_at = models.DateTimeField()
-    updated_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         managed = False
@@ -66,7 +66,7 @@ class RatecardConfig(models.Model):
     ratecard = models.OneToOneField(Ratecards, models.DO_NOTHING)
     dim_factor_kg_per_m3 = models.DecimalField(max_digits=8, decimal_places=2)
     rate_strategy = models.TextField()
-    created_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         managed = False
@@ -126,7 +126,7 @@ class RatecardFees(models.Model):
     per_kg_threshold = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
     applies_if = models.JSONField()
     notes = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         managed = False

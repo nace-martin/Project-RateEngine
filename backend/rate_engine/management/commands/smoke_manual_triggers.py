@@ -132,12 +132,10 @@ class Command(BaseCommand):
                 status="PUBLISHED",
                 effective_date=today,
                 meta={},
-                created_at=now(),
-                updated_at=now(),
             ),
         )
         RatecardConfig.objects.get_or_create(ratecard=rc_sell, defaults={
-            "dim_factor_kg_per_m3": Decimal("167"), "rate_strategy": "IATA_BREAKS", "created_at": now()
+            "dim_factor_kg_per_m3": Decimal("167"), "rate_strategy": "IATA_BREAKS"
         })
 
         org, _ = Organizations.objects.get_or_create(

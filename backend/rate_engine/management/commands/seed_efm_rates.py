@@ -77,8 +77,6 @@ class Command(BaseCommand):
                 effective_date="2025-01-01",
                 expiry_date="2025-12-31",
                 meta={},
-                created_at=now(),
-                updated_at=now(),
             ),
         )
 
