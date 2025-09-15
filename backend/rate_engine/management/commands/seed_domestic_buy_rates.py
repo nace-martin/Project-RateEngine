@@ -57,7 +57,7 @@ class Command(BaseCommand):
                 "provider": provider, "role": "BUY", "scope": "DOMESTIC",
                 "direction": "DOMESTIC", "rate_strategy": "FLAT_PER_KG",
                 "currency": "PGK", "status": "ACTIVE", "source": "SEEDER",
-                "effective_date": now().date(), "created_at": now(), "updated_at": now(),
+                "effective_date": now().date(),
                  "meta": json.dumps({"d2d_available_between": ["POM-LAE", "LAE-POM"]}),
             }
         )
@@ -104,7 +104,7 @@ class Command(BaseCommand):
                 defaults={
                     "amount": Decimal(fee_data["amount"]),
                     "min_amount": Decimal(fee_data.get("min_amount", "0.00")),
-                    "currency": "PGK", "created_at": now()
+                    "currency": "PGK"
                 }
             )
 
@@ -116,8 +116,8 @@ class Command(BaseCommand):
             defaults={
                 "role": "SELL", "scope": "DOMESTIC", "direction": "DOMESTIC",
                 "audience": "PGK_LOCAL", "currency": "PGK", "status": "ACTIVE",
-                "source": "SEEDER", "effective_date": now().date(), "created_at": now(),
-                "updated_at": now(), "meta": json.dumps({"rounding_rule": "NEAREST_0_05"})
+                "source": "SEEDER", "effective_date": now().date(),
+                "meta": json.dumps({"rounding_rule": "NEAREST_0_05"})
             }
         )
 

@@ -144,12 +144,10 @@ def seed_minimal():
             status="ACTIVE",
             effective_date=today,
             meta={},
-            created_at=now(),
-            updated_at=now(),
         ),
     )
     RatecardConfig.objects.get_or_create(ratecard=rc_sell, defaults={
-        "dim_factor_kg_per_m3": Decimal("167"), "rate_strategy": "BREAKS", "created_at": now()
+        "dim_factor_kg_per_m3": Decimal("167"), "rate_strategy": "BREAKS"
     })
 
     # Organization with audience matching SELL card

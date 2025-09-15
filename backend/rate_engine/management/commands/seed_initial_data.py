@@ -42,7 +42,6 @@ def ensure_ratecard(provider, name, role, scope, direction, currency, audience=N
             provider=provider, role=role, scope=scope, direction=direction,
             audience=audience, currency=currency, source=source,
             status=status, effective_date=now().date(), meta={},
-            created_at=now(), updated_at=now(),
         ),
     )
     RatecardConfig.objects.get_or_create(
@@ -50,7 +49,6 @@ def ensure_ratecard(provider, name, role, scope, direction, currency, audience=N
         defaults={
             "dim_factor_kg_per_m3": Decimal("167.00"),
             "rate_strategy": "IATA_BREAKS",
-            "created_at": now(),
         },
     )
     return rc
@@ -85,7 +83,6 @@ def add_fee(rc, fee_type_code, currency, amount, *, min_amount=None, max_amount=
         "currency": currency,
         "amount": amount,
         "applies_if": applies_if if applies_if is not None else {},
-        "created_at": now(),
     }
     if min_amount is not None: defaults["min_amount"] = min_amount
     if max_amount is not None: defaults["max_amount"] = max_amount
