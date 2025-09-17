@@ -14,6 +14,7 @@ from core.models import (
     CurrencyRates,
 )
 from pricing.models import (
+    Audience,
     Ratecards,
     RatecardConfig,
     Lanes,
@@ -46,16 +47,38 @@ def ensure_service(code, name, basis):
     svc, _ = Services.objects.get_or_create(code=code, defaults={"name": name, "basis": basis})
     return svc
 
+
 def ensure_ratecard(provider, name, role, scope, direction, currency, audience=None, source="CATALOG", status="PUBLISHED"):
-    rc, _ = Ratecards.objects.get_or_create(
-        name=name,
-        defaults=dict(
-            provider=provider, role=role, scope=scope, direction=direction,
-            audience=audience, currency=currency, source=source,
-            status=status, effective_date=now().date(), meta={},
-            created_at=now(), updated_at=now(),
-        ),
+    audience_obj = Audience.get_or_create_from_code(audience) if audience else None
+    defaults = dict(
+        provider=provider,
+        role=role,
+        scope=scope,
+        direction=direction,
+        audience_old=audience,
+        audience=audience_obj,
+        currency=currency,
+        source=source,
+        status=status,
+        effective_date=now().date(),
+        meta={},
+        created_at=now(),
+        updated_at=now(),
     )
+    rc, created = Ratecards.objects.get_or_create(name=name, defaults=defaults)
+
+    updates = []
+    if audience and rc.audience_old != audience:
+        rc.audience_old = audience
+        updates.append("audience_old")
+    if rc.audience_id != (audience_obj.id if audience_obj else None):
+        rc.audience = audience_obj
+        updates.append("audience")
+    if updates:
+        rc.updated_at = now()
+        updates.append("updated_at")
+        rc.save(update_fields=updates)
+
     RatecardConfig.objects.get_or_create(
         ratecard_id=rc.id,
         defaults={

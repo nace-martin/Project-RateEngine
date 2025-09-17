@@ -10,7 +10,8 @@ from rest_framework.test import APIClient
 
 from core.models import Stations, Providers
 from organizations.models import Organizations
-from pricing.models import Ratecards, RatecardConfig, Routes, RouteLegs
+from pricing.models import Audience, Ratecards, RatecardConfig, Routes, RouteLegs
+
 
 
 DDL = [
@@ -30,6 +31,17 @@ DDL = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS audiences (
+        id BIGSERIAL PRIMARY KEY,
+        party_type TEXT NOT NULL,
+        region TEXT NOT NULL,
+        settlement TEXT NOT NULL,
+        code TEXT UNIQUE,
+        is_active BOOLEAN DEFAULT TRUE,
+        CONSTRAINT audiences_unique UNIQUE (party_type, region, settlement)
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS ratecards (
         id BIGSERIAL PRIMARY KEY,
         provider_id INTEGER REFERENCES providers(id),
@@ -37,7 +49,8 @@ DDL = [
         role TEXT,
         scope TEXT,
         direction TEXT,
-        audience TEXT,
+        audience_old TEXT,
+        audience_id INTEGER REFERENCES audiences(id),
         rate_strategy VARCHAR(32),
         currency TEXT,
         source TEXT,
@@ -94,7 +107,6 @@ DDL = [
     """,
 ]
 
-
 class Command(BaseCommand):
     help = "Smoke test for manual trigger scenarios via APIClient (no server needed)."
 
@@ -111,6 +123,8 @@ class Command(BaseCommand):
                     cur.execute(sql)
                 except Exception:
                     connection.rollback()
+            cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS audience_old TEXT")
+            cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS audience_id INTEGER REFERENCES audiences(id)")
             cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS commodity_code VARCHAR(8) DEFAULT 'GCR'")
             cur.execute("ALTER TABLE routes ADD COLUMN IF NOT EXISTS requires_manual_rate BOOLEAN DEFAULT FALSE")
 
@@ -120,24 +134,38 @@ class Command(BaseCommand):
 
         prv, _ = Providers.objects.get_or_create(name="Test Provider", defaults={"provider_type": "CARRIER"})
         today = now().date()
-        rc_sell, _ = Ratecards.objects.get_or_create(
-            name="SELL IMPORT PG",
-            defaults=dict(
-                provider=prv,
-                role="SELL",
-                scope="INTERNATIONAL",
-                direction="IMPORT",
-                audience="PGK_LOCAL",
-                rate_strategy="BREAKS",
-                currency="PGK",
-                source="CATALOG",
-                status="PUBLISHED",
-                effective_date=today,
-                meta={},
-                created_at=now(),
-                updated_at=now(),
-            ),
+
+        audience_code = "PGK_LOCAL"
+        audience_obj = Audience.get_or_create_from_code(audience_code)
+        rc_defaults = dict(
+            provider=prv,
+            role="SELL",
+            scope="INTERNATIONAL",
+            direction="IMPORT",
+            audience_old=audience_code,
+            audience=audience_obj,
+            rate_strategy="BREAKS",
+            currency="PGK",
+            source="CATALOG",
+            status="PUBLISHED",
+            effective_date=today,
+            meta={},
+            created_at=now(),
+            updated_at=now(),
         )
+        rc_sell, created = Ratecards.objects.get_or_create(name="SELL IMPORT PG", defaults=rc_defaults)
+        rc_updates = []
+        if rc_sell.audience_old != audience_code:
+            rc_sell.audience_old = audience_code
+            rc_updates.append("audience_old")
+        if rc_sell.audience_id != (audience_obj.id if audience_obj else None):
+            rc_sell.audience = audience_obj
+            rc_updates.append("audience")
+        if rc_updates:
+            rc_sell.updated_at = now()
+            rc_updates.append("updated_at")
+            rc_sell.save(update_fields=rc_updates)
+
         RatecardConfig.objects.get_or_create(ratecard=rc_sell, defaults={
             "dim_factor_kg_per_m3": Decimal("167"), "rate_strategy": "IATA_BREAKS", "created_at": now()
         })

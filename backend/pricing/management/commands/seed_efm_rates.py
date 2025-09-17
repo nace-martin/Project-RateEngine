@@ -6,7 +6,7 @@ from django.utils.timezone import now
 from decimal import Decimal
 
 from core.models import Providers, Services
-from pricing.models import Ratecards, ServiceItems
+from pricing.models import Audience, Ratecards, ServiceItems
 
 # Helper function to create or update a service
 def ensure_service(code, name, basis):
@@ -57,17 +57,24 @@ class Command(BaseCommand):
         our_company, _ = Providers.objects.get_or_create(name="Express Freight Management", defaults={"provider_type": "AGENT"})
 
 
-        # --- 3. Get or Create the Import SELL Rate Card ---
-        self.stdout.write("Creating/Updating the EFM Import SELL Menu...")
-        import_rc, _ = Ratecards.objects.get_or_create(
-            provider=our_company,
-            name="EFM PGK Import SELL Menu 2025",
-            role="SELL",
-            scope="INTERNATIONAL",
-            direction="IMPORT",
-            defaults=dict(
+
+
+        # --- 3. Get or Create the Import SELL Rate Cards ---
+        self.stdout.write("Creating/Updating the EFM Import SELL Menus...")
+        ratecard_specs = [
+            {"name": "EFM PGK Import SELL Menu 2025 (Prepaid)", "audience": "PNG_CUSTOMER_PREPAID"},
+            {"name": "EFM PGK Import SELL Menu 2025 (Collect)", "audience": "OVERSEAS_AGENT_COLLECT"},
+        ]
+
+
+        ratecards = []
+        for spec in ratecard_specs:
+            audience_code = spec["audience"]
+            audience_obj = Audience.get_or_create_from_code(audience_code)
+            defaults = dict(
                 currency="PGK",
-                audience="PGK_LOCAL",
+                audience_old=audience_code,
+                audience=audience_obj,
                 source="CATALOG",
                 status="PUBLISHED",
                 effective_date="2025-01-01",
@@ -75,23 +82,42 @@ class Command(BaseCommand):
                 meta={},
                 created_at=now(),
                 updated_at=now(),
-            ),
-        )
+            )
+            rc, created = Ratecards.objects.update_or_create(
+                provider=our_company,
+                name=spec["name"],
+                role="SELL",
+                scope="INTERNATIONAL",
+                direction="IMPORT",
+                defaults=defaults,
+            )
+            updated_fields = []
+            if rc.audience_old != audience_code:
+                rc.audience_old = audience_code
+                updated_fields.append("audience_old")
+            if rc.audience_id != (audience_obj.id if audience_obj else None):
+                rc.audience = audience_obj
+                updated_fields.append("audience")
+            if updated_fields:
+                rc.updated_at = now()
+                updated_fields.append("updated_at")
+                rc.save(update_fields=updated_fields)
+            ratecards.append(rc)
 
-        # --- 4. Add the Service Items from your Rate Card ---
-        self.stdout.write("Adding/Updating service items for the Import menu...")
-        
+        # --- 4. Add the Service Items from your Rate Cards ---
+        self.stdout.write("Adding/Updating service items for the Import menus...")
+
         # Based on "Customs Clearance and Delivery Charges"
-        add_service_item(import_rc, "CUSTOMS_CLEARANCE", "PGK", "300.00", item_code="040-61130")
-        add_service_item(import_rc, "AGENCY_FEE", "PGK", "250.00", item_code="040-61000")
-        add_service_item(import_rc, "CUSTOMS_ENTRY_PAGE", "PGK", "55.00", item_code="040-61131")
-        add_service_item(import_rc, "DOCUMENTATION_FEE", "PGK", "165.00", item_code="040-61160")
-        add_service_item(import_rc, "HANDLING_GENERAL", "PGK", "165.00", item_code="040-61170")
-        add_service_item(import_rc, "TERMINAL_FEE_INT", "PGK", "165.00", item_code="040-61030")
-        add_service_item(import_rc, "CARTAGE_DELIVERY", "PGK", "1.50", min_amount="95.00", max_amount="500.00", item_code="040-61333")
-        add_service_item(import_rc, "FUEL_SURCHARGE_CARTAGE", "PGK", "0.10", percent_of_service_code="CARTAGE_DELIVERY", item_code="040-61361")
-        add_service_item(import_rc, "DISBURSEMENT_FEE", "PGK", "0.05", min_amount="50.00", max_amount="2500.00", item_code="040-61234", percent_of_service_code="TBA_IMPORT_TAX") # Note: You'll need a way to calculate the import tax for this to work automatically
-
+        for import_rc in ratecards:
+            add_service_item(import_rc, "CUSTOMS_CLEARANCE", "PGK", "300.00", item_code="040-61130")
+            add_service_item(import_rc, "AGENCY_FEE", "PGK", "250.00", item_code="040-61000")
+            add_service_item(import_rc, "CUSTOMS_ENTRY_PAGE", "PGK", "55.00", item_code="040-61131")
+            add_service_item(import_rc, "DOCUMENTATION_FEE", "PGK", "165.00", item_code="040-61160")
+            add_service_item(import_rc, "HANDLING_GENERAL", "PGK", "165.00", item_code="040-61170")
+            add_service_item(import_rc, "TERMINAL_FEE_INT", "PGK", "165.00", item_code="040-61030")
+            add_service_item(import_rc, "CARTAGE_DELIVERY", "PGK", "1.50", min_amount="95.00", max_amount="500.00", item_code="040-61333")
+            add_service_item(import_rc, "FUEL_SURCHARGE_CARTAGE", "PGK", "0.10", percent_of_service_code="CARTAGE_DELIVERY", item_code="040-61361")
+            add_service_item(import_rc, "DISBURSEMENT_FEE", "PGK", "0.05", min_amount="50.00", max_amount="2500.00", item_code="040-61234", percent_of_service_code="TBA_IMPORT_TAX")  # Note: You'll need a way to calculate the import tax for this to work automatically
 
         self.stdout.write(self.style.SUCCESS("Successfully seeded EFM 2025 Import rates."))
 

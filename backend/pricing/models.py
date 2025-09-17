@@ -1,6 +1,86 @@
 from django.db import models
 
 
+class Audience(models.Model):
+    class PartyType(models.TextChoices):
+        CUSTOMER = "CUSTOMER", "Customer"
+        AGENT = "AGENT", "Agent"
+
+    class Region(models.TextChoices):
+        PNG = "PNG", "Papua New Guinea"
+        AU = "AU", "Australia"
+        USD = "USD", "United States Dollar"
+        OVERSEAS = "OVERSEAS", "Overseas"
+
+    class Settlement(models.TextChoices):
+        PREPAID = "PREPAID", "Prepaid"
+        COLLECT = "COLLECT", "Collect"
+
+    party_type = models.CharField(max_length=32, choices=PartyType.choices)
+    region = models.CharField(max_length=32, choices=Region.choices)
+    settlement = models.CharField(max_length=32, choices=Settlement.choices)
+    code = models.CharField(max_length=128, unique=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'audiences'
+        unique_together = (('party_type', 'region', 'settlement'),)
+
+    def __str__(self):
+        return self.code
+
+    @classmethod
+    def normalise_code(cls, raw: str):
+        if not raw:
+            return None
+        tokens = [t.strip().upper() for t in raw.split('_') if t.strip()]
+        region_token = tokens[0] if tokens else 'OVERSEAS'
+        party_token = tokens[1] if len(tokens) >= 2 else ''
+        settlement_token = tokens[2] if len(tokens) >= 3 else ''
+
+        if party_token in {'PREPAID', 'COLLECT'} and not settlement_token:
+            settlement_token = party_token
+            party_token = ''
+
+        region_map = {
+            'PNG': 'PNG',
+            'PGK': 'PNG',
+            'AU': 'AU',
+            'AUD': 'AU',
+            'USD': 'USD',
+            'OVERSEAS': 'OVERSEAS',
+        }
+        party_map = {
+            'CUSTOMER': 'CUSTOMER',
+            'LOCAL': 'CUSTOMER',
+            'AGENT': 'AGENT',
+        }
+
+        region = region_map.get(region_token, region_token)
+        party = party_map.get(party_token, 'CUSTOMER')
+        settlement = settlement_token if settlement_token in {'PREPAID', 'COLLECT'} else 'PREPAID'
+
+        code = f"{region}_{party}_{settlement}"
+        return code, region, party, settlement
+
+    @classmethod
+    def get_or_create_from_code(cls, raw: str):
+        result = cls.normalise_code(raw)
+        if not result:
+            return None
+        code, region, party, settlement = result
+        audience, _ = cls.objects.get_or_create(
+            party_type=party,
+            region=region,
+            settlement=settlement,
+            defaults={'code': code, 'is_active': True},
+        )
+        if audience.code != code:
+            audience.code = code
+            audience.save(update_fields=['code'])
+        return audience
+
+
 class Ratecards(models.Model):
     id = models.BigAutoField(primary_key=True)
     provider = models.ForeignKey('core.Providers', models.DO_NOTHING)
@@ -8,7 +88,8 @@ class Ratecards(models.Model):
     role = models.TextField()
     scope = models.TextField()
     direction = models.TextField()
-    audience = models.TextField(blank=True, null=True)
+    audience_old = models.TextField(blank=True, null=True)
+    audience = models.ForeignKey('pricing.Audience', models.PROTECT, blank=True, null=True)
     # Commodity code for the ratecard (e.g., GCR, DGR, LAR, PER)
     commodity_code = models.CharField(
         max_length=8,

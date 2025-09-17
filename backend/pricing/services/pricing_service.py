@@ -781,37 +781,40 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
                 if first_rc_buy_id is None and cl.source_ratecard_id:
                     first_rc_buy_id = cl.source_ratecard_id
 
-    # 3) SELL destination services (PGK/AUD/USD) based on audience & direction
-    sell_direction = payload.shipment_type  # SELL follows request direction
-    # Prefer SELL card in the requested sell currency; fall back to any currency
+
+    # 3) Determine the correct SELL audience based on payment term
+    sell_direction = payload.shipment_type
+
+    if payload.payment_term == "PREPAID":
+        # For prepaid shipments, the payer is the local customer
+        target_audience = "PNG_CUSTOMER_PREPAID"
+    elif payload.payment_term == "COLLECT":
+        # For collect shipments, the payer is the overseas agent/partner
+        target_audience = "OVERSEAS_AGENT_COLLECT"
+    else:
+        # Fallback to the organization's default audience if payment_term is not specified
+        target_audience = audience
+
+    # Query for the SELL rate card using the specific target audience
+
     sell_qs_base = Ratecard.objects.filter(
         role="SELL",
         scope=scope_for_sell,
         direction=sell_direction,
-        audience=audience,
         effective_date__lte=ts.date(),
-    ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
+    ).filter(
+        Q(audience__code=target_audience) | Q(audience_old=target_audience),
+        Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()),
+    )
 
-    def pick_sell_card(qs):
-        if qs is None:
-            return None
-        card = qs.filter(currency=sell_currency).first()
-        if card:
-            return card
-        return qs.first()
 
-    sell_qs_payment = sell_qs_base.filter(meta__payment_term=payment_term)
-    sell_card = pick_sell_card(sell_qs_payment)
-
+    sell_card = sell_qs_base.filter(currency=sell_currency).first()
     if not sell_card:
-        neutral_qs = sell_qs_base.filter(Q(meta__payment_term__isnull=True) | Q(meta__payment_term=""))
-        sell_card = pick_sell_card(neutral_qs)
-
+        sell_card = sell_qs_base.first()
     if not sell_card:
-        sell_card = pick_sell_card(sell_qs_base)
-
-    if not sell_card:
-        raise ValueError("No SELL ratecard found for audience and payment term.")
+        raise ValueError(
+            f"No SELL ratecard found for audience '{target_audience}' and payment term '{payload.payment_term}'."
+        )
 
     # Build consolidated BUY context in SELL card currency for downstream SELL mapping
     buy_context: Dict[str, Money] = {}
