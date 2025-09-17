@@ -562,6 +562,42 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     pol = PricingPolicy.objects.filter(audience=audience).first()
     fx = FxConverter(caf_on_fx=bool(pol.caf_on_fx if pol else True), caf_pct=caf_pct)
 
+    origin_iata = (payload.origin_iata or "").upper()
+    dest_iata = (payload.dest_iata or "").upper()
+
+    if not origin_iata or not dest_iata:
+        raise ValueError("Both origin_iata and dest_iata are required for quoting.")
+
+    try:
+        origin_station = Station.objects.get(iata=origin_iata)
+    except Station.DoesNotExist as exc:
+        raise ValueError('Unknown origin station {0}.'.format(origin_iata)) from exc
+
+    try:
+        dest_station = Station.objects.get(iata=dest_iata)
+    except Station.DoesNotExist as exc:
+        raise ValueError('Unknown destination station {0}.'.format(dest_iata)) from exc
+
+    payload.origin_iata = origin_iata
+    payload.dest_iata = dest_iata
+
+    # Auto-detect shipment type using station country codes
+    def infer_shipment_type(origin_station, dest_station):
+        origin_country = (origin_station.country or "").upper()
+        dest_country = (dest_station.country or "").upper()
+
+        if origin_country and dest_country and origin_country == dest_country:
+            return "DOMESTIC"
+        if origin_country == "PG" and dest_country != "PG":
+            return "EXPORT"
+        if origin_country != "PG" and dest_country == "PG":
+            return "IMPORT"
+        if origin_country != dest_country:
+            return "EXPORT"
+        return "EXPORT"
+
+    payload.shipment_type = infer_shipment_type(origin_station, dest_station)
+
     # 1) BUY pricing: support multi-leg via Routes/RouteLegs when available
 
     # TODO: Implement logic for Incoterm-based fee inclusion.
@@ -582,14 +618,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     # Determine route based on origin/dest station countries and shipment type
     route = None
     try:
-        origin_iata = (payload.origin_iata or "").upper()
-        dest_iata = (payload.dest_iata or "").upper()
-        st_o = Station.objects.get(iata=origin_iata)
-        st_d = Station.objects.get(iata=dest_iata)
         route_candidates = (
             Routes.objects.filter(
-                origin_country=(st_o.country or "").upper(),
-                dest_country=(st_d.country or "").upper(),
+                origin_country=(origin_station.country or "").upper(),
+                dest_country=(dest_station.country or "").upper(),
                 shipment_type=payload.shipment_type,
             )
             .annotate(

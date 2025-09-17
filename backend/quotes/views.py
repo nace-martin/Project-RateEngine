@@ -73,7 +73,6 @@ class QuoteComputeView(views.APIView):
             org_id=int(data["org_id"]),
             origin_iata=data["origin_iata"],
             dest_iata=data["dest_iata"],
-            shipment_type=data["shipment_type"],
             service_scope=data["service_scope"],
             incoterm=(data.get("incoterm") or None),
             commodity_code=data.get("commodity_code", "GCR"),
@@ -99,13 +98,20 @@ class QuoteComputeView(views.APIView):
             status_str = QuoteStatus.PENDING_RATE if is_manual else QuoteStatus.COMPLETE
             totals = calc_result.totals
 
+            if isinstance(payload, dict):
+                request_snapshot = {**payload, "shipment_type": shipment.shipment_type}
+            else:
+                request_snapshot = {"shipment_type": shipment.shipment_type}
+                if hasattr(ser, 'initial_data') and isinstance(ser.initial_data, dict):
+                    request_snapshot.update(ser.initial_data)
+
             # 2. Create the main Quote record
             new_quote = Quotes.objects.create(
                 organization_id=shipment.org_id,
                 status=status_str,
                 # Store the original incoming payload (JSON-serializable),
                 # not the validated data which contains Decimals.
-                request_snapshot=payload,
+                request_snapshot=request_snapshot,
                 buy_total=totals.get("buy_total", Money(ZERO, "USD")).amount,
                 sell_total=totals.get("sell_total", Money(ZERO, "USD")).amount,
                 currency=totals.get("sell_total", Money(ZERO, "USD")).currency,

@@ -15,7 +15,6 @@ class PieceSerializer(serializers.Serializer):
 class ComputeRequestSerializer(serializers.Serializer):
     origin_iata = serializers.CharField()
     dest_iata = serializers.CharField()
-    shipment_type = serializers.ChoiceField(choices=("IMPORT", "EXPORT", "DOMESTIC"))
     service_scope = serializers.ChoiceField(
         choices=("DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR", "AIRPORT_AIRPORT")
     )

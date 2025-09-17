@@ -44,6 +44,34 @@ const incotermOptions = [
   { value: 'FOB', label: 'FOB (Free on Board)' },
 ];
 
+const stationCountries: Record<string, string> = {
+  BNE: 'AU',
+  SYD: 'AU',
+  CNS: 'AU',
+  LAE: 'PG',
+  POM: 'PG',
+  HGU: 'PG',
+};
+
+const detectShipmentType = (originCode: string, destCode: string): string => {
+  const originCountry = stationCountries[originCode] ?? '';
+  const destCountry = stationCountries[destCode] ?? '';
+
+  if (originCountry && destCountry && originCountry === destCountry) {
+    return 'DOMESTIC';
+  }
+  if (originCountry === 'PG' && destCountry !== 'PG') {
+    return 'EXPORT';
+  }
+  if (originCountry !== 'PG' && destCountry === 'PG') {
+    return 'IMPORT';
+  }
+  if (originCountry && destCountry && originCountry !== destCountry) {
+    return 'EXPORT';
+  }
+  return '';
+};
+
 
 export default function NewQuotePage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
@@ -53,6 +81,7 @@ export default function NewQuotePage() {
   const [commodityCode, setCommodityCode] = useState('GCR');
   const [serviceScope, setServiceScope] = useState('AIRPORT_AIRPORT');
   const [incoterm, setIncoterm] = useState('DAP');
+  const [shipmentType, setShipmentType] = useState('');
   const [isUrgent, setIsUrgent] = useState(false);
   const [pieces, setPieces] = useState<Piece[]>([{ weight_kg: '' }]);
   const [quoteResult, setQuoteResult] = useState<ComputeQuoteResponse | null>(null);
@@ -89,6 +118,12 @@ export default function NewQuotePage() {
     }
     fetchOrganizations();
   }, []);
+
+  useEffect(() => {
+    const originCode = origin.trim().toUpperCase();
+    const destCode = destination.trim().toUpperCase();
+    setShipmentType(detectShipmentType(originCode, destCode));
+  }, [origin, destination]);
 
   const fetchQuoteDetail = async (quoteId: number, token: string | null) => {
     try {
@@ -175,11 +210,13 @@ export default function NewQuotePage() {
     setError(null);
     setQuoteResult(null);
 
+    const originCode = origin.trim().toUpperCase();
+    const destCode = destination.trim().toUpperCase();
+
     const payload = {
       org_id: parseInt(selectedOrg, 10),
-      origin_iata: origin,
-      dest_iata: destination,
-      shipment_type: "IMPORT",
+      origin_iata: originCode,
+      dest_iata: destCode,
       service_scope: serviceScope,
       incoterm: incoterm,
       commodity_code: commodityCode,
@@ -337,6 +374,16 @@ export default function NewQuotePage() {
                   <Label htmlFor="destination">Destination</Label>
                   <Input id="destination" value={destination} onChange={(e) => setDestination(e.target.value.toUpperCase())} maxLength={3} />
                 </div>
+              </div>
+
+              <div>
+                <Label>Shipment Type</Label>
+                <div className="mt-2 inline-flex">
+                  <span className="inline-flex items-center rounded-md border border-slate-300 bg-slate-50 px-3 py-1 text-sm font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-100">
+                    {shipmentType || 'Awaiting selection'}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Automatically detected based on route.</p>
               </div>
 
               <div>

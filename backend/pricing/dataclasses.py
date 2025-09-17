@@ -25,8 +25,8 @@ class ShipmentInput:
     org_id: int
     origin_iata: str
     dest_iata: str
-    shipment_type: str
     service_scope: str
+    shipment_type: Optional[str] = None
     incoterm: Optional[str] = None
     commodity_code: str = "GCR"
     is_urgent: bool = False
