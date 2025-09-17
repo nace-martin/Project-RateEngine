@@ -18,6 +18,7 @@ class ComputeRequestSerializer(serializers.Serializer):
     service_scope = serializers.ChoiceField(
         choices=("DOOR_DOOR", "DOOR_AIRPORT", "AIRPORT_DOOR", "AIRPORT_AIRPORT")
     )
+    payment_term = serializers.ChoiceField(choices=("PREPAID", "COLLECT"), default="PREPAID")
     incoterm = serializers.CharField(required=False, allow_null=True, allow_blank=True, max_length=16)
     org_id = serializers.IntegerField()
     commodity_code = serializers.CharField(required=False, max_length=8, default="GCR")

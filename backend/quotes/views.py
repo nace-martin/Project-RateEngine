@@ -75,6 +75,7 @@ class QuoteComputeView(views.APIView):
             dest_iata=data["dest_iata"],
             service_scope=data["service_scope"],
             incoterm=(data.get("incoterm") or None),
+            payment_term=data.get("payment_term", "PREPAID"),
             commodity_code=data.get("commodity_code", "GCR"),
             is_urgent=bool(data.get("is_urgent", False)),
             airline_hint=data.get("airline_hint") or None,
@@ -105,6 +106,8 @@ class QuoteComputeView(views.APIView):
                 if hasattr(ser, 'initial_data') and isinstance(ser.initial_data, dict):
                     request_snapshot.update(ser.initial_data)
 
+            request_snapshot["payment_term"] = shipment.payment_term
+
             # 2. Create the main Quote record
             new_quote = Quotes.objects.create(
                 organization_id=shipment.org_id,
@@ -112,6 +115,7 @@ class QuoteComputeView(views.APIView):
                 # Store the original incoming payload (JSON-serializable),
                 # not the validated data which contains Decimals.
                 request_snapshot=request_snapshot,
+                payment_term=shipment.payment_term,
                 buy_total=totals.get("buy_total", Money(ZERO, "USD")).amount,
                 sell_total=totals.get("sell_total", Money(ZERO, "USD")).amount,
                 currency=totals.get("sell_total", Money(ZERO, "USD")).currency,
@@ -234,6 +238,7 @@ class QuoteDetailView(views.APIView):
             "origin": snap.get("origin_iata") or snap.get("origin") or "",
             "destination": snap.get("dest_iata") or snap.get("destination") or "",
             "mode": snap.get("shipment_type") or "",
+            "payment_term": q.payment_term,
             "actual_weight_kg": str(actual.quantize(FOURPLACES)),
             "volume_cbm": str(volume.quantize(FOURPLACES)),
             "chargeable_weight_kg": str(chargeable.quantize(FOURPLACES)),
@@ -333,6 +338,7 @@ class QuoteListView(views.APIView):
                 "origin": snap.get("origin_iata") or snap.get("origin") or "",
                 "destination": snap.get("dest_iata") or snap.get("destination") or "",
                 "mode": snap.get("shipment_type") or "",
+            "payment_term": q.payment_term,
                 "status": q.status,
                 "actual_weight_kg": str(actual.quantize(FOURPLACES)),
                 "volume_cbm": str(volume.quantize(FOURPLACES)),
@@ -349,3 +355,4 @@ class QuoteListView(views.APIView):
             })
 
         return paginator.get_paginated_response(items)
+

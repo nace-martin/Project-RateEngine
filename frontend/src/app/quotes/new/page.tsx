@@ -42,7 +42,19 @@ const incotermOptions = [
   { value: 'DAP', label: 'DAP (Delivered at Place)' },
   { value: 'EXW', label: 'EXW (Ex Works)' },
   { value: 'FOB', label: 'FOB (Free on Board)' },
+  { value: 'DDP', label: 'DDP (Delivered Duty Paid)' },
+  { value: 'CIF', label: 'CIF (Cost, Insurance & Freight)' },
+  { value: 'CFR', label: 'CFR (Cost & Freight)' },
 ];
+
+const incotermServiceScopeDefaults: Record<string, string> = {
+  EXW: 'DOOR_AIRPORT',
+  FOB: 'DOOR_AIRPORT',
+  DAP: 'AIRPORT_DOOR',
+  DDP: 'AIRPORT_DOOR',
+  CIF: 'AIRPORT_AIRPORT',
+  CFR: 'AIRPORT_AIRPORT',
+};
 
 const stationCountries: Record<string, string> = {
   BNE: 'AU',
@@ -72,7 +84,6 @@ const detectShipmentType = (originCode: string, destCode: string): string => {
   return '';
 };
 
-
 export default function NewQuotePage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrg, setSelectedOrg] = useState('');
@@ -81,6 +92,7 @@ export default function NewQuotePage() {
   const [commodityCode, setCommodityCode] = useState('GCR');
   const [serviceScope, setServiceScope] = useState('AIRPORT_AIRPORT');
   const [incoterm, setIncoterm] = useState('DAP');
+  const [paymentTerm, setPaymentTerm] = useState("PREPAID");
   const [shipmentType, setShipmentType] = useState('');
   const [isUrgent, setIsUrgent] = useState(false);
   const [pieces, setPieces] = useState<Piece[]>([{ weight_kg: '' }]);
@@ -124,6 +136,14 @@ export default function NewQuotePage() {
     const destCode = destination.trim().toUpperCase();
     setShipmentType(detectShipmentType(originCode, destCode));
   }, [origin, destination]);
+  useEffect(() => {
+    const normalized = (incoterm || "").toUpperCase();
+    const suggestedScope = incotermServiceScopeDefaults[normalized];
+    if (suggestedScope) {
+      setServiceScope((current) => (current === suggestedScope ? current : suggestedScope));
+    }
+  }, [incoterm]);
+
 
   const fetchQuoteDetail = async (quoteId: number, token: string | null) => {
     try {
@@ -219,6 +239,7 @@ export default function NewQuotePage() {
       dest_iata: destCode,
       service_scope: serviceScope,
       incoterm: incoterm,
+      payment_term: paymentTerm,
       commodity_code: commodityCode,
       is_urgent: isUrgent,
       pieces: pieces.map(p => ({
@@ -387,6 +408,32 @@ export default function NewQuotePage() {
               </div>
 
               <div>
+                <Label>Payment Term</Label>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-6">
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                    <input
+                      type="radio"
+                      name="paymentTerm"
+                      value="PREPAID"
+                      checked={paymentTerm === 'PREPAID'}
+                      onChange={() => setPaymentTerm('PREPAID')}
+                      required
+                    />
+                    <span>Prepaid (Shipper Pays)</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                    <input
+                      type="radio"
+                      name="paymentTerm"
+                      value="COLLECT"
+                      checked={paymentTerm === 'COLLECT'}
+                      onChange={() => setPaymentTerm('COLLECT')}
+                    />
+                    <span>Freight Collect (Receiver Pays)</span>
+                  </label>
+                </div>
+              </div>
+              <div>
                 <Label htmlFor="commodity">Cargo Type</Label>
                 <Select onValueChange={setCommodityCode} value={commodityCode}>
                     <SelectTrigger id="commodity" className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"><SelectValue placeholder="Select cargo type" /></SelectTrigger>
@@ -456,6 +503,7 @@ export default function NewQuotePage() {
     </div>
   );
 }
+
 
 
 

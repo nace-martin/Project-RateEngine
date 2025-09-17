@@ -26,6 +26,7 @@ class ShipmentInput:
     origin_iata: str
     dest_iata: str
     service_scope: str
+    payment_term: str = "PREPAID"
     shipment_type: Optional[str] = None
     incoterm: Optional[str] = None
     commodity_code: str = "GCR"

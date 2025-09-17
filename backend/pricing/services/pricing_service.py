@@ -598,6 +598,11 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
 
     payload.shipment_type = infer_shipment_type(origin_station, dest_station)
 
+    payment_term = (payload.payment_term or "PREPAID").upper()
+    if payment_term not in {"PREPAID", "COLLECT"}:
+        payment_term = "PREPAID"
+    payload.payment_term = payment_term
+
     # 1) BUY pricing: support multi-leg via Routes/RouteLegs when available
 
     # TODO: Implement logic for Incoterm-based fee inclusion.
@@ -786,11 +791,27 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         audience=audience,
         effective_date__lte=ts.date(),
     ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
-    sell_card = sell_qs_base.filter(currency=sell_currency).first()
+
+    def pick_sell_card(qs):
+        if qs is None:
+            return None
+        card = qs.filter(currency=sell_currency).first()
+        if card:
+            return card
+        return qs.first()
+
+    sell_qs_payment = sell_qs_base.filter(meta__payment_term=payment_term)
+    sell_card = pick_sell_card(sell_qs_payment)
+
     if not sell_card:
-        sell_card = sell_qs_base.first()
+        neutral_qs = sell_qs_base.filter(Q(meta__payment_term__isnull=True) | Q(meta__payment_term=""))
+        sell_card = pick_sell_card(neutral_qs)
+
     if not sell_card:
-        raise ValueError("No SELL ratecard found for audience.")
+        sell_card = pick_sell_card(sell_qs_base)
+
+    if not sell_card:
+        raise ValueError("No SELL ratecard found for audience and payment term.")
 
     # Build consolidated BUY context in SELL card currency for downstream SELL mapping
     buy_context: Dict[str, Money] = {}
@@ -853,6 +874,7 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         "ts": ts.isoformat(),
         "shipment_type": payload.shipment_type,
         "service_scope": payload.service_scope,
+        "payment_term": payload.payment_term,
         "manual_rate_required": bool(manual_any),
         "manual_reasons": manual_reasons,
         # Backward-compat: expose first BUY ratecard id if available
