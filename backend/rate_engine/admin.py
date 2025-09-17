@@ -4,7 +4,7 @@ from .models import (
     FeeTypes, RatecardFees, Services, ServiceItems, SellCostLinksSimple,
     CurrencyRates, PricingPolicy, Organizations,
 )
-from .engine import validate_break_monotonic
+from .services.pricing_service import validate_break_monotonic
 
 class ReadOnlyAdmin(admin.ModelAdmin):
     def has_add_permission(self, request): return False

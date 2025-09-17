@@ -16,7 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include # Make sure 'include' is imported
-from rate_engine.engine import (
+from rate_engine.views import (
     QuoteComputeView,
     QuoteDetailView,
     QuoteListView,

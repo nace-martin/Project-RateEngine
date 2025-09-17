@@ -1,4 +1,4 @@
-﻿# This is an auto-generated Django model module.
+# This is an auto-generated Django model module.
 # You'll have to do the following manually to clean this up:
 #   * Rearrange models' order
 #   * Make sure each model has one field with primary_key=True
@@ -14,7 +14,6 @@ class Providers(models.Model):
     provider_type = models.TextField()
 
     class Meta:
-        managed = False
         db_table = 'providers'
 
 
@@ -25,7 +24,6 @@ class Stations(models.Model):
     country = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'stations'
 
 
@@ -56,7 +54,6 @@ class Ratecards(models.Model):
     updated_at = models.DateTimeField()
 
     class Meta:
-        managed = False
         db_table = 'ratecards'
         unique_together = (('provider', 'name', 'effective_date'),)
 
@@ -69,7 +66,6 @@ class RatecardConfig(models.Model):
     created_at = models.DateTimeField()
 
     class Meta:
-        managed = False
         db_table = 'ratecard_config'
 
 
@@ -84,7 +80,6 @@ class Lanes(models.Model):
 
     # A unique constraint could not be introspected.
     class Meta:
-        managed = False
         db_table = 'lanes'
         unique_together = (('ratecard', 'origin', 'dest'),)
 
@@ -97,7 +92,6 @@ class LaneBreaks(models.Model):
     min_charge = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'lane_breaks'
         unique_together = (('lane', 'break_code'),)
 
@@ -110,7 +104,6 @@ class FeeTypes(models.Model):
     default_tax_pct = models.DecimalField(max_digits=5, decimal_places=2)
 
     class Meta:
-        managed = False
         db_table = 'fee_types'
 
 
@@ -129,7 +122,6 @@ class RatecardFees(models.Model):
     created_at = models.DateTimeField()
 
     class Meta:
-        managed = False
         db_table = 'ratecard_fees'
 
 
@@ -142,7 +134,6 @@ class CartageLadders(models.Model):
     min_charge = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'cartage_ladders'
         unique_together = (('ratecard', 'min_weight_kg', 'max_weight_kg'),)
 
@@ -158,7 +149,6 @@ class StorageTiers(models.Model):
     notes = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'storage_tiers'
 
 
@@ -169,7 +159,6 @@ class Services(models.Model):
     basis = models.TextField()
 
     class Meta:
-        managed = False
         db_table = 'services'
 
 
@@ -187,7 +176,6 @@ class ServiceItems(models.Model):
     conditions_json = models.JSONField()
 
     class Meta:
-        managed = False
         db_table = 'service_items'
 
 
@@ -199,7 +187,6 @@ class SellCostLinksSimple(models.Model):
     mapping_value = models.DecimalField(max_digits=12, decimal_places=4, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'sell_cost_links_simple'
 
 
@@ -214,7 +201,6 @@ class CurrencyRates(models.Model):
     source = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'currency_rates'
         unique_together = (('as_of_ts', 'base_ccy', 'quote_ccy', 'rate_type'),)
 
@@ -227,7 +213,6 @@ class PricingPolicy(models.Model):
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2)
 
     class Meta:
-        managed = False
         db_table = 'pricing_policy'
 
 
@@ -244,7 +229,6 @@ class Organizations(models.Model):
     notes = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'organizations'
 
 
@@ -256,7 +240,6 @@ class Contacts(models.Model):
     phone = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'contacts'
 
 
@@ -270,7 +253,6 @@ class Sites(models.Model):
     country = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'sites'
 
 
@@ -332,7 +314,6 @@ class Routes(models.Model):
         return self.name
 
     class Meta:
-        managed = False
         db_table = 'routes'
         verbose_name_plural = "Routes"
 
@@ -354,6 +335,5 @@ class RouteLegs(models.Model):
         return f"{self.route.name} - Leg {self.sequence}: {self.origin.iata} to {self.dest.iata}"
 
     class Meta:
-        managed = False
         db_table = 'route_legs'
         ordering = ['route', 'sequence']

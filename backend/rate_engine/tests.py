@@ -67,8 +67,14 @@ class ComputeAuthTests(TestCase):
         res = self.client.post('/api/quote/compute', data=self.payload, format='json')
         self.assertEqual(res.status_code, 403)
 
-from .engine import Piece, calculate_chargeable_weight_per_piece, ZERO
-from .engine import FxConverter
+from .dataclasses import Piece, ShipmentInput
+from .services.pricing_service import (
+    calculate_chargeable_weight_per_piece,
+    compute_leg_cost,
+    compute_quote,
+)
+from .services.fx_service import FxConverter
+from .services.utils import ZERO
 from django.utils.timezone import now
 
 
@@ -432,7 +438,6 @@ class MultiLegRouteTests(TestCase):
         RouteLegs.objects.create(route=cls.route, sequence=2, origin=pom, dest=lae, leg_scope="DOMESTIC", service_type="LINEHAUL")
 
     def test_multi_leg_buy_aggregation(self):
-        from .engine import compute_quote, ShipmentInput
 
         payload = ShipmentInput(
             org_id=self.org.id,
@@ -464,7 +469,6 @@ class MultiLegRouteTests(TestCase):
         Validates that a COST_PLUS_PCT SELL rule correctly applies its margin
         to the SUM of the BUY freight costs from all legs.
         """
-        from .engine import compute_quote, ShipmentInput
         from .models import (
             Services as Service,
             ServiceItems as ServiceItem,
@@ -621,7 +625,6 @@ class ManualTriggerTests(TestCase):
         cls.leg = RouteLeg.objects.create(route=cls.route, sequence=1, origin=cls.bne, dest=cls.lae, leg_scope="INTERNATIONAL", service_type="LINEHAUL")
 
     def _make_payload(self, **overrides):
-        from .engine import ShipmentInput, Piece
         base = dict(
             org_id=1,
             origin_iata="BNE",
@@ -636,7 +639,6 @@ class ManualTriggerTests(TestCase):
         return ShipmentInput(**base)
 
     def _run_leg(self, payload):
-        from .engine import compute_leg_cost, FxConverter
         return compute_leg_cost(
             leg=self.leg,
             chargeable_kg=Decimal("100"),
