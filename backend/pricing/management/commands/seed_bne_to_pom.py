@@ -18,7 +18,14 @@ from pricing.management.commands.seed_initial_data import (
     upsert_provider,
     upsert_station,
 )
-from pricing.models import Routes, RouteLegs, Ratecards
+from pricing.models import (
+    Ratecards,
+    RatecardFees,
+    Routes,
+    RouteLegs,
+    SellCostLinksSimple,
+    ServiceItems,
+)
 
 LANE_BREAKS_BNE = [
     {"code": "MIN", "min": 330.00},
@@ -53,8 +60,6 @@ BUY_FEE_DEFS = [
     ("DOC_FEE", "Export Document Fee", "PER_SHIPMENT", {"amount": "80.00"}),
     ("AGENCY_FEE", "Export Agency Fee", "PER_SHIPMENT", {"amount": "175.00"}),
     ("AWB_FEE", "Origin AWB Fee", "PER_SHIPMENT", {"amount": "25.00"}),
-    ("SECONDARY_SCREEN", "Secondary Screening Fee", "PER_KG", {"amount": "0.41", "min_amount": "75.00", "applies_if": {"secondary_screening": True}}),
-    ("PALLET_REPACK", "Pallet Breakdown/Repack", "PER_SHIPMENT", {"amount": "50.00", "applies_if": {"pallet_repack": True}}),
     ("X_RAY", "Mandatory X-Ray Screening", "PER_KG", {"amount": "0.36", "min_amount": "70.00"}),
     ("CTO", "Cargo Terminal Operator (Terminal Fee)", "PER_KG", {"amount": "0.30", "min_amount": "30.00"}),
 ]
@@ -68,8 +73,6 @@ SELL_SERVICE_DEFS = [
     ("DOC_FEE", "Export Document Fee", "PER_SHIPMENT", {}),
     ("AGENCY_FEE", "Export Agency Fee", "PER_SHIPMENT", {}),
     ("AWB_FEE", "Origin AWB Fee", "PER_SHIPMENT", {}),
-    ("SECONDARY_SCREEN", "Secondary Screening", "PER_KG", {}),
-    ("PALLET_REPACK", "Pallet Breakdown/Repack", "PER_SHIPMENT", {}),
 ]
 
 SELL_LINKS = [
@@ -81,8 +84,6 @@ SELL_LINKS = [
     ("DOC_FEE", "DOC_FEE", "PASS_THROUGH", None),
     ("AGENCY_FEE", "AGENCY_FEE", "PASS_THROUGH", None),
     ("AWB_FEE", "AWB_FEE", "PASS_THROUGH", None),
-    ("SECONDARY_SCREEN", "SECONDARY_SCREEN", "PASS_THROUGH", None),
-    ("PALLET_REPACK", "PALLET_REPACK", "PASS_THROUGH", None),
 ]
 
 LEGACY_NAMES = [
@@ -137,7 +138,11 @@ class Command(BaseCommand):
         ensure_lane_with_breaks(syd_via_rc, syd, pom, airline="NU", is_direct=False, breaks=LANE_BREAKS_SYD_VIA, via=bne)
 
         self.stdout.write(self.style.WARNING("Attaching BUY surcharges..."))
+        allowed_buy_codes = {code for code, *_ in BUY_FEE_DEFS}
         for rc in (bne_rc, syd_rc, syd_via_rc):
+            RatecardFees.objects.filter(ratecard=rc).exclude(
+                fee_type__code__in=allowed_buy_codes
+            ).delete()
             for code, _desc, _basis, params in BUY_FEE_DEFS:
                 add_fee(
                     rc,
@@ -175,6 +180,17 @@ class Command(BaseCommand):
             },
         )
 
+        RouteLegs.objects.update_or_create(
+            route=route,
+            sequence=2,
+            defaults={
+                "origin": syd,
+                "dest": pom,
+                "leg_scope": "INTERNATIONAL",
+                "service_type": "LINEHAUL",
+            },
+        )
+
         self.stdout.write(self.style.WARNING("Configuring SELL menu for AUD importers..."))
         ensure_policy("AUD_AGENT", caf_on_fx=False, gst_applies=False, gst_pct=0)
         sell_rc = ensure_ratecard(
@@ -186,6 +202,15 @@ class Command(BaseCommand):
             "AUD",
             audience="AUD_AGENT",
         )
+
+        allowed_sell_codes = {code for code, *_ in SELL_SERVICE_DEFS}
+
+        SellCostLinksSimple.objects.filter(sell_item__ratecard=sell_rc).exclude(
+            sell_item__service__code__in=allowed_sell_codes
+        ).delete()
+        ServiceItems.objects.filter(ratecard=sell_rc).exclude(
+            service__code__in=allowed_sell_codes
+        ).delete()
 
         sell_items = {}
         for code, desc, basis, extra in SELL_SERVICE_DEFS:

@@ -5,7 +5,7 @@ import re
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils.timezone import now
 
 from ..dataclasses import CalcLine, CalcResult, Money, Piece, ShipmentInput
@@ -105,7 +105,10 @@ def pick_best_break(lane: Lane, chargeable_kg: Decimal) -> Tuple[LaneBreak, Mone
     if "MIN" in by_code:
         min_row = by_code["MIN"]
         min_charge = d(min_row.min_charge)
-        if best_cost is None or min_charge < best_cost:
+        if best_cost is None:
+            best_cost = min_charge
+            best_break = min_row
+        elif min_charge > best_cost:
             best_cost = min_charge
             best_break = min_row
 
@@ -113,6 +116,54 @@ def pick_best_break(lane: Lane, chargeable_kg: Decimal) -> Tuple[LaneBreak, Mone
         raise ValueError("No lane breaks available for pricing")
 
     return best_break, Money(best_cost, ccy)
+
+
+def select_route_legs_for_payload(
+    legs: List[RouteLegs], origin_iata: str, dest_iata: str
+) -> List[RouteLegs]:
+    """Return legs that form a contiguous path between the requested stations."""
+
+    if not legs:
+        return []
+
+    origin = (origin_iata or "").upper()
+    destination = (dest_iata or "").upper()
+
+    path: List[RouteLegs] = []
+    expected_origin = origin
+
+    for leg in legs:
+        leg_origin = (getattr(leg.origin, "iata", "") or "").upper()
+        leg_dest = (getattr(leg.dest, "iata", "") or "").upper()
+
+        if not path:
+            if leg_origin != expected_origin:
+                continue
+            path.append(leg)
+            expected_origin = leg_dest
+            if leg_dest == destination:
+                return path
+            continue
+
+        if leg_origin != expected_origin:
+            continue
+
+        path.append(leg)
+        expected_origin = leg_dest
+        if leg_dest == destination:
+            return path
+
+    # Fallback: any direct leg covering origin -> destination
+    for leg in legs:
+        leg_origin = (getattr(leg.origin, "iata", "") or "").upper()
+        leg_dest = (getattr(leg.dest, "iata", "") or "").upper()
+        if leg_origin == origin and leg_dest == destination:
+            return [leg]
+
+    if path and (getattr(path[-1].dest, "iata", "") or "").upper() == destination:
+        return path
+
+    return []
 
 
 def _normalize_basis(basis_raw: Optional[str]) -> str:
@@ -531,13 +582,32 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     # Determine route based on origin/dest station countries and shipment type
     route = None
     try:
-        st_o = Station.objects.get(iata=payload.origin_iata)
-        st_d = Station.objects.get(iata=payload.dest_iata)
-        route = Routes.objects.filter(
-            origin_country=(st_o.country or "").upper(),
-            dest_country=(st_d.country or "").upper(),
-            shipment_type=payload.shipment_type,
-        ).first()
+        origin_iata = (payload.origin_iata or "").upper()
+        dest_iata = (payload.dest_iata or "").upper()
+        st_o = Station.objects.get(iata=origin_iata)
+        st_d = Station.objects.get(iata=dest_iata)
+        route_candidates = (
+            Routes.objects.filter(
+                origin_country=(st_o.country or "").upper(),
+                dest_country=(st_d.country or "").upper(),
+                shipment_type=payload.shipment_type,
+            )
+            .annotate(
+                origin_match=Case(
+                    When(legs__origin__iata=origin_iata, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                ),
+                dest_match=Case(
+                    When(legs__dest__iata=dest_iata, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                ),
+            )
+            .order_by("origin_match", "dest_match", "id")
+            .distinct()
+        )
+        route = route_candidates.first()
     except Exception:
         route = None
 
@@ -578,9 +648,12 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
     manual_reasons: List[str] = []
 
     if route:
-        legs = list(RouteLegs.objects.filter(route_id=route.id).select_related("origin", "dest").order_by("sequence"))
+        legs_qs = RouteLegs.objects.filter(route_id=route.id).select_related("origin", "dest").order_by("sequence", "id")
+        legs = select_route_legs_for_payload(list(legs_qs), payload.origin_iata, payload.dest_iata)
         if not legs:
-            raise ValueError("Configured route has no legs defined")
+            raise ValueError(
+                f"Configured route has no legs defined for {payload.origin_iata}->{payload.dest_iata}"
+            )
 
         for leg in legs:
             # Use default 167 dim factor for placeholder kg in manual line
