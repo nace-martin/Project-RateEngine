@@ -131,7 +131,7 @@ To run locally, use two terminals.
   - Windows PowerShell: `./scripts/test_backend.ps1`
   - Direct `python manage.py test` uses an in-memory SQLite database (see `backend/rate_engine/settings.py`), so your dev Postgres stays untouched.
 
-### Makefile Shortcuts (repo root)
+### Seed Sample Routes\n\nUse the targeted management commands when you want lane data without loading the full sandbox dataset.\n\n- python manage.py seed_bne_to_pom � seeds the AUD BUY ratecard for BNE?POM (including lane breaks and surcharges).\n\n### Makefile Shortcuts (repo root)
 
 - `make db-up` — start Postgres via Docker Compose (prints `DATABASE_URL`).
 - `make db-down` — stop Compose services.
@@ -178,4 +178,5 @@ Notes:
   - CLI (force fallback): set `BSP_FX_URL=http://127.0.0.1:1` to simulate failure; rerun and observe WARN + ENV usage.
   - API: `curl -X POST "$API/fx/refresh" -H "Authorization: Token <key>" -H "Content-Type: application/json" -d '{"pairs":["USD:PGK","PGK:USD"],"provider":"bsp_html"}'`
   - Tests: `pytest -q` (ensure `DATABASE_URL` points to Postgres).
+
 

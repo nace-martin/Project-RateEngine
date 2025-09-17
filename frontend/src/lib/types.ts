@@ -1,4 +1,4 @@
-// This defines the structure of a single Client object
+﻿// This defines the structure of a single Client object
 export interface Client {
   id: number;
   name: string;
@@ -37,6 +37,15 @@ export interface Money {
   currency: string;
 }
 
+export interface QuoteTotals {
+  sell_total: Money;
+  buy_total?: Money;
+  tax_total?: Money;
+  margin_abs?: Money;
+  // margin_pct uses currency '%'
+  margin_pct?: Money;
+}
+
 // Response shape from POST /api/quote/compute
 // Backend currently returns either top-level sell_total or totals.sell_total
 export interface ComputeQuoteResponse {
@@ -44,14 +53,30 @@ export interface ComputeQuoteResponse {
   status: QuoteStatus;
   manual_reasons?: string[];
   sell_total?: Money;
-  totals?: {
-    sell_total: Money;
-    buy_total?: Money;
-    tax_total?: Money;
-    margin_abs?: Money;
-    // margin_pct uses currency '%'
-    margin_pct?: Money;
-  };
+  totals?: QuoteTotals;
+}
+
+export interface QuoteLine {
+  code: string;
+  desc: string;
+  qty: string;
+  unit: string;
+  unit_price: Money;
+  amount: Money;
+  is_buy: boolean;
+  is_sell: boolean;
+  manual_rate_required: boolean;
+}
+
+export interface QuoteDetail {
+  id: number;
+  status: QuoteStatus;
+  totals: QuoteTotals;
+  currency: string;
+  snapshot?: Record<string, unknown>;
+  buy_lines: QuoteLine[];
+  sell_lines: QuoteLine[];
+  manual_reasons?: string[];
 }
 
 export interface ShipmentPiece {
