@@ -49,13 +49,13 @@ def ensure_service(code, name, basis):
 
 
 def ensure_ratecard(provider, name, role, scope, direction, currency, audience=None, source="CATALOG", status="PUBLISHED"):
-    audience_obj = Audience.get_or_create_from_code(audience) if audience else None
+    audience_code = audience or "OVERSEAS_AGENT_PREPAID"
+    audience_obj = Audience.get_or_create_from_code(audience_code)
     defaults = dict(
         provider=provider,
         role=role,
         scope=scope,
         direction=direction,
-        audience_old=audience,
         audience=audience_obj,
         currency=currency,
         source=source,
@@ -68,10 +68,7 @@ def ensure_ratecard(provider, name, role, scope, direction, currency, audience=N
     rc, created = Ratecards.objects.get_or_create(name=name, defaults=defaults)
 
     updates = []
-    if audience and rc.audience_old != audience:
-        rc.audience_old = audience
-        updates.append("audience_old")
-    if rc.audience_id != (audience_obj.id if audience_obj else None):
+    if rc.audience_id != audience_obj.id:
         rc.audience = audience_obj
         updates.append("audience")
     if updates:

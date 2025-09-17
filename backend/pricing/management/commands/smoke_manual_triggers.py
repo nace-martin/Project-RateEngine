@@ -49,7 +49,6 @@ DDL = [
         role TEXT,
         scope TEXT,
         direction TEXT,
-        audience_old TEXT,
         audience_id INTEGER REFERENCES audiences(id),
         rate_strategy VARCHAR(32),
         currency TEXT,
@@ -123,7 +122,6 @@ class Command(BaseCommand):
                     cur.execute(sql)
                 except Exception:
                     connection.rollback()
-            cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS audience_old TEXT")
             cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS audience_id INTEGER REFERENCES audiences(id)")
             cur.execute("ALTER TABLE ratecards ADD COLUMN IF NOT EXISTS commodity_code VARCHAR(8) DEFAULT 'GCR'")
             cur.execute("ALTER TABLE routes ADD COLUMN IF NOT EXISTS requires_manual_rate BOOLEAN DEFAULT FALSE")
@@ -142,7 +140,6 @@ class Command(BaseCommand):
             role="SELL",
             scope="INTERNATIONAL",
             direction="IMPORT",
-            audience_old=audience_code,
             audience=audience_obj,
             rate_strategy="BREAKS",
             currency="PGK",
@@ -155,10 +152,7 @@ class Command(BaseCommand):
         )
         rc_sell, created = Ratecards.objects.get_or_create(name="SELL IMPORT PG", defaults=rc_defaults)
         rc_updates = []
-        if rc_sell.audience_old != audience_code:
-            rc_sell.audience_old = audience_code
-            rc_updates.append("audience_old")
-        if rc_sell.audience_id != (audience_obj.id if audience_obj else None):
+        if rc_sell.audience_id != audience_obj.id:
             rc_sell.audience = audience_obj
             rc_updates.append("audience")
         if rc_updates:

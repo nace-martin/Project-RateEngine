@@ -803,7 +803,7 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None, c
         direction=sell_direction,
         effective_date__lte=ts.date(),
     ).filter(
-        Q(audience__code=target_audience) | Q(audience_old=target_audience),
+        Q(audience__code=target_audience),
         Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()),
     )
 
@@ -938,5 +938,3 @@ def outlier_guard(per_kg: Decimal) -> Optional[str]:
     if per_kg > Decimal(50):
         return f"Per-kg looks unusually high ({per_kg}). Did you mean {per_kg/Decimal(10)}?"
     return None
-
-

@@ -88,8 +88,7 @@ class Ratecards(models.Model):
     role = models.TextField()
     scope = models.TextField()
     direction = models.TextField()
-    audience_old = models.TextField(blank=True, null=True)
-    audience = models.ForeignKey('pricing.Audience', models.PROTECT, blank=True, null=True)
+    audience = models.ForeignKey('pricing.Audience', models.PROTECT)
     # Commodity code for the ratecard (e.g., GCR, DGR, LAR, PER)
     commodity_code = models.CharField(
         max_length=8,

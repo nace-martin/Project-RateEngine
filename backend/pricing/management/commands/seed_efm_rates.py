@@ -73,7 +73,6 @@ class Command(BaseCommand):
             audience_obj = Audience.get_or_create_from_code(audience_code)
             defaults = dict(
                 currency="PGK",
-                audience_old=audience_code,
                 audience=audience_obj,
                 source="CATALOG",
                 status="PUBLISHED",
@@ -92,10 +91,7 @@ class Command(BaseCommand):
                 defaults=defaults,
             )
             updated_fields = []
-            if rc.audience_old != audience_code:
-                rc.audience_old = audience_code
-                updated_fields.append("audience_old")
-            if rc.audience_id != (audience_obj.id if audience_obj else None):
+            if rc.audience_id != audience_obj.id:
                 rc.audience = audience_obj
                 updated_fields.append("audience")
             if updated_fields:
