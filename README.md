@@ -126,9 +126,10 @@ To run locally, use two terminals.
     - Unix/macOS: `export DATABASE_URL=postgres://rateengine:rateengine@127.0.0.1:5432/rateengine`
     - Windows PowerShell: `$env:DATABASE_URL = "postgres://rateengine:rateengine@127.0.0.1:5432/rateengine"`
 
-- Run backend tests (requires DB schema for managed=False tables if those tests should run):
+- Run backend tests:
   - Unix/macOS: `./scripts/test_backend.sh`
   - Windows PowerShell: `./scripts/test_backend.ps1`
+  - Direct `python manage.py test` uses an in-memory SQLite database (see `backend/rate_engine/settings.py`), so your dev Postgres stays untouched.
 
 ### Makefile Shortcuts (repo root)
 
