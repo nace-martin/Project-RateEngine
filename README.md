@@ -142,7 +142,7 @@ To run locally, use two terminals.
 - `make frontend-dev` — start Next.js dev server.
 
 Notes:
-- The `rate_engine` app maps to an existing schema (`managed=False`); tests that depend on those tables will be skipped if the schema is missing.
+- Legacy `rate_engine` models have been retired; the managed schema now lives across the `core`, `organizations`, `pricing`, and `quotes` apps.
 - The `accounts` app (including `OrganizationMembership`) is managed by Django and will be migrated automatically.
 
 ## CI: FX Refresh Workflow
@@ -177,3 +177,4 @@ Notes:
   - CLI (force fallback): set `BSP_FX_URL=http://127.0.0.1:1` to simulate failure; rerun and observe WARN + ENV usage.
   - API: `curl -X POST "$API/fx/refresh" -H "Authorization: Token <key>" -H "Content-Type: application/json" -d '{"pairs":["USD:PGK","PGK:USD"],"provider":"bsp_html"}'`
   - Tests: `pytest -q` (ensure `DATABASE_URL` points to Postgres).
+

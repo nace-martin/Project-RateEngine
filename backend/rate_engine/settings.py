@@ -66,7 +66,7 @@ INSTALLED_APPS = [
     'organizations',
     'pricing',
     'quotes',
-    'rate_engine.apps.RateEngineConfig',
+
 ]
 
 MIDDLEWARE = [

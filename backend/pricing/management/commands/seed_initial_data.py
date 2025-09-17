@@ -1,4 +1,4 @@
-# backend/rate_engine/management/commands/seed_initial_data.py
+# backend/pricing/management/commands/seed_initial_data.py
 
 from django.core.management.base import BaseCommand
 from django.db import transaction

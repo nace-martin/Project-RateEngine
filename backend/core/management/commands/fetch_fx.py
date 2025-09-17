@@ -8,8 +8,8 @@ from django.core.management.base import BaseCommand, CommandError
 import logging
 import os
 from django.utils.timezone import now
-from rate_engine.fx import EnvProvider, compute_tt_buy_sell, upsert_rate, d
-from rate_engine.fx_providers import load as load_provider
+from core.fx import EnvProvider, compute_tt_buy_sell, upsert_rate, d
+from core.fx_providers import load as load_provider
 from core.models import CurrencyRates as CurrencyRate
 
 

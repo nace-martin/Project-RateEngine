@@ -17,9 +17,9 @@ django.setup()
 
 from django.db import connection
 from django.utils.timezone import now
-from rate_engine.models import (
-    Providers, Stations, Ratecards, RatecardConfig, Organizations, Routes, RouteLegs
-)
+from core.models import Providers, Stations
+from organizations.models import Organizations
+from pricing.models import Ratecards, RatecardConfig, Routes, RouteLegs
 
 
 def ensure_tables():
@@ -183,4 +183,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

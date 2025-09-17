@@ -17,5 +17,5 @@ class Command(BaseCommand):
                     cursor.execute(stmt)
 
         self.stdout.write(self.style.SUCCESS("Truncated quotes and quote_lines and reset identities."))
-        self.stdout.write(self.style.WARNING("Next: run 'python manage.py makemigrations rate_engine' then 'python manage.py migrate rate_engine'."))
+        self.stdout.write(self.style.WARNING("Next: run 'python manage.py migrate quotes' if you have pending schema changes."))
 
