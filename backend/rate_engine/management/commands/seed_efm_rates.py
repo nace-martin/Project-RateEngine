@@ -5,12 +5,8 @@ from django.db import transaction
 from django.utils.timezone import now
 from decimal import Decimal
 
-from rate_engine.models import (
-    Providers,
-    Ratecards,
-    Services,
-    ServiceItems,
-)
+from core.models import Providers, Services
+from pricing.models import Ratecards, ServiceItems
 
 # Helper function to create or update a service
 def ensure_service(code, name, basis):
@@ -98,3 +94,5 @@ class Command(BaseCommand):
 
 
         self.stdout.write(self.style.SUCCESS("Successfully seeded EFM 2025 Import rates."))
+
+

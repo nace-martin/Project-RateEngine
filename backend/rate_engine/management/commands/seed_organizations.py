@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 from decimal import Decimal
 
-from rate_engine.models import Organizations
+from organizations.models import Organizations
 
 
 class Command(BaseCommand):
@@ -55,4 +55,5 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.NOTICE(f"Exists: {obj.name}"))
 
         self.stdout.write(self.style.SUCCESS(f"Organizations ready (created {created})."))
+
 

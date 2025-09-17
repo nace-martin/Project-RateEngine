@@ -59,11 +59,14 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework.authtoken',
     'django_extensions',
-    # Register the rate_engine app via its AppConfig (avoid duplicate label)
-    "rate_engine.apps.RateEngineConfig",
 
     # Local Apps
     'accounts',
+    'core',
+    'organizations',
+    'pricing',
+    'quotes',
+    'rate_engine.apps.RateEngineConfig',
 ]
 
 MIDDLEWARE = [
@@ -187,3 +190,4 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 AUTH_USER_MODEL = 'accounts.CustomUser'
+

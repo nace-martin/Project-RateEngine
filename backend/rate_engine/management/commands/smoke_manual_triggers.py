@@ -8,7 +8,9 @@ from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
-from rate_engine.models import Stations, Providers, Ratecards, RatecardConfig, Organizations, Routes, RouteLegs
+from core.models import Stations, Providers
+from organizations.models import Organizations
+from pricing.models import Ratecards, RatecardConfig, Routes, RouteLegs
 
 
 DDL = [
@@ -199,3 +201,4 @@ class Command(BaseCommand):
         for name, status, body in results:
             snapshot = body.get("snapshot", {}) if isinstance(body, dict) else {}
             print(f"{name}: status={status}, manual={snapshot.get('manual_rate_required')}, reasons={snapshot.get('manual_reasons')}")
+

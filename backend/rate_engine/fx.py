@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Tuple
 
 from django.utils.timezone import now
 
-from .models import CurrencyRates
+from core.models import CurrencyRates
 
 logger = logging.getLogger(__name__)
 
@@ -218,3 +218,4 @@ def refresh_fx(
             "source": source_label,
         })
     return results
+

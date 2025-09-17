@@ -4,7 +4,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from rate_engine.models import Organizations
+from organizations.models import Organizations
 from accounts.models import OrganizationMembership
 from django.db.utils import ProgrammingError, OperationalError
 
@@ -320,10 +320,22 @@ class MultiLegRouteTests(TestCase):
 
         # Seed core data used by engine
         from django.utils.timezone import now
-        from .models import (
-            Providers, Stations, Ratecards, RatecardConfig, Lanes, LaneBreaks,
-            Services, ServiceItems, Organizations, CurrencyRates, Routes, RouteLegs,
+        from core.models import (
+            Providers,
+            Stations,
+            Services,
+            ServiceItems,
+            CurrencyRates,
         )
+        from pricing.models import (
+            Ratecards,
+            RatecardConfig,
+            Lanes,
+            LaneBreaks,
+            Routes,
+            RouteLegs,
+        )
+        from organizations.models import Organizations
 
         # Ensure organizations has country_code column (older migration sets may lack it)
         # Use a DB-agnostic approach: try to add the column and ignore if it already exists.
@@ -469,10 +481,12 @@ class MultiLegRouteTests(TestCase):
         Validates that a COST_PLUS_PCT SELL rule correctly applies its margin
         to the SUM of the BUY freight costs from all legs.
         """
-        from .models import (
+        from core.models import (
             Services as Service,
-            ServiceItems as ServiceItem,
             FeeTypes as FeeType,
+        )
+        from pricing.models import (
+            ServiceItems as ServiceItem,
             SellCostLinksSimple as SellCostLink,
         )
 
@@ -541,7 +555,7 @@ class FxConverterTests(TestCase):
                 );
                 """
             )
-        from .models import CurrencyRates
+        from core.models import CurrencyRates
         # Ensure we have both BUY and SELL sample rates
         CurrencyRates.objects.create(
             as_of_ts=now(), base_ccy="AUD", quote_ccy="PGK", rate=Decimal("2.50"), rate_type="BUY", source="TEST"
@@ -616,7 +630,8 @@ class ManualTriggerTests(TestCase):
             except Exception:
                 connection.rollback()
 
-        from .models import Stations as Station, Routes as Route, RouteLegs as RouteLeg
+        from core.models import Stations as Station
+        from pricing.models import Routes as Route, RouteLegs as RouteLeg
 
         # Seed stations and simple route
         cls.bne = Station.objects.create(iata="BNE", city="Brisbane", country="AU")
@@ -667,7 +682,7 @@ class ManualTriggerTests(TestCase):
 
     def test_route_flag_triggers_manual(self):
         # Flip the route flag on
-        from .models import Routes as Route
+        from pricing.models import Routes as Route
         r = Route.objects.get(id=self.route.id)
         # Direct SQL update in case unmanaged model ignores save side-effects
         from django.db import connection
@@ -676,7 +691,7 @@ class ManualTriggerTests(TestCase):
 
         payload = self._make_payload()
         # Ensure our in-memory leg reflects the flag to avoid lane lookups
-        from .models import RouteLegs as RouteLeg
+        from pricing.models import RouteLegs as RouteLeg
         self.leg = RouteLeg.objects.get(id=self.leg.id)
         # Set attribute defensively (unmanaged models may not refresh relations immediately)
         if hasattr(self.leg, 'route'):
@@ -689,3 +704,4 @@ class ManualTriggerTests(TestCase):
         self.assertTrue(is_manual)
         self.assertIn("Route flagged", reason)
         self.assertTrue(any(l.code == "FREIGHT_MANUAL_RATE" for l in lines))
+

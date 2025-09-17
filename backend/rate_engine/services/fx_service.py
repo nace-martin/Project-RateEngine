@@ -7,7 +7,7 @@ from typing import Optional
 from django.utils.timezone import now
 
 from ..dataclasses import Money
-from ..models import CurrencyRates as CurrencyRate
+from core.models import CurrencyRates as CurrencyRate
 from .utils import TWOPLACES, d
 
 
@@ -55,3 +55,4 @@ class FxConverter:
             return money
         fx_rate = self.rate(money.currency, to_ccy)
         return Money((money.amount * fx_rate).quantize(TWOPLACES), to_ccy)
+

@@ -4,16 +4,13 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils.timezone import now
-from rate_engine.models import (
-    Providers,
-    Stations,
+from core.models import Providers, Stations, FeeTypes, Services
+from pricing.models import (
     Ratecards,
     RatecardConfig,
     Lanes,
     LaneBreaks,
-    FeeTypes,
     RatecardFees,
-    Services,
     ServiceItems,
     SellCostLinksSimple,
 )
@@ -174,3 +171,6 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(self.style.SUCCESS("Domestic BUY/SELL seeding complete with actual rates."))
+
+
+

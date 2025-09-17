@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from .models import Organizations
+from organizations.models import Organizations
 
 
 class PieceSerializer(serializers.Serializer):
@@ -53,3 +53,4 @@ class ComputeRequestSerializer(serializers.Serializer):
                 f"Invalid commodity_code. Allowed: {', '.join(sorted(allowed))}."
             )
         return normalized
+

@@ -6,11 +6,22 @@ from django.utils.timezone import now
 from decimal import Decimal
 
 # Ensure this import path matches your project structure
-from rate_engine.models import (
-    Providers, Stations,
-    Ratecards, RatecardConfig, Lanes, LaneBreaks,
-    FeeTypes, RatecardFees, ServiceItems, SellCostLinksSimple, Services,
-    CurrencyRates, PricingPolicy,
+from core.models import (
+    Providers,
+    Stations,
+    FeeTypes,
+    Services,
+    CurrencyRates,
+)
+from pricing.models import (
+    Ratecards,
+    RatecardConfig,
+    Lanes,
+    LaneBreaks,
+    RatecardFees,
+    ServiceItems,
+    SellCostLinksSimple,
+    PricingPolicy,
 )
 
 #region -------- Helper Functions --------
@@ -321,3 +332,4 @@ class Command(BaseCommand):
         seed_fx_and_policy()
 
         self.stdout.write(self.style.SUCCESS("Sandbox data has been seeded successfully."))
+

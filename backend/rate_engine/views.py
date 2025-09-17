@@ -17,7 +17,9 @@ from rest_framework.response import Response
 from accounts.models import OrganizationMembership
 
 from .dataclasses import Money, Piece, ShipmentInput
-from .models import CurrencyRates as CurrencyRate, Organizations, Quotes, QuoteLines
+from core.models import CurrencyRates as CurrencyRate
+from organizations.models import Organizations
+from quotes.models import Quotes, QuoteLines
 from .serializers import ComputeRequestSerializer
 from .services.pricing_service import compute_quote
 from .services.utils import FOURPLACES, TWOPLACES, ZERO, d
@@ -466,5 +468,7 @@ class FxRefreshView(views.APIView):
                 })
 
         return Response({"updated": summary}, status=status.HTTP_200_OK)
+
+
 
 

@@ -10,7 +10,7 @@ import os
 from django.utils.timezone import now
 from rate_engine.fx import EnvProvider, compute_tt_buy_sell, upsert_rate, d
 from rate_engine.fx_providers import load as load_provider
-from rate_engine.models import CurrencyRates as CurrencyRate
+from core.models import CurrencyRates as CurrencyRate
 
 
 def parse_pairs(arg: str) -> List[Tuple[str, str]]:
@@ -118,3 +118,4 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(
                     f"Saved {base}->{quote} BUY {buy} / SELL {sell} @ {mr.as_of.isoformat()} [ENV]"
                 ))
+

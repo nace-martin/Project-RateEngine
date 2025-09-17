@@ -9,11 +9,14 @@ from django.db.models import Q
 from django.utils.timezone import now
 
 from ..dataclasses import CalcLine, CalcResult, Money, Piece, ShipmentInput
-from ..models import (
+from core.models import (
     FeeTypes as FeeType,
+    Stations as Station,
+)
+from organizations.models import Organizations
+from pricing.models import (
     Lanes as Lane,
     LaneBreaks as LaneBreak,
-    Organizations,
     PricingPolicy,
     RatecardConfig,
     RatecardFees as RatecardFee,
@@ -22,7 +25,6 @@ from ..models import (
     Routes,
     SellCostLinksSimple as SellCostLink,
     ServiceItems as ServiceItem,
-    Stations as Station,
 )
 from .fx_service import FxConverter
 from .utils import (
@@ -806,4 +808,5 @@ def outlier_guard(per_kg: Decimal) -> Optional[str]:
     if per_kg > Decimal(50):
         return f"Per-kg looks unusually high ({per_kg}). Did you mean {per_kg/Decimal(10)}?"
     return None
+
 

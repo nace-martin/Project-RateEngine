@@ -1,9 +1,23 @@
 from django.contrib import admin, messages
-from .models import (
-    Providers, Stations, Ratecards, RatecardConfig, Lanes, LaneBreaks,
-    FeeTypes, RatecardFees, Services, ServiceItems, SellCostLinksSimple,
-    CurrencyRates, PricingPolicy, Organizations,
+from core.models import (
+    Providers,
+    Stations,
+    FeeTypes,
+    Services,
+    CurrencyRates,
 )
+from pricing.models import (
+    Ratecards,
+    RatecardConfig,
+    Lanes,
+    LaneBreaks,
+    RatecardFees,
+    ServiceItems,
+    SellCostLinksSimple,
+    PricingPolicy,
+)
+from organizations.models import Organizations
+
 from .services.pricing_service import validate_break_monotonic
 
 class ReadOnlyAdmin(admin.ModelAdmin):
