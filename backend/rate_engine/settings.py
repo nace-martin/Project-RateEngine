@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
 import os
 import warnings
+import sys
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -59,11 +60,14 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework.authtoken',
     'django_extensions',
-    # Register the rate_engine app via its AppConfig (avoid duplicate label)
-    "rate_engine.apps.RateEngineConfig",
 
     # Local Apps
     'accounts',
+    'core',
+    'organizations',
+    'pricing',
+    'quotes',
+
 ]
 
 MIDDLEWARE = [
@@ -100,27 +104,29 @@ WSGI_APPLICATION = 'rate_engine.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-import os
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 
-# Require PostgreSQL via DATABASE_URL; no SQLite fallback
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise ImproperlyConfigured(
-        "DATABASE_URL must be set to a PostgreSQL connection string."
-    )
+if 'test' in sys.argv[1:]:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+else:
+    # Require PostgreSQL via DATABASE_URL; no SQLite fallback
+    DATABASE_URL = os.environ.get('DATABASE_URL')
+    if not DATABASE_URL:
+        raise ImproperlyConfigured('DATABASE_URL must be set to a PostgreSQL connection string.')
 
-# Enforce Postgres-only URLs
-db_cfg = dj_database_url.parse(DATABASE_URL, conn_max_age=600)
-engine = (db_cfg.get("ENGINE") or "").lower()
-if "postgresql" not in engine:
-    raise ImproperlyConfigured(
-        "DATABASE_URL must use Postgres (e.g., postgres:// or postgresql://)."
-    )
+    # Enforce Postgres-only URLs
+    db_cfg = dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+    engine = (db_cfg.get('ENGINE') or '').lower()
+    if 'postgresql' not in engine:
+        raise ImproperlyConfigured('DATABASE_URL must use Postgres (e.g., postgres:// or postgresql://).')
 
-DATABASES = {"default": db_cfg}
-
+    DATABASES = {'default': db_cfg}
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

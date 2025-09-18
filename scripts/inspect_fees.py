@@ -29,7 +29,7 @@ def _bootstrap_django() -> None:
 def main() -> int:
     _bootstrap_django()
 
-    from rate_engine.models import Ratecards, RatecardFees  # type: ignore
+    from pricing.models import Ratecards, RatecardFees
 
     target_name = os.environ.get(
         "RATECARD_NAME", "PNG Domestic BUY Rates (Flat per KG)"

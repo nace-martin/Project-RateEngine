@@ -15,7 +15,7 @@ class CustomUser(AbstractUser):
 
 class OrganizationMembership(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='org_memberships')
-    organization = models.ForeignKey('rate_engine.Organizations', on_delete=models.CASCADE, related_name='memberships')
+    organization = models.ForeignKey('organizations.Organizations', on_delete=models.CASCADE, related_name='memberships')
     role = models.CharField(max_length=20, default='sales')
     can_quote = models.BooleanField(default=True)
     can_view_costs = models.BooleanField(default=False)
@@ -28,3 +28,4 @@ class OrganizationMembership(models.Model):
 
     def __str__(self):
         return f"{self.user.username} -> {self.organization_id} ({self.role})"
+

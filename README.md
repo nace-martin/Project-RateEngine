@@ -126,9 +126,16 @@ To run locally, use two terminals.
     - Unix/macOS: `export DATABASE_URL=postgres://rateengine:rateengine@127.0.0.1:5432/rateengine`
     - Windows PowerShell: `$env:DATABASE_URL = "postgres://rateengine:rateengine@127.0.0.1:5432/rateengine"`
 
-- Run backend tests (requires DB schema for managed=False tables if those tests should run):
+- Run backend tests:
   - Unix/macOS: `./scripts/test_backend.sh`
   - Windows PowerShell: `./scripts/test_backend.ps1`
+  - Direct `python manage.py test` uses an in-memory SQLite database (see `backend/rate_engine/settings.py`), so your dev Postgres stays untouched.
+
+### Seed Sample Routes
+
+Use the targeted management commands when you want lane data without loading the full sandbox dataset.
+
+- `python manage.py seed_bne_to_pom` seeds the AUD BUY ratecard for BNE->POM (including lane breaks and surcharges).
 
 ### Makefile Shortcuts (repo root)
 
@@ -142,7 +149,7 @@ To run locally, use two terminals.
 - `make frontend-dev` — start Next.js dev server.
 
 Notes:
-- The `rate_engine` app maps to an existing schema (`managed=False`); tests that depend on those tables will be skipped if the schema is missing.
+- Legacy `rate_engine` models have been retired; the managed schema now lives across the `core`, `organizations`, `pricing`, and `quotes` apps.
 - The `accounts` app (including `OrganizationMembership`) is managed by Django and will be migrated automatically.
 
 ## CI: FX Refresh Workflow
@@ -177,3 +184,5 @@ Notes:
   - CLI (force fallback): set `BSP_FX_URL=http://127.0.0.1:1` to simulate failure; rerun and observe WARN + ENV usage.
   - API: `curl -X POST "$API/fx/refresh" -H "Authorization: Token <key>" -H "Content-Type: application/json" -d '{"pairs":["USD:PGK","PGK:USD"],"provider":"bsp_html"}'`
   - Tests: `pytest -q` (ensure `DATABASE_URL` points to Postgres).
+
+

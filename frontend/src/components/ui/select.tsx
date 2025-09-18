@@ -76,15 +76,24 @@ const Select: React.FC<SelectRootProps> = ({ value, onValueChange, required, cla
       onChange={handleChange}
       required={required}
       className={cn(
-        "flex h-9 w-full appearance-none rounded-md border border-gray-300 bg-white px-3 py-1 text-sm shadow-sm",
-        "placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-600",
+        "flex h-10 w-full appearance-none rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900",
+        "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100",
         "disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
     >
-      {placeholder && <option value="" disabled={true} hidden>{placeholder}</option>}
+      {placeholder && (
+        <option value="" disabled hidden className="bg-slate-50 text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+          {placeholder}
+        </option>
+      )}
       {items.map((opt) => (
-        <option key={opt.value} value={opt.value}>
+        <option
+          key={opt.value}
+          value={opt.value}
+          className="bg-slate-50 text-slate-900 dark:bg-slate-800 dark:text-slate-100"
+        >
           {opt.label}
         </option>
       ))}
