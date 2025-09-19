@@ -226,9 +226,19 @@ class SellCostLinksSimple(models.Model):
 class PricingPolicy(models.Model):
     id = models.BigAutoField(primary_key=True)
     audience = models.TextField(unique=True)
-    caf_on_fx = models.BooleanField()
+    # Use two fields for CAF instead of one
+    caf_buy_pct = models.DecimalField(
+        max_digits=5, decimal_places=4, default=0.05,
+        help_text="CAF % for converting foreign currency to PGK (e.g., 0.05 for 5%)"
+    )
+    caf_sell_pct = models.DecimalField(
+        max_digits=5, decimal_places=4, default=0.10,
+        help_text="CAF % for converting PGK to foreign currency (e.g., 0.10 for 10%)"
+    )
     gst_applies = models.BooleanField()
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2)
+    # Remove old caf_on_fx field
+    # caf_on_fx = models.BooleanField()
 
     class Meta:
         db_table = 'pricing_policy'

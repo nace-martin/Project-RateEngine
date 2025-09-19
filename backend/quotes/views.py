@@ -74,7 +74,7 @@ class QuoteComputeView(views.APIView):
             origin_iata=data["origin_iata"],
             dest_iata=data["dest_iata"],
             service_scope=data["service_scope"],
-            incoterm=(data.get("incoterm") or None),
+            incoterm=(data.get("incoterm") or "EXW").upper(), # Default to EXW and normalize
             payment_term=data.get("payment_term", "PREPAID"),
             commodity_code=data.get("commodity_code", "GCR"),
             is_urgent=bool(data.get("is_urgent", False)),
@@ -88,10 +88,10 @@ class QuoteComputeView(views.APIView):
 
         try:
             # 1. Run the rating engine to get the calculation result
+            # Remove caf_pct from this call
             calc_result = compute_quote(
                 shipment,
                 provider_hint=data.get("provider_hint"),
-                caf_pct=d(data.get("caf_pct") or Decimal("0.065")),
             )
 
             is_manual = calc_result.snapshot.get("manual_rate_required", False)
@@ -107,6 +107,8 @@ class QuoteComputeView(views.APIView):
                     request_snapshot.update(ser.initial_data)
 
             request_snapshot["payment_term"] = shipment.payment_term
+            request_snapshot["incoterm"] = shipment.incoterm
+
 
             # 2. Create the main Quote record
             new_quote = Quotes.objects.create(
@@ -239,6 +241,7 @@ class QuoteDetailView(views.APIView):
             "destination": snap.get("dest_iata") or snap.get("destination") or "",
             "mode": snap.get("shipment_type") or "",
             "payment_term": q.payment_term,
+            "incoterm": q.incoterm,
             "actual_weight_kg": str(actual.quantize(FOURPLACES)),
             "volume_cbm": str(volume.quantize(FOURPLACES)),
             "chargeable_weight_kg": str(chargeable.quantize(FOURPLACES)),
@@ -250,7 +253,7 @@ class QuoteDetailView(views.APIView):
                 )
             ),
             "total_sell": str(Decimal(q.sell_total).quantize(TWOPLACES)),
-            "created_at": q.created_at.isoformat(),
+            "created_at": q.created_at.isoformat()
         }
 
         # Include detailed fields for advanced views without breaking the UI
@@ -338,7 +341,8 @@ class QuoteListView(views.APIView):
                 "origin": snap.get("origin_iata") or snap.get("origin") or "",
                 "destination": snap.get("dest_iata") or snap.get("destination") or "",
                 "mode": snap.get("shipment_type") or "",
-            "payment_term": q.payment_term,
+                "payment_term": q.payment_term,
+                "incoterm": q.incoterm,
                 "status": q.status,
                 "actual_weight_kg": str(actual.quantize(FOURPLACES)),
                 "volume_cbm": str(volume.quantize(FOURPLACES)),

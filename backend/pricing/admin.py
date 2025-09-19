@@ -110,5 +110,13 @@ class SellCostLinksSimpleAdmin(ReadOnlyAdmin):
 
 @admin.register(PricingPolicy)
 class PricingPolicyAdmin(ReadOnlyAdmin):
-    list_display = ("id", "audience", "caf_on_fx", "gst_applies", "gst_pct")
+    list_display = (
+        "id",
+        "audience",
+        "caf_buy_pct",
+        "caf_sell_pct",
+        "gst_applies",
+        "gst_pct",
+    )
     list_filter = ("audience",)
+
