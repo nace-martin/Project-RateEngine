@@ -1,4 +1,4 @@
-﻿// This defines the structure of a single Client object
+// This defines the structure of a single Client object
 export interface Client {
   id: number;
   name: string;
@@ -66,6 +66,7 @@ export interface QuoteLine {
   is_buy: boolean;
   is_sell: boolean;
   manual_rate_required: boolean;
+  meta?: Record<string, unknown>;
 }
 
 export interface QuoteDetail {
@@ -97,3 +98,4 @@ export interface ShipmentPiece {
  * Branded type for decimal strings (e.g., "12.34")
  */
 export type DecimalString = string & { __decimalStringBrand: never };
+

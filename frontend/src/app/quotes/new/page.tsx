@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { QuoteStatus, ComputeQuoteResponse, Money, QuoteDetail, QuoteLine } from '@/lib/types';
 import { extractErrorMessage, extractErrorFromResponse } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -177,11 +177,102 @@ export default function NewQuotePage() {
     return `${money.amount} ${money.currency}`;
   };
 
-  const renderLineTable = (title: string, lines?: QuoteLine[]) => {
-    if (!lines || lines.length === 0) return null;
-    const filtered = lines.filter((line) => Number(line.amount.amount) !== 0);
-    if (filtered.length === 0) return null;
 
+  const renderLineTable = (title: string, lines?: QuoteLine[]) => {
+  if (!lines || lines.length === 0) return null;
+
+  const filtered = lines.filter((line) => Number(line.amount.amount) !== 0);
+  if (filtered.length === 0) return null;
+
+  type SegmentKey = 'origin' | 'primary' | 'other';
+
+  const segmentTitleMap: Record<SegmentKey, string> = {
+    origin: 'Origin Charges',
+    primary: 'Destination Charges',
+    other: title,
+  };
+
+  const normaliseSegment = (segment: unknown, description: string): SegmentKey => {
+    if (segment === 'origin') return 'origin';
+    if (segment === 'primary') return 'primary';
+    return description.toLowerCase().startsWith('origin -') ? 'origin' : 'primary';
+  };
+
+  const getCategory = (segment: SegmentKey, metaCategory?: unknown) => {
+    if (typeof metaCategory === 'string' && metaCategory.trim().length > 0) return metaCategory;
+    return segment === 'origin' ? 'Origin Charges' : 'Destination Charges';
+  };
+
+  type EnrichedLine = {
+    line: QuoteLine;
+    segment: SegmentKey;
+    category: string;
+  };
+
+  const enriched: EnrichedLine[] = filtered.map((line) => {
+    const meta = (line.meta ?? {}) as Record<string, unknown>;
+    const segment = normaliseSegment(meta.segment, line.desc ?? line.code ?? '');
+    const category = getCategory(segment, meta.category);
+    return { line, segment, category };
+  });
+
+  const segments = new Map<
+    SegmentKey,
+    { title: string; categories: Map<string, EnrichedLine[]>; currency: string }
+  >();
+
+  enriched.forEach((item) => {
+    const { line, segment, category } = item;
+    if (!segments.has(segment)) {
+      segments.set(segment, {
+        title: segmentTitleMap[segment] ?? title,
+        categories: new Map<string, EnrichedLine[]>(),
+        currency: line.amount.currency,
+      });
+    }
+    const segmentInfo = segments.get(segment)!;
+    if (!segmentInfo.categories.has(category)) {
+      segmentInfo.categories.set(category, []);
+    }
+    segmentInfo.categories.get(category)!.push(item);
+  });
+
+  const orderedSegments = (['origin', 'primary', 'other'] as SegmentKey[])
+    .filter((key) => segments.has(key))
+    .concat(Array.from(segments.keys()).filter((key) => !['origin', 'primary', 'other'].includes(key)));
+
+  const approxZero = (value: number) => Math.abs(value) < 0.005;
+
+  const parseAmount = (raw: unknown): number => {
+    if (typeof raw === 'number') {
+      return Number.isFinite(raw) ? raw : 0;
+    }
+    if (typeof raw === 'string') {
+      const normalised = raw.replace(/,/g, '');
+      const parsed = Number.parseFloat(normalised);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
+  };
+
+  const formatAmount = (value: number, currency: string) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
+    const rounded = Math.round(safeValue * 100) / 100;
+    const formatted = rounded.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return formatted + ' ' + currency;
+  };
+
+  const formatDisplay = (value: number, currency: string, dashIfZero = false) => {
+    if (dashIfZero && approxZero(value)) {
+      return '-';
+    }
+    return formatAmount(value, currency);
+  };
+
+  if (title === 'Sell Breakdown' && orderedSegments.length > 0) {
     return (
       <div className="mt-4">
         <h4 className="text-sm font-semibold mb-2">{title}</h4>
@@ -190,29 +281,190 @@ export default function NewQuotePage() {
             <thead className="bg-slate-100 dark:bg-slate-800">
               <tr className="text-left">
                 <th className="px-3 py-2">Charge</th>
-                <th className="px-3 py-2">Qty</th>
-                <th className="px-3 py-2">Unit</th>
-                <th className="px-3 py-2 text-right">Amount</th>
+                <th className="px-3 py-2 text-right">Subtotal</th>
+                <th className="px-3 py-2 text-right">GST</th>
+                <th className="px-3 py-2 text-right">Total</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((line, idx) => (
-                <tr key={`${line.code}-${idx}`} className="border-t border-slate-200 dark:border-slate-700">
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{line.code}</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">{line.desc}</div>
-                  </td>
-                  <td className="px-3 py-2">{line.qty}</td>
-                  <td className="px-3 py-2">{line.unit}</td>
-                  <td className="px-3 py-2 text-right">{formatMoney(line.amount)}</td>
-                </tr>
-              ))}
+              {orderedSegments.map((segmentKey) => {
+                const info = segments.get(segmentKey)!;
+                const categories = Array.from(info.categories.entries());
+                let segmentSubtotal = 0;
+                let segmentGST = 0;
+                let segmentTotal = 0;
+
+                return (
+                  <Fragment key={segmentKey}>
+                    <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-semibold">
+                      <td className="px-3 py-2" colSpan={4}>
+                        {info.title}
+                      </td>
+                    </tr>
+                    {categories.map(([categoryName, rows]) => (
+                      <Fragment key={[segmentKey, categoryName].join('-')}>
+                        <tr className="bg-slate-50 dark:bg-slate-900/40 text-sm font-semibold italic text-slate-700 dark:text-slate-300">
+                          <td className="px-3 py-2" colSpan={4}>
+                            {categoryName}
+                          </td>
+                        </tr>
+                        {rows.map(({ line }, idx) => {
+                          const meta = (line.meta ?? {}) as Record<string, unknown>;
+                          const total = parseAmount(line.amount.amount);
+                          const gst = segmentKey === 'primary' ? parseAmount(meta.gst_amount) : 0;
+                          const subtotal = segmentKey === 'primary' ? Math.max(total - gst, 0) : total;
+
+                          segmentSubtotal += subtotal;
+                          segmentGST += gst;
+                          segmentTotal += total;
+
+                          return (
+                            <tr
+                              key={[segmentKey, categoryName, line.code, String(idx)].join('-')}
+                              className="border-t border-slate-200 dark:border-slate-700"
+                            >
+                              <td className="px-3 py-2 align-top">
+                                <div className="font-medium text-slate-900 dark:text-slate-100">
+                                  {line.desc || line.code}
+                                </div>
+                                {line.desc && line.code && (
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">{line.code}</div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {formatDisplay(subtotal, info.currency)}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {formatDisplay(gst, info.currency, segmentKey !== 'primary')}
+                              </td>
+                              <td className="px-3 py-2 text-right">{formatDisplay(total, info.currency)}</td>
+                            </tr>
+                          );
+                        })}
+                      </Fragment>
+                    ))}
+                    <tr className="bg-slate-100 dark:bg-slate-800 font-semibold">
+                      <td className="px-3 py-2 text-right">Total {info.title}</td>
+                      <td className="px-3 py-2 text-right">{formatDisplay(segmentSubtotal, info.currency)}</td>
+                      <td className="px-3 py-2 text-right">
+                        {formatDisplay(segmentGST, info.currency, segmentKey !== 'primary')}
+                      </td>
+                      <td className="px-3 py-2 text-right">{formatDisplay(segmentTotal, info.currency)}</td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
     );
-  };
+  }
+
+  const renderSimpleTable = () => (
+    <div className="mt-4">
+      <h4 className="text-sm font-semibold mb-2">{title}</h4>
+      <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-100 dark:bg-slate-800">
+            <tr className="text-left">
+              <th className="px-3 py-2">Charge</th>
+              <th className="px-3 py-2">Qty</th>
+              <th className="px-3 py-2">Unit</th>
+              <th className="px-3 py-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((line, idx) => (
+              <tr key={[line.code, String(idx)].join('-')} className="border-t border-slate-200 dark:border-slate-700">
+                <td className="px-3 py-2">
+                  <div className="font-medium">{line.code}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">{line.desc}</div>
+                </td>
+                <td className="px-3 py-2">{line.qty}</td>
+                <td className="px-3 py-2">{line.unit}</td>
+                <td className="px-3 py-2 text-right">{formatMoney(line.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  if (orderedSegments.length === 0) {
+    return renderSimpleTable();
+  }
+
+  return (
+    <div className="mt-4">
+      <h4 className="text-sm font-semibold mb-2">{title}</h4>
+      <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-100 dark:bg-slate-800">
+            <tr className="text-left">
+              <th className="px-3 py-2">Charge</th>
+              <th className="px-3 py-2">Qty</th>
+              <th className="px-3 py-2">Unit</th>
+              <th className="px-3 py-2 text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orderedSegments.map((segmentKey) => {
+              const info = segments.get(segmentKey)!;
+              const categories = Array.from(info.categories.entries());
+              const segmentTotal = categories.reduce(
+                (acc, [, rows]) =>
+                  acc + rows.reduce((inner, item) => inner + Number(item.line.amount.amount), 0),
+                0,
+              );
+              return (
+                <Fragment key={segmentKey}>
+                  <tr className="bg-slate-100/80 dark:bg-slate-800/80 font-semibold">
+                    <td className="px-3 py-2" colSpan={4}>
+                      {info.title}
+                    </td>
+                  </tr>
+                  {categories.map(([categoryName, rows]) => (
+                    <Fragment key={[segmentKey, categoryName].join('-')}>
+                      <tr className="bg-slate-50 dark:bg-slate-900/40 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        <td className="px-3 py-2" colSpan={4}>
+                          {categoryName}
+                        </td>
+                      </tr>
+                      {rows.map(({ line }, idx) => (
+                        <tr
+                          key={[segmentKey, categoryName, line.code, String(idx)].join('-')}
+                          className="border-t border-slate-200 dark:border-slate-700"
+                        >
+                          <td className="px-3 py-2">
+                            <div className="font-medium">{line.code}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{line.desc}</div>
+                          </td>
+                          <td className="px-3 py-2">{line.qty}</td>
+                          <td className="px-3 py-2">{line.unit}</td>
+                          <td className="px-3 py-2 text-right">{formatMoney(line.amount)}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                  <tr className="bg-slate-100 dark:bg-slate-800 font-semibold">
+                    <td className="px-3 py-2 text-right" colSpan={3}>
+                      Total {info.title}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {formatMoney({ amount: segmentTotal.toFixed(2), currency: info.currency } as Money)}
+                    </td>
+                  </tr>
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 
   const handleAddPiece = () => {
     setPieces([...pieces, { weight_kg: '' }]);
@@ -311,9 +563,9 @@ export default function NewQuotePage() {
         <div>
           <h3 className="text-2xl font-bold">
             {sell ? (
-              <>Total Sell Price: {formatMoney(sell)}</>
+              <Fragment>Total Sell Price: {formatMoney(sell)}</Fragment>
             ) : (
-              <>Quote Created: #{quoteResult.quote_id}</>
+              <Fragment>Quote Created: #{quoteResult.quote_id}</Fragment>
             )}
           </h3>
           {quoteDetail?.manual_reasons?.length ? (
@@ -351,10 +603,10 @@ export default function NewQuotePage() {
         )}
 
         {quoteDetail ? (
-          <>
+          <Fragment>
             {renderLineTable('Buy Breakdown', quoteDetail.buy_lines)}
             {renderLineTable('Sell Breakdown', quoteDetail.sell_lines)}
-          </>
+          </Fragment>
         ) : null}
 
         <details className="border rounded-md p-3 bg-slate-50 dark:bg-slate-800 dark:border-slate-700">

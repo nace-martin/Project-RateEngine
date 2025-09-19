@@ -475,6 +475,7 @@ def normalize_scope_value(service_scope: Optional[str]) -> str:
     return scope_map.get(scope, scope)
 
 
+
 def compute_sell_lines(
     sell_card: Ratecard,
     buy_context: Dict[str, Money],
@@ -607,7 +608,7 @@ def compute_sell_lines(
         unit_price_amount = (line_money_target.amount / qty_decimal).quantize(FOURPLACES) if qty_decimal else line_money_target.amount.quantize(FOURPLACES)
 
         category_map = ORIGIN_CATEGORY_MAP if segment == "origin" else DESTINATION_CATEGORY_MAP
-        meta = {"segment": segment}
+        meta: Dict[str, object] = {"segment": segment, "row_type": "line"}
         category = category_map.get(code)
         if category:
             meta["category"] = category
@@ -628,15 +629,16 @@ def compute_sell_lines(
             )
         )
 
-
     return lines
+
 
 def apply_margin_to_origin_lines(lines: List[CalcLine], multiplier: Decimal) -> List[CalcLine]:
     if multiplier == Decimal('1'):
         return lines
     adjusted: List[CalcLine] = []
     for line in lines:
-        segment = (line.meta or {}).get('segment')
+        meta = line.meta if isinstance(line.meta, dict) else {}
+        segment = meta.get('segment') if isinstance(meta, dict) else None
         if segment == 'origin':
             qty = d(line.qty) if line.qty is not None else ZERO
             extended_amount = (line.extended.amount * multiplier).quantize(TWOPLACES)
@@ -644,8 +646,9 @@ def apply_margin_to_origin_lines(lines: List[CalcLine], multiplier: Decimal) -> 
                 unit_price_amount = (extended_amount / qty).quantize(FOURPLACES)
             else:
                 unit_price_amount = extended_amount.quantize(FOURPLACES)
-            meta = dict(line.meta or {})
+            meta = dict(meta or {})
             meta['margin_multiplier'] = str(multiplier)
+            meta['row_type'] = 'line'
             adjusted.append(
                 CalcLine(
                     code=line.code,
@@ -662,8 +665,13 @@ def apply_margin_to_origin_lines(lines: List[CalcLine], multiplier: Decimal) -> 
                 )
             )
         else:
+            if isinstance(meta, dict):
+                meta = dict(meta)
+                meta.setdefault('row_type', 'line')
+                line.meta = meta
             adjusted.append(line)
     return adjusted
+
 
 
 # ------------------------- Orchestrator --------------------------
@@ -1020,12 +1028,26 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
 
     tax_total = ZERO
     sell_sum = ZERO
-    for l in sell_lines:
-        sell_amt_money = convert_track(l.extended)
+    for line in sell_lines:
+        sell_amt_money = convert_track(line.extended)
         sell_amt = sell_amt_money.amount
-        tax = (sell_amt * (l.tax_pct/Decimal(100))).quantize(TWOPLACES)
+        tax = (sell_amt * (line.tax_pct/Decimal(100))).quantize(TWOPLACES)
         sell_sum += sell_amt + tax
         tax_total += tax
+
+        meta = line.meta if isinstance(line.meta, dict) else {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta.setdefault("row_type", "line")
+        if meta.get("segment") == "primary":
+            gst_rate = (line.tax_pct or ZERO) / Decimal(100)
+            meta["gst_amount"] = str(tax)
+            line.extended = Money((sell_amt + tax).quantize(TWOPLACES), invoice_currency)
+            unit_base = d(line.unit_price.amount)
+            line.unit_price = Money((unit_base * (Decimal(1) + gst_rate)).quantize(FOURPLACES), line.unit_price.currency)
+        else:
+            line.extended = Money(sell_amt.quantize(TWOPLACES), invoice_currency)
+        line.meta = meta
 
     # Apply margin before final rounding
     sell_sum_before_rounding = sell_sum.quantize(TWOPLACES)
