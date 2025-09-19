@@ -22,6 +22,17 @@ class Stations(models.Model):
     iata = models.TextField(unique=True)
     city = models.TextField(blank=True, null=True)
     country = models.TextField(blank=True, null=True)
+    max_service_level = models.CharField(
+        max_length=16,
+        choices=[
+            ("DOOR_DOOR", "Door to Door"),
+            ("DOOR_AIRPORT", "Door to Airport"),
+            ("AIRPORT_DOOR", "Airport to Door"),
+            ("AIRPORT_ONLY", "Airport Only"),
+        ],
+        default="AIRPORT_ONLY",
+        help_text="Maximum service level available at this station.",
+    )
 
     class Meta:
         db_table = 'stations'

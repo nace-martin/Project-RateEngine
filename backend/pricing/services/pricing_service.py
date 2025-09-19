@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
 from django.db.models import Case, IntegerField, Q, Value, When
@@ -675,7 +676,96 @@ def apply_margin_to_origin_lines(lines: List[CalcLine], multiplier: Decimal) -> 
 
 
 # ------------------------- Orchestrator --------------------------
-# ------------------------- Orchestrator --------------------------
+
+def _build_shipment_legs(
+    payload: ShipmentInput, origin_station: Station, dest_station: Station, route: Optional[Routes]
+) -> List[SimpleNamespace]:
+    """
+    Dynamically constructs journey legs based on QuotingMatrix.md business rules.
+    - All international freight must route through POM gateway.
+    - Falls back to pre-configured RouteLegs if they exist for non-gateway scenarios.
+    """
+    shipment_type = payload.shipment_type
+    legs = []
+
+    is_png_import = shipment_type == "IMPORT" and dest_station.country == "PG"
+    is_png_export = shipment_type == "EXPORT" and origin_station.country == "PG"
+    is_domestic = shipment_type == "DOMESTIC"
+
+    # --- Gateway Routing Logic ---
+    if is_png_import and dest_station.iata != "POM":
+        # Import to a PNG outer port must go via POM
+        try:
+            gateway = Station.objects.get(iata="POM")
+        except Station.DoesNotExist:
+            raise ValueError("Gateway station POM not found in database.")
+
+        legs.append(SimpleNamespace(
+            origin=origin_station,
+            dest=gateway,
+            sequence=1,
+            leg_scope="INTERNATIONAL",
+            service_type="LINEHAUL",
+            route=route
+        ))
+        legs.append(SimpleNamespace(
+            origin=gateway,
+            dest=dest_station,
+            sequence=2,
+            leg_scope="DOMESTIC",
+            service_type="ONFORWARDING",
+            route=route
+        ))
+        return legs
+
+    if is_png_export and origin_station.iata != "POM":
+        # Export from a PNG outer port must go via POM
+        try:
+            gateway = Station.objects.get(iata="POM")
+        except Station.DoesNotExist:
+            raise ValueError("Gateway station POM not found in database.")
+
+        legs.append(SimpleNamespace(
+            origin=origin_station,
+            dest=gateway,
+            sequence=1,
+            leg_scope="DOMESTIC",
+            service_type="PRE_CARRIAGE",
+            route=route
+        ))
+        legs.append(SimpleNamespace(
+            origin=gateway,
+            dest=dest_station,
+            sequence=2,
+            leg_scope="INTERNATIONAL",
+            service_type="LINEHAUL",
+            route=route
+        ))
+        return legs
+
+    # --- Standard / Fallback Logic ---
+    # If a pre-configured route with legs exists, use that.
+    if route:
+        db_legs = list(RouteLegs.objects.filter(route_id=route.id).select_related("origin", "dest").order_by("sequence"))
+        if db_legs:
+            # Use the pre-configured legs from the database
+            return db_legs
+
+    # Otherwise, create a single default leg. This covers:
+    # - Domestic shipments
+    # - Simple imports/exports to/from the POM gateway
+    # - International shipments that don't touch PNG
+    scope = "DOMESTIC" if is_domestic else "INTERNATIONAL"
+    legs.append(SimpleNamespace(
+        origin=origin_station,
+        dest=dest_station,
+        sequence=1,
+        leg_scope=scope,
+        service_type="LINEHAUL",
+        route=route
+    ))
+    return legs
+
 
 def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -> CalcResult:
     """Main entry point. Returns full buy/sell breakdown and snapshot.
@@ -753,89 +843,80 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
 
     invoice_currency = determine_invoice_currency(payload.shipment_type, payment_term, origin_country, dest_country)
 
+    manual_any = False
+    manual_reasons: List[str] = []
+
+    # --- Service Level Validation ---
+    normalized_scope = normalize_scope_value(payload.service_scope)
+    if normalized_scope == "DOOR_DOOR":
+        if origin_station.max_service_level != "DOOR_DOOR" or dest_station.max_service_level != "DOOR_DOOR":
+            manual_any = True
+            manual_reasons.append(f"Door-to-Door service is not available for the route {origin_station.iata} to {dest_station.iata}.")
+    elif normalized_scope == "DOOR_AIRPORT":
+        if origin_station.max_service_level not in ["DOOR_DOOR", "DOOR_AIRPORT"]:
+            manual_any = True
+            manual_reasons.append(f"Door Pickup service is not available at {origin_station.iata}.")
+    elif normalized_scope == "AIRPORT_DOOR":
+        if dest_station.max_service_level not in ["DOOR_DOOR", "AIRPORT_DOOR"]:
+            manual_any = True
+            manual_reasons.append(f"Door Delivery service is not available at {dest_station.iata}.")
+
     # 1) BUY pricing: support multi-leg via Routes/RouteLegs when available
 
     # Define sell scope for SELL card lookup regardless of routing mode
     scope_for_sell = "INTERNATIONAL" if payload.shipment_type in ["IMPORT", "EXPORT"] else "DOMESTIC"
-    normalized_scope = normalize_scope_value(payload.service_scope)
     needs_origin_services = normalized_scope in {"DOOR_AIRPORT", "DOOR_DOOR"}
     buy_direction = None  # for snapshot in single-leg mode
-    # Determine route based on origin/dest station countries and shipment type
-    route = None
-    try:
-        route_candidates = (
-            Routes.objects.filter(
-                origin_country=(origin_station.country or "").upper(),
-                dest_country=(dest_station.country or "").upper(),
-                shipment_type=payload.shipment_type,
-            )
-            .annotate(
-                origin_match=Case(
-                    When(legs__origin__iata=origin_iata, then=Value(0)),
-                    default=Value(1),
-                    output_field=IntegerField(),
-                ),
-                dest_match=Case(
-                    When(legs__dest__iata=dest_iata, then=Value(0)),
-                    default=Value(1),
-                    output_field=IntegerField(),
-                ),
-            )
-            .order_by("origin_match", "dest_match", "id")
-            .distinct()
-        )
-        route = route_candidates.first()
-    except Exception:
-        route = None
-
-    # Helper to build active BUY cards for a given scope/direction
-    def active_buy_cards(scope_val: str, direction_val: str):
-        qs = Ratecard.objects.filter(
-            role="BUY",
-            scope=scope_val,
-            direction=direction_val,
-            effective_date__lte=ts.date(),
-        ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
-        if provider_hint:
-            qs = qs.filter(provider_id=provider_hint)
-        return qs
 
     # Aggregates across all legs
     buy_lines: List[CalcLine] = []
-    # Temporary accumulator of BUY amounts before SELL mapping (code -> list[Money])
     buy_context_lists: Dict[str, List[Money]] = {}
     lane_warnings: List[str] = []
     chosen_breaks: List[Dict] = []
     per_leg_chargeables: List[Decimal] = []
     first_rc_buy_id: Optional[int] = None
 
+    route = None
+
     def acc_context(code: str, money: Money):
         if code not in buy_context_lists:
             buy_context_lists[code] = []
         buy_context_lists[code].append(money)
 
-    # Select direction defaulting logic
-    def derive_direction(scope_val: str) -> str:
-        if scope_val == "DOMESTIC":
-            return "DOMESTIC"
-        # INTERNATIONAL legs: BUY as EXPORT from the leg origin
-        return "EXPORT"
-
-    manual_any = False
-    manual_reasons: List[str] = []
-
-    if route:
-        legs_qs = RouteLegs.objects.filter(route_id=route.id).select_related("origin", "dest").order_by("sequence", "id")
-        legs = select_route_legs_for_payload(list(legs_qs), payload.origin_iata, payload.dest_iata)
-        if not legs:
-            raise ValueError(
-                f"Configured route has no legs defined for {payload.origin_iata}->{payload.dest_iata}"
+    if not manual_any:
+        # Determine route based on origin/dest station countries and shipment type
+        try:
+            route_candidates = (
+                Routes.objects.filter(
+                    origin_country=(origin_station.country or "").upper(),
+                    dest_country=(dest_station.country or "").upper(),
+                    shipment_type=payload.shipment_type,
+                )
+                .annotate(
+                    origin_match=Case(
+                        When(legs__origin__iata=origin_iata, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    ),
+                    dest_match=Case(
+                        When(legs__dest__iata=dest_iata, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    ),
+                )
+                .order_by("origin_match", "dest_match", "id")
+                .distinct()
             )
+            route = route_candidates.first()
+        except Exception:
+            route = None
+
+        # --- Intelligent Leg Building ---
+        legs = _build_shipment_legs(payload, origin_station, dest_station, route)
 
         for leg in legs:
-            # Use default 167 dim factor for placeholder kg in manual line
             placeholder_kg = calculate_chargeable_weight_per_piece(payload.pieces, Decimal(167))
-            leg_lines, leg_ctx, is_manual, reason = compute_leg_cost(
+            leg_lines, leg_ctx, is_leg_manual, reason = compute_leg_cost(
                 leg=leg,
                 chargeable_kg=placeholder_kg,
                 shipment_payload=payload,
@@ -844,21 +925,18 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
                 ts=ts,
             )
 
-            if is_manual:
+            if is_leg_manual:
                 manual_any = True
                 if reason and reason not in manual_reasons:
                     manual_reasons.append(reason)
 
-            # Aggregate results
             buy_lines.extend(leg_lines)
             for code, money in leg_ctx.items():
                 acc_context(code, money)
 
-            # Extract freight info for snapshot and kg aggregation
             for cl in leg_lines:
                 if cl.code == "FREIGHT":
                     per_leg_chargeables.append(d(cl.qty))
-                    # capture chosen break if present in meta
                     br = cl.meta.get("break") if isinstance(cl.meta, dict) else None
                     chosen_breaks.append({
                         "leg": int(cl.meta.get("leg") if isinstance(cl.meta, dict) else int(getattr(leg, 'sequence', 0) or 0)),
@@ -869,58 +947,6 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
                     })
                     if first_rc_buy_id is None and cl.source_ratecard_id:
                         first_rc_buy_id = cl.source_ratecard_id
-    else:
-        # Fallback to single-leg behaviour if no route is defined: use consolidated leg logic
-        from types import SimpleNamespace
-        if payload.shipment_type in ["IMPORT", "EXPORT"]:
-            scope_single = "INTERNATIONAL"
-            buy_direction = "EXPORT"
-        else:
-            scope_single = "DOMESTIC"
-            buy_direction = payload.shipment_type
-
-        try:
-            st_o = Station.objects.get(iata=payload.origin_iata)
-            st_d = Station.objects.get(iata=payload.dest_iata)
-        except Exception:
-            raise ValueError("Invalid origin or destination IATA code")
-
-        leg = SimpleNamespace(route=None, leg_scope=scope_single, origin=st_o, dest=st_d, service_type="LINEHAUL", sequence=1)
-        placeholder_kg = calculate_chargeable_weight_per_piece(payload.pieces, Decimal(167))
-        leg_lines, leg_ctx, is_manual, reason = compute_leg_cost(
-            leg=leg,
-            chargeable_kg=placeholder_kg,
-            shipment_payload=payload,
-            fx=fx,
-            sell_currency=invoice_currency,
-            ts=ts,
-        )
-
-        if is_manual:
-            manual_any = True
-            if reason and reason not in manual_reasons:
-                manual_reasons.append(reason)
-
-        # Aggregate results
-        buy_lines.extend(leg_lines)
-        for code, money in leg_ctx.items():
-            acc_context(code, money)
-
-        # Extract info for snapshot
-        for cl in leg_lines:
-            if cl.code == "FREIGHT":
-                per_leg_chargeables.append(d(cl.qty))
-                br = cl.meta.get("break") if isinstance(cl.meta, dict) else None
-                chosen_breaks.append({
-                    "leg": int(cl.meta.get("leg") if isinstance(cl.meta, dict) else 1),
-                    "lane_id": None,
-                    "break": br,
-                    "currency": cl.extended.currency,
-                    "amount": str(cl.extended.amount),
-                })
-                if first_rc_buy_id is None and cl.source_ratecard_id:
-                    first_rc_buy_id = cl.source_ratecard_id
-
 
     # 3) Determine the correct SELL audience based on payment term
     sell_direction = payload.shipment_type
@@ -952,6 +978,10 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
     if not sell_card:
         sell_card = sell_qs_base.first()
     if not sell_card:
+        # If manual_any is true, we can just return a shell response
+        if manual_any:
+            snapshot = { "manual_rate_required": True, "manual_reasons": manual_reasons, "ts": ts.isoformat() }
+            return CalcResult(buy_lines=[], sell_lines=[], totals={}, snapshot=snapshot)
         raise ValueError(
             f"No SELL ratecard found for audience '{target_audience}' and payment term '{payload.payment_term}'."
         )
