@@ -42,7 +42,6 @@ COUNTRY_CURRENCY_MAP = {
     "US": "USD",
 }
 DEFAULT_FOREIGN_CURRENCY = "USD"
-STANDARD_MARGIN_MULTIPLIER = Decimal("1.15")
 
 
 ORIGIN_CATEGORY_MAP = {
@@ -117,9 +116,8 @@ def calculate_chargeable_weight_per_piece(pieces: List[Piece], dim_factor_kg_per
     return round_up_to_next_whole(total_chargeable)
 
 
-def pick_best_break(lane: Lane, chargeable_kg: Decimal) -> Tuple[LaneBreak, Money]:
+def pick_best_break(lane: Lane, chargeable_kg: Decimal, breaks: List[LaneBreak]) -> Tuple[LaneBreak, Money]:
     """Return chosen LaneBreak and base freight in lane currency (ratecard.currency)."""
-    breaks = list(LaneBreak.objects.filter(lane_id=lane.id))
     by_code = {b.break_code: b for b in breaks}
 
     rc = Ratecard.objects.get(id=lane.ratecard_id)
@@ -268,21 +266,10 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
     # BUY-Side: for PER_KG fees, multiply the per-kg rate by chargeable kg
     if basis == "PER_KG":
         kg_dec = d(kg)
-        # Business rule corrections for specific surcharges
-        if code in {"SEC", "SECURITY"}:
-            # Security surcharge: PGK 0.20/kg with PGK 5.00 minimum (whichever is higher)
-            security_rate = Decimal("0.20")
-            security_min = Decimal("5.00")
-            total = max(security_rate * kg_dec, security_min)
-        elif code in {"FUEL", "FUEL_SURCHARGE"}:
-            # Fuel surcharge: PGK 0.35/kg
-            fuel_rate = Decimal("0.35")
-            total = fuel_rate * kg_dec
-        else:
-            # Standard per-kg fee logic
-            total = (amt * kg_dec)
-            if min_amt is not None:
-                total = max(total, min_amt)
+        # Standard per-kg fee logic
+        total = (amt * kg_dec)
+        if min_amt is not None:
+            total = max(total, min_amt)
     elif basis in ("PER_SHIPMENT", "PER_AWB", "PER_SET", "PER_TRANSFER"):
         total = amt
     elif basis == "PERCENT_OF":
@@ -346,11 +333,15 @@ def compute_leg_cost(
             effective_date__lte=ts.date(),
         ).filter(Q(expiry_date__isnull=True) | Q(expiry_date__gte=ts.date()))
 
-        candidate_lanes = Lane.objects.filter(
-            ratecard_id__in=active_cards.values_list("id", flat=True),
-            origin=leg.origin,
-            dest=leg.dest,
-        ).select_related("ratecard")
+        candidate_lanes = (
+            Lane.objects.filter(
+                ratecard_id__in=active_cards.values_list("id", flat=True),
+                origin=leg.origin,
+                dest=leg.dest,
+            )
+            .select_related("ratecard", "ratecard__ratecardconfig")
+            .prefetch_related("lanebreaks_set")
+        )
 
         # Apply optional hints
         if shipment_payload.airline_hint:
@@ -387,20 +378,23 @@ def compute_leg_cost(
     lanes = list(candidate_lanes)
     buy_options: List[Tuple[Lane, Decimal, LaneBreak, Money]] = []
     for lane in lanes:
-        cfg = RatecardConfig.objects.filter(ratecard_id=lane.ratecard_id).first()
+        # Use prefetched/selected related objects
+        cfg = lane.ratecard.ratecardconfig if hasattr(lane.ratecard, "ratecardconfig") else None
         dim = d(cfg.dim_factor_kg_per_m3 if cfg else Decimal(167))
         lane_chargeable = calculate_chargeable_weight_per_piece(shipment_payload.pieces, dim)
 
-        rc_lane = lane.ratecard if hasattr(lane, "ratecard") else Ratecard.objects.get(id=lane.ratecard_id)
+        rc_lane = lane.ratecard
+        lane_breaks = list(lane.lanebreaks_set.all())
+
         if getattr(rc_lane, "rate_strategy", None) == "FLAT_PER_KG":
-            flat_break = LaneBreak.objects.filter(lane_id=lane.id, break_code="FLAT").first()
+            flat_break = next((b for b in lane_breaks if b.break_code == "FLAT"), None)
             if not flat_break:
                 logging.warning(f"Lane {lane.id} marked FLAT_PER_KG but missing FLAT break; skipping.")
                 continue
             base = Money((d(flat_break.per_kg) * lane_chargeable).quantize(TWOPLACES), rc_lane.currency)
             brk = flat_break
         else:
-            brk, base = pick_best_break(lane, lane_chargeable)
+            brk, base = pick_best_break(lane, lane_chargeable, lane_breaks)
         buy_options.append((lane, lane_chargeable, brk, base))
 
     # Pick cheapest option for this leg in SELL currency to normalize comparison
@@ -408,7 +402,7 @@ def compute_leg_cost(
         return fx.convert(m, sell_currency).amount
 
     lane, chosen_chargeable_kg, chosen_break, base_freight = min(buy_options, key=lambda x: to_sell_ccy(x[3]))
-    rc_buy = Ratecard.objects.get(id=lane.ratecard_id)
+    rc_buy = lane.ratecard
 
     # BUY freight line per leg
     buy_lines.append(
@@ -431,7 +425,7 @@ def compute_leg_cost(
     fees = RatecardFee.objects.filter(ratecard_id=rc_buy.id).select_related("fee_type")
     leg_ctx: Dict[str, Money] = {"FREIGHT": base_freight, "secondary_screening_flag": shipment_payload.flags.get("secondary_screening", False)}
     for fee in fees:
-        fee_type = FeeType.objects.get(id=fee.fee_type_id)
+        fee_type = fee.fee_type
         line_money = compute_fee_amount(fee, chosen_chargeable_kg, leg_ctx)
         if line_money.amount <= 0:
             continue
@@ -1009,7 +1003,8 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
         extra_cards=supplementary_sell_cards,
     )
 
-    sell_lines = apply_margin_to_origin_lines(sell_lines, STANDARD_MARGIN_MULTIPLIER)
+    margin_multiplier = d(sell_card.meta.get("origin_margin_multiplier", "1.15"))
+    sell_lines = apply_margin_to_origin_lines(sell_lines, margin_multiplier)
 
     # 4) Totals & taxes (sell lines)
     # Track FX usage to document CAF-on-FX behavior
@@ -1031,10 +1026,9 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
     for line in sell_lines:
         sell_amt_money = convert_track(line.extended)
         sell_amt = sell_amt_money.amount
-        tax = (sell_amt * (line.tax_pct/Decimal(100))).quantize(TWOPLACES)
+        tax = (sell_amt * (line.tax_pct / Decimal(100))).quantize(TWOPLACES)
         sell_sum += sell_amt + tax
         tax_total += tax
-
         meta = line.meta if isinstance(line.meta, dict) else {}
         if not isinstance(meta, dict):
             meta = {}

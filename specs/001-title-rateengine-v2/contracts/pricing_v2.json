@@ -1,0 +1,48 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Pricing V2 API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/quote/compute2": {
+      "post": {
+        "summary": "Compute a quote using the V2 rating core",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteContext"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Quote computed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Totals"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "QuoteContext": {
+        "type": "object",
+        "properties": {}
+      },
+      "Totals": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  }
+}

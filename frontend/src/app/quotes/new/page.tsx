@@ -495,11 +495,10 @@ export default function NewQuotePage() {
       commodity_code: commodityCode,
       is_urgent: isUrgent,
       pieces: pieces.map(p => ({
-        ...p,
-        weight_kg: parseFloat(p.weight_kg) || 0,
-        length_cm: parseFloat(p.length_cm || '0') || undefined,
-        width_cm: parseFloat(p.width_cm || '0') || undefined,
-        height_cm: parseFloat(p.height_cm || '0') || undefined,
+        weight_kg: (p.weight_kg && p.weight_kg.trim()) || '0',
+        length_cm: (p.length_cm && p.length_cm.trim()) || undefined,
+        width_cm: (p.width_cm && p.width_cm.trim()) || undefined,
+        height_cm: (p.height_cm && p.height_cm.trim()) || undefined,
       })),
     };
 

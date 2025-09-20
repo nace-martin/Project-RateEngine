@@ -31,6 +31,13 @@ class FxConverter:
         return d(row.rate) if row else None
 
     def _rate_foreign_to_pgk(self, foreign_ccy: str, at: datetime) -> Decimal:
+        """
+        Calculates the conversion rate from a foreign currency TO PGK.
+
+        This is a "BUY" transaction from the company's perspective (buying foreign
+        currency with PGK). The `caf_buy_pct` is applied to the bank's Telegraphic
+        Transfer (TT) BUY rate to determine the final customer rate.
+        """
         # Prefer PGK->foreign TT BUY (quoted as foreign per PGK)
         raw = self._fetch_rate('PGK', foreign_ccy, 'BUY', at)
         if raw is not None:
@@ -48,6 +55,12 @@ class FxConverter:
         return adjusted
 
     def _rate_pgk_to_foreign(self, foreign_ccy: str, at: datetime) -> Decimal:
+        """
+        Calculates the conversion rate FROM PGK to a foreign currency.
+
+        This is a "SELL" transaction (selling foreign currency for PGK), so the
+        `caf_sell_pct` is applied to the bank's TT SELL rate.
+        """
         raw = self._fetch_rate('PGK', foreign_ccy, 'SELL', at)
         if raw is not None:
             adjusted = raw * (Decimal('1.0') + self.caf_sell_pct)
@@ -61,7 +74,7 @@ class FxConverter:
         adjusted = raw * (Decimal('1.0') + self.caf_sell_pct)
         if adjusted == 0:
             raise ValueError("Adjusted SELL rate results in zero; cannot convert.")
-        return Decimal('1.0') / adjusted
+        return adjusted
 
     def rate(self, base_ccy: str, quote_ccy: str, at: Optional[datetime] = None) -> Decimal:
         at = at or now()

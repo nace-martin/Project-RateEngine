@@ -105,15 +105,15 @@ class Command(BaseCommand):
 
         # Based on "Customs Clearance and Delivery Charges"
         for import_rc in ratecards:
-            add_service_item(import_rc, "CUSTOMS_CLEARANCE", "PGK", "300.00", item_code="040-61130")
-            add_service_item(import_rc, "AGENCY_FEE", "PGK", "250.00", item_code="040-61000")
-            add_service_item(import_rc, "CUSTOMS_ENTRY_PAGE", "PGK", "55.00", item_code="040-61131")
-            add_service_item(import_rc, "DOCUMENTATION_FEE", "PGK", "165.00", item_code="040-61160")
-            add_service_item(import_rc, "HANDLING_GENERAL", "PGK", "165.00", item_code="040-61170")
-            add_service_item(import_rc, "TERMINAL_FEE_INT", "PGK", "165.00", item_code="040-61030")
-            add_service_item(import_rc, "CARTAGE_DELIVERY", "PGK", "1.50", min_amount="95.00", max_amount="500.00", item_code="040-61333")
-            add_service_item(import_rc, "FUEL_SURCHARGE_CARTAGE", "PGK", "0.10", percent_of_service_code="CARTAGE_DELIVERY", item_code="040-61361")
-            add_service_item(import_rc, "DISBURSEMENT_FEE", "PGK", "0.05", min_amount="50.00", max_amount="2500.00", item_code="040-61234", percent_of_service_code="TBA_IMPORT_TAX")  # Note: You'll need a way to calculate the import tax for this to work automatically
+            add_service_item(import_rc, "CUSTOMS_CLEARANCE", "PGK", "300.00", item_code="040-61130", tax_pct="10.0")
+            add_service_item(import_rc, "AGENCY_FEE", "PGK", "250.00", item_code="040-61000", tax_pct="10.0")
+            add_service_item(import_rc, "CUSTOMS_ENTRY_PAGE", "PGK", "55.00", item_code="040-61131", tax_pct="10.0")
+            add_service_item(import_rc, "DOCUMENTATION_FEE", "PGK", "165.00", item_code="040-61160", tax_pct="10.0")
+            add_service_item(import_rc, "HANDLING_GENERAL", "PGK", "165.00", item_code="040-61170", tax_pct="10.0")
+            add_service_item(import_rc, "TERMINAL_FEE_INT", "PGK", "165.00", item_code="040-61030", tax_pct="10.0")
+            add_service_item(import_rc, "CARTAGE_DELIVERY", "PGK", "1.50", min_amount="95.00", max_amount="500.00", item_code="040-61333", tax_pct="10.0")
+            add_service_item(import_rc, "FUEL_SURCHARGE_CARTAGE", "PGK", "0.10", percent_of_service_code="CARTAGE_DELIVERY", item_code="040-61361", tax_pct="10.0")
+            add_service_item(import_rc, "DISBURSEMENT_FEE", "PGK", "0.05", min_amount="50.00", max_amount="2500.00", item_code="040-61234", percent_of_service_code="TBA_IMPORT_TAX", tax_pct="10.0")  # Note: You'll need a way to calculate the import tax for this to work automatically
 
         self.stdout.write(self.style.SUCCESS("Successfully seeded EFM 2025 Import rates."))
 

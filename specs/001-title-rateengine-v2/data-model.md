@@ -1,0 +1,13 @@
+# Data Model
+
+This feature does not introduce any new database models. It utilizes existing BUY/SELL models and seed data.
+
+The following dataclasses will be used to pass data between the pure functions of the new rating core:
+
+- **QuoteContext**: The initial input to the rating process.
+- **NormalizedContext**: The result of the `normalize` function.
+- **BuyResult**: The result of the `rate_buy` function.
+- **SellResult**: The result of the `map_to_sell` function.
+- **Totals**: The final result of the `tax_fx_round` function.
+
+These will be defined in `pricing_v2/dataclasses_v2.py`.

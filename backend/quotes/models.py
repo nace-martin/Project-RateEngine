@@ -39,6 +39,7 @@ class QuoteLines(models.Model):
     unit_price = models.DecimalField(max_digits=12, decimal_places=4)
     extended_price = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=3)
+    tax_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
     # Add a field to flag lines that need manual input
     manual_rate_required = models.BooleanField(default=False)
 

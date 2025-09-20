@@ -192,7 +192,7 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(self.style.WARNING("Configuring SELL menu for AUD importers..."))
-        ensure_policy("AUD_AGENT", caf_on_fx=False, gst_applies=False, gst_pct=0)
+        ensure_policy("AUD_AGENT", gst_applies=False, gst_pct=0)
         sell_rc = ensure_ratecard(
             provider,
             sell_ratecard_name,

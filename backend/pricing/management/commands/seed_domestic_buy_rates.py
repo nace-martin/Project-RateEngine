@@ -1,5 +1,6 @@
 # backend/pricing/management/commands/seed_domestic_buy_rates.py
 
+import json
 from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -13,6 +14,7 @@ from pricing.models import (
     RatecardFees,
     ServiceItems,
     SellCostLinksSimple,
+    Audience,
 )
 
 # Updated with the full list of actual domestic BUY rates
@@ -101,7 +103,8 @@ class Command(BaseCommand):
                 defaults={
                     "amount": Decimal(fee_data["amount"]),
                     "min_amount": Decimal(fee_data.get("min_amount", "0.00")),
-                    "currency": "PGK", "created_at": now()
+                    "currency": "PGK", "created_at": now(),
+                    "applies_if": {},
                 }
             )
 
@@ -111,8 +114,8 @@ class Command(BaseCommand):
         rc_sell, _ = Ratecards.objects.update_or_create(
             name="PNG Domestic SELL Menu (PGK Local)",
             defaults={
-                "role": "SELL", "scope": "DOMESTIC", "direction": "DOMESTIC",
-                "audience": "PGK_LOCAL", "currency": "PGK", "status": "ACTIVE",
+                "provider": provider, "role": "SELL", "scope": "DOMESTIC", "direction": "DOMESTIC",
+                "audience": Audience.get_or_create_from_code("PGK_LOCAL"), "currency": "PGK", "status": "ACTIVE",
                 "source": "SEEDER", "effective_date": now().date(), "created_at": now(),
                 "updated_at": now(), "meta": json.dumps({"rounding_rule": "NEAREST_0_05"})
             }
@@ -147,7 +150,8 @@ class Command(BaseCommand):
                     "amount": Decimal(item_data.get("amount", "0.00")),
                     "min_amount": Decimal(item_data.get("min_amount", "0.00")),
                     "percent_of_service_code": item_data.get("percent_of_service_code"),
-                    "tax_pct": Decimal(item_data["tax_pct"]), "currency": "PGK"
+                    "tax_pct": Decimal(item_data["tax_pct"]), "currency": "PGK",
+                    "conditions_json": {},
                 }
             )
             sell_items[svc.code] = item

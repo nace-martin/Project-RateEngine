@@ -140,6 +140,7 @@ class QuoteComputeView(views.APIView):
                         unit_price=line.unit_price.amount,
                         extended_price=line.extended.amount,
                         currency=line.extended.currency,
+                        tax_pct=line.tax_pct,
                         manual_rate_required=getattr(line, "meta", {}).get("manual_rate_required", False),
                     )
                 )
@@ -198,6 +199,7 @@ class QuoteDetailView(views.APIView):
                 "amount": {"amount": str(l.extended_price), "currency": l.currency},
                 "is_buy": l.is_buy,
                 "is_sell": l.is_sell,
+                "tax_pct": str(l.tax_pct),
                 "manual_rate_required": bool(l.manual_rate_required),
             }
 

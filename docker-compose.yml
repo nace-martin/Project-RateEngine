@@ -1,4 +1,4 @@
-version: '3.9'
+
 
 services:
   postgres:
@@ -19,6 +19,37 @@ services:
       timeout: 5s
       retries: 20
 
+  backend:
+    build: ./backend
+    container_name: rateengine_backend
+    restart: unless-stopped
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgres://rateengine:rateengine@postgres:5432/rateengine
+      - DJANGO_SECRET_KEY=your-secret-key # Replace with a real secret key in production
+      - DJANGO_DEBUG=True
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: rateengine_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
 volumes:
   pgdata:
-
