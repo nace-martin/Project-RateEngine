@@ -1,0 +1,99 @@
+{
+  "version": "1.0",
+  "description": "Business rules for pricing engine currency and charge scope determination",
+  "rules": {
+    "IMPORT": {
+      "COLLECT": {
+        "D2D": {
+          "currency": "PGK",
+          "charges": ["ORIGIN", "AIR_FREIGHT", "DESTINATION"],
+          "description": "Import Collect Door-to-Door: PGK currency with full service scope"
+        },
+        "A2D": {
+          "currency": "PGK",
+          "charges": ["DESTINATION"],
+          "description": "Import Collect Airport-to-Door: PGK currency with destination services only"
+        }
+      },
+      "PREPAID": {
+        "A2D": {
+          "currency": "SHIPPER_CURRENCY",
+          "charges": ["DESTINATION"],
+          "description": "Import Prepaid Airport-to-Door: Shipper's currency (AUD/USD) with destination services only",
+          "currency_fallback": ["AUD", "USD"]
+        }
+      }
+    },
+    "EXPORT": {
+      "PREPAID": {
+        "D2A": {
+          "currency": "PGK",
+          "charges": ["ORIGIN", "AIR_FREIGHT"],
+          "description": "Export Prepaid Door-to-Airport: PGK currency with origin and air freight"
+        },
+        "D2D": {
+          "currency": "PGK",
+          "charges": ["ORIGIN", "AIR_FREIGHT", "AGENT_CLEARANCE", "DELIVERY"],
+          "description": "Export Prepaid Door-to-Door: PGK currency with full service including agent clearance and delivery"
+        }
+      },
+      "COLLECT": {
+        "_comment": "Export Collect scenarios are not typical - clarify billing rules if needed",
+        "_fallback": {
+          "currency": "PGK",
+          "charges": ["ORIGIN"],
+          "description": "Export Collect fallback: PGK currency with origin services only",
+          "requires_manual_review": true
+        }
+      }
+    }
+  },
+  "service_mappings": {
+    "ORIGIN": ["PICKUP", "EXPORT_CLEARANCE", "HANDLING"],
+    "AIR_FREIGHT": ["AIR_FREIGHT", "FUEL_SURCHARGE", "SECURITY_SURCHARGE"],
+    "DESTINATION": ["IMPORT_CLEARANCE", "DELIVERY", "CUSTOMS_HANDLING"],
+    "AGENT_CLEARANCE": ["AGENT_CLEARANCE", "DOCUMENTATION"],
+    "DELIVERY": ["FINAL_DELIVERY", "NOTIFICATION"]
+  },
+  "currency_mappings": {
+    "SHIPPER_CURRENCY": {
+      "determination_logic": "Use shipper's organization currency or fallback to region-based currency",
+      "fallback_by_region": {
+        "AU": "AUD",
+        "US": "USD",
+        "PNG": "PGK",
+        "default": "USD"
+      }
+    },
+    "iata_to_region": {
+      "SYD": "AU", "MEL": "AU", "PER": "AU", "BNE": "AU", "ADL": "AU", "CBR": "AU", "OOL": "AU",
+      "POM": "PNG", "LAE": "PNG", "MAG": "PNG", "WWK": "PNG",
+      "LAX": "US", "JFK": "US", "ORD": "US", "ATL": "US", "DFW": "US", "MIA": "US", "SFO": "US", "SEA": "US", "BOS": "US", "IAD": "US"
+    }
+  },
+  "validation_rules": {
+    "required_combinations": [
+      ["IMPORT", "COLLECT", "D2D"],
+      ["IMPORT", "COLLECT", "A2D"],
+      ["IMPORT", "PREPAID", "A2D"],
+      ["EXPORT", "PREPAID", "D2A"],
+      ["EXPORT", "PREPAID", "D2D"]
+    ],
+    "movement_type_definitions": {
+      "D2D": "Door-to-Door: Full service from shipper to consignee",
+      "A2D": "Airport-to-Door: From destination airport to consignee",
+      "D2A": "Door-to-Airport: From shipper to destination airport"
+    }
+  },
+  "metadata": {
+    "created_date": "2025-01-27",
+    "last_updated": "2025-01-27",
+    "version_history": [
+      {
+        "version": "1.0",
+        "date": "2025-01-27",
+        "changes": "Initial implementation of business rules from decision flow diagram"
+      }
+    ]
+  }
+}

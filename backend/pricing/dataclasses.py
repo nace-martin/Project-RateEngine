@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .services.utils import ZERO
 
@@ -74,3 +74,15 @@ class CalcResult:
     sell_lines: List[CalcLine]
     totals: Dict[str, Money]
     snapshot: Dict
+
+
+@dataclass
+class PricingContext:
+    """Context determined by business rules for pricing calculations"""
+    currency: str
+    charge_scope: List[str]  # e.g., ["ORIGIN", "AIR_FREIGHT", "DESTINATION"]
+    applicable_services: List[str]  # Specific service codes to include
+    requires_manual_review: bool = False
+    rule_path: str = ""  # e.g., "IMPORT.COLLECT.D2D"
+    description: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)

@@ -1,71 +1,85 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
-@dataclass
-class Piece:
-    weight_kg: float
-    length_cm: Optional[float] = None
-    width_cm: Optional[float] = None
-    height_cm: Optional[float] = None
 
 @dataclass
 class QuoteContext:
-    mode: str  # "AIR"
+    mode: str
+    scope: str
+    payment_term: str
     origin_iata: str
     dest_iata: str
-    scope: str  # A2A|A2D|D2A|D2D
-    payment_term: str  # PREPAID|COLLECT
-    pieces: List[Piece]
-    commodity: str = "GCR"
-    incoterm: Optional[str] = None
-    hints: Dict[str, Any] = field(default_factory=dict)
+    pieces: List[Dict[str, Any]]
+    commodity: str
+    margins: Dict[str, Any]
+    policy: Dict[str, Any]
+    audience: Optional[str] = None  # Optional, can be derived
+
 
 @dataclass
 class NormalizedContext:
-    direction: str                 # IMPORT|EXPORT|DOMESTIC
-    audience: str                  # e.g., PNG_CUSTOMER_PREPAID
-    invoice_ccy: str               # PGK|ORIGIN_CCY|DEST_CCY
-    segments: List[str]            # ["ORIGIN","PRIMARY","DEST"]
-    legs: List[Dict[str, Any]]     # [{origin:"BNE", dest:"POM", type:"INTL"}, ...]
-    chargeable_kg: float
-    gst_segment: str = "DEST"
-    snapshot: Dict[str, Any] = field(default_factory=dict)
+    audience: str
+    invoice_ccy: str
+    origin_iata: str
+    # Add other normalized fields as needed
+
 
 @dataclass
-class BuyComponent:
+class CalcLine:
     code: str
-    segment: str
-    basis: str            # PER_KG|PER_SHIPMENT|PERCENT_OF
-    unit_qty: float
-    native_amount: float
-    native_ccy: str
-    meta: Dict[str, Any] = field(default_factory=dict)
+    description: str
+    amount: float
+    currency: str
+    # Add other fields relevant to a calculation line
+
 
 @dataclass
 class BuyResult:
-    components: List[BuyComponent]
-    manual: bool = False
+    buy_lines: List[CalcLine] = field(default_factory=list)
+    buy_total_pgk: float = 0.0
+    is_incomplete: bool = False
     reasons: List[str] = field(default_factory=list)
+    # Add other fields relevant to buy results
 
-@dataclass
-class SellLine:
-    sell_code: str
-    segment: str
-    basis: str
-    unit_qty: float
-    amount: float
-    ccy: str
-    meta: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
-class SellResult:
-    lines: List[SellLine]
-    manual: bool = False
-    reasons: List[str] = field(default_factory=list)
 
 @dataclass
 class Totals:
-    buy_pgk: float
-    tax: float
-    final_sell: float
-    client_ccy: str
+    invoice_ccy: str
+    sell_subtotal: float = 0.0
+    sell_tax: float = 0.0
+    sell_total: float = 0.0
+    buy_total_pgk: float = 0.0
+    is_incomplete: bool = False
+    reasons: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Snapshot:
+    policy_key: str = ""
+    policy_version: str = "v1"
+    golden_inputs: Dict[str, Any] = field(default_factory=dict)
+    chosen_breaks_fees: List[str] = field(default_factory=list)
+    caf_fx_pairs: List[str] = field(default_factory=list)
+    rounding_notes: List[str] = field(default_factory=list)
+    skipped_fees: List[Dict[str, Any]] = field(default_factory=list)
+    # Add other fields to record policy decisions, skipped fees, and reasons
+
+
+@dataclass
+class SellResult:
+    sell_lines: List[CalcLine] = field(default_factory=list)
+    sell_subtotal: float = 0.0
+    sell_tax: float = 0.0
+    sell_total: float = 0.0
+    snapshot: Snapshot = field(default_factory=Snapshot)
+    buy_total_pgk: float = 0.0
+    is_incomplete: bool = False
+    reasons: List[str] = field(default_factory=list)
+    # Add other fields relevant to sell results
+
+
+@dataclass
+class CalcResultV2:
+    # Represents the detailed result of a V2 calculation
+    pass

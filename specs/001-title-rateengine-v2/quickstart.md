@@ -13,15 +13,42 @@ To compute a quote, send a POST request to the `/api/quote/compute2` endpoint wi
 **Request:**
 
 ```bash
-curl -X POST http://localhost:8000/api/quote/compute2 \
-  -H "Content-Type: application/json" \
-  -d 
-  {
-    "customer_id": 123,
-    "origin_address": { ... },
-    "destination_address": { ... },
-    "pieces": [ ... ]
-  }
+curl -X POST http://localhost:8000/api/quote/compute2 \\
+  -H "Content-Type: application/json" \\
+  -d
+  '{
+    "mode": "AIR",
+    "scope": "A2D",
+    "payment_term": "PREPAID",
+    "origin_iata": "BNE",
+    "dest_iata": "POM",
+    "pieces": [{"weight_kg": 81}],
+    "audience": "PNG_CUSTOMER_PREPAID",
+    "margins": {"FREIGHT": 10},
+    "policy": {},
+    "commodity": "GCR"
+  }'
+```
+
+**Request (COLLECT):**
+
+```bash
+curl -X POST http://localhost:8000/api/quote/compute2 \\
+  -H "Content-Type: application/json" \\
+  -d
+  '{
+    "mode": "AIR",
+    "scope": "A2D",
+    "payment_term": "COLLECT",
+    "origin_iata": "BNE",
+    "dest_iata": "POM",
+    "pieces": [{"weight_kg": 81}],
+    "audience": "PNG_CUSTOMER_PREPAID",
+    "invoice_ccy": "PGK",
+    "margins": {"FREIGHT": 10},
+    "policy": {},
+    "commodity": "GCR"
+  }'
 ```
 
 **Response:**

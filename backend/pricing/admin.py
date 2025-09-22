@@ -13,19 +13,8 @@ from pricing.models import (
 from pricing.services.pricing_service import validate_break_monotonic
 
 
-class ReadOnlyAdmin(admin.ModelAdmin):
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-
 @admin.register(Ratecards)
-class RatecardsAdmin(ReadOnlyAdmin):
+class RatecardsAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "name",
@@ -43,7 +32,7 @@ class RatecardsAdmin(ReadOnlyAdmin):
 
 
 @admin.register(Lanes)
-class LanesAdmin(ReadOnlyAdmin):
+class LanesAdmin(admin.ModelAdmin):
     list_display = ("id", "ratecard", "origin", "dest", "airline", "is_direct")
     list_filter = ("airline", "is_direct", "ratecard", "origin", "dest")
     autocomplete_fields = ("ratecard", "origin", "dest")
@@ -64,19 +53,19 @@ class LanesAdmin(ReadOnlyAdmin):
 
 
 @admin.register(LaneBreaks)
-class LaneBreaksAdmin(ReadOnlyAdmin):
+class LaneBreaksAdmin(admin.ModelAdmin):
     list_display = ("id", "lane", "break_code", "min_charge", "per_kg")
     list_filter = ("break_code", "lane")
 
 
 @admin.register(RatecardConfig)
-class RatecardConfigAdmin(ReadOnlyAdmin):
+class RatecardConfigAdmin(admin.ModelAdmin):
     list_display = ("id", "ratecard", "dim_factor_kg_per_m3", "rate_strategy")
     list_filter = ("rate_strategy",)
 
 
 @admin.register(RatecardFees)
-class RatecardFeesAdmin(ReadOnlyAdmin):
+class RatecardFeesAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "ratecard",
@@ -89,7 +78,7 @@ class RatecardFeesAdmin(ReadOnlyAdmin):
 
 
 @admin.register(ServiceItems)
-class ServiceItemsAdmin(ReadOnlyAdmin):
+class ServiceItemsAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "ratecard",
@@ -104,12 +93,12 @@ class ServiceItemsAdmin(ReadOnlyAdmin):
 
 
 @admin.register(SellCostLinksSimple)
-class SellCostLinksSimpleAdmin(ReadOnlyAdmin):
+class SellCostLinksSimpleAdmin(admin.ModelAdmin):
     list_display = ("id", "sell_item", "buy_fee_code", "mapping_type", "mapping_value")
 
 
 @admin.register(PricingPolicy)
-class PricingPolicyAdmin(ReadOnlyAdmin):
+class PricingPolicyAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "audience",

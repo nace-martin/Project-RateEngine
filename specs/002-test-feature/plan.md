@@ -1,7 +1,7 @@
-# Implementation Plan: RateEngine v2 — Simple Rating Core
+# Implementation Plan: AIR · Import · A2D (Airport→Door) v2 rating policy — PREPAID & COLLECT
 
-**Branch**: `001-title-rateengine-v2` | **Date**: 2025-09-21 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `C:\Users\commercial.manager\dev\Project-RateEngine\specs\001-title-rateengine-v2\spec.md`
+**Branch**: `002-test-feature` | **Date**: Monday 22 September 2025 | **Spec**: [spec.md](./spec.md)
+**Input**: Feature specification from `C:\Users\commercial.manager\dev\Project-RateEngine\specs\002-test-feature\spec.md`
 
 ## Execution Flow (/plan command scope)
 ```
@@ -30,18 +30,18 @@
 - Phase 3-4: Implementation execution (manual or via tools)
 
 ## Summary
-This plan outlines the implementation of a new, deterministic, and auditable rating core for the RateEngine. The existing `compute_quote` monolith will be replaced by a series of pure functions (`normalize`, `rate_buy`, `map_to_sell`, `tax_fx_round`) orchestrated by `compute_quote_v2`. This new core will be introduced via a new endpoint `/api/quote/compute2` and controlled by a feature flag.
+This plan outlines the implementation of a new, deterministic policy for currency and fee selection for AIR imports on A2D lanes. The goal is to ensure consistent and auditable quotes, regardless of rate-card coverage, by making currency and fee selection 100% deterministic. This will result in correct destination service menus for sales, invoices in the right currency (AUD for PREPAID, PGK for COLLECT), and clear, actionable reasons for missing data instead of errors.
 
 ## Technical Context
 **Language/Version**: Python 3.11
 **Primary Dependencies**: Django, Django REST Framework
-**Storage**: N/A (existing models are used)
+**Storage**: N/A (existing models are used, no new DB models for MVP)
 **Testing**: pytest
 **Target Platform**: Linux server
 **Project Type**: Web application
 **Performance Goals**: Match or exceed existing performance.
-**Constraints**: The new implementation must match the results of the v1 implementation for happy path scenarios.
-**Scale/Scope**: MVP for AIR only, with specific scopes (A2A, A2D, D2A, D2D).
+**Constraints**: The new implementation must adhere to the specified rules for audience & invoice currency, fee menu, missing rate handling, and totals & reporting.
+**Scale/Scope**: MVP for AIR only, Import direction, A2D scope, PREPAID/COLLECT payment terms, General Cargo (GCR) commodity.
 
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
@@ -52,7 +52,7 @@ The constitution is a template, so no specific checks can be performed. General 
 
 ### Documentation (this feature)
 ```
-specs/001-title-rateengine-v2/
+specs/002-test-feature/
 ├── plan.md              # This file (/plan command output)
 ├── research.md          # Phase 0 output (/plan command)
 ├── data-model.md        # Phase 1 output (/plan command)
@@ -87,9 +87,9 @@ No major unknowns that require research. The implementation details are well-def
 **Output**: research.md
 
 ## Phase 1: Design & Contracts
-The design is centered around the new `pricing_v2` module and its pure functions.
+The design will focus on extending the existing `pricing_v2` module to incorporate the new deterministic policy for currency and fee selection. This will involve updating or creating new dataclasses, recipes, and potentially modifying the `pricing_service_v2` functions to implement the new rules.
 
-**Output**: data-model.md, /contracts/pricing_v2.json, quickstart.md
+**Output**: data-model.md, contracts/, quickstart.md
 
 ## Phase 2: Task Planning Approach
 *This section describes what the /tasks command will do - DO NOT execute during /plan*
@@ -130,7 +130,7 @@ The design is centered around the new `pricing_v2` module and its pure functions
 **Phase Status**:
 - [X] Phase 0: Research complete (/plan command)
 - [X] Phase 1: Design complete (/plan command)
-- [X] Phase 2: Task planning complete (/plan command - describe approach only)
+- [ ] Phase 2: Task planning complete (/plan command - describe approach only)
 - [X] Phase 3: Tasks generated (/tasks command)
 - [X] Phase 4: Implementation complete
 - [X] Phase 5: Validation passed

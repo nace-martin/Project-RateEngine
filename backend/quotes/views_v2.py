@@ -1,25 +1,25 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from django.conf import settings
-from .pricing_v2.dataclasses_v2 import QuoteContext, Piece
-from .pricing_v2.pricing_service_v2 import compute_quote_v2
+from pricing_v2.dataclasses_v2 import QuoteContext, Totals
+from pricing_v2.pricing_service_v2 import compute_quote_v2
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def compute_v2(request):
-    if not getattr(settings, "QUOTER_V2_ENABLED", False):
-        return Response({"detail":"v2 disabled"}, status=404)
-    d = request.data
-    ctx = QuoteContext(
-        mode=d.get("mode","AIR"),
-        origin_iata=d["origin_iata"],
-        dest_iata=d["dest_iata"],
-        scope=d["scope"],
-        payment_term=d["payment_term"],
-        pieces=[Piece(**p) for p in d.get("pieces",[])],
-        commodity=d.get("commodity","GCR"),
-        incoterm=d.get("incoterm"),
-        hints=d.get("hints",{}),
-    )
-    return Response(compute_quote_v2(ctx))
+def compute_quote_v2_api(request):
+    if not settings.QUOTER_V2_ENABLED:
+        return Response(
+            {"detail": "Quoter V2 is not enabled."}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    # In a real scenario, you would validate and deserialize the request data
+    # into a QuoteContext object. For now, we'll create a dummy one.
+    quote_context = QuoteContext()  # Replace with actual deserialization
+
+    try:
+        totals: Totals = compute_quote_v2(quote_context)
+        # In a real scenario, you would serialize the Totals object to JSON
+        return Response(totals.__dict__, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)

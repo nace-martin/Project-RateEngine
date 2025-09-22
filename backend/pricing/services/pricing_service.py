@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import logging
 import re
-from decimal import Decimal
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
 
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils.timezone import now
 
-from ..dataclasses import CalcLine, CalcResult, Money, Piece, ShipmentInput
+from ..dataclasses import CalcLine, CalcResult, Money, Piece, ShipmentInput, PricingContext
 from core.models import (
     FeeTypes as FeeType,
     Stations as Station,
@@ -26,6 +27,7 @@ from pricing.models import (
     SellCostLinksSimple as SellCostLink,
     ServiceItems as ServiceItem,
 )
+from .business_rules import apply_business_rules, BusinessRulesError
 from .fx_service import FxConverter
 from .utils import (
     FOURPLACES,
@@ -120,8 +122,11 @@ def pick_best_break(lane: Lane, chargeable_kg: Decimal, breaks: List[LaneBreak])
     """Return chosen LaneBreak and base freight in lane currency (ratecard.currency)."""
     by_code = {b.break_code: b for b in breaks}
 
-    rc = Ratecard.objects.get(id=lane.ratecard_id)
-    ccy = rc.currency
+    try:
+        rc = Ratecard.objects.get(id=lane.ratecard_id)
+        ccy = rc.currency
+    except Ratecard.DoesNotExist:
+        raise ValueError(f"Ratecard with ID {lane.ratecard_id} not found for lane {lane.id}")
 
     # Per-kg rows
     best_cost = None
@@ -222,7 +227,7 @@ def _normalize_basis(basis_raw: Optional[str]) -> str:
     would cause PER_KG fees to be treated as flat (returning just the per-kg rate).
     """
     b = (basis_raw or "").strip().upper()
-    b = re.sub(r"[\s\-]+", "_", b)  # collapse spaces/dashes to underscore
+    b = re.sub(r"[\s-]+", "_", b)  # collapse spaces/dashes to underscore
     b = re.sub(r"_+", "_", b)
     # Canonical groups
     if b in {"PER_KG", "KG", "PER_KILO", "PER_KILOGRAM", "PER_KGS", "PER_KILOGRAMS"}:
@@ -244,8 +249,11 @@ def compute_fee_amount(fee: RatecardFee, kg: Decimal, context: Dict[str, Money])
     """Compute a BUY fee line in its native currency.
     context: map of code->Money already computed (for PERCENT_OF).
     """
-    ft = FeeType.objects.get(id=fee.fee_type_id)
-    code = ft.code
+    try:
+        ft = FeeType.objects.get(id=fee.fee_type_id)
+        code = ft.code
+    except FeeType.DoesNotExist:
+        raise ValueError(f"FeeType with ID {fee.fee_type_id} not found for ratecard fee {fee.id}")
     # Normalize basis to handle stray casing/whitespace/symbol variants from data seeds
     basis = _normalize_basis(ft.basis)
     ccy = fee.currency
@@ -416,7 +424,7 @@ def compute_leg_cost(
             is_buy=True,
             is_sell=False,
             source_ratecard_id=rc_buy.id,
-            meta={"leg": int(getattr(leg, 'sequence', 0) or 0), "scope": leg.leg_scope, "service_type": leg.service_type, "break": chosen_break.break_code},
+            meta={"leg": int(getattr(leg, 'sequence', 0) or 0), "scope": leg.leg_scope, "service_type": leg.service_type},
         )
     )
     buy_context["FREIGHT"] = base_freight
@@ -457,16 +465,26 @@ def compute_leg_cost(
 
 
 def normalize_scope_value(service_scope: Optional[str]) -> str:
-    scope = (service_scope or "AIRPORT_AIRPORT").upper()
+    scope = (service_scope or "AIRPORT_AIRPORT").upper().strip()
+    # Fast path for abbreviations
+    abbr = {
+        "A2A": "AIRPORT_AIRPORT",
+        "A2D": "AIRPORT_DOOR",
+        "D2A": "DOOR_AIRPORT",
+        "D2D": "DOOR_DOOR",
+    }
+    if scope in abbr:
+        return abbr[scope]
+    # Phrase cleanup
     scope = re.sub(r"[\s-]+", "_", scope)
-    scope = re.sub(r"_+", "_", scope).strip('_')
-    scope_map = {
+    scope = re.sub(r"_+", "_", scope).strip("_")
+    canonical = {
         "DOOR_TO_DOOR": "DOOR_DOOR",
         "DOOR_TO_AIRPORT": "DOOR_AIRPORT",
         "AIRPORT_TO_DOOR": "AIRPORT_DOOR",
         "AIRPORT_TO_AIRPORT": "AIRPORT_AIRPORT",
     }
-    return scope_map.get(scope, scope)
+    return canonical.get(scope, scope)
 
 
 
@@ -478,7 +496,11 @@ def compute_sell_lines(
     incoterm: str,
     fx: FxConverter,
     target_currency: str,
+    shipment_type: str,
     extra_cards: Optional[List[Ratecard]] = None,
+    origin_station: Optional[Station] = None,
+    dest_station: Optional[Station] = None,
+    pricing_context: Optional[PricingContext] = None,  # Add this parameter
 ) -> List[CalcLine]:
     cards: List[Ratecard] = [sell_card] + list(extra_cards or [])
     card_segments = {sell_card.id: "primary"}
@@ -491,13 +513,24 @@ def compute_sell_lines(
         .filter(ratecard_id__in=[c.id for c in cards])
         .select_related("service")
     )
+
+    # Apply business rules service filtering
+    if pricing_context and pricing_context.applicable_services:
+        # Filter ServiceItems to only include those specified by business rules
+        applicable_service_codes = set(pricing_context.applicable_services)
+        items = items.filter(service__code__in=applicable_service_codes)
+        logging.debug(f"Filtered ServiceItems to {len(applicable_service_codes)} applicable services from business rules")
+    else:
+        logging.debug("No business rules service filtering applied - using all ServiceItems")
+
+    items = list(items)  # Convert to list for processing
     links = {l.sell_item_id: l for l in SellCostLink.objects.filter(sell_item_id__in=[i.id for i in items])}
 
     scope = normalize_scope_value(service_scope)
     needs_origin_services = scope in {"DOOR_AIRPORT", "DOOR_DOOR"}
     needs_dest_services = scope in {"AIRPORT_DOOR", "DOOR_DOOR"}
 
-    cartage_origin_codes = {"CARTAGE_PICKUP", "CARTAGE_ORIGIN", "ORIGIN_CARTAGE", "PICKUP"}
+    cartage_origin_codes = {"CARTAGE_PICKUP", "CARTAGE_ORIGIN", "ORIGIN_CARTAGE", "PICKUP", "PICKUP_FUEL"}
     cartage_dest_codes = {"CARTAGE_DELIVERY", "CARTAGE_DEST", "DEST_CARTAGE", "DELIVERY"}
     clearance_origin_codes = {"CUSTOMS_CLEARANCE_ORIGIN", "CUSTOMS_ORIGIN", "EXPORT_CLEARANCE"}
     clearance_dest_codes = {"CUSTOMS_CLEARANCE_DEST", "CUSTOMS_CLEARANCE", "CUSTOMS_DEST", "IMPORT_CLEARANCE"}
@@ -509,8 +542,10 @@ def compute_sell_lines(
         segment = card_segments.get(it.ratecard_id, "primary")
         svc = it.service
         code = (svc.code or "").upper()
+        logging.debug(f"Processing service item: id={it.id}, code={code}, basis={_normalize_basis(getattr(svc, 'basis', None))}, amount={it.amount}")
 
         if code in excluded_sell_codes:
+            logging.debug(f"Skipping {code} due to excluded_sell_codes")
             continue
 
         if segment == "origin":
@@ -551,48 +586,98 @@ def compute_sell_lines(
                     money_in_card = fx.convert(native_money, it.currency)
                 buy_sum_card = d(money_in_card.amount)
 
+        # --- BEGIN safe amount calc ---
+        from decimal import Decimal
+
+        # default: nothing computed yet
         sell_amt_card = ZERO
-        if basis != "PERCENT_OF":
-            if it.amount is not None:
-                unit_price_card = d(it.amount)
-                if basis == "PER_KG":
-                    sell_amt_card = unit_price_card * d(kg)
-                else:
-                    sell_amt_card = unit_price_card
-                if it.min_amount is not None:
-                    sell_amt_card = max(sell_amt_card, d(it.min_amount))
-                if it.max_amount is not None:
-                    sell_amt_card = min(sell_amt_card, d(it.max_amount))
+        # default target ccy for the line: prefer the SELL item currency, fallback to provided target
+        tgt_ccy = it.currency or target_currency
 
-        if basis == "PERCENT_OF" and it.percent_of_service_code:
+        # placeholders for lane-based metadata if used
+        chosen_lane_id: Optional[int] = None
+        chosen_break_code: Optional[str] = None
+
+        if basis == "PERCENT_OF" and getattr(it, "percent_of_service_code", None):
             ref_code = it.percent_of_service_code
-            ref_line = next((l for l in lines if l.code == ref_code and l.is_sell), None)
-            if ref_line:
-                ref_money = Money(d(ref_line.extended.amount), ref_line.extended.currency)
-                if ref_money.currency != it.currency:
-                    ref_money = fx.convert(ref_money, it.currency)
-                pct = d(it.amount or ZERO)
-                sell_amt_card = (ref_money.amount * pct).quantize(TWOPLACES)
+            # look for a prior SELL line with that code
+            ref_line = next((l for l in lines if getattr(l, "is_sell", False) and l.code == ref_code), None)
+            if not ref_line:
+                # we can’t compute the percent-of base -> skip adding this item entirely
+                logging.debug(f"Skipping {code} due to missing ref_line for PERCENT_OF")
+                continue
+            ref_money = Money(d(ref_line.extended.amount), ref_line.extended.currency)
+            if ref_money.currency != tgt_ccy:
+                ref_money = fx.convert(ref_money, tgt_ccy)
+            pct = d(it.amount or ZERO)   # amount field holds fraction, e.g. 0.10 for 10%
+            sell_amt_card = (ref_money.amount * pct).quantize(TWOPLACES)
 
-        if link:
-            if link.mapping_type == "PASS_THROUGH":
-                sell_amt_card = buy_sum_card
-            elif link.mapping_type == "COST_PLUS_PCT":
-                pct = d(link.mapping_value or ZERO)
-                sell_amt_card = (buy_sum_card * (Decimal(1) + pct)).quantize(TWOPLACES)
-                if svc.code.upper() == "AIR_FREIGHT":
-                    sell_amt_card = round_up_nearest_0_05(sell_amt_card)
-            elif link.mapping_type == "COST_PLUS_ABS":
-                inc = d(link.mapping_value or ZERO)
-                sell_amt_card = (buy_sum_card + inc).quantize(TWOPLACES)
-            # FIXED_OVERRIDE uses explicit amount already applied
+        else:
+            # Simple fixed price (per-kg or per-shipment) OR ratecard lane-based when it.amount is None
+            logging.debug(f"Before if it.amount is not None: it.amount={it.amount}, basis={basis}")
+            if it.amount is not None:
+                base = d(it.amount)
+                sell_amt_card = (base * d(kg)) if basis == "PER_KG" else base
+                logging.debug(f"Inside if it.amount is not None: sell_amt_card={sell_amt_card}")
+            else:
+                # amount is None -> attempt to price from sell ratecard lanes for this service
+                lanes_qs = Lane.objects.filter(ratecard=sell_card, origin=origin_station, dest=dest_station).prefetch_related("lanebreaks_set")
 
-        if it.min_amount is not None:
-            sell_amt_card = max(sell_amt_card, d(it.min_amount))
-        if it.max_amount is not None:
-            sell_amt_card = min(sell_amt_card, d(it.max_amount))
+                if not lanes_qs.exists():
+                    logging.warning(f"No lanes found for sell ratecard {getattr(sell_card, 'id', None)} and origin/dest {getattr(origin_station, 'iata', None)}/{getattr(dest_station, 'iata', None)}; defaulting to ZERO for service item {it.id}")
+                    sell_amt_card = ZERO
+                else:
+                    best_amt_converted = None
+                    best_choice = None  # tuple(lane, break, money)
+                    for lane in lanes_qs:
+                        lane_breaks = list(lane.lanebreaks_set.all())
+                        # determine quantity basis for break selection
+                        if basis == "PER_KG":
+                            qty_for_break = d(kg)
+                        elif basis == "PER_SHIPMENT":
+                            qty_for_break = Decimal(1)
+                        else:
+                            qty_for_break = Decimal(1)
+                        try:
+                            chosen_break, base_money = pick_best_break(lane, qty_for_break, lane_breaks)
+                        except ValueError as exc:
+                            # skip lanes with no valid breaks
+                            logging.warning(f"Skipping lane {getattr(lane, 'id', None)} for sell item {it.id} due to break selection error: {exc}")
+                            continue
+                        # Convert base_money (lane currency) to the item's currency for fair comparison
+                        compare_money = base_money
+                        target_compare_ccy = it.currency or sell_card.currency or target_currency
+                        if compare_money.currency != target_compare_ccy:
+                            try:
+                                compare_money = fx.convert(compare_money, target_compare_ccy)
+                            except Exception:
+                                # If conversion fails, skip this lane
+                                logging.warning(f"FX conversion failed from {compare_money.currency} to {target_compare_ccy} for lane {getattr(lane, 'id', None)}; skipping lane.")
+                                continue
+                        if best_amt_converted is None or compare_money.amount < best_amt_converted:
+                            best_amt_converted = compare_money.amount
+                            best_choice = (lane, chosen_break, base_money, compare_money)
 
-        line_money_card = Money(sell_amt_card.quantize(TWOPLACES), it.currency or target_currency)
+                    if best_choice is None:
+                        logging.warning(f"No usable lane breaks found for sell ratecard {getattr(sell_card, 'id', None)} for service item {it.id}; defaulting to ZERO")
+                        sell_amt_card = ZERO
+                    else:
+                        lane, chosen_break, base_money_lane_ccy, base_money_in_item_ccy = best_choice
+                        # Use the base amount in the lane's/native currency and set tgt_ccy accordingly so downstream FX conversion works
+                        sell_amt_card = base_money_lane_ccy.amount
+                        tgt_ccy = base_money_lane_ccy.currency
+                        chosen_lane_id = int(getattr(lane, "id", 0) or 0)
+                        chosen_break_code = getattr(chosen_break, "break_code", None)
+
+            # Apply service-item level min/max which may override lane break min
+            if it.min_amount is not None:
+                sell_amt_card = max(sell_amt_card, d(it.min_amount))
+            if it.max_amount is not None:
+                sell_amt_card = min(sell_amt_card, d(it.max_amount))
+        # At this point we either 'continue'd (skipped) or computed an amount
+        line_money_card = Money(sell_amt_card, tgt_ccy)
+        # --- END safe amount calc ---
+
         if line_money_card.currency != target_currency:
             line_money_target = fx.convert(line_money_card, target_currency)
         else:
@@ -607,6 +692,13 @@ def compute_sell_lines(
         if category:
             meta["category"] = category
 
+        # Attach lane/break metadata when available for debugging/snapshots
+        if chosen_break_code:
+            meta["break_code"] = chosen_break_code
+        if chosen_lane_id is not None:
+            meta["lane_id"] = chosen_lane_id
+
+        logging.debug(f"Before append: code={code}, sell_amt_card={sell_amt_card}, line_money_card={line_money_card}, line_money_target={line_money_target}")
         lines.append(
             CalcLine(
                 code=svc.code,
@@ -622,6 +714,7 @@ def compute_sell_lines(
                 meta=meta,
             )
         )
+        logging.debug(f"Appended {code} to lines. Current lines: {[l.code for l in lines]}")
 
     return lines
 
@@ -697,6 +790,9 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
 
     fx = FxConverter(caf_buy_pct=caf_buy, caf_sell_pct=caf_sell)
 
+    # Initialize manual rating tracking
+    manual_any = False
+    manual_reasons: List[str] = []
 
     origin_iata = (payload.origin_iata or "").upper()
     dest_iata = (payload.dest_iata or "").upper()
@@ -723,7 +819,28 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
     payload.dest_iata = dest_iata
 
 
-    # Auto-detect shipment type using station country codes
+    # Apply business rules to determine pricing context. This is done early
+    # to ensure the original payload.shipment_type (which may contain a
+    # movement type hint) is used.
+    try:
+        pricing_context = apply_business_rules(payload)
+        logging.info(f"Applied business rules: {pricing_context.rule_path} -> {pricing_context.currency}, {len(pricing_context.applicable_services)} services")
+        
+        # The currency determined by business rules is the final invoice currency
+        invoice_currency = pricing_context.currency
+        
+        # Validate business rule compliance
+        if pricing_context.requires_manual_review:
+            logging.warning(f"Business rules require manual review for {pricing_context.rule_path}: {pricing_context.description}")
+            manual_any = True
+            manual_reasons.append(f"Business rules require manual review: {pricing_context.description}")
+        
+    except BusinessRulesError as e:
+        logging.warning(f"Business rules application failed, falling back to legacy logic: {e}")
+        pricing_context = None
+
+    # Auto-detect shipment type (direction) using station country codes.
+    # This is used for legacy logic paths and determining buy/sell direction.
     def infer_shipment_type(origin_station, dest_station):
         origin_country = (origin_station.country or "").upper()
         dest_country = (dest_station.country or "").upper()
@@ -738,14 +855,19 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
             return "EXPORT"
         return "EXPORT"
 
-    payload.shipment_type = infer_shipment_type(origin_station, dest_station)
+    inferred_shipment_type = infer_shipment_type(origin_station, dest_station)
+    # Preserve the inferred type for downstream logic, but restore original payload value if needed.
+    original_shipment_type_hint = payload.shipment_type
+    payload.shipment_type = inferred_shipment_type
 
     payment_term = (payload.payment_term or "PREPAID").upper()
     if payment_term not in {"PREPAID", "COLLECT"}:
         payment_term = "PREPAID"
     payload.payment_term = payment_term
 
-    invoice_currency = determine_invoice_currency(payload.shipment_type, payment_term, origin_country, dest_country)
+    # If business rules failed, determine currency the old way
+    if not pricing_context:
+        invoice_currency = determine_invoice_currency(payload.shipment_type, payment_term, origin_country, dest_country)
 
     # 1) BUY pricing: support multi-leg via Routes/RouteLegs when available
 
@@ -814,9 +936,6 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
             return "DOMESTIC"
         # INTERNATIONAL legs: BUY as EXPORT from the leg origin
         return "EXPORT"
-
-    manual_any = False
-    manual_reasons: List[str] = []
 
     if route:
         legs_qs = RouteLegs.objects.filter(route_id=route.id).select_related("origin", "dest").order_by("sequence", "id")
@@ -916,18 +1035,31 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
                     first_rc_buy_id = cl.source_ratecard_id
 
 
-    # 3) Determine the correct SELL audience based on payment term
+    # 3) Determine the correct SELL audience and direction using business rules
     sell_direction = payload.shipment_type
 
-    if payload.payment_term == "PREPAID":
-        # For prepaid shipments, the payer is the local customer
-        target_audience = "PNG_CUSTOMER_PREPAID"
-    elif payload.payment_term == "COLLECT":
-        # For collect shipments, the payer is the overseas agent/partner
-        target_audience = "OVERSEAS_AGENT_COLLECT"
+    if pricing_context:
+        # Use business rules to determine audience
+        # Map business rule currency to appropriate audience
+        if pricing_context.currency == "PGK":
+            if payload.payment_term == "PREPAID":
+                target_audience = "PNG_CUSTOMER_PREPAID"
+            else:  # COLLECT
+                target_audience = "PNG_CUSTOMER_COLLECT"
+        else:
+            # For non-PGK currencies (AUD, USD), use overseas agent audience
+            target_audience = "OVERSEAS_AGENT_COLLECT" if payload.payment_term == "COLLECT" else "OVERSEAS_AGENT_PREPAID"
+        
+        logging.debug(f"Business rules determined audience: {target_audience} for currency {pricing_context.currency}")
     else:
-        # Fallback to the organization's default audience if payment_term is not specified
-        target_audience = audience
+        # Fallback to legacy logic if business rules not available
+        if payload.payment_term == "PREPAID":
+            target_audience = "PNG_CUSTOMER_PREPAID"
+        elif payload.payment_term == "COLLECT":
+            target_audience = "OVERSEAS_AGENT_COLLECT"
+        else:
+            target_audience = audience
+        logging.warning("Using legacy audience determination logic")
 
     # Query for the SELL rate card using the specific target audience
 
@@ -992,15 +1124,25 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
         # fall back to computing chargeable weight from the request pieces.
         chargeable_kg = calculate_chargeable_weight_per_piece(payload.pieces, Decimal(167))
 
+    # Apply business rules filtering to service scope
+    effective_service_scope = payload.service_scope
+    if pricing_context and pricing_context.applicable_services:
+        logging.debug(f"Business rules limit services to: {pricing_context.applicable_services}")
+        # The service filtering will be applied within compute_sell_lines using the pricing_context
+
     sell_lines = compute_sell_lines(
         sell_card,
         buy_context,
         chargeable_kg,
-        payload.service_scope,
+        effective_service_scope,
         payload.incoterm,
         fx,
         sell_card.currency,
+        payload.shipment_type,
         extra_cards=supplementary_sell_cards,
+        origin_station=origin_station,
+        dest_station=dest_station,
+        pricing_context=pricing_context,  # Pass business rules context
     )
 
     margin_multiplier = d(sell_card.meta.get("origin_margin_multiplier", "1.15"))
@@ -1064,6 +1206,20 @@ def compute_quote(payload: ShipmentInput, provider_hint: Optional[int] = None) -
         "service_scope": payload.service_scope,
         "payment_term": payload.payment_term,
         "incoterm": payload.incoterm,
+        # Add business rules context
+        "business_rules": {
+            "applied": pricing_context is not None,
+            "rule_path": pricing_context.rule_path if pricing_context else None,
+            "currency_source": "business_rules" if pricing_context else "legacy",
+            "currency": pricing_context.currency if pricing_context else None,
+            "determined_currency": pricing_context.currency if pricing_context else invoice_currency,
+            "charge_scope": pricing_context.charge_scope if pricing_context else [],
+            "applicable_services": pricing_context.applicable_services if pricing_context else [],
+            "applicable_services_count": len(pricing_context.applicable_services) if pricing_context else 0,
+            "requires_manual_review": pricing_context.requires_manual_review if pricing_context else False,
+            "description": pricing_context.description if pricing_context else "",
+            "metadata": pricing_context.metadata if pricing_context else {},
+        },
         "manual_rate_required": bool(manual_any),
         "manual_reasons": manual_reasons,
         # Backward-compat: expose first BUY ratecard id if available

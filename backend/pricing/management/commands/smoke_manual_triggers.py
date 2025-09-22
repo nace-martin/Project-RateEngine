@@ -187,7 +187,10 @@ class Command(BaseCommand):
 
         # Auth setup
         User = get_user_model()
-        user, _ = User.objects.get_or_create(username="smoke_user", defaults={"password": "does-not-matter"})
+        user, created = User.objects.get_or_create(username="smoke_user")
+        if created:
+            user.set_unusable_password()
+            user.save()
         token, _ = Token.objects.get_or_create(user=user)
 
         client = APIClient()

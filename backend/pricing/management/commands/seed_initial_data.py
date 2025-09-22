@@ -233,7 +233,7 @@ def seed_all_sell_menus_and_links():
     collect_freight = add_service_item(rc_collect, "AIR_FREIGHT", "AUD", "0.0")
 
     for item in [exp_freight, imp_freight, collect_freight]:
-        add_sell_cost_link(item, "FREIGHT", "PASS_THROUGH")
+        add_sell_cost_link(item, "FREIGHT", "COST_PLUS_PCT", mapping_value="0.20")
         add_sell_cost_link(item, "FUEL", "COST_PLUS_PCT", mapping_value="0.10")
         add_sell_cost_link(item, "SECURITY", "PASS_THROUGH")
         add_sell_cost_link(item, "X_RAY", "PASS_THROUGH")

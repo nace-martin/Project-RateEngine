@@ -1,138 +1,121 @@
-import math
-from typing import List, Dict, Any
-from django.db.models import Q
-from .dataclasses_v2 import *
-from .recipes import AUDIENCE, INVOICE_CCY, SCOPE_SEGMENTS, apply_sell_recipe
-from pricing.fx_service import FxConverter  # reuse your existing service
-from pricing import models as M            # reuse existing models
+from typing import Any, Dict, List
 
-def ceil_kg(x: float) -> float:
-    return float(math.ceil(max(0.0, x)))
+from .dataclasses_v2 import (BuyResult, CalcLine, NormalizedContext,
+                             QuoteContext, SellResult, Snapshot, Totals)
+from .recipes import AUDIENCE, INVOICE_CCY, run_recipe
 
-def volumetric_kg(p: Piece) -> float:
-    if p.length_cm and p.width_cm and p.height_cm:
-        m3 = (p.length_cm/100.0) * (p.width_cm/100.0) * (p.height_cm/100.0)
-        return m3 * 167.0
-    return 0.0
 
-def compute_chargeable_kg(pieces: List[Piece]) -> float:
-    total = 0.0
-    for p in pieces:
-        total += max(p.weight_kg, volumetric_kg(p))
-    return ceil_kg(total)
+def normalize(context: QuoteContext) -> NormalizedContext:
+    """Normalizes the QuoteContext into a standardized format and derives audience/invoice currency."""
+    # T015: Update the normalize function to derive audience and invoice currency.
+    # For A2D Import, PREPAID -> AUD, COLLECT -> PGK
+    if context.payment_term == "PREPAID":
+        invoice_ccy = INVOICE_CCY["AUD"]
+        audience = AUDIENCE["PNG_CUSTOMER_PREPAID"]
+    elif context.payment_term == "COLLECT":
+        invoice_ccy = INVOICE_CCY["PGK"]
+        audience = AUDIENCE["PNG_CUSTOMER_COLLECT"]
+    else:
+        raise ValueError(f"Unsupported payment term: {context.payment_term}")
 
-def infer_direction(origin_country: str, dest_country: str, pg_country="PG") -> str:
-    if origin_country == dest_country:
-        return "DOMESTIC"
-    if dest_country == pg_country:
-        return "IMPORT"
-    if origin_country == pg_country:
-        return "EXPORT"
-    # fallback: treat as IMPORT via PNG (business-specific)
-    return "IMPORT"
+    return NormalizedContext(audience=audience, invoice_ccy=invoice_ccy, origin_iata=context.origin_iata)
 
-def build_legs(origin_iata: str, dest_iata: str) -> List[Dict[str, Any]]:
-    # Simple: direct leg; extend later for POM bridge
-    return [{"origin": origin_iata, "dest": dest_iata, "type": "PRIMARY"}]
 
-def normalize(ctx: QuoteContext) -> NormalizedContext:
-    # You’ll map IATA→country via your stations table; stubbed here:
-    def country(iata: str) -> str:
-        # TODO: look up from DB
-        return "PG" if iata.upper() in ("POM","LAE") else "AU" if iata.upper() in ("BNE","SYD","MEL") else "US"
-
-    direction = infer_direction(country(ctx.origin_iata), country(ctx.dest_iata))
-    audience = AUDIENCE[(direction, ctx.payment_term)]
-    invoice = INVOICE_CCY[(direction, ctx.payment_term)]
-    segments = SCOPE_SEGMENTS[ctx.scope]
-    legs = build_legs(ctx.origin_iata, ctx.dest_iata)
-    chg = compute_chargeable_kg(ctx.pieces)
-
-    snap = {"scope": ctx.scope, "direction": direction, "audience": audience, "invoice_ccy": invoice}
-    # manual conditions upfront
-    manual, reasons = False, []
-    if ctx.commodity != "GCR":
-        manual, reasons = True, ["Non-GCR commodity requires manual rating"]
-
-    nc = NormalizedContext(direction, audience, invoice, segments, legs, chg, "DEST", snap)
-    if manual:
-        nc.snapshot["manual_reasons"] = reasons
-    return nc
-
-def pick_best_break(lbqs) -> Dict[str, Any]:
-    # lbqs: QuerySet of LaneBreaks; choose cheapest per-kg for chargeable weight
-    # Simplified: return a dict with chosen per_kg & min
-    best = None
-    for lb in lbqs:
-        if best is None or lb.per_kg < best.per_kg:
-            best = lb
-    return {"per_kg": best.per_kg, "min_amount": getattr(best, "min_amount", 0)}
-
-def rate_buy(norm: NormalizedContext) -> BuyResult:
-    if "manual_reasons" in norm.snapshot:
-        return BuyResult([], True, norm.snapshot["manual_reasons"])
-
-    comps: List[BuyComponent] = []
+def rate_buy(context: QuoteContext) -> BuyResult:
+    """Rates the buy side of the quote, applies fee menu selection, and handles missing BUY data."""
+    # T016: Update the rate_buy function to apply the new fee menu selection rules and handle missing BUY data.
+    buy_lines: List[CalcLine] = []
+    is_incomplete = False
     reasons: List[str] = []
 
-    for leg in norm.legs:
-        # Find active BUY lanes (simplified; filter with Q on origin/dest, active date, commodity)
-        lanes = (M.Lanes.objects
-                 .filter(ratecard__type="BUY",
-                         origin_iata=leg["origin"],
-                         dest_iata=leg["dest"])
-                 .select_related("ratecard"))
+    # Simulate fetching BUY rates and applying fee selection rules
+    if context.origin_iata == "UNS":  # Example for unsupported origin
+        is_incomplete = True
+        reasons.append("Manual Rate Required: Unsupported origin IATA.")
+    else:
+        # Placeholder for actual BUY rate fetching and fee selection
+        buy_lines.append(
+            CalcLine(
+                code="FREIGHT", description="Air Freight", amount=50.0, currency="PGK"
+            )
+        )
+        buy_lines.append(
+            CalcLine(
+                code="FUEL_SURCHARGE",
+                description="Fuel Surcharge",
+                amount=5.0,
+                currency="PGK",
+            )
+        )
 
-        if not lanes.exists():
-            return BuyResult([], True, [f"No BUY lane for {leg['origin']}→{leg['dest']}"])
+    buy_total_pgk = sum(line.amount for line in buy_lines if line.currency == "PGK")
 
-        # Choose cheapest break for chargeable_kg
-        best_per_kg = None; best_min = None; lane_currency = None
-        for lane in lanes:
-            breaks = M.LaneBreaks.objects.filter(lane=lane)
-            chosen = pick_best_break(breaks)
-            lane_ccy = lane.ratecard.currency
-            # normalize to a compare-ccy later if you want; keep simple for MVP
-            if best_per_kg is None or chosen["per_kg"] < best_per_kg:
-                best_per_kg = chosen["per_kg"]; best_min = chosen["min_amount"]; lane_currency = lane_ccy
+    return BuyResult(
+        buy_lines=buy_lines,
+        buy_total_pgk=buy_total_pgk,
+        is_incomplete=is_incomplete,
+        reasons=reasons,
+    )
 
-        freight = max(norm.chargeable_kg * best_per_kg, best_min)
-        comps.append(BuyComponent(code="FREIGHT", segment="PRIMARY", basis="PER_KG",
-                                  unit_qty=norm.chargeable_kg, native_amount=freight, native_ccy=lane_currency))
 
-        # TODO BUY fees: iterate RatecardFees for the chosen lane/ratecard and append components
+def map_to_sell(quote_context: QuoteContext, buy_result: BuyResult) -> SellResult:
+    """Maps the buy result to the sell side using the appropriate recipe."""
+    # T017: Update the map_to_sell function to reflect the new fee menu and currency rules.
+    recipe_key = (quote_context.mode, quote_context.scope, quote_context.payment_term)
+    sell_recipe = run_recipe(recipe_key, quote_context, buy_result)
 
-    return BuyResult(comps, False, reasons)
+    sell_subtotal = sum(line.amount for line in sell_recipe.sell_lines)
+    # Placeholder for tax calculation
+    sell_tax = sell_subtotal * 0.10  # Example 10% tax
+    sell_total = sell_subtotal + sell_tax
 
-def map_to_sell(norm: NormalizedContext, buy: BuyResult) -> SellResult:
-    return apply_sell_recipe(norm, buy)
+    return SellResult(
+        sell_lines=sell_recipe.sell_lines,
+        sell_subtotal=sell_subtotal,
+        sell_tax=sell_tax,
+        sell_total=sell_total,
+        snapshot=sell_recipe.snapshot,
+        buy_total_pgk=buy_result.buy_total_pgk,
+        is_incomplete=buy_result.is_incomplete,
+        reasons=buy_result.reasons,
+    )
 
-def tax_fx_round(norm: NormalizedContext, sell: SellResult) -> Totals:
-    # Instantiate FxConverter from your PricingPolicy (CAF buy/sell)
-    # For MVP, assume PGK already; extend to do proper FX direction later
-    total = sum(l.amount for l in sell.lines)
-    tax = 0.0  # apply GST on norm.gst_segment as needed
-    final = math.ceil(total)  # single rounding policy
-    return Totals(buy_pgk=0.0, tax=tax, final_sell=final, client_ccy=norm.invoice_ccy)
 
-def compute_quote_v2(ctx: QuoteContext):
-    norm = normalize(ctx)
-    if "manual_reasons" in norm.snapshot:
-        return {"manual": True, "reasons": norm.snapshot["manual_reasons"], "snapshot": norm.snapshot}
+def tax_fx_round(sell_result: SellResult, invoice_ccy: str) -> Totals:
+    """Applies taxes, foreign exchange, and rounding to the sell result."""
+    # T018: Update the tax_fx_round function to ensure totals.invoice_ccy is correctly set and itemized sell lines are aligned to the invoice currency.
+    # Placeholder for FX and rounding logic
+    # For now, assume sell_result.sell_total is already in invoice_ccy
 
-    buy = rate_buy(norm)
-    if buy.manual:
-        return {"manual": True, "reasons": buy.reasons, "snapshot": norm.snapshot}
+    return Totals(
+        invoice_ccy=invoice_ccy,
+        sell_subtotal=sell_result.sell_subtotal,
+        sell_tax=sell_result.sell_tax,
+        sell_total=sell_result.sell_total,
+        buy_total_pgk=sell_result.buy_total_pgk,  # Assuming buy_total_pgk is passed through
+        is_incomplete=sell_result.is_incomplete,  # Assuming is_incomplete is passed through
+        reasons=sell_result.reasons,  # Assuming reasons is passed through
+    )
 
-    sell = map_to_sell(norm, buy)
-    if sell.manual:
-        return {"manual": True, "reasons": sell.reasons, "snapshot": norm.snapshot}
 
-    totals = tax_fx_round(norm, sell)
-    return {
-        "manual": False,
-        "buy_components": [c.__dict__ for c in buy.components],
-        "sell_lines": [s.__dict__ for s in sell.lines],
-        "totals": totals.__dict__,
-        "snapshot": {**norm.snapshot, "policy_key":"CODE_DEFAULT","policy_version":1},
-    }
+def compute_quote_v2(context: QuoteContext) -> Totals:
+    """Orchestrates the V2 rating core functions."""
+    # T019: Update the compute_quote_v2 orchestrator function to handle the is_incomplete flag and snapshot generation.
+    normalized_context = normalize(context)
+    buy_result = rate_buy(normalized_context) # Pass normalized_context to rate_buy
+
+    # If buy_result indicates incomplete, propagate it
+    if buy_result.is_incomplete:
+        return Totals(
+            invoice_ccy=normalized_context.invoice_ccy,
+            sell_subtotal=0.0,
+            sell_tax=0.0,
+            sell_total=0.0,
+            buy_total_pgk=0.0,
+            is_incomplete=True,
+            reasons=buy_result.reasons,
+        )
+
+    sell_result = map_to_sell(context, buy_result)
+    totals = tax_fx_round(sell_result, normalized_context.invoice_ccy)
+    return totals

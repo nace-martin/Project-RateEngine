@@ -41,7 +41,12 @@ if not SECRET_KEY:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+QUOTER_V2_ENABLED = os.getenv(
+    "QUOTER_V2_ENABLED",
+    "true" if DEBUG else "false"
+).lower() in ("1", "true", "yes")
+
+ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
 
 # Application definition
@@ -67,6 +72,7 @@ INSTALLED_APPS = [
     'organizations',
     'pricing',
     'quotes',
+    'pricing_v2',
 
 ]
 

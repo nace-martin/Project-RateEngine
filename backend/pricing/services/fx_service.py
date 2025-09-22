@@ -41,10 +41,13 @@ class FxConverter:
         # Prefer PGK->foreign TT BUY (quoted as foreign per PGK)
         raw = self._fetch_rate('PGK', foreign_ccy, 'BUY', at)
         if raw is not None:
-            adjusted = raw * (Decimal('1.0') - self.caf_buy_pct)
+            # raw is PGK per foreign_ccy. We want foreign_ccy per PGK.
+            # So, base rate is 1/raw. Then apply CAF.
+            base_rate = Decimal('1.0') / raw
+            adjusted = base_rate / (Decimal('1.0') - self.caf_buy_pct) # CAF is subtracted for BUY
             if adjusted == 0:
                 raise ValueError("Adjusted BUY rate results in zero; cannot convert.")
-            return Decimal('1.0') / adjusted
+            return adjusted
 
         raw = self._fetch_rate(foreign_ccy, 'PGK', 'BUY', at)
         if raw is None:
@@ -63,10 +66,13 @@ class FxConverter:
         """
         raw = self._fetch_rate('PGK', foreign_ccy, 'SELL', at)
         if raw is not None:
-            adjusted = raw * (Decimal('1.0') + self.caf_sell_pct)
+            # raw is PGK per foreign_ccy. We want foreign_ccy per PGK.
+            # So, base rate is 1/raw. Then apply CAF.
+            base_rate = Decimal('1.0') / raw
+            adjusted = base_rate * (Decimal('1.0') + self.caf_sell_pct)
             if adjusted == 0:
                 raise ValueError("Adjusted SELL rate results in zero; cannot convert.")
-            return Decimal('1.0') / adjusted
+            return adjusted
 
         raw = self._fetch_rate(foreign_ccy, 'PGK', 'SELL', at)
         if raw is None:

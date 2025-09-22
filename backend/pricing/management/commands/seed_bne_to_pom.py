@@ -25,71 +25,10 @@ from pricing.models import (
     RouteLegs,
     SellCostLinksSimple,
     ServiceItems,
+    PricingPolicy,
 )
 
-LANE_BREAKS_BNE = [
-    {"code": "MIN", "min": 330.00},
-    {"code": "45", "kg": 7.05},
-    {"code": "100", "kg": 6.75},
-    {"code": "250", "kg": 6.55},
-    {"code": "500", "kg": 6.25},
-    {"code": "1000", "kg": 5.95},
-]
 
-LANE_BREAKS_SYD_DIRECT = [
-    {"code": "MIN", "min": 330.00},
-    {"code": "45", "kg": 7.05},
-    {"code": "100", "kg": 6.75},
-    {"code": "250", "kg": 6.55},
-    {"code": "500", "kg": 6.25},
-    {"code": "1000", "kg": 5.95},
-]
-
-LANE_BREAKS_SYD_VIA = [
-    {"code": "MIN", "min": 400.00},
-    {"code": "45", "kg": 7.75},
-    {"code": "100", "kg": 7.55},
-    {"code": "250", "kg": 7.30},
-    {"code": "500", "kg": 6.95},
-    {"code": "1000", "kg": 6.70},
-]
-
-BUY_FEE_DEFS = [
-    ("PICKUP", "Pickup Linehaul", "PER_KG", {"amount": "0.26", "min_amount": "85.00"}),
-    ("PICKUP_FUEL", "Pickup Fuel Surcharge", "PERCENT_OF", {"amount": "0.20", "percent_of_code": "PICKUP"}),
-    ("DOC_FEE", "Export Document Fee", "PER_SHIPMENT", {"amount": "80.00"}),
-    ("AGENCY_FEE", "Export Agency Fee", "PER_SHIPMENT", {"amount": "175.00"}),
-    ("AWB_FEE", "Origin AWB Fee", "PER_SHIPMENT", {"amount": "25.00"}),
-    ("X_RAY", "Mandatory X-Ray Screening", "PER_KG", {"amount": "0.36", "min_amount": "70.00"}),
-    ("CTO", "Cargo Terminal Operator (Terminal Fee)", "PER_KG", {"amount": "0.30", "min_amount": "30.00"}),
-]
-
-SELL_SERVICE_DEFS = [
-    ("AIR_FREIGHT", "Air Freight Charge", "PER_KG", {}),
-    ("PICKUP", "Origin Pickup", "PER_KG", {}),
-    ("PICKUP_FUEL", "Pickup Fuel Surcharge", "PERCENT_OF", {"percent_of_service_code": "PICKUP"}),
-    ("X_RAY", "X-Ray Screening", "PER_KG", {}),
-    ("CTO", "Cargo Terminal Operator Fee", "PER_KG", {}),
-    ("DOC_FEE", "Export Document Fee", "PER_SHIPMENT", {}),
-    ("AGENCY_FEE", "Export Agency Fee", "PER_SHIPMENT", {}),
-    ("AWB_FEE", "Origin AWB Fee", "PER_SHIPMENT", {}),
-]
-
-SELL_LINKS = [
-    ("AIR_FREIGHT", "FREIGHT", "PASS_THROUGH", None),
-    ("PICKUP", "PICKUP", "PASS_THROUGH", None),
-    ("PICKUP_FUEL", "PICKUP_FUEL", "PASS_THROUGH", None),
-    ("X_RAY", "X_RAY", "PASS_THROUGH", None),
-    ("CTO", "CTO", "PASS_THROUGH", None),
-    ("DOC_FEE", "DOC_FEE", "PASS_THROUGH", None),
-    ("AGENCY_FEE", "AGENCY_FEE", "PASS_THROUGH", None),
-    ("AWB_FEE", "AWB_FEE", "PASS_THROUGH", None),
-]
-
-LEGACY_NAMES = [
-    "EFM AU->POM BUY",
-    "EFM AU->POM BUY (AUD)",
-]
 
 
 class Command(BaseCommand):
@@ -104,6 +43,22 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+        # Load data from JSON file
+        from pathlib import Path
+        import json
+        
+        data_path = Path(__file__).resolve().parent / 'data' / 'seed_bne_to_pom_data.json'
+        with open(data_path, 'r') as f:
+            seed_data = json.load(f)
+
+        LANE_BREAKS_BNE = seed_data['lane_breaks_bne']
+        LANE_BREAKS_SYD_DIRECT = seed_data['lane_breaks_syd_direct']
+        LANE_BREAKS_SYD_VIA = seed_data['lane_breaks_syd_via']
+        BUY_FEE_DEFS = seed_data['buy_fee_defs']
+        SELL_SERVICE_DEFS = seed_data['sell_service_defs']
+        SELL_LINKS = seed_data['sell_links']
+        LEGACY_NAMES = seed_data['legacy_names']
+
         provider_name = options["provider"]
         ratecard_bne = options["ratecard_bne"]
         ratecard_syd = options["ratecard_syd"]
@@ -111,6 +66,7 @@ class Command(BaseCommand):
         sell_ratecard_name = options["sell_ratecard"]
 
         self.stdout.write(self.style.WARNING("Ensuring foundational records..."))
+        PricingPolicy.objects.filter(audience="AU_AGENT_PREPAID").delete()
         bne = upsert_station("BNE", "Brisbane", "AU")
         syd = upsert_station("SYD", "Sydney", "AU")
         pom = upsert_station("POM", "Port Moresby", "PG")
@@ -192,7 +148,7 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(self.style.WARNING("Configuring SELL menu for AUD importers..."))
-        ensure_policy("AUD_AGENT", gst_applies=False, gst_pct=0)
+#        ensure_policy("AU_AGENT_PREPAID", gst_applies=False, gst_pct=0)
         sell_rc = ensure_ratecard(
             provider,
             sell_ratecard_name,
