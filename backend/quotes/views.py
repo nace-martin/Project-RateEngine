@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Optional
 
+import logging
+import traceback
+from types import SimpleNamespace
+
+from django.conf import settings
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 
@@ -18,10 +23,69 @@ from pricing.services.utils import FOURPLACES, TWOPLACES, ZERO, d
 from .models import QuoteLines, Quotes
 from .serializers import ComputeRequestSerializer
 
+logger = logging.getLogger(__name__)
+
 
 class QuoteStatus:
     COMPLETE = "COMPLETE"
     PENDING_RATE = "PENDING_RATE"
+
+
+def normalize_scope_for_v2(scope: str) -> str:
+    """
+    Normalize service scope from serializers to V2-recognized short codes.
+    Example: "AIRPORT_DOOR" -> "A2D"
+    """
+    mapping = {
+        "AIRPORT_DOOR": "A2D",
+        "DOOR_AIRPORT": "D2A",
+        "DOOR_DOOR": "D2D",
+        "AIRPORT_AIRPORT": "A2A",
+    }
+    return mapping.get(scope, scope)
+
+
+def get_currency_for_iata(iata: Optional[str]) -> str:
+    """
+    Best-effort mapping of IATA to local currency.
+    This is a lightweight heuristic mapping for common locations.
+    Falls back to 'USD'.
+    """
+    if not iata or not isinstance(iata, str) or len(iata) < 3:
+        return "USD"
+    code = iata.upper()
+    # Common mappings (expand as needed)
+    mapping = {
+        "SYD": "AUD",
+        "MEL": "AUD",
+        "BNE": "AUD",
+        "POM": "PGK",  # Port Moresby -> Papua New Guinea Kina
+        "NRT": "JPY",
+        "HND": "JPY",
+        "LAX": "USD",
+        "JFK": "USD",
+        "SFO": "USD",
+        "SIN": "SGD",
+        "KUL": "MYR",
+        "BKK": "THB",
+        "HKG": "HKD",
+        "LHR": "GBP",
+        "MAN": "GBP",
+        "CDG": "EUR",
+        "NCE": "EUR",
+        "FRA": "EUR",
+        "MAD": "EUR",
+        "AMS": "EUR",
+        "DXB": "AED",
+    }
+    # Try exact code then try first letter heuristics
+    if code in mapping:
+        return mapping[code]
+    # Fallback by region (very rough)
+    first = code[0]
+    if first in ("S", "M", "B"):  # many APAC start with these - fallback to USD is safer
+        return "USD"
+    return "USD"
 
 
 class QuoteComputeView(views.APIView):
@@ -88,27 +152,207 @@ class QuoteComputeView(views.APIView):
 
         try:
             # 1. Run the rating engine to get the calculation result
-            # Remove caf_pct from this call
-            calc_result = compute_quote(
-                shipment,
-                provider_hint=data.get("provider_hint"),
-            )
+            use_v2 = getattr(settings, "QUOTER_V2_ENABLED", False)
 
-            is_manual = calc_result.snapshot.get("manual_rate_required", False)
+            calc_result = None
+
+            # V2 should only be used for Import Prepaid Airport->Door (A2D) scenarios
+            if (
+                use_v2
+                and shipment.service_scope == "AIRPORT_DOOR"
+                and (shipment.payment_term or "").upper() == "PREPAID"
+            ):
+                try:
+                    # Lazy import of V2 pricing pieces
+                    from pricing_v2.dataclasses_v2 import QuoteContext as V2QuoteContext
+                    from pricing_v2.pricing_service_v2 import compute_quote_v2
+                except Exception:
+                    # If v2 modules are not present, fall back silently to v1
+                    logger.exception("V2 modules unavailable, falling back to V1 compute_quote.")
+                    calc_result = compute_quote(
+                        shipment,
+                        provider_hint=data.get("provider_hint"),
+                    )
+
+                if calc_result is None:
+                    # Build a QuoteContext for V2 - map fields appropriately
+                    v2_scope = normalize_scope_for_v2(shipment.service_scope)
+                    v2_mode = "AIR"  # Recipes expect "AIR" for air shipments
+                    v2_direction = "IMPORT"  # Airport -> Door is an import direction
+                    origin_ccy = get_currency_for_iata(shipment.origin_iata)
+                    dest_ccy = get_currency_for_iata(shipment.dest_iata)
+
+                    quote_context = V2QuoteContext(
+                        mode=v2_mode,
+                        direction=v2_direction,
+                        scope=v2_scope,
+                        payment_term=(shipment.payment_term or "PREPAID"),
+                        origin_iata=shipment.origin_iata,
+                        dest_iata=shipment.dest_iata,
+                        pieces=[p.__dict__ for p in shipment.pieces],
+                        commodity=shipment.commodity_code,
+                        margins={},
+                        policy={},
+                        origin_country_currency=origin_ccy,
+                        destination_country_currency=dest_ccy,
+                    )
+
+                    try:
+                        v2_totals = compute_quote_v2(quote_context)
+                        # v2_totals is expected to be dataclass with fields defined in dataclasses_v2.Totals
+
+                        invoice_ccy = getattr(v2_totals, "invoice_ccy", None) or dest_ccy or origin_ccy or "USD"
+
+                        # Build totals dict with Money objects matching V1 shape
+                        sell_total_amount = d(getattr(v2_totals, "sell_total", getattr(v2_totals, "sell_subtotal", 0)))
+                        buy_total_amount = d(getattr(v2_totals, "buy_total_pgk", 0))  # V2 may report buy_total_pgk
+                        buy_total_ccy = "PGK" if getattr(v2_totals, "buy_total_pgk", None) is not None and getattr(v2_totals, "buy_total_pgk", 0) != 0 else "USD"
+
+                        totals = {
+                            "sell_total": Money(sell_total_amount, invoice_ccy),
+                            "buy_total": Money(buy_total_amount, buy_total_ccy),
+                            "tax_total": Money(d(getattr(v2_totals, "sell_tax", 0)), invoice_ccy),
+                            "margin_abs": Money(Decimal(0), invoice_ccy),
+                            "margin_pct": Money(Decimal(0), "%"),
+                        }
+
+                        snapshot = {
+                            "manual_rate_required": bool(getattr(v2_totals, "is_incomplete", False)),
+                            "manual_reasons": list(getattr(v2_totals, "reasons", []) or []),
+                        }
+
+                        # Prepare heuristics for quantity/unit mapping
+                        total_pieces = len(shipment.pieces or [])
+                        total_weight = ZERO
+                        try:
+                            for p in shipment.pieces:
+                                total_weight += d(getattr(p, "weight_kg", 0))
+                        except Exception:
+                            total_weight = ZERO
+
+                        # Convert v2 sell_lines (CalcLine) into V1 line objects
+                        v2_sell_lines = getattr(v2_totals, "sell_lines", []) or []
+                        sell_lines = []
+                        buy_lines = []
+
+                        for line in v2_sell_lines:
+                            # Each line: code, description, amount, currency
+                            code = getattr(line, "code", "") or ""
+                            description = getattr(line, "description", "") or ""
+                            amount = d(getattr(line, "amount", 0))
+                            currency = getattr(line, "currency", None) or invoice_ccy or dest_ccy or "USD"
+
+                            desc_l = description.lower() if isinstance(description, str) else ""
+                            # Heuristic unit detection
+                            if "kg" in desc_l or "per kg" in desc_l or "kg" in code.lower():
+                                unit = "kg"
+                                qty = total_weight or Decimal(1)
+                            elif any(k in desc_l for k in ("piece", "pcs", "pc", "each")):
+                                unit = "piece"
+                                qty = total_pieces or 1
+                            else:
+                                unit = "shipment"
+                                qty = 1
+
+                            # Ensure qty is Decimal or int compatible
+                            try:
+                                qty_decimal = d(qty) if not isinstance(qty, int) else Decimal(qty)
+                            except Exception:
+                                qty_decimal = Decimal(1)
+
+                            unit_price = Money(amount, currency)
+                            extended_amt = (d(amount) * qty_decimal).quantize(FOURPLACES)
+                            extended = Money(extended_amt, currency)
+
+                            line_obj = SimpleNamespace(
+                                code=code,
+                                description=description,
+                                is_buy=False,
+                                is_sell=True,
+                                qty=qty_decimal,
+                                unit=unit,
+                                unit_price=unit_price,
+                                extended=extended,
+                                tax_pct=0,
+                                meta={"manual_rate_required": snapshot["manual_rate_required"]},
+                            )
+                            sell_lines.append(line_obj)
+
+                        # Build a calc_result object matching V1 structure (attributes)
+                        calc_result = SimpleNamespace(
+                            totals=totals,
+                            snapshot=snapshot,
+                            buy_lines=buy_lines,
+                            sell_lines=sell_lines,
+                        )
+
+                    except Exception as e:
+                        # If V2 compute fails, log full context and fallback to V1
+                        logger.exception("V2 compute_quote_v2 failed, falling back to V1. Context: %s", {
+                            "quote_context": {
+                                "mode": v2_mode,
+                                "direction": v2_direction,
+                                "scope": v2_scope,
+                                "payment_term": shipment.payment_term,
+                                "origin_iata": shipment.origin_iata,
+                                "dest_iata": shipment.dest_iata,
+                                "pieces_count": len(shipment.pieces or []),
+                                "origin_ccy": origin_ccy,
+                                "dest_ccy": dest_ccy,
+                            },
+                            "error": str(e),
+                            "traceback": traceback.format_exc(),
+                        })
+                        # Fallback to V1
+                        calc_result = compute_quote(
+                            shipment,
+                            provider_hint=data.get("provider_hint"),
+                        )
+            else:
+                # V1 logic
+                calc_result = compute_quote(
+                    shipment,
+                    provider_hint=data.get("provider_hint"),
+                )
+
+            # At this point calc_result should be an object with attributes:
+            # .snapshot (dict-like), .totals (dict-like), .buy_lines (list), .sell_lines (list)
+            is_manual = False
+            try:
+                is_manual = bool(getattr(calc_result, "snapshot", {}) .get("manual_rate_required", False))
+            except Exception:
+                # Try dict access fallback
+                try:
+                    is_manual = bool(calc_result.get("snapshot", {}).get("manual_rate_required", False))
+                except Exception:
+                    is_manual = False
+
             # Allowable statuses: QuoteStatus.PENDING_RATE | QuoteStatus.COMPLETE
             status_str = QuoteStatus.PENDING_RATE if is_manual else QuoteStatus.COMPLETE
-            totals = calc_result.totals
+            # Totals extraction - support both attribute and dict shapes
+            totals_raw = {}
+            if hasattr(calc_result, "totals"):
+                totals_raw = getattr(calc_result, "totals") or {}
+            elif isinstance(calc_result, dict):
+                totals_raw = calc_result.get("totals", {})
 
+            # Normalize snapshot for later use
+            snapshot_raw = {}
+            if hasattr(calc_result, "snapshot"):
+                snapshot_raw = getattr(calc_result, "snapshot") or {}
+            elif isinstance(calc_result, dict):
+                snapshot_raw = calc_result.get("snapshot", {}) or {}
+
+            # Prepare request_snapshot for storage (keep original payload and some computed fields)
             if isinstance(payload, dict):
-                request_snapshot = {**payload, "shipment_type": shipment.shipment_type}
+                request_snapshot = {**payload, "shipment_type": getattr(shipment, "shipment_type", None)}
             else:
-                request_snapshot = {"shipment_type": shipment.shipment_type}
+                request_snapshot = {"shipment_type": getattr(shipment, "shipment_type", None)}
                 if hasattr(ser, 'initial_data') and isinstance(ser.initial_data, dict):
                     request_snapshot.update(ser.initial_data)
 
             request_snapshot["payment_term"] = shipment.payment_term
             request_snapshot["incoterm"] = shipment.incoterm
-
 
             # 2. Create the main Quote record
             new_quote = Quotes.objects.create(
@@ -118,29 +362,57 @@ class QuoteComputeView(views.APIView):
                 # not the validated data which contains Decimals.
                 request_snapshot=request_snapshot,
                 payment_term=shipment.payment_term,
-                buy_total=totals.get("buy_total", Money(ZERO, "USD")).amount,
-                sell_total=totals.get("sell_total", Money(ZERO, "USD")).amount,
-                currency=totals.get("sell_total", Money(ZERO, "USD")).currency,
+                buy_total=totals_raw.get("buy_total", Money(ZERO, "USD")).amount,
+                sell_total=totals_raw.get("sell_total", Money(ZERO, "USD")).amount,
+                currency=totals_raw.get("sell_total", Money(ZERO, "USD")).currency,
                 incoterm=shipment.incoterm,
             )
 
             # 3. Create the QuoteLines for the new Quote
             lines_to_create = []
-            all_lines = calc_result.buy_lines + calc_result.sell_lines
+            buy_lines = getattr(calc_result, "buy_lines", []) or []
+            sell_lines = getattr(calc_result, "sell_lines", []) or []
+            all_lines = list(buy_lines) + list(sell_lines)
             for line in all_lines:
+                # Line objects created above use Money instances for unit_price and extended
+                try:
+                    unit_price_amt = getattr(line.unit_price, "amount", line.unit_price) if getattr(line, "unit_price", None) else ZERO
+                    unit_price_ccy = getattr(line.unit_price, "currency", totals_raw.get("sell_total", Money(ZERO, "USD")).currency)
+                except Exception:
+                    unit_price_amt = ZERO
+                    unit_price_ccy = totals_raw.get("sell_total", Money(ZERO, "USD")).currency
+
+                try:
+                    extended_amt = getattr(line.extended, "amount", line.extended) if getattr(line, "extended", None) else ZERO
+                    extended_ccy = getattr(line.extended, "currency", unit_price_ccy)
+                except Exception:
+                    extended_amt = ZERO
+                    extended_ccy = unit_price_ccy
+
+                # Ensure qty is stored in a DB-friendly numeric type (string safe)
+                qty_val = getattr(line, "qty", 1)
+                # If qty is Decimal, convert to string to avoid precision loss when assigning to model field later
+                try:
+                    if isinstance(qty_val, Decimal):
+                        qty_to_store = str(qty_val)
+                    else:
+                        qty_to_store = qty_val
+                except Exception:
+                    qty_to_store = qty_val
+
                 lines_to_create.append(
                     QuoteLines(
                         quote=new_quote,
-                        code=line.code,
-                        description=line.description,
-                        is_buy=line.is_buy,
-                        is_sell=line.is_sell,
-                        qty=line.qty,
-                        unit=line.unit,
-                        unit_price=line.unit_price.amount,
-                        extended_price=line.extended.amount,
-                        currency=line.extended.currency,
-                        tax_pct=line.tax_pct,
+                        code=getattr(line, "code", ""),
+                        description=getattr(line, "description", ""),
+                        is_buy=getattr(line, "is_buy", False),
+                        is_sell=getattr(line, "is_sell", False),
+                        qty=qty_to_store,
+                        unit=getattr(line, "unit", "") or "shipment",
+                        unit_price=Decimal(str(unit_price_amt)),
+                        extended_price=Decimal(str(extended_amt)),
+                        currency=extended_ccy,
+                        tax_pct=getattr(line, "tax_pct", 0),
                         manual_rate_required=getattr(line, "meta", {}).get("manual_rate_required", False),
                     )
                 )
@@ -148,32 +420,30 @@ class QuoteComputeView(views.APIView):
             QuoteLines.objects.bulk_create(lines_to_create)
 
             # 4. Return the ID of the new quote with totals wrapped for frontend
+            # Ensure we can access the totals amounts and currencies safely
+            def money_for(key: str):
+                m = totals_raw.get(key, Money(ZERO, "USD"))
+                # If m is Money-like object
+                try:
+                    return {"amount": str(m.amount), "currency": m.currency}
+                except Exception:
+                    # If it's a raw number
+                    try:
+                        return {"amount": str(m), "currency": "USD"}
+                    except Exception:
+                        return {"amount": "0", "currency": "USD"}
+
             response_data = {
                 "quote_id": new_quote.id,
                 "status": status_str,
                 "totals": {
-                    "sell_total": {
-                        "amount": str(totals["sell_total"].amount),
-                        "currency": totals["sell_total"].currency,
-                    },
-                    "buy_total": {
-                        "amount": str(totals["buy_total"].amount),
-                        "currency": totals["buy_total"].currency,
-                    },
-                    "tax_total": {
-                        "amount": str(totals["tax_total"].amount),
-                        "currency": totals["tax_total"].currency,
-                    },
-                    "margin_abs": {
-                        "amount": str(totals["margin_abs"].amount),
-                        "currency": totals["margin_abs"].currency,
-                    },
-                    "margin_pct": {
-                        "amount": str(totals["margin_pct"].amount),
-                        "currency": totals["margin_pct"].currency,
-                    },
+                    "sell_total": money_for("sell_total"),
+                    "buy_total": money_for("buy_total"),
+                    "tax_total": money_for("tax_total"),
+                    "margin_abs": money_for("margin_abs"),
+                    "margin_pct": money_for("margin_pct"),
                 },
-                "manual_reasons": calc_result.snapshot.get("manual_reasons", []),
+                "manual_reasons": snapshot_raw.get("manual_reasons", []),
             }
             return Response(response_data, status=status.HTTP_201_CREATED)
 
@@ -361,4 +631,3 @@ class QuoteListView(views.APIView):
             })
 
         return paginator.get_paginated_response(items)
-

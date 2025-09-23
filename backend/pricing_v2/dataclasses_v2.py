@@ -1,11 +1,18 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
+
+
+@dataclass
+class Recipe:
+    name: str
+    action: Callable
 
 
 @dataclass
 class QuoteContext:
     mode: str
+    direction: str
     scope: str
     payment_term: str
     origin_iata: str
@@ -14,6 +21,8 @@ class QuoteContext:
     commodity: str
     margins: Dict[str, Any]
     policy: Dict[str, Any]
+    origin_country_currency: str
+    destination_country_currency: str
     audience: Optional[str] = None  # Optional, can be derived
 
 
@@ -52,6 +61,7 @@ class Totals:
     buy_total_pgk: float = 0.0
     is_incomplete: bool = False
     reasons: List[str] = field(default_factory=list)
+    sell_lines: List[CalcLine] = field(default_factory=list)  # NEW
 
 
 @dataclass

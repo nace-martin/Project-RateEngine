@@ -15,5 +15,6 @@ urlpatterns = [
     path('api/quotes/', include('quotes.urls')),
     path('api/organizations/', include('organizations.urls')),
     path('api/fx/', include('core.urls')),
-    path('api/quote/compute2', compute_quote_v2_api),
+    path('api/v2/quotes/', compute_quote_v2_api),
+    path('api/pricing_v2/', include('pricing_v2.urls')),
 ]

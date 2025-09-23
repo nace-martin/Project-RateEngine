@@ -1,88 +1,42 @@
 import pytest
-from pricing_v2.dataclasses_v2 import QuoteContext, Totals
-from pricing_v2.pricing_service_v2 import compute_quote_v2
+from backend.pricing_v2.pricing_service_v2 import PricingServiceV2
 
+class MockQuoteRequest:
+    def __init__(self, payment_terms, origin_country_currency, destination_country_currency, service_scope, direction):
+        self.payment_terms = payment_terms
+        self.origin_country_currency = origin_country_currency
+        self.destination_country_currency = destination_country_currency
+        self.service_scope = service_scope
+        self.direction = direction
 
-def test_golden_cases_v2():
-    """Tests for 10 golden cases covering various scenarios for the V2 rating core."""
-
-    # Golden Test Case 1: IMPORT - Basic A2A
-    # Input: ...
-    # Expected Output: ...
-    # assert compute_quote_v2(QuoteContext(...)) == Totals(...)
-    pass
-
-    # Golden Test Case 2: EXPORT - Basic A2D
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 3: DOMESTIC - Basic D2D
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 4: MIN vs +45/+100 - Example where MIN applies
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 5: MIN vs +45/+100 - Example where +45 applies
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 6: CAF direction - Example with specific CAF application
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 7: GST - Example with GST calculation
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 8: Rounding - Example with final SELL rounding
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 9: Bridge/No-bridge - Example with bridge routing
-    # Input: ...
-    # Expected Output: ...
-    pass
-
-    # Golden Test Case 10: Manual Case - Example triggering manual result
-    # Input: ...
-    # Expected Output: ... (manual result with clear reason)
-    pass
-
-    # Golden Test Case (PREPAID AU->PG): BNE -> POM, A2D, PREPAID
-    context_prepaid = QuoteContext(
-        mode="AIR",
-        scope="A2D",
-        payment_term="PREPAID",
-        origin_iata="BNE",
-        dest_iata="POM",
-        pieces=[{"weight_kg": 81}],
-        commodity="GCR",
-        margins={},
-        policy={},
+def test_prepaid_a2d_import():
+    quote_request = MockQuoteRequest(
+        payment_terms="PREPAID",
+        origin_country_currency="AUD",
+        destination_country_currency="PGK",
+        service_scope="A2D",
+        direction="IMPORT"
     )
-    totals_prepaid = compute_quote_v2(context_prepaid)
-    assert totals_prepaid.invoice_ccy == "AUD"
+    pricing_service = PricingServiceV2(quote_request)
+    final_quote = pricing_service.price_quote()
 
-    # Golden Test Case (COLLECT AU->PG): BNE -> POM, A2D, COLLECT
-    context_collect = QuoteContext(
-        mode="AIR",
-        scope="A2D",
-        payment_term="COLLECT",
-        origin_iata="BNE",
-        dest_iata="POM",
-        pieces=[{"weight_kg": 81}],
-        commodity="GCR",
-        margins={},
-        policy={},
+    assert final_quote["totals"]["invoice_ccy"] == "AUD"
+    assert "CUSTOMS_CLEARANCE" in final_quote["sell_lines"]
+    assert "TERMINAL_HANDLING" in final_quote["sell_lines"]
+    assert "DELIVERY" in final_quote["sell_lines"]
+
+def test_collect_a2d_import():
+    quote_request = MockQuoteRequest(
+        payment_terms="COLLECT",
+        origin_country_currency="AUD",
+        destination_country_currency="PGK",
+        service_scope="A2D",
+        direction="IMPORT"
     )
-    totals_collect = compute_quote_v2(context_collect)
-    assert totals_collect.invoice_ccy == "PGK"
+    pricing_service = PricingServiceV2(quote_request)
+    final_quote = pricing_service.price_quote()
+
+    assert final_quote["totals"]["invoice_ccy"] == "PGK"
+    assert "CUSTOMS_CLEARANCE" in final_quote["sell_lines"]
+    assert "TERMINAL_HANDLING" in final_quote["sell_lines"]
+    assert "DELIVERY" in final_quote["sell_lines"]

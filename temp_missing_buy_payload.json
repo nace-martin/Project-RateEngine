@@ -1,0 +1,9 @@
+{
+    "mode": "AIR",
+    "scope": "A2D",
+    "payment_term": "PREPAID",
+    "origin_iata": "UNS",
+    "dest_iata": "POM",
+    "pieces": [{"weight_kg": 81}],
+    "commodity": "GCR"
+}

@@ -43,7 +43,7 @@ DEBUG = True
 
 QUOTER_V2_ENABLED = os.getenv(
     "QUOTER_V2_ENABLED",
-    "true" if DEBUG else "false"
+    "false"
 ).lower() in ("1", "true", "yes")
 
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
