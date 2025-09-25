@@ -1,9 +1,12 @@
 from django.urls import path
+from .views import QuoteVersionCreateView, QuoteVersionLockView, QuotationViewSet
+from rest_framework.routers import DefaultRouter
 
-from .views import QuoteComputeView, QuoteDetailView, QuoteListView
+router = DefaultRouter()
+router.register(r'quotations', QuotationViewSet, basename='quotations')
 
 urlpatterns = [
-    path('compute', QuoteComputeView.as_view(), name='quote-compute'),
-    path('', QuoteListView.as_view(), name='quote-list'),
-    path('<int:quote_id>/', QuoteDetailView.as_view(), name='quote-detail'),
+    path('quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
+    path('quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
 ]
+urlpatterns += router.urls

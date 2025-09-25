@@ -32,7 +32,7 @@ To run locally, use two terminals.
 2. Create and activate a virtual environment:
    ```bash
    # Windows
-   python -m venv .venv && .\\.venv\\Scripts\\activate
+   python -m venv .venv && .\.venv\Scripts\activate
    # Unix/macOS
    python -m venv .venv && source .venv/bin/activate
    ```
@@ -53,7 +53,7 @@ To run locally, use two terminals.
    SECRET_KEY note:
    - Always set `SECRET_KEY` in production.
    - If omitted locally, the app uses a dev-only insecure default and logs a warning.
-   - Generate a strong key: `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
+   - Generate a strong key: `python -c "import secrets; print(secrets.token_urlsafe(50))"
 
    Alternatively, set the environment variable directly:
    ```bash
@@ -95,7 +95,7 @@ To run locally, use two terminals.
   ```bash
   curl -X POST http://127.0.0.1:8000/api/quote/compute \
     -H "Authorization: Token YOUR_TOKEN" -H "Content-Type: application/json" \
-    -d '{"org_id":1,"origin_iata":"SYD","dest_iata":"POM","shipment_type":"EXPORT","service_scope":"AIRPORT_AIRPORT","pieces":[{"weight_kg":"10"}]}'
+    -d '{"origin_iata":"SYD","dest_iata":"POM","shipment_type":"EXPORT","service_scope":"AIRPORT_AIRPORT","pieces":[{"weight_kg":"10"}]}'
   ```
 - CORS: Frontend allowed origins are `http://localhost:3000` and `http://127.0.0.1:3000` (see `backend/rate_engine/settings.py`). Update there for other hosts.
 
@@ -112,10 +112,9 @@ To run locally, use two terminals.
 
 - Authentication: DRF TokenAuth is required for protected endpoints (e.g., `/api/quote/compute`).
 - Compute permissions:
-  - `manager` and `finance` roles may quote for any organization.
-  - `sales` may quote only for organizations where they have an explicit membership (`accounts.OrganizationMembership`) with `can_quote=True`.
-  - Unauthorized org access returns `403` with `{ "detail": "Forbidden for organization" }`.
-  - You can adjust this policy in `QuoteComputeView` if your org/user model differs.
+  - `manager` and `finance` roles may quote for any client.
+  - `sales` may quote only for clients where they have an explicit membership with `can_quote=True`.
+  - You can adjust this policy in `QuoteComputeView` if your user model differs.
 
 ## Docker Compose (Postgres) and Test Runner
 
@@ -149,8 +148,7 @@ Use the targeted management commands when you want lane data without loading the
 - `make frontend-dev` — start Next.js dev server.
 
 Notes:
-- Legacy `rate_engine` models have been retired; the managed schema now lives across the `core`, `organizations`, `pricing`, and `quotes` apps.
-- The `accounts` app (including `OrganizationMembership`) is managed by Django and will be migrated automatically.
+- The `accounts` app is managed by Django and will be migrated automatically.
 
 ## CI: FX Refresh Workflow
 
@@ -184,5 +182,3 @@ Notes:
   - CLI (force fallback): set `BSP_FX_URL=http://127.0.0.1:1` to simulate failure; rerun and observe WARN + ENV usage.
   - API: `curl -X POST "$API/fx/refresh" -H "Authorization: Token <key>" -H "Content-Type: application/json" -d '{"pairs":["USD:PGK","PGK:USD"],"provider":"bsp_html"}'`
   - Tests: `pytest -q` (ensure `DATABASE_URL` points to Postgres).
-
-

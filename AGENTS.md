@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `backend/`: Django 5 project `rate_engine` (settings only) with apps `accounts`, `core`, `organizations`, `pricing`, and `quotes`. Core pricing logic lives in `backend/pricing/services/pricing_service.py`; URLs in `backend/rate_engine/urls.py`.
+- `backend/`: Django 5 project `rate_engine` (settings only) with apps `accounts`, `core`, `pricing`, and `quotes`. Core pricing logic lives in `backend/pricing/services/pricing_service.py`; URLs in `backend/rate_engine/urls.py`.
 - `frontend/`: Next.js (TypeScript + Tailwind) UI. Static assets in `frontend/public/`.
 - `docs/`: Design notes and RFCs. `scripts/`: local utilities.
 - Tests: Backend tests live in each app’s `tests.py`; frontend tests are co‑located per component when present.

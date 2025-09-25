@@ -1,7 +1,7 @@
+# backend/core/urls.py
+
 from django.urls import path
 
-from .views import FxRefreshView
-
 urlpatterns = [
-    path('refresh', FxRefreshView.as_view(), name='fx-refresh'),
+    # We will add our new API views here later
 ]

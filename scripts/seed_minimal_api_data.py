@@ -18,7 +18,6 @@ django.setup()
 from django.db import connection
 from django.utils.timezone import now
 from core.models import Providers, Stations
-from organizations.models import Organizations
 from pricing.models import Ratecards, RatecardConfig, Routes, RouteLegs
 
 
@@ -92,20 +91,6 @@ def ensure_tables():
             service_type VARCHAR(32) NOT NULL
         );
         """,
-        # Organizations (payer)
-        """
-        CREATE TABLE IF NOT EXISTS organizations (
-            id BIGSERIAL PRIMARY KEY,
-            name TEXT UNIQUE,
-            country_code CHAR(2) DEFAULT 'PG',
-            audience TEXT,
-            default_sell_currency TEXT,
-            gst_pct NUMERIC(5,2),
-            disbursement_min NUMERIC(12,2),
-            disbursement_cap NUMERIC(12,2),
-            notes TEXT
-        );
-        """,
     ]
     with connection.cursor() as cur:
         for sql in ddls:
@@ -150,19 +135,6 @@ def seed_minimal():
         "dim_factor_kg_per_m3": Decimal("167"), "rate_strategy": "BREAKS"
     })
 
-    # Organization with audience matching SELL card
-    Organizations.objects.get_or_create(
-        id=1,
-        defaults=dict(
-            name="Test Org",
-            country_code="PG",
-            audience="B2B",
-            default_sell_currency="PGK",
-            gst_pct=Decimal("10.00"),
-            notes="seeded",
-        ),
-    )
-
     # Route and Leg for BNE->LAE IMPORT
     route, _ = Routes.objects.get_or_create(
         name="AU->PG",
@@ -181,5 +153,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

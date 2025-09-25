@@ -35,7 +35,6 @@ export default function QuotesListPage() {
         }
 
         const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-        if (orgId) params.set('org_id', orgId);
         if (statusFilter) params.set('status', statusFilter);
 
         const res = await fetch(`${apiBase}/quotes/?${params.toString()}`, {
@@ -71,22 +70,12 @@ export default function QuotesListPage() {
     }
   }, [user, page, pageSize, orgId, statusFilter]);
 
-  // Load organizations for filter dropdown
   useEffect(() => {
-    const loadOrgs = async () => {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-      const token = localStorage.getItem('authToken');
-      if (!apiBase || !user) return;
-      try {
-        const res = await fetch(`${apiBase}/organizations/`, {
-          headers: { ...(token ? { 'Authorization': `Token ${token}` } : {}) },
-        });
-        if (!res.ok) return; // best-effort
-        const data = await res.json();
-        if (Array.isArray(data)) setOrganizations(data);
-      } catch {}
-    };
-    loadOrgs();
+    const staticOrganizations: { id: number; name: string }[] = [
+      { id: 1, name: 'Test Org 1' },
+      { id: 2, name: 'Test Org 2' },
+    ];
+    setOrganizations(staticOrganizations);
   }, [user]);
 
   // Function to determine if user can see COGS data

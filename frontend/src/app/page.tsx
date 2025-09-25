@@ -13,51 +13,13 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchClients = async () => {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-      if (!apiBase) {
-        setError('API base URL is not configured.');
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
-        const res = await fetch(`${apiBase}/organizations/`, {
-          headers: {
-            ...(token ? { Authorization: `Token ${token}` } : {}),
-            'Content-Type': 'application/json',
-          },
-          cache: 'no-store',
-        });
-
-        if (!res.ok) {
-          const msg = await extractErrorFromResponse(res, 'Failed to fetch clients');
-          setError(msg);
-          setClients([]);
-        } else {
-          const data = await res.json();
-          const items: Client[] = (Array.isArray(data) ? data : []).map((row: any) => ({
-            id: row.id,
-            name: row.name,
-            email: row.email ?? '',
-            phone: row.phone ?? '',
-            org_type: row.org_type ?? row.audience ?? '',
-            created_at: row.created_at ?? '',
-          }));
-          setClients(items);
-        }
-      } catch (e: any) {
-        setError(e?.message || 'Unexpected error fetching clients');
-        setClients([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (user) {
-      fetchClients();
-    }
+    // Static list of clients
+    const staticClients: Client[] = [
+      { id: 1, name: 'Test Client 1', email: 'client1@example.com', phone: '123-456-7890', org_type: 'B2B', created_at: new Date().toISOString() },
+      { id: 2, name: 'Test Client 2', email: 'client2@example.com', phone: '098-765-4321', org_type: 'B2C', created_at: new Date().toISOString() },
+    ];
+    setClients(staticClients);
+    setLoading(false);
   }, [user]);
 
   return (

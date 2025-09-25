@@ -101,34 +101,15 @@ export default function NewQuotePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch organizations when the component mounts
   useEffect(() => {
-    async function fetchOrganizations() {
-      try {
-        const apiBase = process.env.NEXT_PUBLIC_API_BASE;
-        const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
-        if (!apiBase) throw new Error('API configuration error');
-
-        const response = await fetch(`${apiBase}/organizations/`, {
-          headers: {
-            ...(token ? { 'Authorization': `Token ${token}` } : {}),
-          },
-        });
-        if (!response.ok) {
-          const msg = await extractErrorFromResponse(response, 'Failed to fetch organizations');
-          setError(msg);
-          return;
-        }
-        const data = await response.json();
-        setOrganizations(data);
-        if (!selectedOrg && data.length) {
-          setSelectedOrg(String(data[0].id));
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An unknown error occurred');
-      }
+    const staticOrganizations: Organization[] = [
+      { id: 1, name: 'Test Org 1' },
+      { id: 2, name: 'Test Org 2' },
+    ];
+    setOrganizations(staticOrganizations);
+    if (!selectedOrg && staticOrganizations.length) {
+      setSelectedOrg(String(staticOrganizations[0].id));
     }
-    fetchOrganizations();
   }, []);
 
   useEffect(() => {
@@ -486,7 +467,6 @@ export default function NewQuotePage() {
     const destCode = destination.trim().toUpperCase();
 
     const payload = {
-      org_id: parseInt(selectedOrg, 10),
       origin_iata: originCode,
       dest_iata: destCode,
       service_scope: serviceScope,
@@ -754,13 +734,3 @@ export default function NewQuotePage() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-

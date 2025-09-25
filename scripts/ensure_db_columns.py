@@ -29,9 +29,7 @@ def main():
         cur.execute(
             "ALTER TABLE routes ADD COLUMN IF NOT EXISTS requires_manual_rate BOOLEAN DEFAULT FALSE"
         )
-        cur.execute(
-            "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS country_code CHAR(2) DEFAULT 'PG'"
-        )
+
     print("Columns ensured on ratecards and routes.")
 
 

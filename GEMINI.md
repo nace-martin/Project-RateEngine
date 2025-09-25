@@ -55,7 +55,7 @@ This is a full-stack web application designed to streamline and automate the air
 
 *   **Backend:**
     *   The backend follows the standard Django project structure.
-    *   The `rate_engine` directory contains the project settings, while `accounts`, `core`, `organizations`, `pricing`, and `quotes` are individual Django apps.
+    *   The `rate_engine` directory contains the project settings, while `accounts`, `core`, `pricing`, and `quotes` are individual Django apps.
     *   The `requirements.txt` file lists all Python dependencies.
 *   **Frontend:**
     *   The frontend uses Next.js with TypeScript.

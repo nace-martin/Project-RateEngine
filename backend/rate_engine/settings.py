@@ -41,6 +41,8 @@ if not SECRET_KEY:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+
+
 QUOTER_V2_ENABLED = os.getenv(
     "QUOTER_V2_ENABLED",
     "true" if DEBUG else "false"
@@ -69,10 +71,8 @@ INSTALLED_APPS = [
     # Local Apps
     'accounts',
     'core',
-    'organizations',
-    'pricing',
     'quotes',
-    'pricing_v2',
+    'customers',
 
 ]
 
@@ -177,20 +177,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # DRF settings
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.BasicAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
     ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
-    'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle'
-    ],
-    'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/day',
-        'user': '1000/day'
-    },
 }
 
 CORS_ALLOWED_ORIGINS = [
