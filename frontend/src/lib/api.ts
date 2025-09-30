@@ -36,3 +36,34 @@ export async function createQuotation(quotation: Partial<Quotation>) {
     }
     return res.json();
 }
+
+export async function listStations() {
+    const token = await getAuthToken();
+    const res = await fetch(`${API_BASE}/stations/`, {
+        headers: {
+            'Authorization': `Token ${token}`,
+            'Content-Type': 'application/json',
+        },
+    });
+    if (!res.ok) {
+        throw new Error('Failed to fetch stations');
+    }
+    return res.json();
+}
+
+export async function createQuoteVersion(quotationId: number, versionData: any) {
+    const token = await getAuthToken();
+    const res = await fetch(`${API_BASE}/quotes/${quotationId}/versions`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Token ${token}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(versionData),
+    });
+    if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || 'Failed to create quote version');
+    }
+    return res.json();
+}

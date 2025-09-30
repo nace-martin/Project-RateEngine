@@ -1,5 +1,7 @@
-# backend/core/views.py
+from rest_framework import viewsets
+from .models import Station
+from .serializers import StationSerializer
 
-from django.shortcuts import render
-
-# We will build our new API views here based on the new models.
+class StationViewSet(viewsets.ModelViewSet):
+    queryset = Station.objects.all()
+    serializer_class = StationSerializer
