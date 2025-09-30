@@ -13,6 +13,7 @@ router.register(r'stations', StationViewSet, basename='stations')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
+    path('api/auth/', include('accounts.urls')),
     path('api/quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
     path('api/quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
 ]

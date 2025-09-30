@@ -4,6 +4,8 @@ from django.db import connection
 from rest_framework import serializers
 
 from .models import Quotation, QuoteVersion, ShipmentPiece, Charge
+from customers.models import Customer
+from customers.serializers import CustomerSerializer
 
 
 # ---------- TOTALS (read-only projection from SQL VIEW) ----------
@@ -73,9 +75,10 @@ class QuoteVersionSerializer(serializers.ModelSerializer):
 
 # ---------- QUOTATION SERIALIZER (read with nested versions) ----------
 class QuotationSerializer(serializers.ModelSerializer):
-    # Read-only nested versions (created via dedicated endpoint)
     versions = QuoteVersionSerializer(many=True, read_only=True)
+    client = CustomerSerializer(source='customer', read_only=True)
+    customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), write_only=True)
 
     class Meta:
         model = Quotation
-        fields = "__all__"
+        fields = [f.name for f in Quotation._meta.fields] + ['versions', 'client']

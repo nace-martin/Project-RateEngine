@@ -50,7 +50,7 @@ export default function QuoteDetailPage() {
 
       try {
         setLoading(true);
-        const res = await fetch(`${apiBase}/quotes/${routeId}/`, {
+        const res = await fetch(`${apiBase}/quotations/${routeId}/`, {
           headers: {
             Authorization: `Token ${token}`,
             'Content-Type': 'application/json',
