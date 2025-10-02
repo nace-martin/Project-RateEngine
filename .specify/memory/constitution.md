@@ -1,12 +1,14 @@
 <!--
 SYNC IMPACT REPORT
-- Version: v2.1.1 → v3.0.0
-- Modified Principles: Complete overhaul. Replaced 5 generic principles with 15 domain-specific principles.
-- Added Sections: All sections are new.
-- Removed Sections: All old sections removed.
+- Version: v3.0.0 → v3.1.0
+- Modified Principles:
+  - §5 Determinism & Selection: Added rule for offer validity period.
+  - §6 Resilience & Performance: Clarified HTTP 200 for incomplete quotes and specified parallel adapter execution.
+  - §10 Business Rules: Clarified chargeable weight rounding and added fuel surcharge calculation rule.
+- Added Sections: None
+- Removed Sections: None
 - Templates Requiring Updates:
   - ✅ .specify/memory/constitution.md (this file)
-  - ✅ .specify/templates/plan-template.md
 - Follow-up TODOs:
   - TODO(RATIFICATION_DATE): The original adoption date for the constitution is unknown and needs to be set.
 -->
@@ -42,10 +44,12 @@ Build a quoting engine that turns messy partner pricing (rate cards, spot emails
 - Same inputs → same outputs.
 - Selection priority: Contracted RateCard → Current RateCard → Pinned Spot → else incomplete.
 - Tie-breakers: newer valid_from → lower base rate → carrier priority list.
+- An offer is only considered for selection if the calculation timestamp (`compute_at`) is within the offer's validity period (`valid_from` ≤ `compute_at` ≤ `valid_to`).
 
 ## 6) Resilience & Performance Budgets (hard numbers)
-- No 500s on data gaps. Return is_incomplete=true with one crisp reason.
-- Timeouts: each adapter ≤ 2s; total compute ≤ 3s prod (≤ 5s dev).
+- No 500s on data gaps. Return an HTTP 200 response with `is_incomplete: true` and a single, human-readable reason.
+- Adapters run in parallel. Each has a strict timeout of ≤ 2s; late or failed results for an adapter are ignored.
+- Total quote computation time must be ≤ 3s in production (≤ 5s in dev).
 - Retries: 1 retry with jitter; on persistent failure, circuit-break 5 min.
 - Adapters never raise. On error, return zero offers; the service degrades gracefully.
 
@@ -68,7 +72,7 @@ Build a quoting engine that turns messy partner pricing (rate cards, spot emails
 - PDF staples: validity, scope note, GST/VAT line, CTO pass-through note.
 
 ## 10) Business Rules (hard guardrails)
-- Chargeable weight (air): max(actual_kg, (L×W×H cm / 1e6) × 167).
+- Chargeable weight (air): max(actual_kg, (L×W×H cm / 1e6) × 167), rounded up to the nearest whole kg.
 - Import A2D:
   - PREPAID ⇒ AUD, COLLECT ⇒ PGK.
   - Destination-side fees only (clearance, CTO, cartage, fuel%, attendances, etc.).
@@ -77,6 +81,7 @@ Build a quoting engine that turns messy partner pricing (rate cards, spot emails
   - Origin-side fees only (AWB/doc, screening, terminal, pickup, DG, etc.).
 - Percent-of fees apply only if their base exists; otherwise skip + reason.
 - Disbursement only on DDP (5% with min/cap per card).
+- Fuel Surcharge (%) applies to the cartage fee, calculated after any min/cap on cartage has been applied, and before any tax.
 - Rounding: unit prices 4dp; extended totals 2dp.
 
 ## 11) Testing & Coverage (enforced)
@@ -110,4 +115,4 @@ Build a quoting engine that turns messy partner pricing (rate cards, spot emails
 ## Governance
 This constitution defines the non-negotiable rules for the project. Amendments require a documented proposal, review, and version bump according to SemVer. All development, reviews, and deployments must adhere to these principles.
 
-**Version**: 3.0.0 | **Ratified**: TODO(RATIFICATION_DATE) | **Last Amended**: 2025-10-02
+**Version**: 3.1.0 | **Ratified**: TODO(RATIFICATION_DATE) | **Last Amended**: 2025-10-02
