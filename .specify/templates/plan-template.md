@@ -47,7 +47,15 @@
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- **[ ] §1 Code Quality**: Is the design deterministic and does it respect the Universal Translator architecture?
+- **[ ] §2 Testing**: Are business-real test scenarios defined?
+- **[ ] §3 UX**: Does the design prioritize simplicity and workflow awareness?
+- **[ ] §5 Determinism**: Does the selection logic follow the strict priority and tie-breaker rules?
+- **[ ] §6 Resilience**: Are failure modes handled gracefully (no 500s)? Are performance budgets respected?
+- **[ ] §7 Observability**: Does the design include all required fields in the audit snapshot?
+- **[ ] §8 RBAC**: Is the data properly segregated between Sales and Manager roles?
+- **[ ] §10 Business Rules**: Are all relevant hard guardrails (weight, fees, rounding) accounted for?
+- **[ ] §15 DoD**: Does the plan account for all items in the Definition of Done?
 
 ## Project Structure
 
@@ -208,4 +216,4 @@ ios/ or android/
 - [ ] Complexity deviations documented
 
 ---
-*Based on Constitution v2.1.1 - See `/memory/constitution.md`*
+*Based on Constitution v3.0.0 - See /.specify/memory/constitution.md*
