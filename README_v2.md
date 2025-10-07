@@ -27,6 +27,17 @@ graph TD
     B -- No --> I[Return 404 Not Found]
 ```
 
+## BUY Source Adapters
+
+The `rate_buy` function is powered by a system of "BUY Source Adapters". These adapters act as a "Universal Translator", normalizing pricing information from various external sources into a standardized `BuyOffer` format. This allows the V2 engine to compare and select the best offer in a deterministic way.
+
+The initial implementation includes two adapters:
+
+*   **`RateCardAdapter`**: This adapter is responsible for parsing HTML rate cards from partners. It extracts lanes, weight breaks, fees, and validity periods, and transforms them into `BuyOffer` objects.
+*   **`SpotAdapter`**: This adapter handles manually entered spot quotes from the UI. It takes a simple JSON object representing a spot quote and converts it into a `BuyOffer` that can be compared against other offers.
+
+Each adapter runs independently and is protected by a feature flag and a circuit breaker. This ensures that the failure of one adapter does not affect the others or the overall quoting process.
+
 ## Tiny Rule Tables
 
 Decisions in V2 are heavily driven by small, focused data tables. These tables are designed to be easily auditable and extendable.
