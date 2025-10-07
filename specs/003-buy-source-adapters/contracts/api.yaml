@@ -1,0 +1,38 @@
+openapi: 3.0.0
+info:
+  title: RateEngine v2 API
+  version: 2.0.0
+paths:
+  /api/quote/compute2:
+    post:
+      summary: Computes a quote using the v2 engine
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shipment_pieces: 
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      weight_kg: { type: number }
+                      length_cm: { type: number }
+                      width_cm: { type: number }
+                      height_cm: { type: number }
+                audience: { type: string, enum: [PNG_SHIPPER, OVERSEAS_AGENT_AU, OVERSEAS_AGENT_NON_AU, PNG_CUSTOMER_PREPAID, OVERSEAS_AGENT_COLLECT] }
+                payment_term: { type: string, enum: [PREPAID, COLLECT] }
+      responses:
+        '200':
+          description: Successful quote computation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  is_incomplete: { type: boolean }
+                  reason: { type: string }
+                  quote_id: { type: string }
+                  # ... other quote fields
