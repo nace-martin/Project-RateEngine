@@ -41,7 +41,10 @@ class QuotationViewSet(viewsets.ModelViewSet):
 
 
 # ---- Create a new QuoteVersion (idempotent, nested write, GST policy applied) ----
+from accounts.permissions import IsManager
+
 class QuoteVersionCreateView(APIView):
+    permission_classes = [IsManager]
     def post(self, request, id):
         quotation = get_object_or_404(Quotation, pk=id)
         idempotency_key = request.headers.get('Idempotency-Key')

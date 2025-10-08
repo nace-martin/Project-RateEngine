@@ -51,7 +51,7 @@ def _dec(x) -> Decimal:
 def _mk_user_and_client():
     User = get_user_model()
     user = User.objects.create_user(
-        username="tester", email="t@example.com", password="pass", is_staff=True
+        username="tester", email="t@example.com", password="pass", is_staff=True, role='manager'
     )
     client = APIClient()
     client.force_authenticate(user=user)
