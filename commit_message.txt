@@ -1,0 +1,8 @@
+fix(quotes): Correct RBAC and fix tests for QuoteVersion creation
+
+This commit addresses several issues related to the creation of QuoteVersions:
+
+- **RBAC on QuoteVersionCreateView:** The `IsManager` permission is now enforced on the `QuoteVersionCreateView`, ensuring that only users with the 'manager' role can create new quote versions.
+- **Test Fixes:** The tests for `QuoteVersionCreateView` have been updated to reflect the new RBAC policy. This includes creating the necessary test data (Customer, Quotation, Station) and asserting the correct status codes for different user roles.
+- **MVP Flow Test:** The end-to-end test in `test_mvp_flow.py` has been updated to create a user with the 'manager' role, allowing the test to pass.
+- **Dependencies:** The `lxml` dependency in `requirements.txt` is now conditional based on the Python version to prevent build failures.
