@@ -1,6 +1,12 @@
+import axios from 'axios';
 import { Quotation } from './types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000/api';
+
+// Create a configured axios instance
+export const api = axios.create({
+  baseURL: API_BASE,
+});
 
 async function getAuthToken() {
     return localStorage.getItem('authToken');

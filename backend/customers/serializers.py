@@ -7,7 +7,16 @@ class AddressSerializer(serializers.ModelSerializer):
         fields = ['id', 'address_line_1', 'address_line_2', 'city', 'state_province', 'postcode', 'country']
         validators = []
 
-class CustomerSerializer(serializers.ModelSerializer):
+class CustomerListSerializer(serializers.ModelSerializer):
+    """Serializer for listing customers, with a simple string for the address."""
+    primary_address = serializers.StringRelatedField(allow_null=True)
+
+    class Meta:
+        model = Customer
+        fields = ['id', 'company_name', 'primary_address', 'contact_person_name', 'audience_type']
+
+class CustomerDetailSerializer(serializers.ModelSerializer):
+    """Serializer for a single customer, with a full nested address object."""
     primary_address = AddressSerializer(allow_null=True, required=False)
 
     class Meta:
@@ -24,7 +33,6 @@ class CustomerSerializer(serializers.ModelSerializer):
         return customer
 
     def update(self, instance, validated_data):
-        # Handle nested address
         if 'primary_address' in validated_data:
             address_data = validated_data.pop('primary_address')
             if address_data:
@@ -34,9 +42,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             else:
                 instance.primary_address = None
 
-        # Update other fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-        
         instance.save()
         return instance
