@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict
-from pricing_v2.types_v2 import ProvenanceType, FeeBasis, Side, AudienceType
+from pricing_v2.types_v2 import ProvenanceType, FeeBasis, Side
 
 @dataclass
 class Provenance:
@@ -53,6 +53,5 @@ class QuoteContext:
     dest_iata: str = ""
     pieces: List[Dict] = field(default_factory=list)
     commodity: str = "GCR"
-    # The 'audience' is now part of the context, which will be
-    # automatically populated from the "Smart Address Book".
-    audience: Optional[AudienceType] = None
+    payer: Optional[Dict] = None
+    spot_offers: List[Dict] = field(default_factory=list)

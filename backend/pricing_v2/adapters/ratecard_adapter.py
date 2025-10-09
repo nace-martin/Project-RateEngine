@@ -11,7 +11,9 @@ TEST_CARDS_DIR = os.path.join(os.path.dirname(__file__), '..', 'tests')
 RATE_CARD_MAP = {
     "AUD_DESTINATION_ONLY": os.path.join(TEST_CARDS_DIR, "2025_A2D_AUD.html"),
     "PGK_DESTINATION_ONLY": os.path.join(TEST_CARDS_DIR, "2025_A2D_PGK.html"),
-    # We will add export cards here later
+    "PGK_ORIGIN_ONLY": os.path.join(TEST_CARDS_DIR, "2025_A2A_PGK.html"),
+    "PGK_DESTINATION_ONLY_COLLECT": os.path.join(TEST_CARDS_DIR, "2025_A2D_PGK_COLLECT.html"),
+    "AUD_ORIGIN_ONLY_D2A": os.path.join(TEST_CARDS_DIR, "2025_D2A_AUD_BNE_POM.html"),
 }
 
 class RatecardAdapter(BaseBuyAdapter):
@@ -23,7 +25,7 @@ class RatecardAdapter(BaseBuyAdapter):
         invoice_currency, fee_scope, reason = resolve_currency_and_fee_scope(
             scope=ctx.scope,
             payment_term=ctx.payment_term,
-            audience=ctx.audience
+            payer=ctx.payer
         )
 
         if not invoice_currency:
@@ -51,6 +53,13 @@ class RatecardAdapter(BaseBuyAdapter):
             "HANDLING": "040-61170",
             "CARTAGE": "040-61333",
             "FUEL_PCT": "040-61361",
+            "PICKUP": "010-10100",
+            "PICKUP_FUEL_PCT": "010-10101",
+            "XRAY": "010-10200",
+            "CTO": "010-10300",
+            "EXPORT_DOC": "010-10400",
+            "EXPORT_AGENCY": "010-10500",
+            "ORIGIN_AWB": "010-10600",
         }
 
         for code, item_code in FEE_CODE_MAP.items():
@@ -60,7 +69,7 @@ class RatecardAdapter(BaseBuyAdapter):
                      basis=FeeBasis(fee_data["basis"]),
                      rate=fee_data["rate"],
                      minimum=fee_data["minimum"],
-                     side=Side.DEST
+                     side=Side.DESTINATION
                  ))
 
         # For this MVP, we are focusing on A2D, so we create a simple offer.

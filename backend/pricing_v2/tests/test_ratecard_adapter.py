@@ -1,12 +1,14 @@
 import pytest
+from pricing_v2.adapters.ratecard_adapter import RatecardAdapter
+from pricing_v2.dataclasses_v2 import QuoteContext
 
 class TestRateCardAdapter:
-    @pytest.mark.xfail
-    def test_parser(self):
-        # This test will fail until the HTML parser is implemented
-        assert False
+    def test_adapter_initialization(self):
+        adapter = RatecardAdapter()
+        assert adapter.key == "ratecard"
 
-    @pytest.mark.xfail
-    def test_fee_math(self):
-        # This test will fail until the fee math is implemented
-        assert False
+    def test_collect_no_rate_card(self):
+        adapter = RatecardAdapter()
+        ctx = QuoteContext(origin_iata="XXX", dest_iata="YYY")
+        offers = adapter.collect(ctx)
+        assert offers == []

@@ -2,9 +2,9 @@ from enum import Enum
 
 class AudienceType(str, Enum):
     """Defines the business relationship for a given Organization."""
-    PNG_SHIPPER = "PNG_SHIPPER"
-    OVERSEAS_AGENT_AU = "OVERSEAS_AGENT_AU"
-    OVERSEAS_AGENT_NON_AU = "OVERSEAS_AGENT_NON_AU"
+    LOCAL_PNG_CUSTOMER = "Local PNG Customer"
+    OVERSEAS_PARTNER_AU = "Overseas Partner (AU)"
+    OVERSEAS_PARTNER_NON_AU = "Overseas Partner (Non-AU)"
 
 class ProvenanceType(Enum):
     RATE_CARD = "RATE_CARD"
@@ -12,9 +12,11 @@ class ProvenanceType(Enum):
     MANUAL = "MANUAL"
 
 class FeeBasis(Enum):
-    PER_KG = "PER_KG"
-    PER_SHIPMENT = "PER_SHIPMENT"
-    PERCENT_OF_BASE = "PERCENT_OF_BASE"
+    PER_KG = "KG"
+    PER_SHIPMENT = "AWB"
+    PERCENT_OF_BASE = "PERCENTAGE"
+    PAGE = "PAGE"
+    FLAT = "FLAT"
 
 class Side(Enum):
     ORIGIN = "ORIGIN"

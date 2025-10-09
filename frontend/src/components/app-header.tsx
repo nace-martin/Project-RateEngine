@@ -16,6 +16,7 @@ export default function AppHeader() {
           {isAuthenticated && (
             <nav className="flex items-center gap-3 text-sm">
               <Link href="/quotes" className="text-gray-700 hover:text-blue-600 font-medium">Quotes</Link>
+              <Link href="/customers" className="text-gray-700 hover:text-blue-600 font-medium">Customers</Link>
               {canSeeSettings && (
                 <Link href="/settings" className="text-gray-700 hover:text-blue-600 font-medium">System Settings</Link>
               )}

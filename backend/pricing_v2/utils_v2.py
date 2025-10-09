@@ -36,7 +36,7 @@ def parse_html_rate_card(file_path: str) -> Dict[str, Any]:
                         "description": row_data.get("item name", ""),
                         "basis": row_data.get("cost per", "FLAT").upper(),
                         "rate": float(row_data.get("pgk", row_data.get("aud", 0.0))),
-                        "minimum": float(row_data.get("min", 0.0))
+                        "minimum": float(row_data.get("min") or 0.0)
                     }
         # Check for lane table
         elif "origin" in headers and "destination" in headers:
@@ -51,7 +51,7 @@ def parse_html_rate_card(file_path: str) -> Dict[str, Any]:
                 lane = {
                     "origin": row_data.get("origin"),
                     "dest": row_data.get("destination"),
-                    "min_charge": float(row_data.get("min", 0.0)),
+                    "min_charge": float(row_data.get("min") or 0.0),
                     "breaks": []
                 }
 
