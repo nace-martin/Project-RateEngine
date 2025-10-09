@@ -12,12 +12,14 @@ export default function NewCustomerPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
     company_name: '',
-    address_line_1: '',
-    address_line_2: '',
-    city: '',
-    country: '',
-    state_province: '',
-    postcode: '',
+    primary_address: {
+      address_line_1: '',
+      address_line_2: '',
+      city: '',
+      state_province: '',
+      postcode: '',
+      country: '',
+    },
     contact_person_name: '',
     contact_person_email: '',
     contact_person_phone: '',
@@ -26,7 +28,16 @@ export default function NewCustomerPage() {
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({ ...formData, [e.target.id]: e.target.value });
+    const { id, value } = e.target;
+    if (id.startsWith('primary_address.')) {
+      const field = id.split('.')[1];
+      setFormData(prev => ({ 
+        ...prev, 
+        primary_address: { ...prev.primary_address, [field]: value } 
+      }));
+    } else {
+      setFormData({ ...formData, [id]: value });
+    }
   };
 
   const handleSelectChange = (value: string) => {
@@ -36,20 +47,27 @@ export default function NewCustomerPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const token = localStorage.getItem('authToken');
+
+    const submissionData: any = { ...formData };
+    if (submissionData.audience_type === 'LOCAL_PNG_CUSTOMER') {
+      submissionData.primary_address = null;
+    }
+
     const res = await fetch('http://127.0.0.1:8000/api/customers/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Token ${token}`,
       },
-      body: JSON.stringify(formData),
+      body: JSON.stringify(submissionData),
     });
 
     if (res.ok) {
       router.push('/customers');
     } else {
       // Handle error
-      console.error('Failed to create customer');
+      const errorData = await res.json();
+      console.error('Failed to create customer:', errorData);
     }
   };
 
@@ -89,28 +107,28 @@ export default function NewCustomerPage() {
           ) : (
             <>
               <div>
-                <Label htmlFor="address_line_1">Address Line 1</Label>
-                <Input id="address_line_1" value={formData.address_line_1} onChange={handleChange} />
+                <Label htmlFor="primary_address.address_line_1">Address Line 1</Label>
+                <Input id="primary_address.address_line_1" value={formData.primary_address.address_line_1} onChange={handleChange} />
               </div>
               <div>
-                <Label htmlFor="address_line_2">Address Line 2</Label>
-                <Input id="address_line_2" value={formData.address_line_2} onChange={handleChange} />
+                <Label htmlFor="primary_address.address_line_2">Address Line 2</Label>
+                <Input id="primary_address.address_line_2" value={formData.primary_address.address_line_2} onChange={handleChange} />
               </div>
               <div>
-                <Label htmlFor="city">City</Label>
-                <Input id="city" value={formData.city} onChange={handleChange} />
+                <Label htmlFor="primary_address.city">City</Label>
+                <Input id="primary_address.city" value={formData.primary_address.city} onChange={handleChange} />
               </div>
               <div>
-                <Label htmlFor="state_province">State / Province</Label>
-                <Input id="state_province" value={formData.state_province} onChange={handleChange} />
+                <Label htmlFor="primary_address.state_province">State / Province</Label>
+                <Input id="primary_address.state_province" value={formData.primary_address.state_province} onChange={handleChange} />
               </div>
               <div>
-                <Label htmlFor="postcode">Postcode</Label>
-                <Input id="postcode" value={formData.postcode} onChange={handleChange} />
+                <Label htmlFor="primary_address.postcode">Postcode</Label>
+                <Input id="primary_address.postcode" value={formData.primary_address.postcode} onChange={handleChange} />
               </div>
               <div>
-                <Label htmlFor="country">Country</Label>
-                <Input id="country" value={formData.country} onChange={handleChange} />
+                <Label htmlFor="primary_address.country">Country</Label>
+                <Input id="primary_address.country" value={formData.primary_address.country} onChange={handleChange} />
               </div>
             </>
           )}

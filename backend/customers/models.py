@@ -1,5 +1,19 @@
 from django.db import models
-from django.utils import timezone
+
+class Address(models.Model):
+    address_line_1 = models.CharField(max_length=255, blank=True, null=True)
+    address_line_2 = models.CharField(max_length=255, blank=True, null=True)
+    city = models.CharField(max_length=100, blank=True, null=True)
+    state_province = models.CharField(max_length=100, blank=True, null=True, verbose_name="State / Province")
+    postcode = models.CharField(max_length=20, blank=True, null=True)
+    country = models.CharField(max_length=100, blank=True, null=True)
+
+    class Meta:
+        unique_together = ('address_line_1', 'address_line_2', 'city', 'state_province', 'postcode', 'country')
+        verbose_name_plural = "Addresses"
+
+    def __str__(self):
+        return f"{self.address_line_1}, {self.city}, {self.country}"
 
 class Customer(models.Model):
     AUDIENCE_CHOICES = [
@@ -10,14 +24,9 @@ class Customer(models.Model):
 
     company_name = models.CharField(max_length=255, unique=True)
     audience_type = models.CharField(max_length=50, choices=AUDIENCE_CHOICES, default='LOCAL_PNG_CUSTOMER')
-
-    # Structured address fields (optional)
-    address_line_1 = models.CharField(max_length=255, blank=True, null=True)
-    address_line_2 = models.CharField(max_length=255, blank=True, null=True)
-    city = models.CharField(max_length=100, blank=True, null=True)
-    state_province = models.CharField(max_length=100, blank=True, null=True, verbose_name="State / Province")
-    postcode = models.CharField(max_length=20, blank=True, null=True)
-    country = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Link to the new Address model
+    primary_address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, blank=True, related_name='customers')
 
     # Flexible address field for PNG
     address_description = models.TextField(blank=True, null=True, help_text="For PNG addresses without formal structure, e.g., 'Warehouse next to the main market, Gordons'")

@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -12,11 +11,15 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
+interface Address {
+  country: string;
+}
+
 interface Customer {
   id: number;
   company_name: string;
   contact_person_name: string;
-  country: string;
+  primary_address: Address | null;
 }
 
 export default function CustomersPage() {
@@ -88,7 +91,7 @@ export default function CustomersPage() {
                   {customer.company_name}
                 </th>
                 <td className="px-6 py-4">{customer.contact_person_name}</td>
-                <td className="px-6 py-4">{customer.country}</td>
+                <td className="px-6 py-4">{customer.primary_address?.country}</td>
                 <td className="px-6 py-4 text-right">
                   <Link href={`/customers/${customer.id}/edit`}>
                     <Button variant="outline">Edit</Button>

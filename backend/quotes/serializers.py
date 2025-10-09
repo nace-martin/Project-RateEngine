@@ -5,7 +5,7 @@ from rest_framework import serializers
 
 from .models import Quotation, QuoteVersion, ShipmentPiece, Charge
 from customers.models import Customer
-from customers.serializers import CustomerSerializer
+from customers.serializers import CustomerDetailSerializer as CustomerSerializer
 
 
 # ---------- TOTALS (read-only projection from SQL VIEW) ----------
