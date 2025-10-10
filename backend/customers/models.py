@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import UniqueConstraint
 
 class Address(models.Model):
     address_line_1 = models.CharField(max_length=255, blank=True, null=True)
@@ -9,8 +10,10 @@ class Address(models.Model):
     country = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
-        unique_together = ('address_line_1', 'address_line_2', 'city', 'state_province', 'postcode', 'country')
         verbose_name_plural = "Addresses"
+        constraints = [
+            UniqueConstraint(fields=['address_line_1', 'address_line_2', 'city', 'state_province', 'postcode', 'country'], name='unique_address')
+        ]
 
     def __str__(self):
         return f"{self.address_line_1}, {self.city}, {self.country}"
