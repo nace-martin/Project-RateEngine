@@ -33,6 +33,8 @@ class RatecardAdapter(BaseBuyAdapter):
 
         # Step 2: Find the correct "Recipe Book" (the HTML rate card).
         card_key = f"{invoice_currency}_{fee_scope}"
+        if ctx.payment_term == "COLLECT" and fee_scope == "DESTINATION_ONLY":
+            card_key += "_COLLECT"
         card_path = RATE_CARD_MAP.get(card_key)
 
         if not card_path or not os.path.exists(card_path):

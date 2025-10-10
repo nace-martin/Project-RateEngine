@@ -10,7 +10,7 @@ def resolve_currency_and_fee_scope(
     The 'Rule Expert'. Determines the correct currency and fee scope based on facts.
     Returns: (invoice_currency, fee_scope, reason)
     """
-    fee_scope = "ORIGIN_ONLY" if "A2A" in scope else "DESTINATION_ONLY"
+    fee_scope = "ORIGIN_ONLY" if "A2A" in scope or "D2A" in scope else "DESTINATION_ONLY"
 
     # For Imports (A2D), the rule is simple and based on payment term
     if "A2D" in scope:

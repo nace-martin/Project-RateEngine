@@ -15,7 +15,7 @@ class SpotAdapter(BaseBuyAdapter):
             return offers
 
         for spot_offer_data in context.spot_offers:
-            lane = BuyLane(origin=context.origin, destination=context.destination)
+            lane = BuyLane(origin=context.origin_iata, dest=context.dest_iata, min_charge=spot_offer_data.get("min_charge", 0))
             fees = []
             for fee_code, rate in spot_offer_data.get("fees", {}).items():
                 # This is a simplification. A real implementation would need to know the basis for each fee.
@@ -23,20 +23,20 @@ class SpotAdapter(BaseBuyAdapter):
 
             offer = BuyOffer(
                 lane=lane,
-                currency=spot_offer_data["ccy"],
+                ccy=spot_offer_data["ccy"],
                 breaks=[
                     BuyBreak(
                         from_kg=spot_offer_data["min_kg"],
                         rate_per_kg=spot_offer_data["af_per_kg"],
                     )
                 ],
-                min_charge=spot_offer_data.get("min_charge", 0),
+
                 fees=fees,
                 valid_from=datetime.strptime(spot_offer_data["valid_from"], "%Y-%m-%d").date(),
                 valid_to=datetime.strptime(spot_offer_data["valid_to"], "%Y-%m-%d").date(),
                 provenance=Provenance(
                     type=ProvenanceType.SPOT,
-                    ref=f"Spot offer for {lane.origin}->{lane.destination}",
+                    ref=f"Spot offer for {lane.origin}->{lane.dest}",
                 ),
             )
             offers.append(offer)

@@ -1,7 +1,7 @@
 import pytest
 from pricing_v2.dataclasses_v2 import QuoteContext
 from pricing_v2.pricing_service_v2 import build_buy_menu, select_best_offer
-from pricing_v2.types_v2 import OrgType
+from pricing_v2.types_v2 import OrgType, ProvenanceType
 
 # Define which fee codes belong to which side of the journey
 ORIGIN_FEES = {"AWB", "DOC", "SCREEN", "PICKUP", "CTO_ORIGIN", "DG"}
@@ -115,7 +115,7 @@ def test_spot_adapter():
     assert offer.ccy == "USD"
     assert offer.lane.origin == "LHR"
     assert offer.lane.dest == "JFK"
-    assert offer.provenance.type == "spot"
+    assert offer.provenance.type == ProvenanceType.SPOT
     codes = _fee_codes(offer)
     assert "AWB" in codes
     assert "SCREEN" in codes

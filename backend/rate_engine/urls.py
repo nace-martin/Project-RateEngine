@@ -13,6 +13,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('api/', include('customers.urls')),
     path('api/auth/', include('accounts.urls')),
+    path('api/ratecards/', include('ratecards.urls')),
     path('api/quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
     path('api/quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
 ]

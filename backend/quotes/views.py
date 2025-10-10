@@ -111,6 +111,7 @@ class QuoteVersionCreateView(APIView):
                 ch['is_taxable'] = _c.is_taxable
                 ch['gst_percentage'] = _c.gst_percentage
 
+                print(f"Charge before create: {ch}") # DEBUG
                 Charge.objects.create(version=version, **ch)
 
         return Response(QuoteVersionSerializer(version).data, status=status.HTTP_201_CREATED)

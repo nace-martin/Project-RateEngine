@@ -23,7 +23,7 @@ class ComputeV2APITest(TestCase):
         self.manager_client.force_authenticate(self.manager_user)
 
         # Create a customer
-        self.customer = Customer.objects.create(name='Test Customer')
+        self.customer = Customer.objects.create(company_name='Test Customer')
 
         # Create stations
         self.origin = Station.objects.create(iata_code='LAE', city='Lae', country_code='PG')

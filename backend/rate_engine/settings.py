@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'core',
     'customers',
     'quotes',
+    'ratecards',
 ]
 
 MIDDLEWARE = [
