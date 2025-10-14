@@ -99,3 +99,11 @@ export interface ShipmentPiece {
  */
 export type DecimalString = string & { __decimalStringBrand: never };
 
+export interface RatecardFile {
+  id: number;
+  name: string;
+  file: string;
+  file_type: 'CSV' | 'HTML';
+  created_at: string;
+  updated_at: string;
+}
