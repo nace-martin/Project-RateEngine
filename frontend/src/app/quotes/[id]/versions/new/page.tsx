@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { listStations, createQuoteVersion } from '@/lib/api';
+import { useAuth } from '@/context/auth-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +37,8 @@ interface Charge {
 export default function NewQuoteVersionPage() {
     const params = useParams();
     const router = useRouter();
-    const { id: quotationId } = params;
+    const { token } = useAuth();
+    const quotationId = typeof params.id === 'string' ? params.id : Array.isArray(params.id) ? params.id[0] : undefined;
 
     const [stations, setStations] = useState<Station[]>([]);
     const [origin, setOrigin] = useState('');
@@ -47,16 +49,20 @@ export default function NewQuoteVersionPage() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        if (!token) {
+            return;
+        }
+        const authToken = token;
         async function fetchStations() {
             try {
-                const stationData = await listStations();
+                const stationData = await listStations(authToken);
                 setStations(stationData);
             } catch (error) {
                 setError('Failed to load stations');
             }
         }
         fetchStations();
-    }, []);
+    }, [token]);
 
     const handleAddPiece = () => {
         setPieces([...pieces, { length_cm: 0, width_cm: 0, height_cm: 0, weight_kg: 0, count: 1 }]);
@@ -82,16 +88,28 @@ export default function NewQuoteVersionPage() {
         setCharges(newCharges);
     };
 
-    const handleChargeChange = (index: number, field: keyof Charge, value: any) => {
+    const handleChargeChange = (
+        index: number,
+        field: keyof Charge,
+        value: Charge[keyof Charge]
+    ) => {
         const newCharges = [...charges];
-        newCharges[index][field] = value;
+        newCharges[index] = { ...newCharges[index], [field]: value } as Charge;
         setCharges(newCharges);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        e.preventDefault();
         setIsLoading(true);
         setError(null);
+
+        if (!token || !quotationId) {
+            setError('Authentication error. Please sign in again.');
+            setIsLoading(false);
+            return;
+        }
+        const authToken = token;
 
         const versionData = {
             origin: parseInt(origin, 10),
@@ -109,7 +127,7 @@ export default function NewQuoteVersionPage() {
         };
 
         try {
-            await createQuoteVersion(Number(quotationId), versionData);
+            await createQuoteVersion(authToken, quotationId, versionData);
             router.push(`/quotes/${quotationId}`);
         } catch (error: any) {
             setError(error.message || 'Failed to save quote version');
@@ -171,8 +189,25 @@ export default function NewQuoteVersionPage() {
                             {charges.map((charge, index) => (
                                 <div key={index} className="grid grid-cols-5 gap-2 p-2 border rounded-md">
                                     <Input placeholder="Description" value={charge.description} onChange={(e) => handleChargeChange(index, 'description', e.target.value)} required />
-                                    <Input type="number" placeholder="Unit Price" value={charge.unit_price} onChange={(e) => handleChargeChange(index, 'unit_price', e.target.value)} required />
-                                    <Select onValueChange={(value) => handleChargeChange(index, 'side', value)} value={charge.side}>
+                                    <Input
+                                        type="number"
+                                        placeholder="Unit Price"
+                                        value={charge.unit_price}
+                                        onChange={(e) =>
+                                            handleChargeChange(
+                                                index,
+                                                'unit_price',
+                                                Number(e.target.value) || 0
+                                            )
+                                        }
+                                        required
+                                    />
+                                    <Select
+                                        onValueChange={(value) =>
+                                            handleChargeChange(index, 'side', value)
+                                        }
+                                        value={charge.side}
+                                    >
                                         <SelectTrigger><SelectValue /></SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="BUY">Buy</SelectItem>

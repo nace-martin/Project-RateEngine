@@ -12,6 +12,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('api/', include('customers.urls')),
+    path('api/', include('quotes.urls')),
     path('api/auth/', include('accounts.urls')),
     path('api/ratecards/', include('ratecards.urls')),
     path('api/quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),

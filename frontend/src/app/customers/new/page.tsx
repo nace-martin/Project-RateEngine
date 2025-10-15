@@ -87,7 +87,7 @@ export default function NewCustomerPage() {
 
           <div>
             <Label htmlFor="audience_type">Audience Type</Label>
-            <Select onValueChange={handleSelectChange} defaultValue={formData.audience_type}>
+            <Select onValueChange={handleSelectChange} value={formData.audience_type}>
               <SelectTrigger id="audience_type">
                 <SelectValue placeholder="Select audience type" />
               </SelectTrigger>

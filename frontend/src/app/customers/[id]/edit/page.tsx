@@ -8,26 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/auth-context";
-import { api } from "@/lib/api";
+import { getCustomer, updateCustomer } from "@/lib/api";
+import type { Customer as CustomerType, CustomerAddress } from "@/lib/types";
 
-// Define a clear "manifest" for our data shapes
-interface Address {
-  address_line_1: string;
-  city: string;
-  state_province: string;
-  postcode: string;
-  country: string;
-}
-
-interface Customer {
-  id: number;
-  company_name: string;
-  audience_type: string;
-  primary_address: Address;
-  contact_person_name: string;
-  contact_person_email: string;
-  contact_person_phone: string;
-}
+type Customer = CustomerType & { primary_address: CustomerAddress };
 
 export default function EditCustomerPage() {
   // Use our strong types instead of 'any'
@@ -35,23 +19,23 @@ export default function EditCustomerPage() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const params = useParams();
-  const { id } = params;
+  const id = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] : undefined;
   const { token } = useAuth();
 
   useEffect(() => {
     if (id && token) {
       const fetchCustomer = async () => {
         try {
-          const response = await api.get(`/customers/${id}/`, {
-            headers: { Authorization: `Token ${token}` },
-          });
-          // Ensure primary_address is not null for the form
-          if (!response.data.primary_address) {
-            response.data.primary_address = {
-              address_line_1: "", city: "", state_province: "", postcode: "", country: "",
-            };
-          }
-          setCustomer(response.data);
+          const response = await getCustomer(token, id);
+          const primaryAddress: CustomerAddress = response.primary_address ?? {
+            address_line_1: "",
+            city: "",
+            state_province: "",
+            postcode: "",
+            country: "",
+          };
+          const normalisedCustomer: Customer = { ...response, primary_address: primaryAddress };
+          setCustomer(normalisedCustomer);
         } catch (err) {
           setError("Failed to fetch customer data.");
         }
@@ -81,15 +65,13 @@ export default function EditCustomerPage() {
     e.preventDefault();
     setError(null);
 
-    if (!token || !customer) {
+    if (!token || !customer || !id) {
       setError("Authentication error or missing customer data.");
       return;
     }
 
     try {
-      await api.put(`/customers/${id}/`, customer, {
-        headers: { Authorization: `Token ${token}` },
-      });
+      await updateCustomer(token, id, customer);
       router.push("/customers");
     } catch (err: any) {
       console.error(err);

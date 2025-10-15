@@ -1,57 +1,72 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict
-from pricing_v2.types_v2 import ProvenanceType, FeeBasis, Side
+from datetime import date
+from decimal import Decimal
+from typing import List, Optional, Dict, Any
+
+from .types_v2 import FeeBasis, Payer, PaymentTerm, ProvenanceType, Scope, Side
+
 
 @dataclass
-class Provenance:
-    type: ProvenanceType
-    ref: Optional[str] = None
-    raw_blob_hash: Optional[str] = None
+class QuoteContext:
+    """The input payload for a v2 pricing request."""
+    # customer_id will link the quote to a customer in the address book
+    customer_id: Optional[int] = None
+    origin_iata: str = "BNE"
+    dest_iata: str = "POM"
+    pieces: List[Dict[str, Any]] = field(default_factory=list)
+    scope: Scope = Scope.IMPORT_A2D
+    payer: Payer = Payer.PNG_CUSTOMER
+    payment_term: PaymentTerm = PaymentTerm.PREPAID
+    spot_offers: List[Dict[str, Any]] = field(default_factory=list)
 
-@dataclass
-class BuyFee:
-    code: str
-    basis: FeeBasis
-    rate: float
-    minimum: float = 0.0
-    depends_on: Optional[str] = None
-    side: Optional[Side] = None
-
-@dataclass
-class BuyBreak:
-    from_kg: float
-    rate_per_kg: float
 
 @dataclass
 class BuyLane:
+    """Represents the lane for a BUY offer."""
     origin: str
     dest: str
-    carrier: Optional[str] = None
-    min_charge: float = 0.0
+    min_charge: Decimal = Decimal("0.00")
+
+
+@dataclass
+class BuyBreak:
+    """Represents a single weight break in a BUY offer."""
+    from_kg: Decimal
+    rate_per_kg: Decimal
+    total: Optional[Decimal] = None
+
+
+@dataclass
+class BuyFee:
+    """Represents a single fee in a BUY offer."""
+    code: str
+    basis: FeeBasis
+    rate: Decimal
+    minimum: Decimal = Decimal("0.00")
+    maximum: Decimal = Decimal("0.00")
+    side: Side = Side.UNSPECIFIED
+
+
+@dataclass
+class Provenance:
+    """Represents the source of a BUY offer."""
+    type: ProvenanceType
+    ref: str
+
 
 @dataclass
 class BuyOffer:
+    """Represents a single, complete BUY offer from an adapter."""
     lane: BuyLane
     ccy: str
     breaks: List[BuyBreak] = field(default_factory=list)
     fees: List[BuyFee] = field(default_factory=list)
-    valid_from: Optional[str] = None
-    valid_to: Optional[str] = None
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
     provenance: Optional[Provenance] = None
-    notes: Optional[str] = None
+
 
 @dataclass
 class BuyMenu:
-    offers: List[BuyOffer] = field(default_factory=list)
-
-@dataclass
-class QuoteContext:
-    mode: str = "AIR"
-    scope: str = "A2A"
-    payment_term: str = "COLLECT"
-    origin_iata: str = ""
-    dest_iata: str = ""
-    pieces: List[Dict] = field(default_factory=list)
-    commodity: str = "GCR"
-    payer: Optional[Dict] = None
-    spot_offers: List[Dict] = field(default_factory=list)
+    """Represents a collection of BUY offers."""
+    offers: List[BuyOffer]

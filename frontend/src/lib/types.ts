@@ -1,16 +1,43 @@
 // This defines the structure of a single Client object
-export interface Client {
+export interface LoginData {
+  username: string;
+  password: string;
+}
+
+export interface User {
   id: number;
-  name: string;
-  email: string;
-  phone: string;
-  org_type: string;
-  created_at: string;
+  username: string;
+  role: string;
+}
+
+export interface CustomerAddress {
+  address_line_1: string;
+  address_line_2?: string;
+  city: string;
+  state_province: string;
+  postcode: string;
+  country: string;
+}
+
+export interface Customer {
+  id: number;
+  company_name: string;
+  audience_type: string;
+  primary_address: CustomerAddress | null;
+  contact_person_name: string;
+  contact_person_email: string;
+  contact_person_phone: string;
+  created_at?: string;
+  // Legacy fields kept optional for older screens still referencing them
+  name?: string;
+  email?: string;
+  phone?: string;
+  org_type?: string;
 }
 
 export interface Quote {
   id: number;
-  client: Client; // The related client object
+  client: Customer; // The related client object
   origin: string;
   destination: string;
   mode: string;
@@ -106,4 +133,58 @@ export interface RatecardFile {
   file_type: 'CSV' | 'HTML';
   created_at: string;
   updated_at: string;
+}
+
+export interface Piece {
+  weight_kg: number;
+  length_cm: number;
+  width_cm: number;
+  height_cm: number;
+  count?: number;
+}
+
+export interface QuoteContext {
+  customer_id?: number;
+  origin_iata: string;
+  dest_iata: string;
+  pieces: Piece[];
+}
+
+export interface QuoteVersion {
+  id: number;
+  quote: number;
+  version_number?: number;
+  origin?: number;
+  destination?: number;
+  pieces: Piece[];
+  charges: {
+    stage: string;
+    code: string;
+    description: string;
+    basis: string;
+    qty: number;
+    unit_price: number;
+    side: string;
+    currency: string;
+  }[];
+  created_at?: string;
+}
+
+// This should mirror the BuyOffer dataclass from the backend
+export interface BuyOffer {
+  lane: {
+    origin: string;
+    dest: string;
+  };
+  ccy: string;
+  breaks: {
+    from_kg: number;
+    rate_per_kg: number;
+    total?: number;
+  }[];
+  fees: {
+    code: string;
+    rate: number;
+  }[];
+  // ... any other fields you expect from the backend
 }

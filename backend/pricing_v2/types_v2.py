@@ -21,12 +21,18 @@ class FeeBasis(Enum):
 class Side(Enum):
     ORIGIN = "ORIGIN"
     DESTINATION = "DESTINATION"
+    UNSPECIFIED = "UNSPECIFIED"
 
 class PaymentTerm(Enum):
     PREPAID = "PREPAID"
     COLLECT = "COLLECT"
 
-class OrgType(str, Enum):
+class Payer(str, Enum):
     OVERSEAS_AGENT = "OVERSEAS_AGENT"
     PNG_SHIPPER = "PNG_SHIPPER"
     PNG_CUSTOMER = "PNG_CUSTOMER"
+
+class Scope(str, Enum):
+    IMPORT_A2D = "IMPORT_A2D"
+    EXPORT_D2A = "EXPORT_D2A"
+    A2A = "A2A"

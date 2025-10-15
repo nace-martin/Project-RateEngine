@@ -1,89 +1,53 @@
 import math
+from decimal import Decimal
 from typing import List, Dict, Any
-from bs4 import BeautifulSoup
 
-# A simple cache so we don't re-read files multiple times during one request
-_CARD_CACHE = {}
+# Standard IATA volumetric factor (cubic meters to kg)
+VOLUMETRIC_FACTOR = Decimal('167')
+# Alternative factor for dimensions in cm (L*W*H / 6000)
+# 1,000,000 cm^3/m^3 / 6000 = 166.666...
+# We will use the 6000 divisor for direct cm calculation.
+VOLUMETRIC_DIVISOR_CM = Decimal('6000')
 
-def parse_html_rate_card(file_path: str) -> Dict[str, Any]:
+def calculate_chargeable_weight(pieces: List[Dict[str, Any]]) -> Decimal:
     """
-    Parses a given HTML rate card file into a structured dictionary.
-    This acts as our "Reading Assistant".
+    Calculates the chargeable weight for a shipment based on its pieces.
+
+    The chargeable weight is the greater of the total actual weight and the
+    total volumetric weight.
+
+    Args:
+        pieces: A list of dictionaries, where each dictionary represents a piece
+                and must contain 'weight_kg', 'length_cm', 'width_cm',
+                and 'height_cm'.
+
+    Returns:
+        The calculated chargeable weight, rounded up to the nearest whole number.
     """
-    if file_path in _CARD_CACHE:
-        return _CARD_CACHE[file_path]
+    if not pieces:
+        return Decimal('0')
 
-    with open(file_path, 'r') as f:
-        soup = BeautifulSoup(f, 'lxml')
+    total_actual_weight = Decimal('0')
+    total_volumetric_weight = Decimal('0')
 
-    data = {"lanes": [], "fees": {}}
-    
-    for table in soup.find_all("table"):
-        headers = [th.text.strip().lower() for th in table.find_all("th")]
-        
-        # Check for fee table
-        if "item code" in headers:
-            for row in table.find("tbody").find_all("tr") if table.find("tbody") else []:
-                cells = [td.text.strip() for td in row.find_all("td")]
-                if not cells:
-                    continue
-                
-                row_data = dict(zip(headers, cells))
-                item_code = row_data.get("item code")
-                
-                if item_code:
-                    data["fees"][item_code] = {
-                        "description": row_data.get("item name", ""),
-                        "basis": row_data.get("cost per", "FLAT").upper(),
-                        "rate": float(row_data.get("pgk", row_data.get("aud", 0.0))),
-                        "minimum": float(row_data.get("min") or 0.0)
-                    }
-        # Check for lane table
-        elif "origin" in headers and "destination" in headers:
-             for row in table.find("tbody").find_all("tr") if table.find("tbody") else []:
-                cells = [td.text.strip() for td in row.find_all("td")]
-                if not cells:
-                    continue
-                
-                row_data = dict(zip(headers, cells))
-
-                # Extract lane details
-                lane = {
-                    "origin": row_data.get("origin"),
-                    "dest": row_data.get("destination"),
-                    "min_charge": float(row_data.get("min") or 0.0),
-                    "breaks": []
-                }
-
-                # Extract rate breaks
-                for header, value in row_data.items():
-                    if header.startswith('+'): # e.g. +45, +100
-                        try:
-                            from_kg = int(header[1:])
-                            rate_per_kg = float(value)
-                            lane["breaks"].append({"from_kg": from_kg, "rate_per_kg": rate_per_kg})
-                        except ValueError:
-                            continue # Ignore headers that are not valid numbers
-                
-                data["lanes"].append(lane)
-
-
-    _CARD_CACHE[file_path] = data
-    return data
-
-def chargeable_kg(pieces: List[Dict], divisor: int = 6000) -> int:
-    """
-    Air volumetric kg using cm and IATA divisor (default 6000 => ~167 kg/m³).
-    Returns CEILING to whole kg (business rule).
-    """
-    total_volume_cm3 = 0
-    total_weight_kg = 0
     for piece in pieces:
-        total_volume_cm3 += piece.get('length_cm', 0) * piece.get('width_cm', 0) * piece.get('height_cm', 0)
-        total_weight_kg += piece.get('weight_kg', 0)
+        # Ensure all required keys are present, defaulting to 0 if not
+        actual_weight = Decimal(piece.get('weight_kg', 0))
+        length = Decimal(piece.get('length_cm', 0))
+        width = Decimal(piece.get('width_cm', 0))
+        height = Decimal(piece.get('height_cm', 0))
 
-    volumetric_weight_kg = total_volume_cm3 / divisor
-    
-    chargeable_weight = max(total_weight_kg, volumetric_weight_kg)
-    
-    return math.ceil(chargeable_weight)
+        # Accumulate total actual weight
+        total_actual_weight += actual_weight
+
+        # Calculate volumetric weight for the piece and accumulate
+        # Formula: (L x W x H in cm) / 6000
+        piece_volume = length * width * height
+        piece_volumetric_weight = piece_volume / VOLUMETRIC_DIVISOR_CM
+        total_volumetric_weight += piece_volumetric_weight
+
+    # The chargeable weight is the greater of the two totals
+    chargeable_weight = max(total_actual_weight, total_volumetric_weight)
+
+    # Per freight rules, always round up to the nearest whole kilogram
+    return Decimal(math.ceil(chargeable_weight))

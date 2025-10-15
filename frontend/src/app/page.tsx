@@ -1,45 +1,67 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import { Client } from '@/lib/types';
-import { extractErrorFromResponse } from '@/lib/utils';
-import ProtectedRoute from '@/components/protected-route';
-import { useAuth } from '@/context/auth-context';
+import { useEffect, useState } from "react";
+import ProtectedRoute from "@/components/protected-route";
+import { useAuth } from "@/context/auth-context";
+import type { Customer } from "@/lib/types";
 
 export default function HomePage() {
   const { user } = useAuth();
-  const [clients, setClients] = useState<Client[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Static list of clients
-    const staticClients: Client[] = [
-      { id: 1, name: 'Test Client 1', email: 'client1@example.com', phone: '123-456-7890', org_type: 'B2B', created_at: new Date().toISOString() },
-      { id: 2, name: 'Test Client 2', email: 'client2@example.com', phone: '098-765-4321', org_type: 'B2C', created_at: new Date().toISOString() },
+    const staticCustomers: Customer[] = [
+      {
+        id: 1,
+        company_name: "Test Customer 1",
+        audience_type: "LOCAL_PNG_CUSTOMER",
+        primary_address: null,
+        contact_person_name: "Jane Doe",
+        contact_person_email: "jane@example.com",
+        contact_person_phone: "123-456-7890",
+        name: "Test Customer 1",
+        email: "jane@example.com",
+        phone: "123-456-7890",
+      },
+      {
+        id: 2,
+        company_name: "Test Customer 2",
+        audience_type: "OVERSEAS_PARTNER_AU",
+        primary_address: null,
+        contact_person_name: "John Smith",
+        contact_person_email: "john@example.com",
+        contact_person_phone: "555-0100",
+        name: "Test Customer 2",
+        email: "john@example.com",
+        phone: "555-0100",
+      },
     ];
-    setClients(staticClients);
+    setCustomers(staticCustomers);
     setLoading(false);
   }, [user]);
 
   return (
     <ProtectedRoute>
       <main className="container mx-auto p-8">
-        <h1 className="text-4xl font-bold">Clients</h1>
-        <p className="mt-2 text-lg text-gray-600">A list of clients from the database.</p>
+        <h1 className="text-4xl font-bold">Customers</h1>
+        <p className="mt-2 text-lg text-gray-600">
+          A list of customers from the database.
+        </p>
 
-        {loading && <div className="mt-6">Loading clients…</div>}
-        {error && !loading && (
-          <div className="mt-6 text-red-600">{error}</div>
-        )}
+        {loading && <div className="mt-6">Loading customers…</div>}
 
-        {!loading && !error && (
+        {!loading && (
           <div className="mt-8">
             <ul className="divide-y divide-gray-200">
-              {clients.map((client) => (
-                <li key={client.id} className="py-4">
-                  <p className="text-xl font-semibold text-gray-800">{client.name}</p>
-                  <p className="text-sm text-gray-500">{client.email}</p>
+              {customers.map((customer) => (
+                <li key={customer.id} className="py-4">
+                  <p className="text-xl font-semibold text-gray-800">
+                    {customer.company_name || customer.name}
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    {customer.contact_person_email || customer.email}
+                  </p>
                 </li>
               ))}
             </ul>

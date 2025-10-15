@@ -1,86 +1,83 @@
-import os
 from typing import List
+from decimal import Decimal
+
+# Models from our new ratecards app
+from ratecards.models import RateCardLane
+
+# Dataclasses and types for the pricing engine
 from pricing_v2.dataclasses_v2 import QuoteContext, BuyOffer, BuyLane, BuyBreak, BuyFee, Provenance
-from pricing_v2.types_v2 import FeeBasis, Side, ProvenanceType
-from pricing_v2.resolution_v2 import resolve_currency_and_fee_scope
-from pricing_v2.utils_v2 import parse_html_rate_card
+from pricing_v2.types_v2 import FeeBasis, ProvenanceType
+
+# The chargeable weight utility we just created
+from pricing_v2.utils_v2 import calculate_chargeable_weight
+
+# The base adapter class
 from .base import BaseBuyAdapter
 
-# Define where our test rate cards are located
-TEST_CARDS_DIR = os.path.join(os.path.dirname(__file__), '..', 'tests')
-RATE_CARD_MAP = {
-    "AUD_DESTINATION_ONLY": os.path.join(TEST_CARDS_DIR, "2025_A2D_AUD.html"),
-    "PGK_DESTINATION_ONLY": os.path.join(TEST_CARDS_DIR, "2025_A2D_PGK.html"),
-    "PGK_ORIGIN_ONLY": os.path.join(TEST_CARDS_DIR, "2025_A2A_PGK.html"),
-    "PGK_DESTINATION_ONLY_COLLECT": os.path.join(TEST_CARDS_DIR, "2025_A2D_PGK_COLLECT.html"),
-    "AUD_ORIGIN_ONLY_D2A": os.path.join(TEST_CARDS_DIR, "2025_D2A_AUD_BNE_POM.html"),
-}
 
 class RatecardAdapter(BaseBuyAdapter):
-    """Adapter for ingesting structured rate cards from HTML files."""
-    key = "ratecard"
+    """
+    Adapter for ingesting cost rates from the database-backed rate card system.
+    """
+    key = "ratecard_db"
 
     def collect(self, ctx: QuoteContext) -> List[BuyOffer]:
-        # Step 1: Ask the "Rule Expert" what to do.
-        invoice_currency, fee_scope, reason = resolve_currency_and_fee_scope(
-            scope=ctx.scope,
-            payment_term=ctx.payment_term,
-            payer=ctx.payer
-        )
+        # 1. Calculate chargeable weight using the utility
+        chargeable_weight = calculate_chargeable_weight(ctx.pieces)
+        if chargeable_weight <= 0:
+            return [] # No weight, no rate
 
-        if not invoice_currency:
-            return [] # Cannot determine which rate card to use.
+        # 2. Find the correct rate card lane from the database
+        try:
+            lane = RateCardLane.objects.get(
+                origin_code=ctx.origin_iata,
+                destination_code=ctx.dest_iata
+                # Note: This assumes only one active rate card per lane.
+                # A future version might need filtering by date or rate card name.
+            )
+        except RateCardLane.DoesNotExist:
+            return [] # No cost rate card found for this lane
 
-        # Step 2: Find the correct "Recipe Book" (the HTML rate card).
-        card_key = f"{invoice_currency}_{fee_scope}"
-        if ctx.payment_term == "COLLECT" and fee_scope == "DESTINATION_ONLY":
-            card_key += "_COLLECT"
-        card_path = RATE_CARD_MAP.get(card_key)
+        # 3. Find the applicable weight break for the chargeable weight
+        # We look for the highest weight break that is less than or equal to our weight.
+        rate_break = lane.breaks.filter(weight_break_kg__lte=chargeable_weight).last()
 
-        if not card_path or not os.path.exists(card_path):
-            return [] # We don't have a rate card for this scenario yet.
+        if not rate_break:
+            # No applicable weight break found (e.g., shipment is too light)
+            return []
 
-        # Step 3: Use the "Reading Assistant" to get the prices.
-        card_data = parse_html_rate_card(card_path)
+        # 4. Calculate the base freight cost
+        # The cost is the chargeable weight multiplied by the rate from the break.
+        freight_cost = chargeable_weight * rate_break.rate_per_kg
 
-        # Step 4: Construct the 'BuyOffer' (the standard digital form).
-        # This is a simplified version. A real implementation would have more complex logic
-        # for weight breaks and matching multiple fees.
-        
+        # 5. Gather all surcharges for the lane
         fees = []
-        # Map our generic fee codes to the item codes in the HTML file
-        FEE_CODE_MAP = {
-            "CLEAR": "040-61130",
-            "AGENCY": "040-61000",
-            "HANDLING": "040-61170",
-            "CARTAGE": "040-61333",
-            "FUEL_PCT": "040-61361",
-            "PICKUP": "010-10100",
-            "PICKUP_FUEL_PCT": "010-10101",
-            "XRAY": "010-10200",
-            "CTO": "010-10300",
-            "EXPORT_DOC": "010-10400",
-            "EXPORT_AGENCY": "010-10500",
-            "ORIGIN_AWB": "010-10600",
-        }
+        for surcharge in lane.surcharges.all():
+            fees.append(BuyFee(
+                code=surcharge.code,
+                basis=FeeBasis.PER_SHIPMENT, # Assuming per-shipment for now
+                rate=surcharge.rate
+            ))
 
-        for code, item_code in FEE_CODE_MAP.items():
-            if fee_data := card_data["fees"].get(item_code):
-                 fees.append(BuyFee(
-                     code=code,
-                     basis=FeeBasis(fee_data["basis"]),
-                     rate=fee_data["rate"],
-                     minimum=fee_data["minimum"],
-                     side=Side.DESTINATION
-                 ))
-
-        # For this MVP, we are focusing on A2D, so we create a simple offer.
-        # A full implementation would handle A2A with weight breaks here.
+        # 6. Construct and return the final BuyOffer
         offer = BuyOffer(
             lane=BuyLane(origin=ctx.origin_iata, dest=ctx.dest_iata),
-            ccy=invoice_currency,
+            # For now, we'll assume the currency is on the rate card file,
+            # but we'll need a way to store and retrieve this. Hardcoding PGK for now.
+            ccy="PGK",
+            breaks=[
+                BuyBreak(
+                    from_kg=chargeable_weight,
+                    rate_per_kg=rate_break.rate_per_kg,
+                    # This represents the calculated total freight cost
+                    total=freight_cost
+                )
+            ],
             fees=fees,
-            provenance=Provenance(type=ProvenanceType.RATE_CARD, ref=os.path.basename(card_path)),
+            provenance=Provenance(
+                type=ProvenanceType.RATE_CARD,
+                ref=f"db:{lane.ratecard_file.name}:lane:{lane.id}"
+            ),
         )
 
         return [offer]

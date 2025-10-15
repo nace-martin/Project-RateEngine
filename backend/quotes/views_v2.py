@@ -2,8 +2,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from ..pricing_v2.pricing_service_v2 import build_buy_menu, select_best_offer
-from ..pricing_v2.dataclasses_v2 import QuoteContext, PaymentTerm
+from pricing_v2.pricing_service_v2 import build_buy_menu, select_best_offer
+from pricing_v2.dataclasses_v2 import QuoteContext, PaymentTerm
 from datetime import datetime
 
 from .serializers_v2 import QuoteResponseSerializerSales, QuoteResponseSerializerManager
@@ -19,12 +19,8 @@ class ComputeV2(APIView):
         # into a serializer and building the QuoteContext from it.
         # Here we create a dummy context for demonstration.
         context = QuoteContext(
-            shipment_pieces=request.data.get("shipment_pieces", []),
-            audience=request.data.get("audience", ""),
+            pieces=request.data.get("pieces", []),
             payment_term=PaymentTerm(request.data.get("payment_term", "PREPAID")),
-            compute_at=datetime.now(),
-            origin=request.data.get("origin", ""),
-            destination=request.data.get("destination", ""),
             spot_offers=request.data.get("spot_offers", [])
         )
 
@@ -34,7 +30,7 @@ class ComputeV2(APIView):
             serializer = self.get_serializer_class()({"is_incomplete": True, "reason": "No BUY offers found."})
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        best_offer = select_best_offer(context, buy_menu)
+        best_offer = select_best_offer(buy_menu)
 
         # Placeholder for snapshot generation
         snapshot = {
@@ -45,6 +41,7 @@ class ComputeV2(APIView):
         }
 
         response_data = {
+            "is_incomplete": False,
             "best_buy_offer": best_offer,
             "snapshot": snapshot
         }

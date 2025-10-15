@@ -11,5 +11,6 @@ urlpatterns = [
     path('quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
     path('quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
     path('quote/compute2', ComputeV2.as_view(), name='quote-compute-v2'),
+    path('quotes/compute/v2/', ComputeV2.as_view(), name='quote-compute-v2-alias'),
 ]
 urlpatterns += router.urls

@@ -1,7 +1,8 @@
-import { LoginData, User, Customer, Quote, QuoteVersion } from './types';
+import { LoginData, User, Customer, Quote, QuoteVersion, QuoteContext, BuyOffer } from './types';
 import { RatecardFile } from './types';
 
-const API_URL = 'http://localhost:8000/api';
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000/api').replace(/\/$/, '');
+const API_URL = API_BASE;
 
 async function fetchWrapper<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, options);
@@ -102,6 +103,12 @@ export async function createQuoteVersion(token: string, quoteId: string, data: P
     });
 }
 
+export async function listStations(token: string): Promise<{ id: number; iata_code: string }[]> {
+    return fetchWrapper<{ id: number; iata_code: string }[]>(`${API_URL}/stations/`, {
+        headers: { Authorization: `Token ${token}` },
+    });
+}
+
 export async function getRateCards(token: string): Promise<RatecardFile[]> {
     return fetchWrapper<RatecardFile[]>(`${API_URL}/ratecards/ratecard-files/`, {
         headers: { Authorization: `Token ${token}` },
@@ -127,4 +134,30 @@ export async function uploadRateCard(token: string, file: File, name: string, fi
         throw new Error(errorData.detail || 'An error occurred');
     }
     return response.json();
+}
+
+/**
+ * Sends a quote request to the v2 calculation engine.
+ * @param quoteDetails - The context for the quote, including origin, destination, and pieces.
+ * @param token - The user's authentication token.
+ * @returns A Promise that resolves to the calculated BuyOffer.
+ */
+export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string): Promise<BuyOffer> {
+  const response = await fetch(`${API_URL}/quotes/compute/v2/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Token ${token}`,
+    },
+    body: JSON.stringify(quoteDetails),
+  });
+
+  if (!response.ok) {
+    // Try to parse the error response from the backend
+    const errorData = await response.json().catch(() => ({})); // Provide a fallback empty object
+    const errorMessage = errorData.error || `An error occurred: ${response.statusText}`;
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
 }
