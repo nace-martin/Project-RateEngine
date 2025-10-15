@@ -1,20 +1,20 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from quotes.views import QuotationViewSet, QuoteVersionCreateView, QuoteVersionLockView
-from core.views import StationViewSet
+# from quotes.views import QuotationViewSet, QuoteVersionCreateView, QuoteVersionLockView
+# from core.views import StationViewSet
 
 router = DefaultRouter()
-router.register(r'quotations', QuotationViewSet, basename='quotations')
-router.register(r'stations', StationViewSet, basename='stations')
+# router.register(r'quotations', QuotationViewSet, basename='quotations')
+# router.register(r'stations', StationViewSet, basename='stations')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
-    path('api/', include('customers.urls')),
+    # path('api/', include('customers.urls')),
     path('api/', include('quotes.urls')),
     path('api/auth/', include('accounts.urls')),
     path('api/ratecards/', include('ratecards.urls')),
-    path('api/quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
-    path('api/quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
+    # path('api/quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
+    # path('api/quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
 ]

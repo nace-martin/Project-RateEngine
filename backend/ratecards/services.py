@@ -1,74 +1,42 @@
-import csv
-from decimal import Decimal, InvalidOperation
-from django.db import transaction
-from .models import RateCardLane, RateBreak, Surcharge
+# backend/ratecards/services.py
 
-class RateCardParsingService:
-    """
-    A service to handle the parsing and storage of rate card files.
-    """
+from decimal import Decimal
+from .models import RateCard, RateCardBreak
 
-    def parse_and_store(self, ratecard_file_instance):
+class RateCardService:
+    """
+    A service to find the correct rate from a rate card based on weight.
+    """
+    def get_air_freight_rate(self, chargeable_kg: Decimal, origin_code: str, dest_code: str) -> dict:
         """
-        Reads a CSV file associated with a RatecardFile instance, parses its
-        contents, and populates the database with lane, break, and surcharge data.
-
-        Args:
-            ratecard_file_instance: The RatecardFile model instance to process.
+        Finds the applicable air freight rate for a given weight and lane.
         
-        This assumes the CSV has the following headers:
-        - origin_code
-        - destination_code
-        - weight_break_kg
-        - rate_per_kg
-        - surcharge_name (optional)
-        - surcharge_code (optional)
-        - surcharge_rate (optional)
+        Returns a dictionary with 'rate_per_kg', 'minimum_charge', and 'rate_break_id'.
         """
-        # Use a transaction to ensure all-or-nothing data import
-        with transaction.atomic():
-            # Clear any existing data related to this file to prevent duplicates on re-upload
-            ratecard_file_instance.lanes.all().delete()
+        # A simple implementation assuming city codes for now.
+        # This could be expanded to use country, etc.
+        try:
+            rate_card = RateCard.objects.get(
+                origin_city_code=origin_code,
+                destination_city_code=dest_code,
+                is_active=True
+            )
+        except RateCard.DoesNotExist:
+            raise ValueError(f"No active rate card found for lane {origin_code}-{dest_code}")
 
-            # Open the file from storage and read it
-            file = ratecard_file_instance.file
-            file.open(mode='r')
-            try:
-                # Assuming the file is UTF-8, decode it
-                decoded_file = (line.decode('utf-8') for line in file)
-                reader = csv.DictReader(decoded_file)
-                
-                for row in reader:
-                    # Find or create the lane for this row
-                    lane, _ = RateCardLane.objects.get_or_create(
-                        ratecard_file=ratecard_file_instance,
-                        origin_code=row['origin_code'],
-                        destination_code=row['destination_code']
-                    )
+        # Find the correct weight break. We want the highest band that is LESS than or equal to the chargeable weight.
+        rate_break = RateCardBreak.objects.filter(
+            rate_card=rate_card,
+            weight_break_kg__lte=chargeable_kg
+        ).order_by('-weight_break_kg').first()
 
-                    # Create the rate break for this lane
-                    try:
-                        RateBreak.objects.create(
-                            lane=lane,
-                            weight_break_kg=Decimal(row['weight_break_kg']),
-                            rate_per_kg=Decimal(row['rate_per_kg'])
-                        )
-                    except (InvalidOperation, KeyError):
-                        # Handle cases where rate break columns are missing or invalid
-                        # You could add more robust logging or error handling here
-                        continue
+        if not rate_break:
+            # If no specific break is found, we could fall back to a general/minimum rate
+            # For now, we'll assume a break always exists.
+            raise ValueError(f"No applicable weight break found for {chargeable_kg}kg on rate card {rate_card.id}")
 
-                    # If surcharge information exists, create the surcharge
-                    if row.get('surcharge_name') and row.get('surcharge_code') and row.get('surcharge_rate'):
-                        try:
-                            Surcharge.objects.create(
-                                lane=lane,
-                                name=row['surcharge_name'],
-                                code=row['surcharge_code'],
-                                rate=Decimal(row['surcharge_rate'])
-                            )
-                        except InvalidOperation:
-                            # Handle invalid surcharge rate
-                            continue
-            finally:
-                file.close()
+        return {
+            "rate_per_kg": rate_break.rate_per_kg,
+            "minimum_charge": rate_card.minimum_charge,
+            "rate_break_id": rate_break.id
+        }

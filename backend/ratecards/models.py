@@ -1,53 +1,49 @@
+# backend/ratecards/models.py
+
+import uuid
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
-class RatecardFile(models.Model):
-    """Represents an uploaded rate card file."""
-    file = models.FileField(upload_to='ratecards/')
-    name = models.CharField(max_length=255)
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+class RateCard(models.Model):
+    """
+    Represents an air freight rate card for a specific lane.
+    This is a cleaner, simplified model.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Using simple CharFields for city codes for now. Can be linked to core.City later.
+    origin_city_code = models.CharField(max_length=3)
+    destination_city_code = models.CharField(max_length=3)
     
-    def __str__(self):
-        return self.name
+    carrier = models.CharField(max_length=10, default="PX") # Defaulting to Air Niugini as per spec
+    minimum_charge = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default="PGK")
+    
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
 
-class RateCardLane(models.Model):
-    """
-    Represents a specific lane (origin-destination pair) within a rate card.
-    """
-    ratecard_file = models.ForeignKey(RatecardFile, related_name='lanes', on_delete=models.CASCADE)
-    origin_code = models.CharField(max_length=3, help_text="IATA code for the origin airport")
-    destination_code = models.CharField(max_length=3, help_text="IATA code for the destination airport")
+    def __str__(self):
+        return f"Rate Card {self.origin_city_code}-{self.destination_city_code} ({self.carrier})"
 
     class Meta:
-        unique_together = ('ratecard_file', 'origin_code', 'destination_code')
+        unique_together = ('origin_city_code', 'destination_city_code', 'carrier', 'effective_from')
+
+
+class RateCardBreak(models.Model):
+    """
+    Represents a single weight break line item within a RateCard.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    rate_card = models.ForeignKey(RateCard, related_name='breaks', on_delete=models.CASCADE)
+    
+    # The weight break in KG. This is the lower bound of the bracket.
+    # e.g., 100 means this rate applies to shipments >= 100kg and < next break.
+    weight_break_kg = models.DecimalField(max_digits=10, decimal_places=2)
+    rate_per_kg = models.DecimalField(max_digits=10, decimal_places=2)
 
     def __str__(self):
-        return f"{self.origin_code} -> {self.destination_code} ({self.ratecard_file.name})"
-
-class RateBreak(models.Model):
-    """
-    Stores a single weight break and its corresponding rate for a specific lane.
-    e.g., +45kg, +100kg
-    """
-    lane = models.ForeignKey(RateCardLane, related_name='breaks', on_delete=models.CASCADE)
-    weight_break_kg = models.DecimalField(max_digits=10, decimal_places=2, help_text="The minimum weight for this rate break (e.g., 45 for +45kg)")
-    rate_per_kg = models.DecimalField(max_digits=10, decimal_places=2)
+        return f"{self.rate_card}: {self.weight_break_kg}kg @ {self.rate_per_kg}/kg"
 
     class Meta:
         ordering = ['weight_break_kg']
-
-    def __str__(self):
-        return f"{self.lane}: {self.weight_break_kg}kg @ {self.rate_per_kg}/kg"
-
-class Surcharge(models.Model):
-    """
-    Stores an individual surcharge for a specific lane.
-    """
-    lane = models.ForeignKey(RateCardLane, related_name='surcharges', on_delete=models.CASCADE)
-    name = models.CharField(max_length=100, help_text="Name of the surcharge (e.g., Fuel Surcharge)")
-    code = models.CharField(max_length=20, help_text="Short code for the surcharge (e.g., FSC)")
-    rate = models.DecimalField(max_digits=10, decimal_places=2)
-    # Basis will tell us how to apply the rate, e.g., per kg, per shipment, etc.
-    # For now, we'll assume a simple flat rate per shipment. This can be expanded later.
-    
-    def __str__(self):
-        return f"{self.lane}: {self.name} ({self.code}) - {self.rate}"
+        unique_together = ('rate_card', 'weight_break_kg')

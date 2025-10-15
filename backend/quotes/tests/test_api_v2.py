@@ -1,77 +1,107 @@
-from django.test import TestCase
-from django.urls import reverse, NoReverseMatch
-from django.contrib.auth import get_user_model
+# backend/quotes/tests/test_api_v2.py
+
+import pytest
+from decimal import Decimal
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
-import datetime
 
-from quotes.models import Quotation
-from customers.models import Customer
-from core.models import Station
+from core.models import Policy, FxSnapshot, Country, City, LocalTariff, Currency
+from parties.models import Company
+from quotes.models import Quote
 
-User = get_user_model()
+@pytest.mark.django_db
+class TestCreateQuoteAPI:
+    def setup_method(self):
+        """Set up the database state for all tests in this class."""
+        self.client = APIClient()
+        self.url = "/api/v2/quotes/compute/"
 
-class ComputeV2APITest(TestCase):
-    def setUp(self):
-        # Adjust these kwargs if your CustomUser uses different field names
-        self.sales_user = User.objects.create_user(username='sales', password='password', role='sales')
-        self.manager_user = User.objects.create_user(username='manager', password='password', role='manager')
+        # --- Create necessary objects for a valid request ---
+        self.pg_currency = Currency.objects.create(code='PGK')
+        country_pg = Country.objects.create(code='PG', name='Papua New Guinea')
+        city_pom = City.objects.create(country=country_pg, name='Port Moresby')
 
-        self.sales_client = APIClient()
-        self.manager_client = APIClient()
-        self.sales_client.force_authenticate(self.sales_user)
-        self.manager_client.force_authenticate(self.manager_user)
+        self.bill_to_company = Company.objects.create(name='Test Importer Inc.')
+        self.shipper_company = Company.objects.create(name='Test Exporter Co.')
 
-        # Create a customer
-        self.customer = Customer.objects.create(company_name='Test Customer')
-
-        # Create stations
-        self.origin = Station.objects.create(iata_code='LAE', city='Lae', country_code='PG')
-        self.destination = Station.objects.create(iata_code='POM', city='Port Moresby', country_code='PG')
-
-        # Create a quotation
-        self.quotation = Quotation.objects.create(
-            reference='TEST-001',
-            customer=self.customer,
-            date=datetime.date.today(),
-            service_type='EXPORT',
-            terms='FOB',
-            scope='A2A',
-            payment_term='PREPAID'
+        Policy.objects.create(
+            name="Test API Policy",
+            caf_import_pct=Decimal("0.05"),
+            margin_pct=Decimal("0.15"),
+            effective_from=timezone.now()
         )
-        self.quote_id = self.quotation.pk
 
-        # Resolve URL once and fail loudly if route is missing
-        try:
-            self.url = reverse('quote-version-create', kwargs={'id': self.quote_id})
-        except NoReverseMatch as e:
-            self.fail(f"URL name 'quote-version-create' not found: {e}")
+        FxSnapshot.objects.create(
+            as_of_timestamp=timezone.now(),
+            source="TestBSP",
+            rates={"AUD": {"tt_buy": "2.50", "tt_sell": "2.60"}}
+        )
 
-    def test_sales_cannot_create_version(self):
-        data = {
-            "origin": self.origin.pk,
-            "destination": self.destination.pk,
-            "volumetric_weight_kg": 10.0,
-            "chargeable_weight_kg": 10.0,
-            "sell_currency": "PGK",
-            "valid_from": datetime.date.today().isoformat(),
-            "valid_to": (datetime.date.today() + datetime.timedelta(days=30)).isoformat(),
-            "pieces": []
+        LocalTariff.objects.create(
+            country=country_pg,
+            charge_code='CARTAGE',
+            description='PNG Destination Cartage',
+            basis=LocalTariff.Basis.FORMULA,
+            currency=self.pg_currency,
+            gst_rate=Decimal("0.10")
+        )
+
+    def test_create_quote_api_success(self):
+        """
+        Tests a successful quote creation through the API endpoint.
+        """
+        # --- Define the API request payload ---
+        payload = {
+            "scenario": Quote.Scenario.IMP_D2D_COLLECT,
+            "chargeable_kg": "120.00",
+            "bill_to_id": str(self.bill_to_company.id),
+            "shipper_id": str(self.shipper_company.id),
+            "consignee_id": str(self.bill_to_company.id),
+            "buy_lines": [
+                {"currency": "AUD", "amount": "1000.00", "description": "Freight"}
+            ]
         }
-        res = self.sales_client.post(self.url, data, format='json')
-        # Expect 403 if RBAC blocks sales; change to 200/201 if your policy differs
-        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN, res.content)
 
-    def test_manager_can_create_version(self):
-        data = {
-            "origin": self.origin.pk,
-            "destination": self.destination.pk,
-            "volumetric_weight_kg": 10.0,
-            "chargeable_weight_kg": 10.0,
-            "sell_currency": "PGK",
-            "valid_from": datetime.date.today().isoformat(),
-            "valid_to": (datetime.date.today() + datetime.timedelta(days=30)).isoformat(),
-            "pieces": []
+        # --- Make the POST request to our endpoint ---
+        response = self.client.post(self.url, payload, format='json')
+        print(response.json())
+
+        # --- Assert the response ---
+        assert response.status_code == status.HTTP_201_CREATED
+        
+        response_data = response.json()
+        assert 'id' in response_data
+        assert response_data['scenario'] == Quote.Scenario.IMP_D2D_COLLECT
+        
+        # --- Verify key calculation in the response ---
+        # Expected calculation:
+        # Buy: 1000 AUD * (2.50 * 1.05 CAF) = 2625.00 PGK
+        # Sell: 2625.00 * 1.15 Margin = 3018.75 PGK
+        # Cartage: 1.50 * 120 = 180.00 PGK
+        # Cartage GST: 180.00 * 0.10 = 18.00 PGK
+        # Grand Total: 3018.75 + 180.00 + 18.00 = 3216.75 PGK
+        
+        totals = response_data['totals']
+        assert Decimal(totals['grand_total_pgk']) == Decimal("3216.75")
+        assert Decimal(totals['gst_total_pgk']) == Decimal("18.00")
+        assert len(response_data['lines']) == 2 # 1 origin line, 1 destination line
+
+    def test_create_quote_api_bad_request(self):
+        """
+        Tests that the API returns a 400 Bad Request for invalid data.
+        """
+        # --- Define an invalid payload (missing chargeable_kg) ---
+        payload = {
+            "scenario": Quote.Scenario.IMP_D2D_COLLECT,
+            # "chargeable_kg": "120.00", # Missing
+            "bill_to_id": str(self.bill_to_company.id),
+            "shipper_id": str(self.shipper_company.id),
+            "consignee_id": str(self.bill_to_company.id)
         }
-        res = self.manager_client.post(self.url, data, format='json')
-        self.assertIn(res.status_code, {status.HTTP_200_OK, status.HTTP_201_CREATED}, res.content)
+
+        response = self.client.post(self.url, payload, format='json')
+
+        # --- Assert the response ---
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'chargeable_kg' in response.json() # Check for the specific error

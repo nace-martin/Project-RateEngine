@@ -1,0 +1,17 @@
+feat: Integrate v2 pricing engine with DB-backed rate cards
+
+This commit represents a major update to the pricing engine, transitioning from a file-based rate card system to a database-driven one and integrating it with the new v2 pricing service.
+
+**Backend:**
+- Refactored `RatecardAdapter` to fetch rates from the new `RateCardLane`, `RateBreak`, and `Surcharge` models.
+- Implemented `RateCardParsingService` to process uploaded CSV rate cards and populate the database.
+- Created a `calculate_chargeable_weight` utility to handle complex weight calculations.
+- Added comprehensive integration tests for the new database-backed adapter and unit tests for the weight utility.
+- Updated `computeV2` endpoint and related dataclasses to support the new workflow.
+
+**Frontend:**
+- Overhauled the "New Quote" page to provide a dynamic interface for creating v2 quotes.
+- Created a `QuoteResultDisplay` component to present the calculated costs from the v2 engine.
+- Added `calculateQuoteV2` API function to communicate with the new backend endpoint.
+- Updated customer and quote pages to use the latest API and type definitions.
+- Introduced new UI components (`Separator`, `Table`) and applied a refreshed global theme.

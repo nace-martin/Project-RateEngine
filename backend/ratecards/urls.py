@@ -1,10 +1,10 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import RatecardFileViewSet
+# backend/ratecards/urls.py
 
-router = DefaultRouter()
-router.register(r'ratecard-files', RatecardFileViewSet)
+# from django.urls import path, include
+# from rest_framework.routers import DefaultRouter
+# from .views import RatecardFileViewSet
 
-urlpatterns = [
-    path('', include(router.urls)),
-]
+# router = DefaultRouter()
+# router.register(r'files', RatecardFileViewSet)
+
+urlpatterns = [] # An empty list is required for the app to be included

@@ -1,16 +1,12 @@
+# backend/quotes/urls.py
+
 from django.urls import path
-from .views import QuoteVersionCreateView, QuoteVersionLockView, QuotationViewSet
-from rest_framework.routers import DefaultRouter
+from .views_v2 import CreateQuoteAPIViewV2 #, QuotePDFView # Add QuotePDFView
 
-router = DefaultRouter()
-router.register(r'quotations', QuotationViewSet, basename='quotations')
-
-from .views_v2 import ComputeV2
+app_name = 'quotes'
 
 urlpatterns = [
-    path('quotes/<int:id>/versions', QuoteVersionCreateView.as_view(), name='quote-version-create'),
-    path('quote-versions/<int:id>/lock', QuoteVersionLockView.as_view(), name='quote-version-lock'),
-    path('quote/compute2', ComputeV2.as_view(), name='quote-compute-v2'),
-    path('quotes/compute/v2/', ComputeV2.as_view(), name='quote-compute-v2-alias'),
+    path('v2/quotes/compute/', CreateQuoteAPIViewV2.as_view(), name='create-quote-v2'),
+    # --- ADD THIS NEW URL PATTERN ---
+    # path('v2/quotes/<uuid:quote_id>/pdf/', QuotePDFView.as_view(), name='get-quote-pdf'),
 ]
-urlpatterns += router.urls

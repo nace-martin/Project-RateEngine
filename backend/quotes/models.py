@@ -1,118 +1,112 @@
-from django.conf import settings
+# backend/quotes/models.py
+
+import uuid
 from django.db import models
-from django.core.exceptions import ValidationError
+from django.utils.translation import gettext_lazy as _
+from parties.models import Company
+from core.models import Policy, FxSnapshot
 
-class Quotation(models.Model):
-    SERVICE_TYPE_CHOICES = [('IMPORT','Import'), ('EXPORT','Export'), ('DOMESTIC','Domestic')]
-    TERMS_CHOICES = [('EXW','EXW'), ('FOB','FOB'), ('CIP','CIP'), ('CPT','CPT'), ('DAP','DAP'), ('DDP','DDP')]
-    SCOPE_CHOICES = [('D2D','Door–Door'), ('D2A','Door–Airport'), ('A2D','Airport–Door'), ('A2A','Airport–Airport')]
-    PAYMENT_TERM_CHOICES = [('PREPAID','Prepaid'), ('COLLECT','Collect')]
+class Quote(models.Model):
+    """
+    Main quote object. Stores the high-level request, links to the rulesets used,
+    and holds the final calculated totals.
+    """
+    class Scenario(models.TextChoices):
+        IMP_D2D_COLLECT = 'IMPORT_D2D_COLLECT', _('Import D2D Collect')
+        IMP_A2D_AGENT = 'IMPORT_A2D_AGENT_AUD', _('Import A2D Agent (AUD)')
+        EXP_D2A_COLLECT = 'EXPORT_D2A_COLLECT', _('Export D2A Collect')
+        EXP_D2A_PREPAID = 'EXPORT_D2A_PREPAID', _('Export D2A Prepaid')
+        EXP_D2D_COLLECT = 'EXPORT_D2D_COLLECT', _('Export D2D Collect')
+        EXP_D2D_PREPAID = 'EXPORT_D2D_PREPAID', _('Export D2D Prepaid')
 
-    reference = models.CharField(max_length=255, unique=True)
-    customer = models.ForeignKey('customers.Customer', on_delete=models.PROTECT)
-    date = models.DateField()
-    validity_days = models.PositiveIntegerField(default=7)
-    service_type = models.CharField(max_length=20, choices=SERVICE_TYPE_CHOICES)
-    terms = models.CharField(max_length=20, choices=TERMS_CHOICES)
-    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES)
-    payment_term = models.CharField(max_length=20, choices=PAYMENT_TERM_CHOICES)
-    sell_currency = models.CharField(max_length=3, default='PGK')
-    notes = models.TextField(blank=True, null=True)
-    status = models.CharField(max_length=20, default='DRAFT')
+    class Status(models.TextChoices):
+        DRAFT = 'DRAFT', _('Draft')
+        FINAL = 'FINAL', _('Finalized')
+        SENT = 'SENT', _('Sent to Customer')
+        ARCHIVED = 'ARCHIVED', _('Archived')
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    quote_number = models.CharField(max_length=50, unique=True, blank=True, help_text="Auto-generated human-readable ID.")
+    
+    # Parties involved
+    bill_to = models.ForeignKey(Company, related_name='quotes_billed', on_delete=models.SET_NULL, null=True, blank=True)
+    shipper = models.ForeignKey(Company, related_name='quotes_shipped', on_delete=models.SET_NULL, null=True, blank=True)
+    consignee = models.ForeignKey(Company, related_name='quotes_consigned', on_delete=models.SET_NULL, null=True, blank=True)
+
+    # Auditability Links
+    policy = models.ForeignKey(Policy, on_delete=models.PROTECT, help_text="The exact policy version used for this quote.")
+    fx_snapshot = models.ForeignKey(FxSnapshot, on_delete=models.PROTECT, help_text="The exact FX snapshot used for this quote.")
+    
+    # Core Request & Response
+    scenario = models.CharField(max_length=50, choices=Scenario.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    request_details = models.JSONField(help_text="Original request payload from the user.")
+    
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['customer', '-created_at']),
-        ]
-
+    
     def __str__(self):
-        return self.reference
-
-class QuoteVersion(models.Model):
-    quotation = models.ForeignKey(Quotation, on_delete=models.CASCADE, related_name='versions')
-    version_no = models.PositiveIntegerField()
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
-    locked_at = models.DateTimeField(null=True, blank=True)
-    origin = models.ForeignKey('core.Station', on_delete=models.PROTECT, related_name='+')
-    destination = models.ForeignKey('core.Station', on_delete=models.PROTECT, related_name='+')
-    volumetric_divisor = models.PositiveIntegerField(default=6000)
-    volumetric_weight_kg = models.DecimalField(max_digits=10, decimal_places=3)
-    chargeable_weight_kg = models.DecimalField(max_digits=10, decimal_places=3)
-    carrier_code = models.CharField(max_length=3, blank=True, null=True)
-    service_level = models.CharField(max_length=50, blank=True, null=True)
-    transit_time_days = models.PositiveIntegerField(blank=True, null=True)
-    routing_details = models.TextField(blank=True, null=True)
-    fx_snapshot = models.JSONField(default=dict)
-    policy_snapshot = models.JSONField(default=dict)
-    rate_provenance = models.JSONField(default=dict)
-    sell_currency = models.CharField(max_length=3)
-    valid_from = models.DateField()
-    valid_to = models.DateField()
-    calc_version = models.CharField(max_length=32, default='qe-0.1')
-    created_at = models.DateTimeField(auto_now_add=True)
-    idempotency_key = models.CharField(max_length=64, null=True, blank=True, unique=True)
-
-    class Meta:
-        unique_together = [('quotation','version_no')]
-        indexes = [
-            models.Index(fields=['quotation', '-version_no']),
-            models.Index(fields=['origin', 'destination', '-created_at']),
-        ]
-        ordering = ['-version_no']
-
-    @property
-    def is_locked(self) -> bool:
-        return self.locked_at is not None
-
-    def __str__(self):
-        return f"{self.quotation.reference} v{self.version_no}"
-
-class ShipmentPiece(models.Model):
-    version = models.ForeignKey(QuoteVersion, on_delete=models.CASCADE, related_name='pieces')
-    length_cm = models.PositiveIntegerField()
-    width_cm  = models.PositiveIntegerField()
-    height_cm = models.PositiveIntegerField()
-    weight_kg = models.DecimalField(max_digits=10, decimal_places=3)
-    count = models.PositiveIntegerField(default=1)
-    description = models.CharField(max_length=255, blank=True, null=True)
+        return self.quote_number
 
     def save(self, *args, **kwargs):
-        if self.pk and self.version.is_locked:
-            raise ValidationError("This quote version is locked and cannot be modified.")
-        if not self.pk and self.version.is_locked:
-            raise ValidationError("This quote version is locked and cannot accept new pieces.")
-        return super().save(*args, **kwargs)
+        if not self.quote_number:
+            # A simple sequence for human-readable IDs. Could be more robust.
+            last_quote = Quote.objects.all().order_by('created_at').last()
+            last_id = int(last_quote.quote_number.split('-')[1]) if last_quote else 1000
+            self.quote_number = f"QT-{last_id + 1}"
+        super().save(*args, **kwargs)
 
-class Charge(models.Model):
-    STAGE = [('ORIGIN','Origin'), ('AIR','Air'), ('DESTINATION','Destination')]
-    BASIS = [('PER_KG','Per Kg'), ('FLAT','Flat'), ('PERCENT','Percent')]
-    SIDE  = [('BUY','Buy'), ('SELL','Sell')]
 
-    version = models.ForeignKey(QuoteVersion, on_delete=models.CASCADE, related_name='charges')
-    stage = models.CharField(max_length=12, choices=STAGE)
-    code = models.CharField(max_length=20, blank=True, null=True)
+class QuoteLine(models.Model):
+    """
+    A single, auditable line item within a quote. This replaces the old QuoteCharge model.
+    It stores not just the result, but how we got there.
+    """
+    class Section(models.TextChoices):
+        ORIGIN = 'ORIGIN', _('Origin')
+        FREIGHT = 'FREIGHT', _('Freight')
+        DESTINATION = 'DESTINATION', _('Destination')
+        INFO_ONLY = 'INFO_ONLY', _('Informational Only')
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    quote = models.ForeignKey(Quote, related_name='lines', on_delete=models.CASCADE)
+    section = models.CharField(max_length=20, choices=Section.choices)
+    charge_code = models.CharField(max_length=50, help_text="e.g., 'FREIGHT', 'CARTAGE', 'AW'")
     description = models.CharField(max_length=255)
-    basis = models.CharField(max_length=10, choices=BASIS, default='FLAT')
-    qty = models.DecimalField(max_digits=18, decimal_places=3, default=1)
-    unit_price = models.DecimalField(max_digits=18, decimal_places=4, default=0)
-    extended_price = models.DecimalField(max_digits=18, decimal_places=2)
-    side = models.CharField(max_length=5, choices=SIDE, default='SELL')
-    is_taxable = models.BooleanField(default=True)
-    min_charge_applied = models.BooleanField(default=False)
-    gst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=10.0)
-    currency = models.CharField(max_length=3, default='PGK')
-    source_ref = models.CharField(max_length=64, blank=True, null=True)
+    
+    # Calculation Inputs
+    basis = models.CharField(max_length=50) # e.g., 'PER_KG', 'FLAT', '120.0 kg @ 5.60/kg'
+    quantity = models.DecimalField(max_digits=10, decimal_places=2)
+    rate = models.DecimalField(max_digits=12, decimal_places=4)
+    currency = models.CharField(max_length=3)
+    
+    # Calculation Outputs
+    buy_amount_native = models.DecimalField(max_digits=12, decimal_places=2)
+    sell_amount_pgk = models.DecimalField(max_digits=12, decimal_places=2)
+    gst_amount_pgk = models.DecimalField(max_digits=12, decimal_places=2, default=0.0)
+    
+    # Audit Flags & Data
+    caf_applied_pct = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    margin_applied_pct = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    rounding_applied = models.BooleanField(default=False)
+    source_references = models.JSONField(help_text="Links to source tables, e.g., {'surcharge_id': '...', 'ratecard_break_id': '...'}")
 
-    class Meta:
-        indexes = [
-            models.Index(fields=['version', 'side', 'stage']),
-        ]
+    def __str__(self):
+        return f"{self.quote.quote_number} - {self.description}"
 
-    def save(self, *args, **kwargs):
-        if self.pk and self.version.is_locked:
-            raise ValidationError("This quote version is locked and cannot be modified.")
-        if not self.pk and self.version.is_locked:
-            raise ValidationError("This quote version is locked and cannot accept new lines.")
-        return super().save(*args, **kwargs)
+
+class QuoteTotal(models.Model):
+    """
+    Final totals for the quote. Stored separately for clarity.
+    """
+    quote = models.OneToOneField(Quote, primary_key=True, related_name='totals', on_delete=models.CASCADE)
+    subtotal_pgk = models.DecimalField(max_digits=12, decimal_places=2)
+    gst_total_pgk = models.DecimalField(max_digits=12, decimal_places=2)
+    grand_total_pgk = models.DecimalField(max_digits=12, decimal_places=2)
+    output_currency = models.CharField(max_length=3, default='PGK') # For agent quotes in AUD
+    grand_total_output_currency = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Totals for {self.quote.quote_number}"

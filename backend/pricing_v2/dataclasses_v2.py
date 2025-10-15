@@ -1,9 +1,33 @@
+# backend/pricing_v2/dataclasses_v2.py
+
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 
+from core.models import Policy, FxSnapshot
+from parties.models import Company
+
 from .types_v2 import FeeBasis, Payer, PaymentTerm, ProvenanceType, Scope, Side
+
+
+@dataclass
+class QuoteRequest:
+    """
+    A structured data object representing a validated and enriched quote request,
+    ready for use by the pricing service.
+    """
+    scenario: str
+    policy: Policy
+    fx_snapshot: FxSnapshot
+    bill_to: Company
+    shipper: Company
+    consignee: Company
+    chargeable_kg: Decimal
+    buy_lines: List[Dict[str, Any]]
+    origin_code: Optional[str] = None
+    destination_code: Optional[str] = None
+    agent_dest_lines_aud: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

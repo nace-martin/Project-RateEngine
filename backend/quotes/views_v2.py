@@ -1,50 +1,70 @@
+# backend/quotes/views_v2.py
+
+from django.http import HttpResponse
+from django.template.loader import render_to_string
+from django.views import View
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+# import weasyprint
 
-from pricing_v2.pricing_service_v2 import build_buy_menu, select_best_offer
-from pricing_v2.dataclasses_v2 import QuoteContext, PaymentTerm
-from datetime import datetime
+from pricing_v2.pricing_service_v2 import PricingServiceV2
+from .models import Quote # Make sure Quote is imported
+from .serializers_v2 import QuoteCreateSerializerV2, QuoteResponseSerializerV2
 
-from .serializers_v2 import QuoteResponseSerializerSales, QuoteResponseSerializerManager
-
-class ComputeV2(APIView):
-    def get_serializer_class(self):
-        if self.request.user.groups.filter(name='Sales').exists():
-            return QuoteResponseSerializerSales
-        return QuoteResponseSerializerManager
-
+class CreateQuoteAPIViewV2(APIView):
+    """
+    The main V2 endpoint for computing and creating a new quote.
+    """
+    
     def post(self, request, *args, **kwargs):
-        # A real implementation would involve deserializing the request data
-        # into a serializer and building the QuoteContext from it.
-        # Here we create a dummy context for demonstration.
-        context = QuoteContext(
-            pieces=request.data.get("pieces", []),
-            payment_term=PaymentTerm(request.data.get("payment_term", "PREPAID")),
-            spot_offers=request.data.get("spot_offers", [])
-        )
+        # 1. Validate the incoming request data
+        serializer = QuoteCreateSerializerV2(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        validated_data = serializer.validated_data
+        
+        try:
+            # 2. Instantiate and call our pricing service
+            service = PricingServiceV2()
+            new_quote = service.create_quote(validated_data)
+            
+            # 3. Format the response using our response serializer
+            response_serializer = QuoteResponseSerializerV2(new_quote)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except NotImplementedError as e:
+            return Response({"error": str(e)}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        except Exception as e:
+            # Generic error handler for now
+            return Response({"error": f"An unexpected error occurred: {repr(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        buy_menu = build_buy_menu(context)
-
-        if not buy_menu.offers:
-            serializer = self.get_serializer_class()({"is_incomplete": True, "reason": "No BUY offers found."})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        best_offer = select_best_offer(buy_menu)
-
-        # Placeholder for snapshot generation
-        snapshot = {
-            "selection_rationale": "Placeholder: No selection rationale implemented yet.",
-            "included_fees": [],
-            "skipped_fees_with_reasons": [],
-            "phase_timings_ms": {},
-        }
-
-        response_data = {
-            "is_incomplete": False,
-            "best_buy_offer": best_offer,
-            "snapshot": snapshot
-        }
-
-        serializer = self.get_serializer_class()(response_data)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+# class QuotePDFView(View):
+#     def get(self, request, quote_id):
+#         """
+#         Generates and returns a PDF document for a given quote.
+#         """
+#         try:
+#             quote = Quote.objects.get(pk=quote_id)
+#         except Quote.DoesNotExist:
+#             return HttpResponse("Quote not found", status=404)
+# 
+#         # Prepare the context data for the template
+#         context = {
+#             'quote': quote,
+#             'lines': quote.lines.all().order_by('section'),
+#             'totals': quote.totals,
+#         }
+# 
+#         # Render the HTML template
+#         html_string = render_to_string('quotes/pdf_template.html', context)
+# 
+#         # Generate the PDF
+#         pdf_file = weasyprint.HTML(string=html_string).write_pdf()
+# 
+#         # Create the HTTP response to trigger a download
+#         response = HttpResponse(pdf_file, content_type='application/pdf')
+#         response['Content-Disposition'] = f'attachment; filename="Quote-{quote.quote_number}.pdf"'
+# 
+#         return response
