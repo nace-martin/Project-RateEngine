@@ -1,8 +1,8 @@
 import { LoginData, User, Customer, Quote, QuoteVersion, QuoteContext, BuyOffer } from './types';
 import { RatecardFile } from './types';
+import { API_BASE_URL } from './config';
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000/api').replace(/\/$/, '');
-const API_URL = API_BASE;
+const API_URL = API_BASE_URL;
 
 async function fetchWrapper<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, options);
@@ -160,4 +160,35 @@ export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string
   }
 
   return response.json();
+}
+
+/**
+ * Creates a new quote using the V2 pricing engine.
+ * @param quoteRequest The data for the new quote.
+ * @returns The newly created quote object from the backend.
+ */
+export async function createQuoteV2(quoteRequest: any): Promise<any> {
+  try {
+    const response = await fetch(`${API_URL}/v2/quotes/compute/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // If you have authentication, the token would go here
+        // 'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(quoteRequest),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({})); // Attempt to parse, fallback to empty object
+      const errorMessage = errorData.detail || errorData.error || JSON.stringify(errorData);
+      console.error("API Error:", errorData);
+      throw new Error(`Failed to create quote: ${errorMessage}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error creating V2 quote:', error);
+    throw error;
+  }
 }

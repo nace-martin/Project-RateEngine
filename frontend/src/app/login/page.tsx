@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { extractErrorFromResponse } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
+import { API_BASE_URL } from '@/lib/config';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -20,7 +21,7 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      const apiBase = API_BASE_URL;
       const response = await fetch(`${apiBase}/auth/login/`, {
         method: 'POST',
         headers: {

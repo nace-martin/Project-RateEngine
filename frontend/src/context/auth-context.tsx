@@ -22,11 +22,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log("Auth provider useEffect running");
     const storedToken = localStorage.getItem('authToken');
     const role = localStorage.getItem('userRole');
     const username = localStorage.getItem('username');
     
+    console.log("Stored Token:", storedToken);
+
     if (storedToken && role && username) {
+      console.log("Token and user info found, setting user.");
       setUser({ username, role });
       setToken(storedToken);
     }

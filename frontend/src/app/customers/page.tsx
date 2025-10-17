@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { API_BASE_URL } from '@/lib/config';
 
 interface Address {
   country: string;
@@ -24,22 +25,37 @@ interface Customer {
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const getCustomers = async () => {
-      const token = localStorage.getItem('authToken');
-      const res = await fetch('http://127.0.0.1:8000/api/customers/', {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${token}`,
-        },
-      });
-      if (!res.ok) {
-        console.error('Failed to fetch customers');
-        return;
+      try {
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          setError('You must be logged in to view customers.');
+          return;
+        }
+
+        const res = await fetch(`${API_BASE_URL}/customers/`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Token ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          console.error('Failed to fetch customers', res.status);
+          setError('Failed to fetch customers.');
+          return;
+        }
+
+        const data = await res.json();
+        setCustomers(data);
+        setError(null);
+      } catch (err) {
+        console.error('Failed to fetch customers', err);
+        setError('Failed to fetch customers.');
       }
-      const data = await res.json();
-      setCustomers(data);
     };
 
     getCustomers();
@@ -61,6 +77,7 @@ export default function CustomersPage() {
         </div>
       </CardHeader>
       <CardContent>
+        {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
         <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
           <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
             <tr>

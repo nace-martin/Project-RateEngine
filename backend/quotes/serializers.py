@@ -1,84 +1,92 @@
-from __future__ import annotations
-from decimal import Decimal
-from django.db import connection
+import json
+from typing import Any, Dict
 from rest_framework import serializers
-
-from .models import Quotation, QuoteVersion, ShipmentPiece, Charge
-from customers.models import Customer
-from customers.serializers import CustomerDetailSerializer as CustomerSerializer
+from .models import Quote
 
 
-# ---------- TOTALS (read-only projection from SQL VIEW) ----------
-class QuoteVersionTotalsSerializer(serializers.Serializer):
-    sell_origin     = serializers.DecimalField(max_digits=18, decimal_places=2)
-    sell_air        = serializers.DecimalField(max_digits=18, decimal_places=2)
-    sell_destination= serializers.DecimalField(max_digits=18, decimal_places=2)
-    sell_total      = serializers.DecimalField(max_digits=18, decimal_places=2)
-    buy_total       = serializers.DecimalField(max_digits=18, decimal_places=2)
-    tax_total       = serializers.DecimalField(max_digits=18, decimal_places=2)
-    grand_total     = serializers.DecimalField(max_digits=18, decimal_places=2)
-    margin_abs      = serializers.DecimalField(max_digits=18, decimal_places=2)
-    margin_pct      = serializers.DecimalField(max_digits=6,  decimal_places=2)
+class QuoteLegacyListSerializer(serializers.ModelSerializer):
+    """
+    Shapes the modern Quote model so the legacy frontend screens keep working.
+    """
 
-
-# ---------- NESTED WRITE/READ SERIALIZERS ----------
-class ShipmentPieceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ShipmentPiece
-        exclude = ("version",)
-
-class ChargeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Charge
-        exclude = ("version",)
-
-
-# ---------- VERSION SERIALIZER (write nested, read totals) ----------
-class QuoteVersionSerializer(serializers.ModelSerializer):
-    pieces = ShipmentPieceSerializer(many=True, read_only=True)
-    charges = ChargeSerializer(many=True, read_only=True)
-    totals = serializers.SerializerMethodField(read_only=True)
+    client = serializers.SerializerMethodField()
+    origin = serializers.SerializerMethodField()
+    destination = serializers.SerializerMethodField()
+    mode = serializers.SerializerMethodField()
+    chargeable_weight_kg = serializers.SerializerMethodField()
+    base_cost = serializers.SerializerMethodField()
+    total_sell = serializers.SerializerMethodField()
 
     class Meta:
-        model = QuoteVersion
-        fields = [
-            "id", "quotation", "version_no",
-            "created_by", "locked_at",
-            "origin", "destination",
-            "volumetric_divisor", "volumetric_weight_kg", "chargeable_weight_kg",
-            "carrier_code", "service_level", "transit_time_days", "routing_details",
-            "fx_snapshot", "policy_snapshot", "rate_provenance",
-            "sell_currency", "valid_from", "valid_to",
-            "calc_version", "created_at",
-            "pieces", "charges", "totals",
-            "idempotency_key",   # optional, keep if you want to see it in responses
-        ]
-        # 👇 critical: we set quotation (and others) as read-only so the serializer
-        # doesn't demand them in the POST payload you validate before create().
-        read_only_fields = ("quotation", "version_no", "created_at", "locked_at", "created_by", "idempotency_key")
+        model = Quote
+        fields = (
+            "id",
+            "client",
+            "origin",
+            "destination",
+            "mode",
+            "status",
+            "chargeable_weight_kg",
+            "base_cost",
+            "total_sell",
+            "created_at",
+        )
 
-    def get_totals(self, obj):
-        # Pull from the SQL view quotes_quoteversion_totals
-        with connection.cursor() as cur:
-            cur.execute("""
-                SELECT sell_origin, sell_air, sell_destination, sell_total,
-                       buy_total, tax_total, grand_total, margin_abs, margin_pct
-                FROM quotes_quoteversion_totals WHERE quote_version_id=%s
-            """, [obj.id])
-            row = cur.fetchone()
-            if not row:
-                return None
-            keys = ["sell_origin","sell_air","sell_destination","sell_total",
-                    "buy_total","tax_total","grand_total","margin_abs","margin_pct"]
-            return dict(zip(keys, row))
+    # --- Helpers -----------------------------------------------------------------
+    def _request_details(self, obj: Quote) -> Dict[str, Any]:
+        data = obj.request_details
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                return {}
+        return data or {}
 
+    # --- Field serializers -------------------------------------------------------
+    def get_client(self, obj: Quote) -> Dict[str, Any]:
+        company = obj.bill_to
+        if not company:
+            return {
+                "id": None,
+                "name": "Unknown",
+                "company_name": "Unknown",
+            }
+        return {
+            "id": str(company.id),
+            "name": company.name,
+            "company_name": company.name,
+        }
 
-# ---------- QUOTATION SERIALIZER (read with nested versions) ----------
-class QuotationSerializer(serializers.ModelSerializer):
-    versions = QuoteVersionSerializer(many=True, read_only=True)
-    client = CustomerSerializer(source='customer', read_only=True)
-    customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), write_only=True)
+    def get_origin(self, obj: Quote) -> str:
+        details = self._request_details(obj)
+        return details.get("origin_code") or details.get("origin_iata") or ""
 
-    class Meta:
-        model = Quotation
-        fields = [f.name for f in Quotation._meta.fields] + ['versions', 'client']
+    def get_destination(self, obj: Quote) -> str:
+        details = self._request_details(obj)
+        return details.get("destination_code") or details.get("dest_iata") or ""
+
+    def get_mode(self, obj: Quote) -> str:
+        details = self._request_details(obj)
+        return details.get("mode") or "AIR"
+
+    def get_chargeable_weight_kg(self, obj: Quote) -> str:
+        details = self._request_details(obj)
+        value = details.get("chargeable_kg") or details.get("chargeable_weight_kg")
+        return str(value) if value is not None else ""
+
+    def get_base_cost(self, obj: Quote) -> str:
+        totals = getattr(obj, "totals", None)
+        if not totals or totals.subtotal_pgk is None:
+            return "0"
+        return str(totals.subtotal_pgk)
+
+    def get_total_sell(self, obj: Quote) -> str:
+        totals = getattr(obj, "totals", None)
+        if not totals:
+            return "0"
+        # Prefer the output currency total if present (v2 agent quotes), else PGK grand total.
+        if totals.grand_total_output_currency is not None:
+            return str(totals.grand_total_output_currency)
+        if totals.grand_total_pgk is not None:
+            return str(totals.grand_total_pgk)
+        return "0"

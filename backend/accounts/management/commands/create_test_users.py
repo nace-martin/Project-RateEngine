@@ -44,6 +44,30 @@ class Command(BaseCommand):
                 self.style.SUCCESS(f"Successfully created {user_data['role']} user: {user.username}")
             )
 
+        # Ensure a default admin user exists for local development convenience
+        admin_username = 'admin'
+        admin_password = 'admin'
+        admin_defaults = {
+            'email': 'admin@example.com',
+            'role': 'manager',
+            'is_staff': True,
+            'is_superuser': True,
+        }
+
+        if CustomUser.objects.filter(username=admin_username).exists():
+            self.stdout.write(
+                self.style.WARNING(f"User {admin_username} already exists")
+            )
+        else:
+            CustomUser.objects.create_superuser(
+                username=admin_username,
+                password=admin_password,
+                **admin_defaults,
+            )
+            self.stdout.write(
+                self.style.SUCCESS(f"Successfully created admin user: {admin_username}/{admin_password}")
+            )
+
         self.stdout.write(
             self.style.SUCCESS("All test users created successfully!")
         )

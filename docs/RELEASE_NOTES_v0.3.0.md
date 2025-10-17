@@ -22,7 +22,7 @@ Backend
 
 Frontend
 
-- Compute call updated to use `${NEXT_PUBLIC_API_BASE}/quote/compute` with `NEXT_PUBLIC_API_BASE` including `/api`.
+- Compute call updated to use `${NEXT_PUBLIC_API_BASE_URL}/quote/compute` with `NEXT_PUBLIC_API_BASE_URL` including `/api`.
 
 Testing
 
@@ -37,7 +37,7 @@ Migrations
 Upgrade Guide
 
 - Backend: set `DATABASE_URL` (Postgres), run `migrate`, and use `POST /api/quote/compute`.
-- Frontend: set `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000/api` and rebuild.
+- Frontend: set `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000/api` and rebuild.
 
 Smoke Test
 

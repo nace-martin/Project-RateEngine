@@ -25,6 +25,9 @@ class TestCreateQuoteAPI:
         self.bill_to_company = Company.objects.create(name='Test Importer Inc.')
         self.shipper_company = Company.objects.create(name='Test Exporter Co.')
 
+        print(f"Bill To ID: {self.bill_to_company.id}")
+        print(f"Shipper ID: {self.shipper_company.id}")
+
         Policy.objects.create(
             name="Test API Policy",
             caf_import_pct=Decimal("0.05"),

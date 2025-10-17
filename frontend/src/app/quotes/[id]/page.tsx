@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
 import ProtectedRoute from '@/components/protected-route';
 import { extractErrorFromResponse } from '@/lib/utils';
+import { API_BASE_URL } from '@/lib/config';
 
 interface QuoteDetail {
   id: number;
@@ -44,9 +45,8 @@ export default function QuoteDetailPage() {
     const fetchQuote = async () => {
       if (!routeId || !user) return;
 
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      const apiBase = API_BASE_URL;
       const token = localStorage.getItem('authToken');
-      if (!apiBase) throw new Error('API base URL is not configured');
 
       try {
         setLoading(true);

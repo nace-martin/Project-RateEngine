@@ -81,7 +81,7 @@ To run locally, use two terminals.
    npm run dev
    ```
    Frontend runs at http://localhost:3000.
-   If needed, copy `frontend/.env.local.example` to `frontend/.env.local` to set `NEXT_PUBLIC_API_BASE`.
+   If needed, copy `frontend/.env.local.example` to `frontend/.env.local` to set `NEXT_PUBLIC_API_BASE_URL`.
 
 ## Verify Backend & CORS
 

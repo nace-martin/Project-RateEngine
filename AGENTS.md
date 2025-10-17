@@ -1,40 +1,36 @@
 # Repository Guidelines
 
+Keep this quick reference close when contributing; it captures how the RateEngine repository is organized and how we expect work to flow.
+
 ## Project Structure & Module Organization
-- `backend/`: Django 5 project `rate_engine` (settings only) with apps `accounts`, `core`, `pricing`, and `quotes`. Core pricing logic lives in `backend/pricing/services/pricing_service.py`; URLs in `backend/rate_engine/urls.py`.
-- `frontend/`: Next.js (TypeScript + Tailwind) UI. Static assets in `frontend/public/`.
-- `docs/`: Design notes and RFCs. `scripts/`: local utilities.
-- Tests: Backend tests live in each app’s `tests.py`; frontend tests are co‑located per component when present.
+- `backend/`: Django 5 project `rate_engine` with apps `accounts`, `core`, `pricing`, and `quotes`. Pricing logic concentrates in `backend/pricing/services/pricing_service.py`; entry URLs live in `backend/rate_engine/urls.py`.
+- `frontend/`: Next.js (TypeScript + Tailwind) app. Public assets sit in `frontend/public/`; shared UI primitives belong under `frontend/src/components/`.
+- `docs/` collects RFCs and design notes; `scripts/` holds local automation. Use these directories before adding new tooling.
+- Tests reside beside their domain: each Django app has a `tests.py`; React components keep colocated test files when present.
 
 ## Build, Test, and Development Commands
-Backend (run inside `backend/`):
-- Create venv: Windows `python -m venv .venv && . .venv/Scripts/activate`; Unix `python -m venv .venv && source .venv/bin/activate`.
-- Install deps: `pip install -r requirements.txt`.
-- Configure DB (required Postgres): Windows `set DATABASE_URL=postgres://...`; Unix `export DATABASE_URL=postgres://...`.
-- Migrate/seed: `python manage.py migrate`; optional `python manage.py create_test_users`.
-- Run API: `python manage.py runserver`.
-- Smoke login: `curl -X POST http://127.0.0.1:8000/api/auth/login/ -H "Content-Type: application/json" -d '{"username":"sales_user","password":"sales_password"}'`.
-
-Frontend (run inside `frontend/`):
-- Install: `npm install`. Dev server: `npm run dev` (expects backend at `http://127.0.0.1:8000`).
+- **Backend setup** (run inside `backend/`): `python -m venv .venv && . .venv/Scripts/activate` (Windows) or `source .venv/bin/activate` (Unix), then `pip install -r requirements.txt`.
+- **Database config**: export `DATABASE_URL=postgres://...` before running migrations or server processes.
+- **Run API**: `python manage.py migrate`, optional `python manage.py create_test_users`, then `python manage.py runserver`.
+- **Smoke login**: `curl -X POST http://127.0.0.1:8000/api/auth/login/ ...` verifies auth wiring.
+- **Frontend setup** (inside `frontend/`): `npm install`, then `npm run dev` (expects API at `http://127.0.0.1:8000`).
 
 ## Coding Style & Naming Conventions
-- Python: PEP 8; modules/files `snake_case`; explicit, descriptive names.
-- Django: Keep views/serializers within app packages; endpoints under `api/` (no version prefix); descriptive URL names.
-- TypeScript/React: Components `PascalCase`; hooks/utils `camelCase`; keep files small. ESLint at `frontend/eslint.config.mjs`; Tailwind utility-first styling.
+- Follow PEP 8 with descriptive `snake_case` modules, class-based views, and `api/` URL namespaces; add comments sparingly for non-obvious logic.
+- TypeScript uses ESLint via `frontend/eslint.config.mjs` and Prettier defaults; components use `PascalCase`, hooks/utilities `camelCase`, Tailwind utilities first.
+- Keep files focused; extract shared logic to `core` services or `frontend/src/lib/`.
 
 ## Testing Guidelines
-- Backend: Write `TestCase` classes in each app’s `tests.py`. Run with `python manage.py test`.
-- Frontend: Add deterministic, co‑located tests per component when meaningful.
-- Aim for fast, isolated unit tests; mock external services.
+- Django tests inherit from `TestCase` or `APITestCase` in each app’s `tests.py`; run `python manage.py test` before submitting backend work.
+- Frontend tests live beside components; prefer deterministic React Testing Library specs and mock network calls.
+- Target fast, isolated coverage and document any meaningful gaps in the PR description.
 
 ## Commit & Pull Request Guidelines
-- Commits: Imperative, present tense with scope, e.g., `feat(accounts): add token login`.
-- PRs: Describe intent, key changes, tests, and migrations; link issues. Include screenshots for UI changes.
+- Commits use imperative, scope-prefixed messages (e.g., `feat(pricing): add tier lookup`). Avoid batching unrelated changes.
+- PRs summarize intent, key changes, tests executed, migrations, and linked issues; add UI screenshots or recordings when frontend behavior shifts.
+- Request review only after CI and linting pass; flag follow-up tasks explicitly if deferring work.
 
 ## Security & Configuration Tips
-- Auth: DRF TokenAuth; only login/register are open. Use `Authorization: Token <token>` for protected endpoints.
-- CORS: Allowed for `localhost:3000` by default; set `ALLOWED_HOSTS` appropriately outside dev.
-- Database: Postgres via `DATABASE_URL` is required; do not commit secrets.
-
-
+- Auth relies on DRF TokenAuth; restrict non-auth endpoints and send `Authorization: Token <token>` for protected routes.
+- Keep `ALLOWED_HOSTS` tuned per environment and never commit secrets or real database URLs.
+- Postgres is mandatory via `DATABASE_URL`; update `.env.example` if configuration changes are required.

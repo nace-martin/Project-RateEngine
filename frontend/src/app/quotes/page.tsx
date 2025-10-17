@@ -6,6 +6,7 @@ import { useAuth } from '@/context/auth-context';
 import ProtectedRoute from '@/components/protected-route';
 import { useState, useEffect } from 'react';
 import { extractErrorFromResponse } from '@/lib/utils';
+import { API_BASE_URL } from '@/lib/config';
 
 export default function QuotesListPage() {
   const { user } = useAuth();
@@ -27,17 +28,13 @@ export default function QuotesListPage() {
       
       try {
         setLoading(true);
-        const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+        const apiBase = API_BASE_URL;
         const token = localStorage.getItem('authToken');
         
-        if (!apiBase) {
-          throw new Error('API configuration error');
-        }
-
         const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
         if (statusFilter) params.set('status', statusFilter);
 
-        const res = await fetch(`${apiBase}/quotations/?${params.toString()}`, {
+        const res = await fetch(`${apiBase}/v2/quotes/?${params.toString()}`, {
           headers: {
             'Authorization': `Token ${token}`,
             'Content-Type': 'application/json',
