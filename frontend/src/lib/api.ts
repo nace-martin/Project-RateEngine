@@ -192,3 +192,35 @@ export async function createQuoteV2(quoteRequest: any): Promise<any> {
     throw error;
   }
 }
+
+/**
+ * Fetches a single quote by its ID from the V2 endpoint.
+ * @param quoteId The ID of the quote to fetch.
+ * @returns The quote object.
+ */
+export async function getQuoteV2(quoteId: string): Promise<any> {
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (!apiBaseUrl) {
+    throw new Error("API base URL is not configured");
+  }
+
+  try {
+    const response = await fetch(`${apiBaseUrl}/v2/quotes/${quoteId}/`, {
+      headers: {
+        'Content-Type': 'application/json',
+        // Add Authorization header if needed
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("API Error fetching quote:", errorData);
+      throw new Error(`Failed to fetch quote: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching V2 quote:', error);
+    throw error;
+  }
+}

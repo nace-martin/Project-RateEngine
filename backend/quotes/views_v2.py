@@ -68,3 +68,17 @@ class CreateQuoteAPIViewV2(APIView):
 #         response['Content-Disposition'] = f'attachment; filename="Quote-{quote.quote_number}.pdf"'
 # 
 #         return response
+
+class GetQuoteAPIViewV2(APIView):
+    """
+    Retrieves a single quote by its ID.
+    """
+    def get(self, request, quote_id, *args, **kwargs):
+        try:
+            quote = Quote.objects.get(id=quote_id)
+            serializer = QuoteResponseSerializerV2(quote)
+            return Response(serializer.data)
+        except Quote.DoesNotExist:
+            return Response({"error": "Quote not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"An unexpected error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
