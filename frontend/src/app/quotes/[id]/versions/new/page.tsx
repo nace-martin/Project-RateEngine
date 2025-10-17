@@ -58,6 +58,7 @@ export default function NewQuoteVersionPage() {
                 const stationData = await listStations(authToken);
                 setStations(stationData);
             } catch (error) {
+                console.error('Failed to load stations', error);
                 setError('Failed to load stations');
             }
         }
@@ -73,9 +74,11 @@ export default function NewQuoteVersionPage() {
         setPieces(newPieces);
     };
 
-    const handlePieceChange = (index: number, field: keyof Piece, value: any) => {
+    const handlePieceChange = (index: number, field: keyof Piece, value: string) => {
+        const numericValue = Number(value);
+        const safeValue = Number.isNaN(numericValue) ? 0 : numericValue;
         const newPieces = [...pieces];
-        newPieces[index][field] = value;
+        newPieces[index] = { ...newPieces[index], [field]: safeValue };
         setPieces(newPieces);
     };
 
@@ -99,7 +102,6 @@ export default function NewQuoteVersionPage() {
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
         e.preventDefault();
         setIsLoading(true);
         setError(null);
@@ -129,8 +131,13 @@ export default function NewQuoteVersionPage() {
         try {
             await createQuoteVersion(authToken, quotationId, versionData);
             router.push(`/quotes/${quotationId}`);
-        } catch (error: any) {
-            setError(error.message || 'Failed to save quote version');
+        } catch (error) {
+            console.error('Failed to save quote version', error);
+            if (error instanceof Error) {
+                setError(error.message || 'Failed to save quote version');
+            } else {
+                setError('Failed to save quote version');
+            }
         } finally {
             setIsLoading(false);
         }

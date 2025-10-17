@@ -1,5 +1,16 @@
-import { LoginData, User, Customer, Quote, QuoteVersion, QuoteContext, BuyOffer } from './types';
-import { RatecardFile } from './types';
+import {
+  LoginData,
+  User,
+  Customer,
+  Quote,
+  QuoteVersion,
+  QuoteContext,
+  BuyOffer,
+  RatecardFile,
+  CompanySearchResult,
+  QuoteV2Request,
+  QuoteV2Response,
+} from './types';
 import { API_BASE_URL } from './config';
 
 const API_URL = API_BASE_URL;
@@ -10,7 +21,7 @@ async function fetchWrapper<T>(url: string, options: RequestInit = {}): Promise<
     const errorData = await response.json();
     throw new Error(errorData.detail || 'An error occurred');
   }
-  return response.json();
+  return response.json() as Promise<BuyOffer>;
 }
 
 export async function login(data: LoginData): Promise<{ token: string }> {
@@ -153,9 +164,10 @@ export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string
   });
 
   if (!response.ok) {
-    // Try to parse the error response from the backend
-    const errorData = await response.json().catch(() => ({})); // Provide a fallback empty object
-    const errorMessage = errorData.error || `An error occurred: ${response.statusText}`;
+    const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const errorMessage =
+      (typeof errorData.error === 'string' && errorData.error) ||
+      `An error occurred: ${response.statusText}`;
     throw new Error(errorMessage);
   }
 
@@ -167,7 +179,7 @@ export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string
  * @param quoteRequest The data for the new quote.
  * @returns The newly created quote object from the backend.
  */
-export async function createQuoteV2(quoteRequest: any): Promise<any> {
+export async function createQuoteV2(quoteRequest: QuoteV2Request): Promise<QuoteV2Response> {
   try {
     const response = await fetch(`${API_URL}/v2/quotes/compute/`, {
       method: 'POST',
@@ -180,16 +192,58 @@ export async function createQuoteV2(quoteRequest: any): Promise<any> {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({})); // Attempt to parse, fallback to empty object
-      const errorMessage = errorData.detail || errorData.error || JSON.stringify(errorData);
-      console.error("API Error:", errorData);
+      const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      const errorMessage =
+        (typeof errorData === 'object' && errorData !== null && 'detail' in errorData
+          ? String((errorData as Record<string, unknown>).detail)
+          : undefined) ||
+        (typeof errorData === 'object' && errorData !== null && 'error' in errorData
+          ? String((errorData as Record<string, unknown>).error)
+          : undefined) ||
+        JSON.stringify(errorData);
+      console.error('API Error:', errorData);
       throw new Error(`Failed to create quote: ${errorMessage}`);
     }
 
-    return await response.json();
+    return (await response.json()) as QuoteV2Response;
   } catch (error) {
     console.error('Error creating V2 quote:', error);
-    throw error;
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Error creating V2 quote');
+  }
+}
+
+/**
+ * Searches for companies by name.
+ * @param query The search term.
+ * @returns A list of matching companies.
+ */
+export async function searchCompanies(query: string, signal?: AbortSignal): Promise<CompanySearchResult[]> {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery.length < 2) {
+    return [];
+  }
+
+  if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
+    throw new Error('API base URL is not configured');
+  }
+
+  const params = new URLSearchParams({ q: trimmedQuery });
+
+  try {
+    const response = await fetch(`${API_URL}/v2/parties/search/?${params.toString()}`, { signal });
+    if (!response.ok) {
+      throw new Error('Failed to search companies');
+    }
+    return (await response.json()) as CompanySearchResult[];
+  } catch (error) {
+    console.error('Error searching companies:', error);
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Error searching companies');
   }
 }
 
@@ -198,7 +252,7 @@ export async function createQuoteV2(quoteRequest: any): Promise<any> {
  * @param quoteId The ID of the quote to fetch.
  * @returns The quote object.
  */
-export async function getQuoteV2(quoteId: string): Promise<any> {
+export async function getQuoteV2(quoteId: string): Promise<QuoteV2Response> {
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!apiBaseUrl) {
     throw new Error("API base URL is not configured");
@@ -213,14 +267,17 @@ export async function getQuoteV2(quoteId: string): Promise<any> {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error("API Error fetching quote:", errorData);
+      const errorData = (await response.json()) as Record<string, unknown>;
+      console.error('API Error fetching quote:', errorData);
       throw new Error(`Failed to fetch quote: ${response.statusText}`);
     }
 
-    return await response.json();
+    return (await response.json()) as QuoteV2Response;
   } catch (error) {
     console.error('Error fetching V2 quote:', error);
-    throw error;
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Error fetching V2 quote');
   }
 }

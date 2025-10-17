@@ -125,7 +125,7 @@ export default function QuotesListPage() {
             <select
               className="border rounded px-2 py-1 text-sm"
               value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value as any); setPage(1); }}
+              onChange={(e) => { setStatusFilter(e.target.value as QuoteStatus); setPage(1); }}
             >
               <option value="">All</option>
               <option value={QuoteStatus.PENDING_RATE}>Pending Rate</option>

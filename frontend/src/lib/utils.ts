@@ -13,7 +13,7 @@ export async function extractErrorFromResponse(response: Response, defaultMessag
   try {
     const errorData = await response.json();
     return errorData.detail || errorData.error || defaultMessage;
-  } catch (e) {
+  } catch {
     return defaultMessage;
   }
 }

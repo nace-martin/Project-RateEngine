@@ -35,6 +35,56 @@ export interface Customer {
   org_type?: string;
 }
 
+export interface CompanySearchResult {
+  id: string;
+  name: string;
+}
+
+export interface QuoteV2LineRequest {
+  currency: string;
+  amount: string;
+  description: string;
+}
+
+export interface QuoteV2AgentLineRequest {
+  amount: string;
+  description: string;
+}
+
+export interface QuoteV2Request {
+  scenario: string;
+  chargeable_kg: string;
+  bill_to_id: string;
+  shipper_id: string;
+  consignee_id: string;
+  origin_code: string;
+  destination_code: string;
+  buy_lines: QuoteV2LineRequest[];
+  agent_dest_lines_aud: QuoteV2AgentLineRequest[];
+}
+
+export interface QuoteV2Totals {
+  grand_total_pgk?: number;
+  [key: string]: unknown;
+}
+
+export interface QuoteV2Line {
+  section?: string;
+  description?: string;
+  sell_amount_pgk?: number | string;
+  [key: string]: unknown;
+}
+
+export interface QuoteV2Response {
+  id: string | number;
+  quote_number?: string;
+  totals?: QuoteV2Totals;
+  scenario?: string;
+  status?: string;
+  lines?: QuoteV2Line[];
+  [key: string]: unknown;
+}
+
 export interface Quote {
   id: number;
   client: Customer; // The related client object

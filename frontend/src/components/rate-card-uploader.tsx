@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { uploadRateCard, getRateCards } from '@/lib/api';
 import { RatecardFile } from '@/lib/types';
@@ -13,21 +13,29 @@ export default function RateCardUploader() {
   const [file, setFile] = useState<File | null>(null);
   const [rateCards, setRateCards] = useState<RatecardFile[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const fetchRateCards = async () => {
+  const fetchRateCards = useCallback(async () => {
     if (token) {
+      setIsLoading(true);
       try {
         const data = await getRateCards(token);
         setRateCards(data);
       } catch (err) {
-        setError('Failed to fetch rate cards');
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('Failed to fetch rate cards');
+        }
+      } finally {
+        setIsLoading(false);
       }
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     fetchRateCards();
-  }, [token]);
+  }, [fetchRateCards]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -53,7 +61,7 @@ export default function RateCardUploader() {
       setFile(null);
       fetchRateCards(); // Refresh the list after upload
       setError(null)
-    } catch (err) {
+    } catch {
       setError('Failed to upload file');
     }
   };
@@ -71,13 +79,17 @@ export default function RateCardUploader() {
             </form>
 
             <h3 className="text-lg font-semibold mt-6">Uploaded Rate Cards</h3>
-            <ul className="space-y-2 mt-4">
-            {rateCards.map((rateCard) => (
-                <li key={rateCard.id} className="border p-2 rounded-md">
-                {rateCard.name} ({rateCard.file_type})
-                </li>
-            ))}
-            </ul>
+            {isLoading ? (
+              <p>Loading rate cards...</p>
+            ) : (
+              <ul className="space-y-2 mt-4">
+              {rateCards.map((rateCard) => (
+                  <li key={rateCard.id} className="border p-2 rounded-md">
+                  {rateCard.name} ({rateCard.file_type})
+                  </li>
+              ))}
+              </ul>
+            )}
         </CardContent>
     </Card>
 

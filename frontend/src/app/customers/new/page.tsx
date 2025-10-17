@@ -8,6 +8,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+type CustomerFormData = {
+  company_name: string;
+  primary_address: {
+    address_line_1: string;
+    address_line_2: string;
+    city: string;
+    state_province: string;
+    postcode: string;
+    country: string;
+  };
+  contact_person_name: string;
+  contact_person_email: string;
+  contact_person_phone: string;
+  audience_type: string;
+  address_description: string;
+};
+
+type CustomerSubmissionData = Omit<CustomerFormData, 'primary_address'> & {
+  primary_address: CustomerFormData['primary_address'] | null;
+};
+
 export default function NewCustomerPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
@@ -48,10 +69,11 @@ export default function NewCustomerPage() {
     e.preventDefault();
     const token = localStorage.getItem('authToken');
 
-    const submissionData: any = { ...formData };
-    if (submissionData.audience_type === 'LOCAL_PNG_CUSTOMER') {
-      submissionData.primary_address = null;
-    }
+    const submissionData: CustomerSubmissionData = {
+      ...formData,
+      primary_address:
+        formData.audience_type === 'LOCAL_PNG_CUSTOMER' ? null : formData.primary_address,
+    };
 
     const res = await fetch('http://127.0.0.1:8000/api/customers/', {
       method: 'POST',

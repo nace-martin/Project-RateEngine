@@ -40,7 +40,7 @@ export default function LoginPage() {
         const message = await extractErrorFromResponse(response, 'Login failed');
         setError(message);
       }
-    } catch (err) {
+    } catch {
       setError('An error occurred during login');
     } finally {
       setLoading(false);
