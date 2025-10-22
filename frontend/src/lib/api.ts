@@ -281,3 +281,30 @@ export async function getQuoteV2(quoteId: string): Promise<QuoteV2Response> {
     throw new Error('Error fetching V2 quote');
   }
 }
+
+/**
+ * Fetches contacts for a specific company ID.
+ * @param companyId The UUID of the company.
+ * @returns A list of contacts.
+ */
+export async function getCompanyContacts(companyId: string): Promise<{ id: string; first_name: string; last_name: string; email: string }[]> {
+  if (!companyId) return []; // Don't fetch if no company ID
+
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (!apiBaseUrl) {
+    throw new Error("API base URL is not configured");
+  }
+
+  try {
+    const response = await fetch(`${apiBaseUrl}/v2/parties/companies/${companyId}/contacts/`);
+    if (!response.ok) {
+      // Handle 404 specifically if needed, otherwise generic error
+      throw new Error("Failed to fetch contacts for the company");
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching company contacts:', error);
+    // Return empty array on error to avoid breaking the UI
+    return []; 
+  }
+}

@@ -13,6 +13,14 @@ const PieceSchema = z.object({
   weight: z.coerce.number().positive("Weight must be positive"),
 });
 
+// --- NEW: Schema for a single charge line ---
+const ChargeLineSchema = z.object({
+  description: z.string().min(1, "Description is required."),
+  currency: z.string().length(3, "Currency must be 3 letters."), // Could refine with z.enum later
+  amount: z.coerce.number().positive("Amount must be positive."),
+});
+// ---
+
 // --- Mode-Specific Schemas ---
 
 const AirModeSchema = z.object({
@@ -26,20 +34,22 @@ const AirModeSchema = z.object({
   bill_to_id: PartySchema,
   shipper_id: PartySchema,
   consignee_id: PartySchema,
+  contact_id: z.string().uuid().optional(), // Optional contact associated with Bill To
   origin_code: z.string().length(3, "Origin must be a 3-letter code").toUpperCase(),
   destination_code: z.string().length(3, "Destination must be a 3-letter code").toUpperCase(),
   pieces: z.array(PieceSchema).min(1, "At least one piece is required."),
-  // Add fields for DG, Door Pickup toggles later
-  // dangerousGoods: z.boolean().optional(),
-  // doorPickup: z.boolean().optional(),
+  
+  // --- ADD THESE FIELDS ---
+  buy_lines: z.array(ChargeLineSchema).optional(), // Origin/Freight charges
+  agent_dest_lines_aud: z.array(ChargeLineSchema).optional(), // Destination charges (AUD for exports)
+  // ---
 });
 
 // --- Discriminated Union ---
-// This allows us to add SEA, CUSTOMS later
 export const QuoteFormSchema = z.discriminatedUnion("mode", [
   AirModeSchema,
-  // z.object({ mode: z.literal("SEA"), ... }), // Example for later
-  // z.object({ mode: z.literal("CUSTOMS"), ... }), // Example for later
+  // z.object({ mode: z.literal("SEA"), ... }),
+  // z.object({ mode: z.literal("CUSTOMS"), ... }), 
 ]);
 
 // Infer the TypeScript type from the schema
