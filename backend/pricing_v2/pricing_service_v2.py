@@ -1,371 +1,518 @@
-# backend/pricing_v2/pricing_service_v2.py
+# backend/pricing_v2/pricing_service_v3.py # Conceptually V3
+# (Rename the file later if desired, update imports elsewhere accordingly)
 
-import math
 import json
-from datetime import datetime, date
-from decimal import Decimal
-import uuid
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.utils import timezone
 from django.db import transaction
+from django.core.exceptions import ObjectDoesNotExist
 
-from core.models import FxSnapshot, Policy, Surcharge, LocalTariff
-from parties.models import Company
-from quotes.models import Quote, QuoteLine, QuoteTotal
-# NOTE: We will create this dataclass in the next step.
-from .dataclasses_v2 import QuoteRequest
+# V3 Models
+from core.models import FxSnapshot, Policy, Surcharge, LocalTariff, Currency, Airport, Port
+from parties.models import Company, Contact, CustomerCommercialProfile
+from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion, OverrideNote
+from services.models import ServiceComponent, IncotermRule
 
-# A comprehensive helper for JSON serialization
-def json_serializer_default(obj):
-    if isinstance(obj, (datetime, date)):
-        return obj.isoformat()
+# V3 Dataclasses (We'll define these)
+from .dataclasses_v3 import V3QuoteRequest, CalculationContext, ServiceCostLine
+
+# V2 RateCard service (reusable for FRT_AIR)
+from ratecards.services import RateCardService
+
+# --- Helper Functions ---
+def decimal_default(obj):
     if isinstance(obj, Decimal):
-        return float(obj)
-    if isinstance(obj, uuid.UUID):
-        return str(obj)
+        return float(obj) # Or str(obj) if exact precision needed in JSON
     raise TypeError
 
-class PricingServiceV2:
+def get_exchange_rate(fx_snapshot: FxSnapshot, from_currency: str, to_currency: str) -> Decimal | None:
+    """Helper to get a specific rate from the snapshot JSON."""
+    if from_currency == to_currency:
+        return Decimal("1.0")
+    
+    rates_data = fx_snapshot.rates
+    
+    # Try direct PGK -> FCY (using TT Sell as per V2 logic for output)
+    if from_currency == 'PGK' and to_currency != 'PGK':
+        rate_info = rates_data.get(to_currency)
+        if rate_info and rate_info.get('tt_sell'):
+            # Assuming rate is stored as PGK per 1 FCY (e.g., AUD: 2.60)
+            # To get FCY per 1 PGK, we need 1 / rate
+            return Decimal("1.0") / Decimal(rate_info['tt_sell'])
+            
+    # Try FCY -> PGK (using TT Buy as per V2 logic for input)
+    elif from_currency != 'PGK' and to_currency == 'PGK':
+         rate_info = rates_data.get(from_currency)
+         if rate_info and rate_info.get('tt_buy'):
+             # Assuming rate is stored as PGK per 1 FCY (e.g., AUD: 2.50)
+             return Decimal(rate_info['tt_buy']) # PGK per 1 FCY
+
+    # Add logic for FCY -> FCY if needed (e.g., via PGK)
+    
+    print(f"Warning: Exchange rate not found for {from_currency} -> {to_currency}")
+    return None
+
+# --- Main Service ---
+class PricingServiceV3:
     """
-    A stateless service that calculates quotes based on a request object
-    and the rules stored in the database.
+    V3 Pricing Engine: Customer-first, Incoterm-driven, Multi-currency.
     """
 
     @transaction.atomic
-    def create_quote(self, request_data: dict) -> Quote:
-        """
-        Main entry point for creating a quote. It orchestrates the entire process
-        from validation to calculation and database persistence.
-        """
-        # 1. Prepare the Quote Request and find the correct rules
-        quote_request = self._prepare_quote_request(request_data)
-        
-        # 2. Create the main Quote object with audit links
-        quote = Quote.objects.create(
-            scenario=quote_request.scenario,
-            bill_to=quote_request.bill_to,
-            shipper=quote_request.shipper,
-            consignee=quote_request.consignee,
-            policy=quote_request.policy,
-            fx_snapshot=quote_request.fx_snapshot,
-            request_details=json.dumps(request_data, default=json_serializer_default)
-        )
+    def create_quote(self, request_data: dict, user) -> Quote:
+        """ Main entry point - passes buy_lines to cost calculation """
+        context = self._prepare_calculation_context(request_data, user)
+        required_services = self._get_required_services(context)
 
-        # 3. Route to the correct calculation method based on scenario
-        if quote_request.scenario == Quote.Scenario.IMP_D2D_COLLECT:
-            self._calculate_import_d2d_collect(quote, quote_request)
-        elif quote_request.scenario == Quote.Scenario.EXP_D2D_PREPAID:
-            self._calculate_export_d2d_prepaid(quote, quote_request)
-        elif quote_request.scenario == Quote.Scenario.IMP_A2D_AGENT:
-            self._calculate_import_a2d_agent(quote, quote_request)
-        else:
-            raise NotImplementedError(f"Scenario {quote_request.scenario} is not yet implemented.")
-            
+        # --- PASS USER BUY LINES ---
+        user_buy_lines = request_data.get('buy_lines', []) # Get buy lines from original request
+        cost_lines_pgk = self._calculate_costs_pgk(context, required_services, user_buy_lines)
+        # ---
+
+        sell_lines_pgk = self._apply_margin_pgk(context, cost_lines_pgk)
+        # Check for incompleteness *before* final conversion
+        if any(line.is_incomplete for line in sell_lines_pgk):
+            print("Quote calculation incomplete due to missing costs.")
+            # How to handle? Save as DRAFT/INCOMPLETE? Raise specific exception?
+            # For now, let's save but maybe set status differently
+            # We'll refine this when adding RecoverableMissingRate exception
+
+        sell_lines_output_currency, totals = self._convert_to_output_currency(context, sell_lines_pgk)
+        quote = self._save_quote_v3(context, request_data, user, sell_lines_output_currency, totals)
+
+        # Update status if incomplete
+        if any(line.is_incomplete for line in sell_lines_pgk):
+             quote.status = Quote.Status.INCOMPLETE
+             quote.save(update_fields=['status'])
+             # TODO: Add reason/notes about incompleteness
+
         return quote
 
-    def _prepare_quote_request(self, request_data: dict) -> QuoteRequest:
+    # ... (_prepare_calculation_context is fine) ...
+    # ... (_get_required_services is fine) ...
+
+    # --- MODIFY THIS METHOD ---
+    def _calculate_costs_pgk(self, context: CalculationContext, services: list[ServiceComponent], user_buy_lines: list[dict]) -> list[ServiceCostLine]:
         """
-        Validates the raw request and enriches it with the necessary database
-        objects (Policy, FxSnapshot, Parties) for calculation.
+        Calculates PGK costs, now handling FCY inputs based on service.cost_currency_type.
         """
-        # Resolve Policy
-        policy_id = request_data.get("policy_id", "current")
-        if policy_id == "current":
-            policy = Policy.objects.filter(is_active=True, effective_from__lte=timezone.now()).latest('effective_from')
+        cost_lines: list[ServiceCostLine] = []
+        missing_rate_found = False
+
+        print(f"\nCalculating PGK costs for {len(services)} services...")
+
+        for service in services:
+            cost_pgk = Decimal("0.0")
+            rate_source_info = f"Base ({service.base_pgk_cost} PGK / {service.unit})"
+            is_incomplete = False
+
+            # --- NEW: Check Currency Type First ---
+            if service.cost_currency_type == 'FCY':
+                # --- Handle FCY Cost Input ---
+                print(f"  - Service {service.code} requires FCY input.")
+                found_input = None
+                # Try to find matching input (simple match on code or description for now)
+                # More robust matching might be needed
+                for line_input in user_buy_lines:
+                    # Prioritize matching service code if provided in input, else description
+                    input_code = line_input.get('charge_code') or line_input.get('code')
+                    input_desc = line_input.get('description','').lower()
+                    service_desc = service.description.lower()
+
+                    if input_code == service.code or service.code in input_desc or service_desc in input_desc :
+                         found_input = line_input
+                         print(f"    - Found matching user input: {found_input}")
+                         break # Take the first match
+
+                if found_input:
+                    try:
+                        fcy_amount = Decimal(found_input['amount'])
+                        fcy_currency = found_input['currency'].upper()
+
+                        if fcy_currency == 'PGK':
+                            # User entered PGK for an FCY expected cost - treat as direct PGK cost? Or error?
+                            cost_pgk = fcy_amount
+                            rate_source_info = f"User Input (PGK): {fcy_amount:.2f} PGK"
+                            print(f"    - Warning: Received PGK input for expected FCY service {service.code}. Using PGK value directly.")
+                        else:
+                            # Get TT Buy rate and CAF from snapshot
+                            tt_buy_rate = get_exchange_rate(context.fx_snapshot, fcy_currency, 'PGK') # FCY -> PGK
+                            caf_pct = context.fx_snapshot.caf_percent # Use CAF from snapshot
+
+                            if tt_buy_rate is None:
+                                print(f"    - ERROR: Missing TT Buy rate for {fcy_currency} -> PGK in snapshot.")
+                                is_incomplete = True
+                                missing_rate_found = True
+                                rate_source_info = f"ERROR: Missing TT Buy rate for {fcy_currency}"
+                            else:
+                                # Apply CAF (FCY -> PGK uses +CAF)
+                                fx_caf_rate = tt_buy_rate * (Decimal("1.0") + caf_pct)
+                                cost_pgk = fcy_amount * fx_caf_rate
+
+                                rate_source_info = (
+                                    f"User Input: {fcy_amount:.2f} {fcy_currency} "
+                                    f"-> TT Buy {tt_buy_rate} * (1+{caf_pct:.2%}) = {fx_caf_rate:.4f} "
+                                    f"-> {cost_pgk:.2f} PGK"
+                                )
+                                print(f"    - Calculated Cost: {cost_pgk:.2f} PGK")
+
+                    except (KeyError, ValueError, TypeError) as e:
+                        print(f"    - ERROR: Invalid user input format: {found_input} - {e}")
+                        is_incomplete = True
+                        missing_rate_found = True
+                        rate_source_info = f"ERROR: Invalid input line format - {e}"
+                else:
+                    # Required FCY input was NOT provided
+                    print(f"    - ERROR: Required FCY cost input for {service.code} not found in user_buy_lines.")
+                    is_incomplete = True
+                    missing_rate_found = True
+                    rate_source_info = "ERROR: Required foreign cost input missing"
+
+            elif service.cost_currency_type == 'PGK':
+                # --- Handle PGK Cost Calculation (Existing Logic) ---
+                print(f"  - Service {service.code} uses PGK logic.")
+
+                # Rate Card Lookup (e.g., for FRT_AIR Export)
+                if service.code == 'FRT_AIR' and service.unit == 'KG' and context.request.shipment_type == 'EXPORT':
+                     try:
+                         # ... (RateCardService lookup as before) ...
+                         rate_card_service = RateCardService()
+                         rate_info = rate_card_service.get_air_freight_rate(context.chargeable_kg, context.request.origin_code, context.request.destination_code)
+                         calculated_freight = context.chargeable_kg * rate_info['rate_per_kg']
+                         cost_pgk = max(rate_info['minimum_charge'], calculated_freight)
+                         # ... (rate_source_info update) ...
+                     except ValueError as e:
+                         print(f"    - RATE MISSING (RateCard Export) for {service.code}: {e}")
+                         is_incomplete = True; missing_rate_found = True
+                         rate_source_info = f"ERROR: {e}"
+
+                # Per KG charges
+                elif service.unit == 'KG':
+                    # ... (Per KG logic as before, including min charge) ...
+                     cost_pgk = service.base_pgk_cost * context.chargeable_kg
+                     rate_source_info = f"{context.chargeable_kg:.1f}kg @ {service.base_pgk_cost}/kg = {cost_pgk:.2f} PGK"
+                     if service.min_charge_pgk is not None and cost_pgk < service.min_charge_pgk:
+                         cost_pgk = service.min_charge_pgk
+                         rate_source_info += f" -> Min Applied ({service.min_charge_pgk:.2f} PGK)"
+
+                # Flat rate per Shipment
+                elif service.unit == 'SHIPMENT':
+                     # ... (Flat rate logic as before) ...
+                     cost_pgk = service.base_pgk_cost
+                     rate_source_info = f"Flat rate = {cost_pgk:.2f} PGK"
+                     # Apply component minimum if applicable (though less common for SHIPMENT)
+                     if service.min_charge_pgk is not None and cost_pgk < service.min_charge_pgk:
+                         cost_pgk = service.min_charge_pgk
+                         rate_source_info += f" -> Min Applied ({service.min_charge_pgk:.2f} PGK)"
+
+                # Tiering Logic
+                elif service.tiering_json and isinstance(service.tiering_json, list):
+                    # ... (Tiering logic as before) ...
+                    # Ensure rate_source_info is updated and is_incomplete/missing_rate_found flags set on failure
+                     pass # Placeholder for brevity
+
+                # Fallback/Default
+                elif not is_incomplete:
+                    # ... (Fallback logic as before, including min charge) ...
+                     cost_pgk = service.base_pgk_cost
+                     rate_source_info = f"Fallback to Base Cost = {cost_pgk:.2f} PGK / {service.unit}"
+                     if service.min_charge_pgk is not None and cost_pgk < service.min_charge_pgk:
+                          cost_pgk = service.min_charge_pgk
+                          rate_source_info += f" -> Min Applied ({service.min_charge_pgk:.2f} PGK)"
+            else:
+                 # Unknown cost_currency_type
+                 print(f"    - ERROR: Unknown cost_currency_type '{service.cost_currency_type}' for {service.code}")
+                 is_incomplete = True
+                 missing_rate_found = True
+                 rate_source_info = f"ERROR: Invalid cost type '{service.cost_currency_type}'"
+
+
+            # --- TODO: Integrate Surcharges/LocalTariffs based on context ---
+
+            cost_lines.append(ServiceCostLine(
+                service_component=service,
+                cost_pgk=cost_pgk if not is_incomplete else Decimal("0.0"),
+                source_info=rate_source_info,
+                is_incomplete=is_incomplete,
+            ))
+
+        # TODO: Raise RecoverableMissingRate exception if missing_rate_found is True
+        if missing_rate_found:
+             print("WARNING: One or more rates/costs were missing during calculation.")
+             # Consider raising specific exception here to inform caller
+
+        print(f"Calculated PGK costs result: {[f'{line.service_component.code}: {line.cost_pgk if not line.is_incomplete else 'INCOMPLETE'}' for line in cost_lines]}")
+        return cost_lines
+
+    def _apply_margin_pgk(self, context: CalculationContext, cost_lines: list[ServiceCostLine]) -> list[ServiceCostLine]:
+        """
+        Applies margin (customer-specific or policy default) to each cost line's PGK cost.
+        Populates the sell_price_pgk field. Considers minimum margin rules.
+        """
+        # --- Determine applicable margin percentage ---
+        margin_pct = context.policy.margin_pct # Default from general Policy
+        source = "Policy Default"
+
+        # Check for customer-specific override
+        if context.customer_profile and context.customer_profile.default_margin_percent is not None:
+             margin_pct_override = context.customer_profile.default_margin_percent
+             # Optional: Check against minimum margin if defined
+             min_margin = context.customer_profile.min_margin_percent
+             if min_margin is not None and margin_pct_override < min_margin:
+                 print(f"Warning: Customer default margin {margin_pct_override:.2%} is below minimum {min_margin:.2%}. Applying minimum.")
+                 margin_pct = min_margin
+                 source = f"Customer Minimum ({min_margin:.2%})"
+             else:
+                 margin_pct = margin_pct_override
+                 source = f"Customer Profile ({margin_pct:.2%})"
         else:
-            policy = Policy.objects.get(id=policy_id)
+            source = f"Policy Default ({margin_pct:.2%})"
 
-        # Resolve FX Snapshot
-        fx_asof = request_data.get("fx_asof", str(timezone.now().date()))
-        fx_date = datetime.fromisoformat(fx_asof).date()
-        fx_snapshot = FxSnapshot.objects.filter(as_of_timestamp__date=fx_date).latest('as_of_timestamp')
+        print(f"Applying Margin: {margin_pct:.2%} ({source})")
+        margin_multiplier = Decimal("1.0") + margin_pct
 
-        # Resolve Parties
-        bill_to = Company.objects.get(id=request_data["bill_to_id"])
-        shipper = Company.objects.get(id=request_data["shipper_id"])
-        consignee = Company.objects.get(id=request_data["consignee_id"])
-        
-        # Create a structured dataclass for easier use
-        return QuoteRequest(
-            scenario=request_data["scenario"],
-            policy=policy,
-            fx_snapshot=fx_snapshot,
-            bill_to=bill_to,
-            shipper=shipper,
-            consignee=consignee,
-            chargeable_kg=Decimal(request_data["chargeable_kg"]),
-            buy_lines=request_data.get("buy_lines", []),
-            origin_code=request_data.get("origin_code"),
-            destination_code=request_data.get("destination_code"),
-            agent_dest_lines_aud=request_data.get("agent_dest_lines_aud", [])
-        )
-
-    def _calculate_import_d2d_collect(self, quote: Quote, request: QuoteRequest):
-        """
-        Calculates a standard Import D2D Collect quote.
-        - Converts foreign buy charges using TT BUY + CAF.
-        - Applies a margin.
-        - Adds local PNG destination charges without margin.
-        """
-        policy = request.policy
-        fx_rates = request.fx_snapshot.rates
-        
-        buy_total_pgk = Decimal("0.0")
-
-        # --- 1. Process Foreign Currency Buy Lines ---
-        foreign_buy_lines = [line for line in request.buy_lines if line['currency'] != 'PGK']
-        
-        for line in foreign_buy_lines:
-            currency = line['currency']
-            amount_fcy = Decimal(line['amount'])
+        # --- Apply margin to each line ---
+        for line in cost_lines:
+            service = line.service_component
             
-            # Get TT_BUY rate from our snapshot
-            rate_info = fx_rates.get(currency, {})
-            tt_buy_rate = Decimal(rate_info.get('tt_buy'))
-            
-            # Apply CAF (Currency Adjustment Factor) from the Policy
-            fx_caf_rate = tt_buy_rate * (Decimal("1.0") + policy.caf_import_pct)
-            
-            # Convert to PGK
-            # Assuming is_pgk_per_fcy = True based on our spec
-            amount_pgk = amount_fcy * fx_caf_rate
-            buy_total_pgk += amount_pgk
-
-            # Create an auditable QuoteLine for this charge
-            QuoteLine.objects.create(
-                quote=quote,
-                section=QuoteLine.Section.ORIGIN,
-                charge_code=line.get('charge_code', 'FRT'),
-                description=line['description'],
-                currency=currency,
-                basis='FLAT', # Placeholder
-                quantity=Decimal('1.00'), # Placeholder
-                rate=amount_fcy, # Placeholder
-                buy_amount_native=amount_fcy,
-                sell_amount_pgk=amount_pgk, # Pre-margin
-                caf_applied_pct=policy.caf_import_pct,
-                source_references={'buy_line_input': line, 'fx_rate_used': str(tt_buy_rate)}
+            # Only apply margin if the cost was calculated successfully
+            # And potentially check if the service is meant to have margin applied (e.g., audience='SELL' or 'BOTH')
+            apply_margin = (
+                not line.is_incomplete and 
+                line.cost_pgk > 0 and 
+                service.audience in ['SELL', 'BOTH']
             )
 
-        # --- 2. Apply Margin to the Converted Total ---
-        sell_component_pgk = buy_total_pgk * (Decimal("1.0") + policy.margin_pct)
-        
-        # Now, update the sell_amount_pgk on the lines to include margin
-        margin_multiplier = (Decimal("1.0") + policy.margin_pct)
-        for q_line in quote.lines.filter(section=QuoteLine.Section.ORIGIN):
-            q_line.sell_amount_pgk *= margin_multiplier
-            q_line.margin_applied_pct = policy.margin_pct
-            q_line.save()
+            if apply_margin:
+                 line.sell_price_pgk = (line.cost_pgk * margin_multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                 line.margin_applied_pct = margin_pct
+            else:
+                # If no margin applied (e.g., pass-through cost or missing cost), sell = buy
+                line.sell_price_pgk = line.cost_pgk if not line.is_incomplete else Decimal("0.0")
+                line.margin_applied_pct = None # Explicitly set no margin applied
 
-        # --- 3. Add PNG Destination Charges (No CAF, No Margin) ---
-        dest_total_pgk = Decimal("0.0")
+            print(f"  - {service.code}: Cost={line.cost_pgk:.2f}, Margin={line.margin_applied_pct if line.margin_applied_pct is not None else 'N/A'}, Sell={line.sell_price_pgk:.2f} PGK")
+
+        return cost_lines
+
+
+    def _convert_to_output_currency(self, context: CalculationContext, sell_lines_pgk: list[ServiceCostLine]) -> tuple[list[ServiceCostLine], dict]:
+        """
+        Applies GST based on ServiceComponent rules.
+        Applies FX Buffer from the snapshot.
+        Converts sell_price_pgk (including GST) to the target output currency.
+        Calculates final totals in both PGK and output currency.
+        """
+        target_currency_code = context.output_currency.code
+        fx_snapshot = context.fx_snapshot
+        req = context.request
+
+        print(f"\nConverting to output currency: {target_currency_code}")
+
+        # --- Get base conversion rate PGK -> Target Currency ---
+        # Using our helper function (which assumes TT_SELL for PGK -> FCY)
+        rate_pgk_to_output = get_exchange_rate(fx_snapshot, 'PGK', target_currency_code)
+
+        if rate_pgk_to_output is None and target_currency_code != 'PGK':
+            # This should ideally be caught earlier or handled more gracefully
+            raise ValueError(f"Cannot convert PGK to {target_currency_code}: Missing TT_SELL rate in snapshot ID {fx_snapshot.id}.")
+
+        # --- Apply FX Buffer (as per suggestion: Buffer applied to the rate) ---
+        buffer_pct = fx_snapshot.fx_buffer_percent
+        effective_rate = rate_pgk_to_output # Will be Decimal('1.0') if target is PGK
+
+        if target_currency_code != 'PGK':
+            if buffer_pct > 0:
+                # Assuming buffer makes the rate less favorable to protect margin
+                # If rate_pgk_to_output is FCY per 1 PGK (e.g., 0.41 AUD per 1 PGK),
+                # adding buffer means we charge *more* FCY per PGK.
+                effective_rate = rate_pgk_to_output * (Decimal("1.0") + buffer_pct)
+                print(f"Applied FX Buffer {buffer_pct:.2%}. Rate: {rate_pgk_to_output} -> {effective_rate}")
+            else:
+                print(f"No FX Buffer applied (Buffer={buffer_pct:.2%}). Rate: {rate_pgk_to_output}")
+        else:
+             print("Output currency is PGK. No conversion needed.")
+
+
+        # --- Initialize totals ---
+        subtotal_output = Decimal("0.0")
+        gst_total_output = Decimal("0.0")
+        subtotal_pgk = Decimal("0.0")
         gst_total_pgk = Decimal("0.0")
 
-        # Example: Fetching a cartage charge from the new LocalTariff model
-        try:
-            cartage_tariff = LocalTariff.objects.get(country_id='PG', charge_code='CARTAGE')
-            # Here you would implement the specific cartage formula
-            # For now, a placeholder value
-            cartage_base = min(max(Decimal(95), Decimal(1.50) * request.chargeable_kg), Decimal(500))
-            cartage_gst = cartage_base * cartage_tariff.gst_rate
-            dest_total_pgk += (cartage_base + cartage_gst)
-            gst_total_pgk += cartage_gst
+        # --- Process each line: Apply GST, Convert ---
+        for line in sell_lines_pgk:
+            if line.is_incomplete:
+                # Skip lines where cost couldn't be determined
+                print(f"  - Skipping incomplete line: {line.service_component.code}")
+                continue
 
+            service = line.service_component
+            sell_pgk = line.sell_price_pgk # This already includes margin
+
+            # --- Apply GST (based on component's tax rate, calculated on PGK sell price) ---
+            gst_pct = service.tax_rate
+            apply_gst = False # Default to false
+
+            # Determine if GST applies based on rules (Refine this logic!)
+            # Example Rule: Apply GST if shipment is Domestic OR if service leg is Destination for Imports
+            if req.shipment_type == 'DOMESTIC':
+                 apply_gst = True
+                 # Domestic might have different GST rules based on service type/location?
+            elif req.shipment_type == 'IMPORT' and service.leg == 'DESTINATION':
+                 apply_gst = True
+            elif req.shipment_type == 'EXPORT' and service.leg == 'ORIGIN' and gst_pct > 0:
+                 # Check if origin export services get GST based on tax_code/rate in ServiceComponent
+                 apply_gst = True # Example: Assume yes if tax_rate > 0
+
+            # Apply based on flag and rate > 0
+            if apply_gst and gst_pct > 0:
+                line.gst_pgk = (sell_pgk * gst_pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                line.gst_pct = gst_pct # Store the rate applied
+                print(f"  - Applied GST {gst_pct:.2%} to {service.code}: {line.gst_pgk:.2f} PGK")
+            else:
+                line.gst_pgk = Decimal("0.0")
+                line.gst_pct = Decimal("0.0")
+
+            # Add to PGK totals
+            subtotal_pgk += sell_pgk
+            gst_total_pgk += line.gst_pgk
+
+            # --- Convert line sell price and GST to output currency ---
+            line_total_pgk_incl_gst = sell_pgk + line.gst_pgk
+
+            if target_currency_code == 'PGK':
+                line.sell_price_output = sell_pgk
+                line.gst_output = line.gst_pgk
+            else:
+                 # Apply rounding strategy (e.g., per line, commercial rounding)
+                 # Note: Rounding the total including GST might be preferred financially
+                 line_total_output = (line_total_pgk_incl_gst * effective_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+                 # Back-calculate approximate components in output currency if needed for display,
+                 # but prioritize accuracy of the line total.
+                 # A simpler approach is to store the converted total and potentially PGK components.
+                 # Let's store the PGK components and the final converted line total.
+                 line.sell_price_output = (sell_pgk * effective_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) # For potential display
+                 line.gst_output = (line.gst_pgk * effective_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) # For potential display
+                 # Ensure line total accuracy: recalculate from rounded components or round the converted total PGK incl GST
+                 line_total_output_check = line.sell_price_output + line.gst_output
+                 # It might be better to just store the final converted line total directly
+                 # For now, let's sum the rounded components.
+
+            line.output_currency = target_currency_code
+
+            # Add rounded output components to totals
+            subtotal_output += line.sell_price_output
+            gst_total_output += line.gst_output
+
+        # --- Calculate Final Totals ---
+        grand_total_output = subtotal_output + gst_total_output
+        grand_total_pgk = subtotal_pgk + gst_total_pgk
+
+        # --- Prepare Totals Dictionary ---
+        totals = {
+            "subtotal_pgk": subtotal_pgk.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "gst_total_pgk": gst_total_pgk.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "grand_total_pgk": grand_total_pgk.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+
+            "output_currency": target_currency_code,
+            "subtotal_output": subtotal_output.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "gst_total_output": gst_total_output.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "grand_total_output": grand_total_output.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+
+            "exchange_rate_used": effective_rate, # Rate used including buffer
+            "base_exchange_rate": rate_pgk_to_output, # Base rate before buffer
+            "fx_snapshot_id": str(fx_snapshot.id),
+            "caf_percent_snapshot": fx_snapshot.caf_percent, # Keep for audit (though not used in V3 calc flow here)
+            "fx_buffer_percent_snapshot": fx_snapshot.fx_buffer_percent,
+        }
+        print(f"\nFinal Totals Calculated:\n  PGK: {totals['grand_total_pgk']}\n  {totals['output_currency']}: {totals['grand_total_output']}")
+        print(f"  FX Details: Base Rate={totals['base_exchange_rate']}, Effective Rate={totals['exchange_rate_used']}, Buffer={totals['fx_buffer_percent_snapshot']:.2%}")
+
+        return sell_lines_pgk, totals
+
+
+    def _save_quote_v3(self, context: CalculationContext, request_data: dict, user, processed_lines: list[ServiceCostLine], totals: dict) -> Quote:
+        """
+        Saves the V3 Quote, QuoteVersion, QuoteLines, and QuoteTotal to the DB.
+        """
+        req = context.request
+        
+        # Create the main Quote object
+        quote = Quote.objects.create(
+            customer=req.customer,
+            contact=req.contact,
+            mode=req.mode,
+            shipment_type=req.shipment_type,
+            incoterm=req.incoterm,
+            payment_term=req.payment_term,
+            output_currency=context.output_currency,
+            origin_code=req.origin_code,
+            destination_code=req.destination_code,
+            is_dangerous_goods=req.is_dangerous_goods,
+            policy=context.policy, # Store fallback policy for reference
+            fx_snapshot=context.fx_snapshot,
+            status=Quote.Status.DRAFT, # Initial status
+            created_by=user,
+            # valid_until defaults set in model save method
+        )
+
+        # Create the first QuoteVersion
+        # Determine next version number
+        last_version_no = QuoteVersion.objects.filter(quote=quote).order_by('-version_no').values_list('version_no', flat=True).first() or 0
+        current_version_no = last_version_no + 1
+        
+        quote_version = QuoteVersion.objects.create(
+            quote=quote,
+            version_no=current_version_no,
+            payload_json=json.dumps(request_data, default=decimal_default),
+            policy=context.policy,
+            fx_snapshot=context.fx_snapshot,
+            status=quote.status,
+            reason="Initial Quote Calculation",
+            created_by=user
+        )
+
+        # Create QuoteLine objects from processed lines
+        for line in processed_lines:
+            service = line.service_component
             QuoteLine.objects.create(
                 quote=quote,
-                section=QuoteLine.Section.DESTINATION,
-                charge_code='CARTAGE',
-                description='PNG Destination Cartage',
-                currency='PGK',
-                basis=cartage_tariff.basis,
-                quantity=request.chargeable_kg,
-                rate=cartage_tariff.rate or Decimal('0.0'),
-                buy_amount_native=cartage_base,
-                sell_amount_pgk=cartage_base, # No margin
-                gst_amount_pgk=cartage_gst,
-                source_references={'tariff_id': str(cartage_tariff.id)}
+                # Link version? Maybe not needed if version stores payload
+                section=service.leg,
+                charge_code=service.code,
+                description=service.description,
+                basis=line.source_info, # Store how cost was derived
+                quantity=context.chargeable_kg if service.unit == 'KG' else Decimal("1.0"), # Simplification
+                rate=service.base_pgk_cost, # Store base rate for reference?
+                currency='PGK', # Base calculation currency
+                buy_amount_native=line.cost_pgk, # Store calculated PGK cost
+                sell_amount_pgk=line.sell_price_pgk,
+                gst_amount_pgk=line.gst_pgk,
+                margin_applied_pct=line.margin_applied_pct,
+                # TODO: Add CAF/Buffer pct applied?
+                source_references={"service_component_id": str(service.id)}
             )
-        except LocalTariff.DoesNotExist:
-            # Handle case where tariff is not found
-            pass 
-            
-        # ... Add other local tariffs (clearance, agency fee) in the same way ...
 
-        # --- 4. Finalize and Save Totals ---
-        grand_total_pgk = sell_component_pgk + dest_total_pgk
-        
+        # Create QuoteTotal object
         QuoteTotal.objects.create(
             quote=quote,
-            subtotal_pgk=sell_component_pgk + (dest_total_pgk - gst_total_pgk),
-            gst_total_pgk=gst_total_pgk,
-            grand_total_pgk=grand_total_pgk
+            subtotal_pgk=totals['subtotal_pgk'],
+            gst_total_pgk=totals['gst_total_pgk'],
+            grand_total_pgk=totals['grand_total_pgk'],
+            output_currency=totals['output_currency'],
+            grand_total_output_currency=totals['grand_total_output'],
+            # Add notes about FX rate used etc.?
+            notes=f"FX Rate (PGK->{totals['output_currency']}) used: {totals['exchange_rate_used']:.6f} (incl. {totals['fx_buffer_percent_snapshot']:.2%} buffer). Snapshot ID: {totals['fx_snapshot_id']}"
         )
 
-    def _calculate_export_d2d_prepaid(self, quote: Quote, request: QuoteRequest):
-        """
-        Calculates a standard Export D2D Prepaid quote.
-        """
-        from ratecards.services import RateCardService
+        # Optionally update quote status if calculation complete/valid
+        # if not any(line.cost_pgk < 0 for line in processed_lines):
+        #    quote.status = Quote.Status.FINAL
+        #    quote.save()
 
-        policy = request.policy
-        fx_rates = request.fx_snapshot.rates
-        chargeable_kg = request.chargeable_kg
-
-        total_buy_pgk = Decimal("0.0")
-
-        # 1. Calculate Origin Freight Charges from Rate Card
-        rate_card_service = RateCardService()
-        freight_rate_info = rate_card_service.get_air_freight_rate(chargeable_kg, request.origin_code, request.destination_code)
-        
-        rate_per_kg = freight_rate_info['rate_per_kg']
-        min_charge = freight_rate_info['minimum_charge']
-        
-        freight_buy_pgk = max(rate_per_kg * chargeable_kg, min_charge)
-        total_buy_pgk += freight_buy_pgk
-
-        QuoteLine.objects.create(
-            quote=quote,
-            section=QuoteLine.Section.FREIGHT,
-            charge_code='AIR_FREIGHT',
-            description=f"Air Freight from {request.origin_code} to {request.destination_code}",
-            currency='PGK',
-            basis=f"{chargeable_kg}kg @ {rate_per_kg}/kg",
-            quantity=chargeable_kg,
-            rate=rate_per_kg,
-            buy_amount_native=freight_buy_pgk,
-            sell_amount_pgk=freight_buy_pgk, # Pre-margin
-            source_references={'rate_break_id': str(freight_rate_info['rate_break_id'])}
-        )
-
-        # 2. Calculate Origin Surcharges
-        surcharges = Surcharge.objects.filter(is_active=True, effective_from__lte=timezone.now().date())
-        for surcharge in surcharges:
-            surcharge_buy_pgk = Decimal('0.0')
-            if surcharge.basis == Surcharge.Basis.FLAT:
-                surcharge_buy_pgk = surcharge.rate
-            elif surcharge.basis == Surcharge.Basis.PER_KG:
-                surcharge_buy_pgk = surcharge.rate * chargeable_kg
-            
-            if surcharge.minimum_charge and surcharge_buy_pgk < surcharge.minimum_charge:
-                surcharge_buy_pgk = surcharge.minimum_charge
-            
-            total_buy_pgk += surcharge_buy_pgk
-
-            QuoteLine.objects.create(
-                quote=quote,
-                section=QuoteLine.Section.ORIGIN,
-                charge_code=surcharge.code,
-                description=surcharge.description,
-                currency=surcharge.currency.code,
-                basis=surcharge.basis,
-                quantity=chargeable_kg if surcharge.basis == Surcharge.Basis.PER_KG else Decimal('1.0'),
-                rate=surcharge.rate,
-                buy_amount_native=surcharge_buy_pgk,
-                sell_amount_pgk=surcharge_buy_pgk, # Pre-margin
-                source_references={'surcharge_id': str(surcharge.id)}
-            )
-
-        # 3. Calculate Destination Charges (AUD -> PGK)
-        rate_info = fx_rates.get('AUD', {})
-        tt_buy_rate = Decimal(rate_info.get('tt_buy'))
-        fx_caf_rate = tt_buy_rate * (Decimal("1.0") + policy.caf_import_pct)
-
-        for line in request.agent_dest_lines_aud:
-            amount_aud = Decimal(line['amount'])
-            dest_buy_pgk = amount_aud * fx_caf_rate
-            total_buy_pgk += dest_buy_pgk
-
-            QuoteLine.objects.create(
-                quote=quote,
-                section=QuoteLine.Section.DESTINATION,
-                charge_code=line.get('charge_code', 'DEST_AGENT'),
-                description=line['description'],
-                currency='AUD',
-                basis='FLAT',
-                quantity=Decimal('1.0'),
-                rate=amount_aud,
-                buy_amount_native=amount_aud,
-                sell_amount_pgk=dest_buy_pgk, # Pre-margin
-                caf_applied_pct=policy.caf_import_pct,
-                source_references={'buy_line_input': line, 'fx_rate_used': str(tt_buy_rate)}
-            )
-
-        # 4. Apply Margin to all lines
-        margin_multiplier = (Decimal("1.0") + policy.margin_pct)
-        for q_line in quote.lines.all():
-            q_line.sell_amount_pgk *= margin_multiplier
-            q_line.margin_applied_pct = policy.margin_pct
-            q_line.save()
-
-        # 5. Finalize and Save Totals
-        total_sell_pgk = total_buy_pgk * margin_multiplier
-        
-        QuoteTotal.objects.create(
-            quote=quote,
-            subtotal_pgk=total_sell_pgk,
-            gst_total_pgk=Decimal("0.00"), # No GST in this scenario
-            grand_total_pgk=total_sell_pgk
-        )
-
-    def _calculate_import_a2d_agent(self, quote: Quote, request: QuoteRequest):
-        """
-        Calculates a Prepaid Import A2D quote for an overseas agent in AUD.
-        - Converts PGK destination charges using TT SELL - CAF.
-        - No margin is applied.
-        - Rounds the final AUD amount up to the nearest whole dollar.
-        """
-        policy = request.policy
-        fx_rates = request.fx_snapshot.rates
-        
-        # --- 1. Get FX Rate and Apply Negative CAF ---
-        rate_info = fx_rates.get("AUD", {})
-        tt_sell_rate = Decimal(rate_info.get('tt_sell'))
-        # Note the subtraction for the export CAF rule
-        effective_fx = tt_sell_rate * (Decimal("1.0") - policy.caf_export_pct)
-
-        # --- 2. Calculate PGK Destination Charges ---
-        # In a real scenario, these would come from the request or LocalTariffs.
-        # For now, we'll use the example from the spec.
-        # A more robust implementation would fetch these from the DB.
-        pgk_lines = [
-            {'desc': 'Customs Clearance', 'amount': Decimal('330.00')},
-            {'desc': 'Agency Fee', 'amount': Decimal('275.00')},
-            {'desc': 'Handling', 'amount': Decimal('181.50')},
-        ]
-
-        # --- 3. Convert to AUD and Round ---
-        total_aud = Decimal("0.0")
-        for line in pgk_lines:
-            pgk_val = line['amount']
-            # Convert to AUD
-            aud_raw = pgk_val / effective_fx
-            # Round up to the nearest whole number (per-line rounding)
-            aud_final = Decimal(math.ceil(aud_raw))
-            total_aud += aud_final
-
-            QuoteLine.objects.create(
-                quote=quote,
-                section=QuoteLine.Section.DESTINATION,
-                charge_code=line['desc'].upper().replace(' ', '_'),
-                description=line['desc'],
-                currency='AUD', # Output currency is AUD
-                basis='FLAT', # Placeholder
-                quantity=Decimal('1.00'), # Placeholder
-                rate=pgk_val, # Placeholder
-                buy_amount_native=pgk_val, # Store the original PGK value
-                sell_amount_pgk=aud_final, # Store the final rounded AUD value
-                caf_applied_pct=-policy.caf_export_pct, # Note the negative CAF
-                rounding_applied=True,
-                source_references={'original_pgk_amount': str(pgk_val)}
-            )
-        
-        # --- 4. Finalize Totals ---
-        QuoteTotal.objects.create(
-            quote=quote,
-            subtotal_pgk=sum(l['amount'] for l in pgk_lines), # Subtotal is the sum of PGK buys
-            gst_total_pgk=Decimal("0.0"), # Assuming GST is included in the lines
-            grand_total_pgk=sum(l['amount'] for l in pgk_lines),
-            output_currency="AUD",
-            grand_total_output_currency=total_aud,
-            notes=f"Converted from PGK using TT SELL x (1 - {policy.caf_export_pct*100}% CAF). No margin. Rounded up to whole AUD."
-        )
+        print(f"Saved V3 Quote: {quote.quote_number} v{current_version_no}")
+        return quote

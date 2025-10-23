@@ -31,55 +31,66 @@ CATEGORY_CHOICES = [
     ('STATUTORY', 'Statutory / Pass-Through'),
 ]
 
+# --- NEW: Choices for Cost Type ---
+COST_TYPE_CHOICES = [
+    ('COGS', 'COGS (Cost - Requires Lookup or Base)'),
+    ('RATE_OFFER', 'Rate Offer (Sell Price - Requires Lookup or Base)'),
+]
+# ---
+
+# --- NEW: Choices for Cost Source ---
+COST_SOURCE_CHOICES = [
+    ('BASE_COST', 'Base PGK Cost (Directly from this ServiceComponent)'),
+    ('EXPORT_RATECARD', 'Export Rate Card (e.g., ratecards.RateCard)'),
+    ('PARTNER_RATECARD', 'Partner Rate Card (e.g., Import AUD Rates - Requires New Model)'),
+    ('LOCAL_TARIFF', 'Local Tariff (e.g., core.LocalTariff - PNG Sell Rates)'),
+    ('SURCHARGE', 'Surcharge Table (e.g., core.Surcharge - PX Fees)'),
+    # Add more sources as needed (e.g., SPOT_RATE, MANUAL_INPUT)
+]
+# ---
+
 class ServiceComponent(models.Model):
-    """
-    Represents a granular, billable service component (e.g., pickup, clearance, freight).
-    Stores base costs and rules.
-    """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    code = models.CharField(
-        max_length=20, unique=True, db_index=True,
-        help_text="Short, unique, stable code (e.g., 'PKUP_ORG', 'CLEAR_IMP', 'FRT_AIR')."
-    )
+    code = models.CharField(max_length=20, unique=True, db_index=True, help_text="Short, unique, stable code (e.g., 'PKUP_ORG', 'CLEAR_IMP', 'FRT_AIR').")
     description = models.CharField(max_length=255)
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, db_index=True)
     leg = models.CharField(max_length=20, choices=LEG_CHOICES, db_index=True)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, null=True, blank=True, db_index=True, help_text="Category for grouping charges on quotes/invoices.")
+
+    # --- ADD cost_type field ---
+    cost_type = models.CharField(
+        max_length=10,
+        choices=COST_TYPE_CHOICES,
+        default='COGS', # Default to COGS, adjust as needed
+        help_text="Is this a direct cost (COGS) or a standard sell rate (Rate Offer)?"
+    )
+    # ---
+
+    # --- ADD cost_source field ---
+    cost_source = models.CharField(
+        max_length=20,
+        choices=COST_SOURCE_CHOICES,
+        default='BASE_COST', # Default to using base_pgk_cost
+        help_text="Where does the system find the cost/rate for this service?"
+    )
+    # ---
+
     base_pgk_cost = models.DecimalField(
         max_digits=12, decimal_places=2, default=Decimal("0.0"),
-        help_text="Standard internal cost for this service in PGK."
+        help_text="Standard internal cost or sell rate in PGK (used if cost_source is BASE_COST)."
     )
-    unit = models.CharField(
-        max_length=20, choices=UNIT_CHOICES, default='SHIPMENT',
-        help_text="The unit basis for the base_pgk_cost (e.g., Per KG, Per Shipment)."
+    cost_currency_type = models.CharField( # Keep this to flag if source is FCY
+        max_length=3,
+        choices=[('PGK', 'PGK'), ('FCY', 'FCY')],
+        default='PGK',
+        help_text="Currency type if cost_source requires lookup (e.g., PARTNER_RATECARD often FCY)."
     )
-    min_charge_pgk = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True,
-        help_text="Minimum cost applied for this component in PGK."
-    )
-    # Tiering/Weight Breaks - Stored as JSON for flexibility
-    # Example: [{"min_kg": 0, "max_kg": 100, "rate": 5.50}, {"min_kg": 100, "rate": 4.50}]
-    # Example: [{"min_cbm": 0, "max_cbm": 1, "rate": 150.00}, ...]
-    tiering_json = models.JSONField(
-        null=True, blank=True,
-        help_text="JSON defining tiered pricing rules (e.g., weight breaks, CBM breaks)."
-    )
-    audience = models.CharField(
-        max_length=10, choices=AUDIENCE_CHOICES, default='BOTH',
-        help_text="Is this primarily a Buy cost, Sell charge, or both?"
-    )
-    category = models.CharField(
-        max_length=20, 
-        choices=CATEGORY_CHOICES, # Optional: Use choices
-        null=True, blank=True, db_index=True,
-        help_text="Category for grouping charges on quotes/invoices."
-    )
-    tax_code = models.CharField(
-        max_length=20, null=True, blank=True,
-        help_text="Tax code reference (e.g., 'GST_10', 'ZERO_RATED')."
-    )
-    # Store the rate directly for simplicity, can be linked to a TaxRate model later
+    unit = models.CharField(max_length=20, choices=UNIT_CHOICES, default='SHIPMENT', help_text="The unit basis for the cost/rate.")
+    min_charge_pgk = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Minimum charge applied in PGK.")
+    tiering_json = models.JSONField(null=True, blank=True, help_text="JSON defining tiered pricing rules.")
+    audience = models.CharField(max_length=10, choices=AUDIENCE_CHOICES, default='BOTH')
+    tax_code = models.CharField(max_length=20, null=True, blank=True)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal("0.0"))
-
     is_active = models.BooleanField(default=True)
 
     def __str__(self):

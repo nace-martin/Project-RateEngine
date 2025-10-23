@@ -5,10 +5,17 @@ from .models import ServiceComponent, IncotermRule
 
 @admin.register(ServiceComponent)
 class ServiceComponentAdmin(admin.ModelAdmin):
-    list_display = ('code', 'description', 'mode', 'leg', 'unit', 'base_pgk_cost', 'is_active')
-    list_filter = ('mode', 'leg', 'is_active')
+    # Add cost_type and cost_source to list_display and list_filter
+    list_display = (
+        'code', 'description', 'mode', 'leg', 'category', 
+        'cost_type', 'cost_source', 'cost_currency_type', # New fields
+        'unit', 'base_pgk_cost', 'is_active'
+    )
+    list_filter = ('mode', 'leg', 'category', 'cost_type', 'cost_source', 'is_active') # New fields
     search_fields = ('code', 'description')
     ordering = ('mode', 'leg', 'code')
+    # Make fields editable in list view for quick adjustments
+    list_editable = ('is_active', 'cost_type', 'cost_source', 'cost_currency_type', 'base_pgk_cost')
 
 @admin.register(IncotermRule)
 class IncotermRuleAdmin(admin.ModelAdmin):

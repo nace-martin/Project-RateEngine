@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 # import weasyprint
 
-from pricing_v2.pricing_service_v2 import PricingServiceV2
+from pricing_v2.pricing_service_v2 import PricingServiceV3
 from .models import Quote # Make sure Quote is imported
 from .serializers_v2 import QuoteCreateSerializerV2, QuoteResponseSerializerV2
 
@@ -27,8 +27,8 @@ class CreateQuoteAPIViewV2(APIView):
         
         try:
             # 2. Instantiate and call our pricing service
-            service = PricingServiceV2()
-            new_quote = service.create_quote(validated_data)
+            service = PricingServiceV3()
+            new_quote = service.create_quote(validated_data, request.user)
             
             # 3. Format the response using our response serializer
             response_serializer = QuoteResponseSerializerV2(new_quote)
