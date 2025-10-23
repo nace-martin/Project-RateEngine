@@ -13,6 +13,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
     # path('api/', include('customers.urls')),
     path('api/', include('parties.urls')),
+    path('api/', include('core.urls')),
     path('api/', include('quotes.urls')),
     path('api/auth/', include('accounts.urls')),
     path('api/ratecards/', include('ratecards.urls')),

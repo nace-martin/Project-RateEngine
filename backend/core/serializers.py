@@ -1,7 +1,12 @@
+# backend/core/serializers.py
 from rest_framework import serializers
-from .models import Station
+from .models import Currency, Country, City, Airport
 
-class StationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Station
-        fields = '__all__'
+class LocationSearchSerializer(serializers.Serializer):
+    """
+    Serializer for location search results (Cities/Airports).
+    """
+    id = serializers.CharField() # Could be City ID (UUID) or Airport IATA code (str)
+    code = serializers.CharField() # City name or Airport IATA code
+    display_name = serializers.CharField() # e.g., "Port Moresby (POM), PG" or "Brisbane (BNE), AU"
+    type = serializers.CharField() # 'city' or 'airport'

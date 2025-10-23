@@ -1,6 +1,7 @@
 # backend/core/models.py
 
 import uuid
+from decimal import Decimal
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -30,22 +31,42 @@ class Country(models.Model):
 class City(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     country = models.ForeignKey(Country, on_delete=models.CASCADE)
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, db_index=True) # Add index
 
     def __str__(self):
         return f"{self.name}, {self.country.code}"
 
     class Meta:
         verbose_name_plural = "Cities"
-        unique_together = ('country', 'name')
+        unique_together = ('country', 'name') # Ensure unique city names per country
+        ordering = ['country__code', 'name'] # Add default ordering
 
 class Airport(models.Model):
-    iata_code = models.CharField(max_length=3, primary_key=True)
+    # Use IATA code as primary key for simplicity if guaranteed unique
+    iata_code = models.CharField(max_length=3, primary_key=True, help_text="IATA 3-letter airport code.")
     name = models.CharField(max_length=100)
-    city = models.ForeignKey(City, on_delete=models.CASCADE, null=True, blank=True)
+    city = models.ForeignKey(City, on_delete=models.PROTECT, null=True, blank=True) # Protect city link
 
     def __str__(self):
         return self.iata_code
+
+    class Meta:
+         ordering = ['iata_code'] # Add default ordering
+
+# --- ADD PORT MODEL ---
+class Port(models.Model):
+    """Represents a Sea Port, typically identified by UN/LOCODE."""
+    # Using UN/LOCODE as the primary key assumes uniqueness
+    unlocode = models.CharField(max_length=5, primary_key=True, help_text="UN/LOCODE (e.g., PGPOM, AUBNE).")
+    name = models.CharField(max_length=100)
+    city = models.ForeignKey(City, on_delete=models.PROTECT, null=True, blank=True) # Link to City
+
+    def __str__(self):
+        return self.unlocode
+
+    class Meta:
+         ordering = ['unlocode'] # Add default ordering
+# --- END ADD ---
 
 # --- NEW Models based on the Backend Design Spec ---
 
@@ -79,6 +100,14 @@ class FxSnapshot(models.Model):
     as_of_timestamp = models.DateTimeField(db_index=True)
     source = models.CharField(max_length=50)
     rates = models.JSONField(help_text="A JSON blob of all currency rates at the time of the snapshot.")
+    caf_percent = models.DecimalField(
+        max_digits=5, decimal_places=4, default=Decimal("0.0"), # Example default, should be set during creation
+        help_text="Currency Adjustment Factor % applied at the time of snapshot."
+    )
+    fx_buffer_percent = models.DecimalField(
+        max_digits=5, decimal_places=4, default=Decimal("0.0"), # Example default
+        help_text="Additional FX buffer/hedge % applied at the time of snapshot."
+    )
 
     def __str__(self):
         return f"FX Snapshot from {self.source} at {self.as_of_timestamp}"

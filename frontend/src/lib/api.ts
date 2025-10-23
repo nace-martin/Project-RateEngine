@@ -308,3 +308,33 @@ export async function getCompanyContacts(companyId: string): Promise<{ id: strin
     return []; 
   }
 }
+
+/**
+ * Searches for locations (cities/airports).
+ * @param query The search term.
+ * @returns A list of matching locations.
+ */
+export async function searchLocations(query: string): Promise<{ code: string; display_name: string }[]> {
+  if (query.length < 2) return [];
+
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (!apiBaseUrl) {
+    throw new Error("API base URL is not configured");
+  }
+
+  try {
+    const response = await fetch(`${apiBaseUrl}/v2/locations/search/?q=${query}`);
+    if (!response.ok) {
+      throw new Error("Failed to search locations");
+    }
+    // Map backend response to { value: code, label: display_name } for Combobox
+    const data = await response.json();
+    return data.map((loc: any) => ({
+      value: loc.code, // Use the 3-letter code as the value
+      label: loc.display_name
+    }));
+  } catch (error) {
+    console.error('Error searching locations:', error);
+    return []; // Return empty on error
+  }
+}

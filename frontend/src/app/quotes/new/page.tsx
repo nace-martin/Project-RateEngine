@@ -10,9 +10,10 @@ import { z } from 'zod'; // Import zod
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { createQuoteV2, searchCompanies, getCompanyContacts } from '@/lib/api';
+import { createQuoteV2, searchCompanies, getCompanyContacts, searchLocations } from '@/lib/api';
 import { Combobox } from '@/components/ui/combobox';
 import { useDebouncedCallback } from 'use-debounce';
 import { QuoteFormSchema, QuoteFormData } from '@/lib/schemas/quoteSchema'; // Import schema and type
@@ -21,6 +22,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 // Define a type for company search options
 type CompanyOption = { value: string; label: string };
 type ContactOption = { value: string; label: string };
+type LocationOption = { value: string; label: string };
 
 const currencies = ["PGK", "AUD", "USD", "CNY", "EUR", "GBP"]; // Example list
 
@@ -65,6 +67,7 @@ export default function NewQuotePage() {
   const watchedScenario = watch("scenario");
   const watchedMode = watch("mode");
   const watchedBillToId = watch("bill_to_id");
+  const watchedOrigin = watch("origin_code");
 
   // --- State for Comboboxes ---
   const [billToOptions, setBillToOptions] = useState<CompanyOption[]>([]);
@@ -72,11 +75,19 @@ export default function NewQuotePage() {
   const [consigneeOptions, setConsigneeOptions] = useState<CompanyOption[]>([]);
   const [contactOptions, setContactOptions] = useState<ContactOption[]>([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  const [originOptions, setOriginOptions] = useState<LocationOption[]>([]);
+  const [destinationOptions, setDestinationOptions] = useState<LocationOption[]>([]);
 
   // Debounced search handler
-  const handleSearch = useDebouncedCallback(async (query: string, setter: React.Dispatch<React.SetStateAction<CompanyOption[]>>) => {
+  const handleCompanySearch = useDebouncedCallback(async (query: string, setter: React.Dispatch<React.SetStateAction<CompanyOption[]>>) => {
     const companies = await searchCompanies(query);
     setter(companies.map(c => ({ value: c.id, label: c.name })));
+  }, 300);
+
+  const handleLocationSearch = useDebouncedCallback(async (query: string, setter: React.Dispatch<React.SetStateAction<LocationOption[]>>) => {
+    const locations = await searchLocations(query);
+    // Ensure the value is always the 3-letter code
+    setter(locations.map(loc => ({ value: loc.value, label: loc.label })));
   }, 300);
 
   // --- State for API interaction ---
@@ -99,10 +110,10 @@ export default function NewQuotePage() {
       const consigneeId = form.getValues('consignee_id');
       if (consigneeId && form.getValues('bill_to_id') !== consigneeId) {
         setValue('bill_to_id', consigneeId, { shouldValidate: true });
-        handleSearch(consigneeId, setBillToOptions);
+        handleCompanySearch(consigneeId, setBillToOptions);
       }
     }
-  }, [isCollect, form, setValue, handleSearch]);
+  }, [isCollect, form, setValue, handleCompanySearch]);
 
   // --- NEW EFFECT: Fetch Contacts when Bill To changes ---
   useEffect(() => {
@@ -218,21 +229,42 @@ export default function NewQuotePage() {
                     <CardContent className="space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <FormField control={control} name="origin_code" render={({ field }) => (
-                          <FormItem>
+                          <FormItem className="flex flex-col">
                             <FormLabel>Origin</FormLabel>
-                            <FormControl><Input {...field} onChange={e => field.onChange(e.target.value.toUpperCase())} /></FormControl>
+                            <Combobox
+                                options={originOptions}
+                                value={field.value}
+                                onChange={(value) => {
+                                    // Ensure value is uppercase before setting
+                                    setValue('origin_code', value.toUpperCase(), { shouldValidate: true });
+                                }}
+                                onSearch={(query) => handleLocationSearch(query, setOriginOptions)}
+                                placeholder="Select Origin..."
+                                searchPlaceholder="Search locations..."
+                            />
                             <FormMessage />
                           </FormItem>
                         )} />
                         <FormField control={control} name="destination_code" render={({ field }) => (
-                          <FormItem>
+                          <FormItem className="flex flex-col">
                             <FormLabel>Destination</FormLabel>
-                            <FormControl><Input {...field} onChange={e => field.onChange(e.target.value.toUpperCase())} /></FormControl>
+                            <Combobox
+                                options={destinationOptions}
+                                value={field.value}
+                                 onChange={(value) => {
+                                    // Ensure value is uppercase before setting
+                                    setValue('destination_code', value.toUpperCase(), { shouldValidate: true });
+                                }}
+                                onSearch={(query) => handleLocationSearch(query, setDestinationOptions)}
+                                placeholder="Select Destination..."
+                                searchPlaceholder="Search locations..."
+                            />
                             <FormMessage />
                           </FormItem>
                         )} />
                       </div>
 
+                      <Label>Dimensions & Weight</Label>
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -276,7 +308,7 @@ export default function NewQuotePage() {
                               options={consigneeOptions}
                               value={field.value}
                               onChange={field.onChange} // RHF handles value update
-                              onSearch={(query) => handleSearch(query, setConsigneeOptions)}
+                              onSearch={(query) => handleCompanySearch(query, setConsigneeOptions)}
                               placeholder="Select Consignee..." searchPlaceholder="Search companies..."
                             />
                             <FormMessage />
@@ -289,7 +321,7 @@ export default function NewQuotePage() {
                               options={billToOptions}
                               value={field.value}
                               onChange={field.onChange}
-                              onSearch={(query) => handleSearch(query, setBillToOptions)}
+                              onSearch={(query) => handleCompanySearch(query, setBillToOptions)}
                               placeholder="Select Bill To..." searchPlaceholder="Search companies..."
                               // Disable the combobox if the rule applies
                               disabled={isBillToLocked} 
@@ -345,7 +377,7 @@ export default function NewQuotePage() {
                               options={shipperOptions}
                               value={field.value}
                               onChange={field.onChange}
-                              onSearch={(query) => handleSearch(query, setShipperOptions)}
+                              onSearch={(query) => handleCompanySearch(query, setShipperOptions)}
                               placeholder="Select Shipper..." searchPlaceholder="Search companies..."
                             />
                             <FormMessage />

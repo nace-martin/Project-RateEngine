@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'parties',
     'quotes',
     'ratecards',
+    'services',
 ]
 
 MIDDLEWARE = [

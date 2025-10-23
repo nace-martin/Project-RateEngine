@@ -9,7 +9,7 @@ class QuoteCreateSerializerV2(serializers.Serializer):
     Validates the incoming payload for a new quote request.
     This matches the structure defined in our "Backend & Data Design Spec".
     """
-    scenario = serializers.ChoiceField(choices=Quote.Scenario.choices)
+    # scenario = serializers.ChoiceField(choices=Quote.Scenario.choices)
     chargeable_kg = serializers.DecimalField(max_digits=10, decimal_places=2)
     
     # We expect UUIDs for the party IDs
@@ -70,5 +70,5 @@ class QuoteResponseSerializerV2(serializers.ModelSerializer):
     class Meta:
         model = Quote
         fields = [
-            'id', 'quote_number', 'scenario', 'status', 'lines', 'totals'
+            'id', 'quote_number', 'status', 'lines', 'totals'
         ]
