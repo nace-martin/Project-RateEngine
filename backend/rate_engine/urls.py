@@ -1,20 +1,17 @@
 from django.contrib import admin
 from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-# from quotes.views import QuotationViewSet, QuoteVersionCreateView, QuoteVersionLockView
-# from core.views import StationViewSet
-
-router = DefaultRouter()
-# router.register(r'quotations', QuotationViewSet, basename='quotations')
-# router.register(r'stations', StationViewSet, basename='stations')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include(router.urls)),
-    # path('api/', include('customers.urls')),
+    
+    # Include your app's URLs
+    # This will now include our new 'api/v3/quotes/compute/' URL
+    path('api/', include('quotes.urls')), 
+    path('api/', include('ratecards.urls')),
     path('api/', include('parties.urls')),
     path('api/', include('core.urls')),
-    path('api/', include('quotes.urls')),
     path('api/auth/', include('accounts.urls')),
-    path('api/ratecards/', include('ratecards.urls')),
+    
+    # Include DRF's login URLs for the Browsable API
+    path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
 ]

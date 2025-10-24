@@ -5,7 +5,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from core.models import City, Airport, Port # Import location models
 from parties.models import Company
-from services.models import ServiceComponent
+from services.models import ServiceComponent, UNIT_CHOICES as SERVICE_UNIT_CHOICES
 
 MODE_CHOICES = [('AIR', _('Air')), ('SEA', _('Sea')), ('ROAD', _('Road'))]
 SHIPMENT_TYPE_CHOICES = [
@@ -82,6 +82,7 @@ class PartnerRateCard(models.Model):
     )
     name = models.CharField(
         max_length=255,
+        unique=True,
         help_text="A descriptive name, e.g., 'EFM AUD Import Airfreight 2025'"
     )
     currency_code = models.CharField(
@@ -162,15 +163,6 @@ class PartnerRate(models.Model):
     This is the "rate sheet" that links a ServiceComponent (like 'Freight')
     to its buy-side cost (e.g., min charge, per-kg tiers) in a foreign currency.
     """
-    # Define choices for 'unit' based on ServiceComponent's choices
-    UNIT_CHOICES = [
-        ('PER_KG', _('Per KG')),
-        ('PER_SHIPMENT', _('Per Shipment')),
-        ('PER_CBM', _('Per CBM')),
-        ('PER_PIECE', _('Per Piece')),
-        ('PER_CONTAINER', _('Per Container')),
-    ]
-
     lane = models.ForeignKey(
         PartnerRateLane,
         on_delete=models.CASCADE,
@@ -185,7 +177,7 @@ class PartnerRate(models.Model):
     )
     unit = models.CharField(
         max_length=20,
-        choices=UNIT_CHOICES,
+        choices=SERVICE_UNIT_CHOICES, # <-- Use the imported choices
         default='PER_KG',
         help_text="The unit of measure for this rate."
     )

@@ -54,3 +54,76 @@ export const QuoteFormSchema = z.discriminatedUnion("mode", [
 
 // Infer the TypeScript type from the schema
 export type QuoteFormData = z.infer<typeof QuoteFormSchema>;
+
+// --- V3 Schemas ---
+
+// Define enums for our dropdowns
+// These should match the choices in the backend models
+export const V3_MODES = ["AIR", "SEA", "ROAD"] as const;
+export const V3_SHIPMENT_TYPES = ["IMPORT", "EXPORT", "DOMESTIC"] as const;
+export const V3_INCOTERMS = [
+  "EXW",
+  "FOB",
+  "DAP",
+  "DDP",
+  "CPT",
+  "CFR",
+] as const; // Add more as needed
+export const V3_PAYMENT_TERMS = ["PREPAID", "COLLECT"] as const;
+
+// Optional schema for manual overrides (Spot Rates)
+const manualCostOverrideSchema = z.object({
+  service_component_id: z.number(),
+  cost_fcy: z.number().positive(),
+  currency: z.string().length(3),
+  unit: z.string(),
+  min_charge_fcy: z.number().positive().optional(),
+});
+
+// The main V3 Quote Request Schema
+// This matches our V3QuoteComputeRequestSerializer on the backend
+export const quoteFormSchemaV3 = z.object({
+  // --- Step 1: Customer ---
+  customer_id: z.number({ required_error: "Customer must be selected." }),
+  contact_id: z.number({ required_error: "Contact must be selected." }),
+
+  // --- Step 2: Shipment Type ---
+  mode: z.nativeEnum(V3_MODES, {
+    required_error: "Mode of transport is required.",
+  }),
+  shipment_type: z.nativeEnum(V3_SHIPMENT_TYPES, {
+    required_error: "Shipment type is required.",
+  }),
+  incoterm: z.nativeEnum(V3_INCOTERMS, {
+    required_error: "Incoterm is required.",
+  }),
+  payment_term: z.nativeEnum(V3_PAYMENT_TERMS).default("PREPAID"),
+  output_currency: z.string().length(3).optional(), // e.g. "USD"
+
+  // --- Step 3: Details ---
+  origin_airport_code: z
+    .string({ required_error: "Origin is required." })
+    .length(3, "Must be a 3-letter IATA code."),
+  destination_airport_code: z
+    .string({ required_error: "Destination is required." })
+    .length(3, "Must be a 3-letter IATA code."),
+
+  pieces: z
+    .number({ required_error: "Number of pieces is required." })
+    .positive("Pieces must be at least 1.")
+    .int(),
+  gross_weight_kg: z
+    .number({ required_error: "Gross weight is required." })
+    .positive("Weight must be positive."),
+  volume_cbm: z
+    .number({ required_error: "Volume is required." })
+    .positive("Volume must be positive."),
+
+  is_dangerous_goods: z.boolean().default(false),
+
+  // --- Spot Rate Overrides ---
+  overrides: z.array(manualCostOverrideSchema).optional(),
+});
+
+// This creates a TypeScript type from our schema
+export type QuoteFormSchemaV3 = z.infer<typeof quoteFormSchemaV3>;

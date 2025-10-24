@@ -9,6 +9,7 @@ from decimal import Decimal # Import Decimal
 class Company(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255, unique=True)
+    company_type = models.CharField(max_length=20, choices=[('CUSTOMER', 'Customer'), ('SUPPLIER', 'Supplier')], default='CUSTOMER')
     tax_id = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -63,12 +64,12 @@ class CustomerCommercialProfile(models.Model):
         help_text="Default currency for quoting this customer (e.g., AUD, USD)."
     )
     default_margin_percent = models.DecimalField(
-        max_digits=5, decimal_places=4,
+        max_digits=5, decimal_places=2,
         null=True, blank=True,
-        help_text="Override standard margin for this customer (e.g., 0.12 for 12%)."
+        help_text="Override standard margin for this customer (e.g., 12.00 for 12%)."
     )
     min_margin_percent = models.DecimalField(
-        max_digits=5, decimal_places=4,
+        max_digits=5, decimal_places=2,
         null=True, blank=True,
         help_text="Minimum allowable margin for quotes to this customer."
     )

@@ -52,7 +52,7 @@ COST_SOURCE_CHOICES = [
 class ServiceComponent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=20, unique=True, db_index=True, help_text="Short, unique, stable code (e.g., 'PKUP_ORG', 'CLEAR_IMP', 'FRT_AIR').")
-    description = models.CharField(max_length=255)
+    description = models.CharField(max_length=255, unique=True)
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, db_index=True)
     leg = models.CharField(max_length=20, choices=LEG_CHOICES, db_index=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, null=True, blank=True, db_index=True, help_text="Category for grouping charges on quotes/invoices.")

@@ -1,55 +1,90 @@
-# backend/pricing_v2/dataclasses_v3.py
+# In: backend/pricing_v2/dataclasses_v3.py
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import List, Dict, Any, Optional
-
-# Import relevant models
-from core.models import Policy, FxSnapshot, Currency
-from parties.models import Company, Contact, CustomerCommercialProfile
+from typing import List, Optional, Dict
+from parties.models import CustomerCommercialProfile
+from core.models import FxSnapshot, Airport
 from services.models import ServiceComponent
+
+@dataclass
+class ServiceCostLine:
+    """
+    Represents a single line item in a quote calculation, holding cost data.
+    """
+    service_component: ServiceComponent
+    cost_pgk: Decimal
+    sell_pgk: Decimal
+    cost_source: str
+    cost_fcy: Optional[Decimal] = None
+    cost_fcy_currency: Optional[str] = None
+    sell_fcy: Optional[Decimal] = None
+    sell_fcy_currency: Optional[str] = None
+    sell_pgk_incl_gst: Optional[Decimal] = None
+    sell_fcy_incl_gst: Optional[Decimal] = None
+    exchange_rate: Optional[Decimal] = None
+    is_rate_missing: bool = False
+    cost_source_description: Optional[str] = None
+
+@dataclass
+class CalculationContext:
+    """
+    Holds all the necessary data for a quote calculation.
+    """
+    request: 'V3QuoteRequest'
+    customer: 'Company'
+    customer_profile: CustomerCommercialProfile
+    fx_snapshot: FxSnapshot
+    output_currency: str
+    chargeable_weight_kg: Decimal
+    origin_airport: Airport
+    destination_airport: Airport
+    incoterm_rule_key: tuple
+    overrides: Dict[int, 'ManualCostOverride']
+
+@dataclass
+class ManualCostOverride:
+    """
+    Represents a single spot rate manually provided by the user
+    to override database lookups for a COGS service.
+    """
+    service_component_id: int
+    cost_fcy: Decimal
+    currency: str  # e.g., 'USD', 'AUD'
+    unit: str      # e.g., 'PER_KG', 'PER_SHIPMENT'
+    min_charge_fcy: Optional[Decimal] = None
+    # We can add tiering_json here later if needed for complex overrides
 
 
 @dataclass
 class V3QuoteRequest:
-    """ Inputs derived directly from the API request for V3 """
-    customer: Company
-    contact: Optional[Contact]
+    """
+    All input data required to compute a V3 Quote.
+    """
+    customer_id: int
+    contact_id: int
     mode: str
     shipment_type: str
-    incoterm: Optional[str]
-    payment_term: str
-    origin_code: str
-    destination_code: str
-    pieces: List[Dict[str, Any]]
-    is_dangerous_goods: bool
-    output_currency_override: Optional[str]
-    # Add other flags/inputs as needed
-
-
-@dataclass
-class CalculationContext:
-    """ Holds all necessary context for a V3 calculation """
-    request: V3QuoteRequest
-    customer_profile: Optional[CustomerCommercialProfile]
-    policy: Policy # Fallback policy
-    fx_snapshot: FxSnapshot
-    output_currency: Currency # Final determined output currency object
-    chargeable_kg: Decimal # Calculated chargeable weight (or W/M etc. later)
-    # user: Any # User object for permissions/audit
-
-
-@dataclass
-class ServiceCostLine:
-    """ Represents a calculated cost/sell line item """
-    service_component: ServiceComponent
-    cost_pgk: Decimal = Decimal("0.0")
-    source_info: str = "" # How cost was derived (e.g., base, rate card, manual)
-    is_incomplete: bool = False # Add flag to dataclass
-    margin_applied_pct: Optional[Decimal] = None
-    sell_price_pgk: Decimal = Decimal("0.0")
-    gst_pct: Decimal = Decimal("0.0")
-    gst_pgk: Decimal = Decimal("0.0")
+    incoterm: str
+    origin_airport_code: str
+    destination_airport_code: str
+    pieces: int
+    gross_weight_kg: Decimal
+    volume_cbm: Decimal
+    
+    # Optional fields
+    payment_term: str = "PREPAID"
     output_currency: Optional[str] = None
-    sell_price_output: Decimal = Decimal("0.0")
-    gst_output: Decimal = Decimal("0.0")
+    is_dangerous_goods: bool = False
+    
+    # THIS IS THE NEW FIELD FOR SPOT RATES:
+    overrides: List[ManualCostOverride] = field(default_factory=list)
+
+@dataclass
+class V3QuoteResponse:
+    """
+    The response from a V3 quote calculation.
+    """
+    quote_id: int
+    quote_version_id: int
+    lines: List[ServiceCostLine]
