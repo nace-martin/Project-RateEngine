@@ -200,7 +200,7 @@ class PartnerRate(models.Model):
     )
     
     def __str__(self):
-        return f"{self.service_component.name} on {self.lane}"
+        return f"{self.service_component} on {self.lane}"
 
     class Meta:
         verbose_name = "Partner Rate"

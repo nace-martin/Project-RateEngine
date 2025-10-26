@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"; // <-- Add useEffect
 import { zodResolver } from "@hookform/resolvers/zod";
 // We must import useFieldArray
 import { useForm, useFieldArray } from "react-hook-form";
-import { Trash2 } from "lucide-react"; // Import a trash icon
+import { Trash2, Loader2 } from "lucide-react"; // Import spinner and trash icon
 
 // --- ADD TYPE IMPORT ---
 // Assuming you have a Contact type defined, maybe in src/lib/types.ts
@@ -13,6 +13,12 @@ import type { Contact, CompanySearchResult } from "@/lib/types";
 
 // --- Import api client (assuming you have one like in src/lib/api.ts) ---
 import { apiClient } from "@/lib/api";
+// --- END ADD ---
+
+// --- ADD IMPORTS ---
+import { V3QuoteComputeResponse } from "@/lib/types"; // Import response type
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // For showing errors/success
+import Link from "next/link"; // To link to the created quote
 // --- END ADD ---
 
 
@@ -72,6 +78,9 @@ export default function NewQuotePage() {
   const [contacts, setContacts] = useState<Contact[]>([]); // To store fetched contacts
   const [isLoadingContacts, setIsLoadingContacts] = useState(false); // Loading indicator
   // --- END ADD ---
+  const [isSubmitting, setIsSubmitting] = useState(false); // For main form submission
+  const [apiError, setApiError] = useState<string | null>(null); // To store API errors
+  const [quoteResult, setQuoteResult] = useState<V3QuoteComputeResponse | null>(null); // Successful result
 
 
   const form = useForm<QuoteFormSchemaV3>({
@@ -134,11 +143,43 @@ export default function NewQuotePage() {
     });
   }
 
-  function onSubmit(data: QuoteFormSchemaV3) {
-    console.log("V3 Form data is valid:");
-    console.log(data);
-    // TODO: Call the /api/v3/quotes/compute/ endpoint here
+  // --- REPLACE onSubmit FUNCTION ---
+  async function onSubmit(data: QuoteFormSchemaV3) {
+    setIsSubmitting(true);
+    setApiError(null);
+    setQuoteResult(null); // Clear previous results
+    console.log("Submitting V3 Form data:", data);
+
+    try {
+      // Make the POST request to the V3 compute endpoint
+      const response = await apiClient.post<V3QuoteComputeResponse>(
+        "/api/v3/quotes/compute/",
+        data
+      );
+
+      console.log("API Success Response:", response.data);
+      setQuoteResult(response.data); // Store the successful result
+      // Optional: Reset form after successful submission
+      // form.reset();
+      // setSelectedCustomerId(null); // Reset customer selection
+      // TODO: Maybe redirect to the new quote's page: router.push(`/quotes/${response.data.id}`)
+
+    } catch (error: any) {
+      console.error("API Error:", error);
+      let errorMessage = "An unexpected error occurred.";
+      // Try to get a more specific error message from the response
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      setApiError(errorMessage);
+      // TODO: Show error in a Toast notification for better UX
+    } finally {
+      setIsSubmitting(false); // Ensure loading state is turned off
+    }
   }
+  // --- END REPLACE ---
 
   return (
     <div className="container mx-auto max-w-5xl p-4">
@@ -146,8 +187,15 @@ export default function NewQuotePage() {
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           <div className="flex items-center justify-between">
             <h1 className="text-3xl font-bold">New V3 Quote</h1>
-            <Button type="submit" className="text-lg">
-              Calculate Quote
+            <Button type="submit" className="text-lg" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Calculating...
+                </>
+              ) : (
+                "Calculate Quote"
+              )}
             </Button>
           </div>
 
@@ -473,6 +521,35 @@ export default function NewQuotePage() {
 
             </TabsContent>
           </Tabs>
+
+          {/* --- ADD RESULT/ERROR DISPLAY --- */}
+          <div className="mt-6">
+            {apiError && (
+              <Alert variant="destructive">
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{apiError}</AlertDescription>
+              </Alert>
+            )}
+            {quoteResult && (
+              <Alert variant="success">
+                <AlertTitle>Quote Calculated Successfully!</AlertTitle>
+                <AlertDescription>
+                  Quote Number:{" "}
+                  <Link href={`/quotes/${quoteResult.id}`} className="font-medium underline">
+                    {quoteResult.quote_number}
+                  </Link>
+                  <br />
+                  Total (incl. GST): {quoteResult.latest_version.totals.total_sell_fcy_incl_gst}{" "}
+                  {quoteResult.latest_version.totals.total_sell_fcy_currency}
+                  {quoteResult.latest_version.totals.has_missing_rates && (
+                    <span className="ml-2 font-bold text-orange-600">(Incomplete - Missing Rates)</span>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+          {/* --- END ADD --- */}
+
         </form>
       </Form>
     </div>

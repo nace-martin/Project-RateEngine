@@ -247,3 +247,65 @@ export interface BuyOffer {
   }[];
   // ... any other fields you expect from the backend
 }
+
+// --- ADD V3 QUOTE RESPONSE TYPES ---
+// These should match the V3QuoteComputeResponseSerializer structure
+
+interface V3QuoteLine {
+  id: string;
+  service_component: {
+    id: number;
+    name: string;
+    category: string;
+    unit: string;
+  };
+  cost_pgk: string; // Decimals come as strings
+  cost_fcy?: string | null;
+  cost_fcy_currency?: string | null;
+  sell_pgk: string;
+  sell_pgk_incl_gst: string;
+  sell_fcy: string;
+  sell_fcy_incl_gst: string;
+  sell_fcy_currency?: string | null;
+  exchange_rate?: string | null;
+  cost_source?: string | null;
+  cost_source_description?: string | null;
+  is_rate_missing: boolean;
+}
+
+interface V3QuoteTotal {
+  total_sell_fcy: string;
+  total_sell_fcy_incl_gst: string;
+  total_sell_fcy_currency: string;
+  has_missing_rates: boolean;
+  notes?: string | null;
+}
+
+interface V3QuoteVersion {
+  id: string;
+  version_number: number;
+  status: string;
+  created_at: string; // ISO date string
+  lines: V3QuoteLine[];
+  totals: V3QuoteTotal;
+}
+
+// This is the main type for the compute response
+export interface V3QuoteComputeResponse {
+  id: string; // UUID
+  quote_number: string;
+  customer: number; // Customer ID
+  contact: number; // Contact ID
+  mode: string;
+  shipment_type: string;
+  incoterm: string;
+  payment_term: string;
+  output_currency: string;
+  origin_code: string;
+  destination_code: string;
+  status: string;
+  valid_until: string; // Date string (YYYY-MM-DD)
+  created_at: string; // ISO date string
+  latest_version: V3QuoteVersion;
+}
+// --- END ADD ---
