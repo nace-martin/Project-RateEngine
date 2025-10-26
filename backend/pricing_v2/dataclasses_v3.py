@@ -8,6 +8,18 @@ from core.models import FxSnapshot, Airport
 from services.models import ServiceComponent
 
 @dataclass
+class DimensionLine:
+    """
+    Represents one line of dimensions, which may contain multiple pieces.
+    e.g., 2 pieces @ 100x50x50cm, 20kg each
+    """
+    pieces: int
+    length_cm: Decimal
+    width_cm: Decimal
+    height_cm: Decimal
+    gross_weight_kg: Decimal # Assumed to be weight PER PIECE
+
+@dataclass
 class ServiceCostLine:
     """
     Represents a single line item in a quote calculation, holding cost data.
@@ -60,6 +72,7 @@ class ManualCostOverride:
 class V3QuoteRequest:
     """
     All input data required to compute a V3 Quote.
+    NOW ACCEPTS DIMENSION LINES instead of totals.
     """
     customer_id: int
     contact_id: int
@@ -68,16 +81,20 @@ class V3QuoteRequest:
     incoterm: str
     origin_airport_code: str
     destination_airport_code: str
-    pieces: int
-    gross_weight_kg: Decimal
-    volume_cbm: Decimal
     
-    # Optional fields
+    # --- THESE FIELDS ARE NEW ---
+    dimensions: List[DimensionLine]
+    
+    # --- THESE FIELDS ARE REMOVED ---
+    # pieces: int
+    # gross_weight_kg: Decimal
+    # volume_cbm: Decimal
+    
+    # Optional fields (unchanged)
     payment_term: str = "PREPAID"
     output_currency: Optional[str] = None
     is_dangerous_goods: bool = False
     
-    # THIS IS THE NEW FIELD FOR SPOT RATES:
     overrides: List[ManualCostOverride] = field(default_factory=list)
 
 @dataclass

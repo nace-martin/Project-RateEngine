@@ -35,6 +35,15 @@ export interface Customer {
   org_type?: string;
 }
 
+export interface Contact {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  company: number;
+}
+
 export interface CompanySearchResult {
   id: string;
   name: string;

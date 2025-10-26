@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 
 # Our V3 Service and Dataclasses
 from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v2.dataclasses_v3 import V3QuoteRequest, ManualCostOverride
+from pricing_v2.dataclasses_v3 import V3QuoteRequest, ManualCostOverride, DimensionLine
 
 # Our new V3 Serializers
 from .serializers_v3 import (
@@ -45,6 +45,18 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 ) for ov in override_data
             ]
 
+            # Map dimension lines
+            dimension_data = data.get('dimensions', [])
+            dimension_lines = [
+                DimensionLine(
+                    pieces=line['pieces'],
+                    length_cm=line['length_cm'],
+                    width_cm=line['width_cm'],
+                    height_cm=line['height_cm'],
+                    gross_weight_kg=line['gross_weight_kg'],
+                ) for line in dimension_data
+            ]
+
             # Create the main request dataclass
             request_data = V3QuoteRequest(
                 customer_id=data['customer_id'],
@@ -54,9 +66,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 incoterm=data['incoterm'],
                 origin_airport_code=data['origin_airport_code'],
                 destination_airport_code=data['destination_airport_code'],
-                pieces=data['pieces'],
-                gross_weight_kg=data['gross_weight_kg'],
-                volume_cbm=data['volume_cbm'],
+                dimensions=dimension_lines, # Use new dimensions field
                 payment_term=data.get('payment_term', 'PREPAID'),
                 output_currency=data.get('output_currency'),
                 is_dangerous_goods=data.get('is_dangerous_goods', False),

@@ -19,6 +19,43 @@ class ManualCostOverrideSerializer(serializers.Serializer):
     min_charge_fcy = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
 
 
+class DimensionLineSerializer(serializers.Serializer):
+    """
+    Serializer for a single dimension line in the V3QuoteRequest.
+    Matches the DimensionLine dataclass.
+    """
+    pieces = serializers.IntegerField()
+    length_cm = serializers.DecimalField(max_digits=10, decimal_places=2)
+    width_cm = serializers.DecimalField(max_digits=10, decimal_places=2)
+    height_cm = serializers.DecimalField(max_digits=10, decimal_places=2)
+    gross_weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+    def validate_pieces(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Pieces must be positive.")
+        return value
+
+    def validate_length_cm(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Length must be positive.")
+        return value
+
+    def validate_width_cm(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Width must be positive.")
+        return value
+
+    def validate_height_cm(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Height must be positive.")
+        return value
+
+    def validate_gross_weight_kg(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Gross weight per piece must be positive.")
+        return value
+
+
 class V3QuoteComputeRequestSerializer(serializers.Serializer):
     """
     Validates the incoming payload for the V3 Compute API.
@@ -31,30 +68,14 @@ class V3QuoteComputeRequestSerializer(serializers.Serializer):
     incoterm = serializers.CharField(max_length=3)
     origin_airport_code = serializers.CharField(max_length=3)
     destination_airport_code = serializers.CharField(max_length=3)
-    pieces = serializers.IntegerField()
-    gross_weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2)
-    volume_cbm = serializers.DecimalField(max_digits=10, decimal_places=3)
+    
+    dimensions = DimensionLineSerializer(many=True) # New field
     
     payment_term = serializers.CharField(max_length=10, required=False)
     output_currency = serializers.CharField(max_length=3, required=False)
     is_dangerous_goods = serializers.BooleanField(required=False)
     
     overrides = ManualCostOverrideSerializer(many=True, required=False)
-
-    def validate_gross_weight_kg(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Gross weight must be positive.")
-        return value
-
-    def validate_volume_cbm(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Volume must be positive.")
-        return value
-        
-    def validate_pieces(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Pieces must be positive.")
-        return value
 
 
 # --- Response Serializers ---

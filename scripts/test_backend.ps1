@@ -1,7 +1,7 @@
 Param()
 $ErrorActionPreference = 'Stop'
 
-Push-Location (Join-Path $PSScriptRoot '..' 'backend')
+Push-Location "$PSScriptRoot\..\backend"
 try {
   if (-not $env:DATABASE_URL) {
     $env:DATABASE_URL = 'postgres://rateengine:rateengine@127.0.0.1:5432/rateengine'
