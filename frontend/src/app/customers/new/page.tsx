@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { API_BASE_URL } from "@/lib/config";
 
 type CustomerFormData = {
   company_name: string;
@@ -75,7 +76,7 @@ export default function NewCustomerPage() {
         formData.audience_type === 'LOCAL_PNG_CUSTOMER' ? null : formData.primary_address,
     };
 
-    const res = await fetch('http://127.0.0.1:8000/api/customers/', {
+    const res = await fetch(`${API_BASE_URL}/api/v2/customers/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

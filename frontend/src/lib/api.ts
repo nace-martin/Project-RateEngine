@@ -37,7 +37,7 @@ async function fetchWrapper<T>(url: string, options: RequestInit = {}): Promise<
 }
 
 export async function login(data: LoginData): Promise<{ token: string }> {
-  return fetchWrapper<{ token: string }>(`${API_URL}/accounts/login/`, {
+  return fetchWrapper<{ token: string }>(`${API_URL}/api/auth/login/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -45,25 +45,25 @@ export async function login(data: LoginData): Promise<{ token: string }> {
 }
 
 export async function getMe(token: string): Promise<User> {
-  return fetchWrapper<User>(`${API_URL}/accounts/me/`, {
+  return fetchWrapper<User>(`${API_URL}/api/accounts/me/`, {
     headers: { Authorization: `Token ${token}` },
   });
 }
 
 export async function getCustomers(token: string): Promise<Customer[]> {
-    return fetchWrapper<Customer[]>(`${API_URL}/customers/`, {
+    return fetchWrapper<Customer[]>(`${API_URL}/api/v2/customers/`, {
       headers: { Authorization: `Token ${token}` },
     });
   }
 
   export async function getCustomer(token: string, id: string): Promise<Customer> {
-    return fetchWrapper<Customer>(`${API_URL}/customers/${id}/`, {
+    return fetchWrapper<Customer>(`${API_URL}/api/v2/customers/${id}/`, {
       headers: { Authorization: `Token ${token}` },
     });
   }
 
   export async function createCustomer(token: string, data: Partial<Customer>): Promise<Customer> {
-    return fetchWrapper<Customer>(`${API_URL}/customers/`, {
+    return fetchWrapper<Customer>(`${API_URL}/api/v2/customers/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -74,7 +74,7 @@ export async function getCustomers(token: string): Promise<Customer[]> {
   }
 
   export async function updateCustomer(token: string, id: string, data: Partial<Customer>): Promise<Customer> {
-    return fetchWrapper<Customer>(`${API_URL}/customers/${id}/`, {
+    return fetchWrapper<Customer>(`${API_URL}/api/v2/customers/${id}/`, {
         method: 'PATCH',
         headers: {
             'Content-Type': 'application/json',
@@ -86,20 +86,20 @@ export async function getCustomers(token: string): Promise<Customer[]> {
 
 
   export async function getQuotes(token: string): Promise<Quote[]> {
-    return fetchWrapper<Quote[]>(`${API_URL}/quotes/`, {
+    return fetchWrapper<Quote[]>(`${API_URL}/api/v2/quotes/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
 export async function getQuote(token: string, id: string): Promise<Quote> {
-    return fetchWrapper<Quote>(`${API_URL}/quotes/${id}/`, {
+    return fetchWrapper<Quote>(`${API_URL}/api/v2/quotes/${id}/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
 
 export async function createQuote(token: string, data: Partial<Quote>): Promise<Quote> {
-    return fetchWrapper<Quote>(`${API_URL}/quotes/`, {
+    return fetchWrapper<Quote>(`${API_URL}/api/v2/quotes/`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -110,13 +110,13 @@ export async function createQuote(token: string, data: Partial<Quote>): Promise<
 }
 
 export async function getQuoteVersions(token: string, quoteId: string): Promise<QuoteVersion[]> {
-    return fetchWrapper<QuoteVersion[]>(`${API_URL}/quotes/${quoteId}/versions/`, {
+    return fetchWrapper<QuoteVersion[]>(`${API_URL}/api/v2/quotes/${quoteId}/versions/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
 export async function createQuoteVersion(token: string, quoteId: string, data: Partial<QuoteVersion>): Promise<QuoteVersion> {
-    return fetchWrapper<QuoteVersion>(`${API_URL}/quotes/${quoteId}/versions/`, {
+    return fetchWrapper<QuoteVersion>(`${API_URL}/api/v2/quotes/${quoteId}/versions/`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -127,13 +127,13 @@ export async function createQuoteVersion(token: string, quoteId: string, data: P
 }
 
 export async function listStations(token: string): Promise<{ id: number; iata_code: string }[]> {
-    return fetchWrapper<{ id: number; iata_code: string }[]>(`${API_URL}/stations/`, {
+    return fetchWrapper<{ id: number; iata_code: string }[]>(`${API_URL}/api/stations/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
 export async function getRateCards(token: string): Promise<RatecardFile[]> {
-    return fetchWrapper<RatecardFile[]>(`${API_URL}/ratecards/ratecard-files/`, {
+    return fetchWrapper<RatecardFile[]>(`${API_URL}/api/ratecards/ratecard-files/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
@@ -144,7 +144,7 @@ export async function uploadRateCard(token: string, file: File, name: string, fi
     formData.append('name', name);
     formData.append('file_type', file_type);
 
-    const response = await fetch(`${API_URL}/ratecards/ratecard-files/`, {
+    const response = await fetch(`${API_URL}/api/ratecards/ratecard-files/`, {
         method: 'POST',
         headers: {
             Authorization: `Token ${token}`,
@@ -166,7 +166,7 @@ export async function uploadRateCard(token: string, file: File, name: string, fi
  * @returns A Promise that resolves to the calculated BuyOffer.
  */
 export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string): Promise<BuyOffer> {
-  const response = await fetch(`${API_URL}/quotes/compute/v2/`, {
+  const response = await fetch(`${API_URL}/api/v2/quotes/compute/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -193,7 +193,7 @@ export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string
  */
 export async function createQuoteV2(quoteRequest: QuoteV2Request): Promise<QuoteV2Response> {
   try {
-    const response = await fetch(`${API_URL}/v2/quotes/compute/`, {
+    const response = await fetch(`${API_URL}/api/v2/quotes/compute/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -245,7 +245,7 @@ export async function searchCompanies(query: string, signal?: AbortSignal): Prom
   const params = new URLSearchParams({ q: trimmedQuery });
 
   try {
-    const response = await fetch(`${API_URL}/v2/parties/search/?${params.toString()}`, { signal });
+    const response = await fetch(`${API_URL}/api/v2/parties/search/?${params.toString()}`, { signal });
     if (!response.ok) {
       throw new Error('Failed to search companies');
     }
@@ -270,8 +270,10 @@ export async function getQuoteV2(quoteId: string): Promise<QuoteV2Response> {
     throw new Error("API base URL is not configured");
   }
 
+  const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
+
   try {
-    const response = await fetch(`${apiBaseUrl}/v2/quotes/${quoteId}/`, {
+    const response = await fetch(`${normalizedBaseUrl}/api/v2/quotes/${quoteId}/`, {
       headers: {
         'Content-Type': 'application/json',
         // Add Authorization header if needed
@@ -307,8 +309,10 @@ export async function getCompanyContacts(companyId: string): Promise<{ id: strin
     throw new Error("API base URL is not configured");
   }
 
+  const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
+
   try {
-    const response = await fetch(`${apiBaseUrl}/v2/parties/companies/${companyId}/contacts/`);
+    const response = await fetch(`${normalizedBaseUrl}/api/v2/parties/companies/${companyId}/contacts/`);
     if (!response.ok) {
       // Handle 404 specifically if needed, otherwise generic error
       throw new Error("Failed to fetch contacts for the company");
@@ -334,8 +338,10 @@ export async function searchLocations(query: string): Promise<{ value: string; l
     throw new Error("API base URL is not configured");
   }
 
+  const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
+
   try {
-    const response = await fetch(`${apiBaseUrl}/v2/locations/search/?q=${query}`);
+    const response = await fetch(`${normalizedBaseUrl}/api/v2/locations/search/?q=${query}`);
     if (!response.ok) {
       throw new Error("Failed to search locations");
     }

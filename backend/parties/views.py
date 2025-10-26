@@ -6,6 +6,18 @@ from rest_framework import status, generics, permissions # Add status import
 from .models import Company, Contact # Add Contact
 from .serializers import CompanySearchSerializer, ContactSerializer, CompanySerializer # Add ContactSerializer
 
+class CustomerListView(generics.ListCreateAPIView):
+    serializer_class = CompanySerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Company.objects.filter(company_type='CUSTOMER')
+
+class CustomerDetailView(generics.RetrieveUpdateAPIView):
+    serializer_class = CompanySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = Company.objects.filter(company_type='CUSTOMER')
+
 class CompanySearchAPIView(APIView):
     """
     Provides a search endpoint for companies.

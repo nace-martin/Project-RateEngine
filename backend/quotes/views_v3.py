@@ -1,10 +1,12 @@
 # In: backend/quotes/views_v3.py
 
 import logging
-from decimal import Decimal
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.shortcuts import get_object_or_404
+
+from .models import Quote
 
 # Our V3 Service and Dataclasses
 from pricing_v2.pricing_service_v3 import PricingServiceV3
@@ -100,3 +102,39 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 {"detail": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class QuoteRetrieveV3APIView(generics.RetrieveAPIView):
+    """
+    API view to retrieve a single V3 Quote by its UUID.
+    GET /api/v3/quotes/{id}/
+    """
+    queryset = Quote.objects.all().prefetch_related(
+        'versions__lines__service_component',
+        'versions__totals'
+    )
+    serializer_class = V3QuoteComputeResponseSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+
+    def get_object(self):
+        """
+        Retrieve the quote ensuring we get the latest version ordered correctly.
+        Override is needed because the default manager might not apply
+        the ordering defined in the QuoteVersion Meta.
+        """
+        queryset = self.get_queryset().order_by('-versions__version_number')
+
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        assert lookup_url_kwarg in self.kwargs, (
+            'Expected view %s to be called with a URL keyword argument named "%s". '
+            'Fix your URL conf, or set the `.lookup_field` attribute on the view correctly.' %
+            (self.__class__.__name__, lookup_url_kwarg)
+        )
+
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        obj = get_object_or_404(queryset, **filter_kwargs)
+
+        self.check_object_permissions(self.request, obj)
+
+        return obj

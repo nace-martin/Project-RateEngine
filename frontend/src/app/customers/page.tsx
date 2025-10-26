@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { API_BASE_URL } from '@/lib/config';
+import { apiClient } from '@/lib/api';
 
 interface Address {
   country: string;
@@ -30,27 +30,8 @@ export default function CustomersPage() {
   useEffect(() => {
     const getCustomers = async () => {
       try {
-        const token = localStorage.getItem('authToken');
-        if (!token) {
-          setError('You must be logged in to view customers.');
-          return;
-        }
-
-        const res = await fetch(`${API_BASE_URL}/customers/`, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Token ${token}`,
-          },
-        });
-
-        if (!res.ok) {
-          console.error('Failed to fetch customers', res.status);
-          setError('Failed to fetch customers.');
-          return;
-        }
-
-        const data = await res.json();
-        setCustomers(data);
+        const res = await apiClient.get<Customer[]>('/api/v2/customers/');
+        setCustomers(res.data);
         setError(null);
       } catch (err) {
         console.error('Failed to fetch customers', err);

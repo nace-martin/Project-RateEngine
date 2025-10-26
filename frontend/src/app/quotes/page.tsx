@@ -34,7 +34,7 @@ export default function QuotesListPage() {
         const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
         if (statusFilter) params.set('status', statusFilter);
 
-        const res = await fetch(`${apiBase}/v2/quotes/?${params.toString()}`, {
+        const res = await fetch(`${apiBase}/api/v2/quotes/?${params.toString()}`, {
           headers: {
             'Authorization': `Token ${token}`,
             'Content-Type': 'application/json',
