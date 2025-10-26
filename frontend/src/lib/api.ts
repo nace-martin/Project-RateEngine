@@ -15,13 +15,25 @@ import { API_BASE_URL } from './config';
 
 const API_URL = API_BASE_URL;
 
+export const apiClient = {
+  get: async <T>(url: string, options: RequestInit = {}): Promise<{ data: T }> => {
+    const response = await fetch(`${API_URL}${url}`, options);
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'An error occurred');
+    }
+    const data = await response.json();
+    return { data };
+  },
+};
+
 async function fetchWrapper<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, options);
   if (!response.ok) {
     const errorData = await response.json();
     throw new Error(errorData.detail || 'An error occurred');
   }
-  return response.json() as Promise<BuyOffer>;
+  return response.json() as Promise<T>;
 }
 
 export async function login(data: LoginData): Promise<{ token: string }> {
@@ -314,7 +326,7 @@ export async function getCompanyContacts(companyId: string): Promise<{ id: strin
  * @param query The search term.
  * @returns A list of matching locations.
  */
-export async function searchLocations(query: string): Promise<{ code: string; display_name: string }[]> {
+export async function searchLocations(query: string): Promise<{ value: string; label: string }[]> {
   if (query.length < 2) return [];
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
@@ -328,8 +340,8 @@ export async function searchLocations(query: string): Promise<{ code: string; di
       throw new Error("Failed to search locations");
     }
     // Map backend response to { value: code, label: display_name } for Combobox
-    const data = await response.json();
-    return data.map((loc: any) => ({
+    const data = (await response.json()) as { code: string; display_name: string }[];
+    return data.map((loc) => ({
       value: loc.code, // Use the 3-letter code as the value
       label: loc.display_name
     }));

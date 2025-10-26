@@ -25,11 +25,12 @@ from .dataclasses_v3 import (
     V3QuoteRequest,
     CalculationContext,
     ServiceCostLine,
-    ManualCostOverride, # Import new dataclass
+    ManualCostOverride,
+    DimensionLine, # <-- ADD THIS IMPORT
 )
 
 # Utils
-from .utils_v2 import calculate_chargeable_weight, VOLUMETRIC_FACTOR # Re-use V2 util
+from .utils_v2 import calculate_chargeable_weight # Re-use V2 util
 
 _logger = logging.getLogger(__name__)
 
@@ -111,13 +112,20 @@ class PricingServiceV3:
 
         output_currency = (request.output_currency or preferred_currency_code or "PGK").upper()
 
-        # Calculate chargeable weight
-        # Support both detailed piece inputs and simple gross/volume requests.
-        if isinstance(request.pieces, list) and request.pieces and isinstance(request.pieces[0], dict):
-            chargeable_weight_kg = calculate_chargeable_weight(request.pieces)
-        else:
-            volumetric_weight = (request.volume_cbm or Decimal("0")) * VOLUMETRIC_FACTOR
-            chargeable_weight_kg = max(request.gross_weight_kg, volumetric_weight).to_integral_value(rounding=ROUND_UP)
+        # Calculate total gross weight and total volume from the dimension lines
+        pieces_payload: List[Dict[str, Decimal]] = []
+        for line in request.dimensions:
+            for _ in range(line.pieces):
+                pieces_payload.append(
+                    {
+                        "weight_kg": line.gross_weight_kg,
+                        "length_cm": line.length_cm,
+                        "width_cm": line.width_cm,
+                        "height_cm": line.height_cm,
+                    }
+                )
+
+        chargeable_weight_kg = calculate_chargeable_weight(pieces_payload)
 
         incoterm_rule_key = (
             request.mode,

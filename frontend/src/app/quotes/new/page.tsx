@@ -1,567 +1,478 @@
-// frontend/src/app/quotes/new/page.tsx
-
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
-import { useForm, useFieldArray, Controller } from 'react-hook-form'; // Import hooks
-import { zodResolver } from '@hookform/resolvers/zod'; // Import resolver
-import { z } from 'zod'; // Import zod
+import { useState, useEffect } from "react"; // <-- Add useEffect
+import { zodResolver } from "@hookform/resolvers/zod";
+// We must import useFieldArray
+import { useForm, useFieldArray } from "react-hook-form";
+import { Trash2 } from "lucide-react"; // Import a trash icon
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { createQuoteV2, searchCompanies, getCompanyContacts, searchLocations } from '@/lib/api';
-import { Combobox } from '@/components/ui/combobox';
-import { useDebouncedCallback } from 'use-debounce';
-import { QuoteFormSchema, QuoteFormData } from '@/lib/schemas/quoteSchema'; // Import schema and type
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"; // Import Form components
+// --- ADD TYPE IMPORT ---
+// Assuming you have a Contact type defined, maybe in src/lib/types.ts
+import type { Contact, CompanySearchResult } from "@/lib/types";
+// --- END ADD ---
 
-// Define a type for company search options
-type CompanyOption = { value: string; label: string };
-type ContactOption = { value: string; label: string };
-type LocationOption = { value: string; label: string };
+// --- Import api client (assuming you have one like in src/lib/api.ts) ---
+import { apiClient } from "@/lib/api";
+// --- END ADD ---
 
-const currencies = ["PGK", "AUD", "USD", "CNY", "EUR", "GBP"]; // Example list
+
+// Import our new V3 schema and enums
+import {
+  quoteFormSchemaV3,
+  type QuoteFormSchemaV3,
+  V3_MODES,
+  V3_INCOTERMS,
+  V3_PAYMENT_TERMS,
+} from "@/lib/schemas/quoteSchema";
+
+// Import Shadcn UI Components
+import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+// Import the new Tabs components
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+
+// --- ADD THIS IMPORT ---
+import CompanySearchCombobox from "@/components/CompanySearchCombobox";
+// --- END ADD ---
+
+
 
 export default function NewQuotePage() {
-  // --- react-hook-form setup ---
-  const form = useForm<QuoteFormData>({
-    resolver: zodResolver(QuoteFormSchema),
+  // --- ADD THIS STATE ---
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<CompanySearchResult | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>([]); // To store fetched contacts
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false); // Loading indicator
+  // --- END ADD ---
+
+
+  const form = useForm<QuoteFormSchemaV3>({
+    resolver: zodResolver(quoteFormSchemaV3),
     defaultValues: {
-      mode: "AIR", 
-      scenario: "IMPORT_A2D_AGENT_AUD",
-      origin_code: "BNE",
-      destination_code: "POM",
-      pieces: [{ pieces: 1, length: 100, width: 80, height: 50, weight: 120 }],
-      bill_to_id: "", 
-      shipper_id: "",
-      consignee_id: "",
-      contact_id: undefined,
-      buy_lines: [
-        { description: "Air Freight", currency: "AUD", amount: 1250.00 },
-      ],
-      agent_dest_lines_aud: [],
+      customer_id: 0,
+      contact_id: 0,
+      mode: "AIR",
+      shipment_type: "IMPORT",
+      incoterm: "EXW",
+      payment_term: "PREPAID",
+      origin_airport_code: "",
+      destination_airport_code: "",
+      is_dangerous_goods: false,
+      dimensions: [],
     },
   });
 
-  // Access form state and methods
-  const { control, handleSubmit, watch, setValue, getValues, formState: { errors } } = form;
-
-  // useFieldArray for dynamic pieces
-  const { fields: pieceFields, append: appendPiece, remove: removePiece } = useFieldArray({
-    control, name: "pieces",
+  // Setup useFieldArray to manage the dynamic 'dimensions' list
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "dimensions",
   });
 
-  const { fields: buyLineFields, append: appendBuyLine, remove: removeBuyLine } = useFieldArray({
-    control, name: "buy_lines",
-  });
-  const { fields: agentLineFields, append: appendAgentLine, remove: removeAgentLine } = useFieldArray({
-    control, name: "agent_dest_lines_aud",
-  });
+  // This is the function for the "Add Piece" button
+  // ... useFieldArray and other functions ...
 
-  // Watch relevant fields to update calculations or apply rules
-  const watchedPieces = watch("pieces");
-  const watchedScenario = watch("scenario");
-  const watchedMode = watch("mode");
-  const watchedBillToId = watch("bill_to_id");
-  const watchedOrigin = watch("origin_code");
-
-  // --- State for Comboboxes ---
-  const [billToOptions, setBillToOptions] = useState<CompanyOption[]>([]);
-  const [shipperOptions, setShipperOptions] = useState<CompanyOption[]>([]);
-  const [consigneeOptions, setConsigneeOptions] = useState<CompanyOption[]>([]);
-  const [contactOptions, setContactOptions] = useState<ContactOption[]>([]);
-  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
-  const [originOptions, setOriginOptions] = useState<LocationOption[]>([]);
-  const [destinationOptions, setDestinationOptions] = useState<LocationOption[]>([]);
-
-  // Debounced search handler
-  const handleCompanySearch = useDebouncedCallback(async (query: string, setter: React.Dispatch<React.SetStateAction<CompanyOption[]>>) => {
-    const companies = await searchCompanies(query);
-    setter(companies.map(c => ({ value: c.id, label: c.name })));
-  }, 300);
-
-  const handleLocationSearch = useDebouncedCallback(async (query: string, setter: React.Dispatch<React.SetStateAction<LocationOption[]>>) => {
-    const locations = await searchLocations(query);
-    // Ensure the value is always the 3-letter code
-    setter(locations.map(loc => ({ value: loc.value, label: loc.label })));
-  }, 300);
-
-  // --- State for API interaction ---
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [quoteResult, setQuoteResult] = useState<any>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // --- Calculation Logic (using watched values) ---
-  const calculateVolume = (piece: any) => (piece.length * piece.width * piece.height) / 1000000;
-  const calculateVolumetricWeight = (piece: any) => calculateVolume(piece) * 167;
-  const totalGrossWeight = watchedPieces.reduce((total, p) => total + ((p.pieces || 0) * (p.weight || 0)), 0);
-  const totalVolumetricWeight = watchedPieces.reduce((total, p) => total + ((p.pieces || 0) * calculateVolumetricWeight(p)), 0);
-  const chargeableWeight = Math.max(totalGrossWeight, totalVolumetricWeight).toFixed(2);
-
-  // --- Business Rule: Lock Bill To for Collect ---
-  const isCollect = watchedScenario === 'IMPORT_D2D_COLLECT';
-  const isBillToLocked = isCollect;
+  // --- ADD useEffect FOR FETCHING CONTACTS ---
   useEffect(() => {
-    if (isCollect) {
-      const consigneeId = form.getValues('consignee_id');
-      if (consigneeId && form.getValues('bill_to_id') !== consigneeId) {
-        setValue('bill_to_id', consigneeId, { shouldValidate: true });
-        handleCompanySearch(consigneeId, setBillToOptions);
-      }
-    }
-  }, [isCollect, form, setValue, handleCompanySearch]);
-
-  // --- NEW EFFECT: Fetch Contacts when Bill To changes ---
-  useEffect(() => {
-    const fetchContacts = async () => {
-      if (!watchedBillToId) {
-        setContactOptions([]); // Clear options if no company selected
-        setValue('contact_id', undefined); // Clear selected contact
-        return;
-      }
+    // Define the async function to fetch contacts
+    const fetchContacts = async (customerId: number) => {
       setIsLoadingContacts(true);
+      setContacts([]); // Clear previous contacts
       try {
-        const contacts = await getCompanyContacts(watchedBillToId);
-        setContactOptions(contacts.map(c => ({
-          value: c.id,
-          label: `${c.first_name} ${c.last_name} (${c.email})`
-        })));
-        // Optionally reset contact if the previously selected one isn't in the new list
-        const currentContactId = getValues('contact_id');
-        if (currentContactId && !contacts.some(c => c.id === currentContactId)) {
-           setValue('contact_id', undefined);
-        }
-      } catch (e) {
-         console.error("Failed to load contacts", e);
-         setContactOptions([]); // Clear on error
+        // Construct the URL with query parameter
+        const response = await apiClient.get<Contact[]>(`/api/contacts/?customer_id=${customerId}`);
+        setContacts(response.data); // Update state with fetched contacts
+      } catch (error) {
+        console.error("Error fetching contacts:", error);
+        // TODO: Show an error message to the user (e.g., using a Toast)
       } finally {
         setIsLoadingContacts(false);
       }
     };
-    fetchContacts();
-  }, [watchedBillToId, setValue, getValues]); // Depend on watchedBillToId
 
-  // --- API Submission ---
-  const onSubmit = async (data: QuoteFormData) => {
-    setIsSubmitting(true);
-    setSubmitError(null);
-    setQuoteResult(null);
-
-    // Prepare payload 
-    const payload = {
-      ...data,
-      chargeable_kg: chargeableWeight,
-      contact_id: data.contact_id || null,
-    };
-
-    try {
-      const result = await createQuoteV2(payload);
-      setQuoteResult(result);
-    } catch (err: any) {
-      setSubmitError(err.message || 'An unknown error occurred.');
-    } finally {
-      setIsSubmitting(false);
+    // If a customer is selected, call the fetch function
+    if (selectedCustomerId) {
+      fetchContacts(selectedCustomerId);
     }
-  };
+  }, [selectedCustomerId]); // Dependency array: run effect when selectedCustomerId changes
+  // --- END ADD ---
+
+  function addPieceLine() {
+    append({
+      pieces: 1,
+      length_cm: 0,
+      width_cm: 0,
+      height_cm: 0,
+      gross_weight_kg: 0,
+    });
+  }
+
+  function onSubmit(data: QuoteFormSchemaV3) {
+    console.log("V3 Form data is valid:");
+    console.log(data);
+    // TODO: Call the /api/v3/quotes/compute/ endpoint here
+  }
 
   return (
-    <div className="container mx-auto p-4 space-y-6">
-      <h1 className="text-2xl font-bold">New Quote (Smart Form)</h1>
-      <Form {...form}> 
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-6">
-              
-              {/* Mode Selection Card (no change) */}
-              <Card>
-                  <CardHeader><CardTitle>Mode & Scenario</CardTitle></CardHeader>
-                  <CardContent className="grid grid-cols-2 gap-4">
-                     <FormField
-                        control={control}
-                        name="mode"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Mode</FormLabel>
-                             <Select onValueChange={field.onChange} defaultValue={field.value} disabled> {/* Disabled for now as only AIR exists */}
-                              <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                              <SelectContent>
-                                <SelectItem value="AIR">Air Freight</SelectItem>
-                                {/* <SelectItem value="SEA">Sea Freight</SelectItem> */}
-                                {/* <SelectItem value="CUSTOMS">Customs Only</SelectItem> */}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                     <FormField
-                        control={control}
-                        name="scenario"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Quote Type / Scenario</FormLabel>
-                             <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                              <SelectContent>
-                                <SelectItem value="IMPORT_D2D_COLLECT">Import D2D Collect</SelectItem>
-                                <SelectItem value="EXPORT_D2D_PREPAID">Export D2D Prepaid</SelectItem>
-                                <SelectItem value="IMPORT_A2D_AGENT_AUD">Import A2D Agent (AUD)</SelectItem>
-                                {/* Add other scenarios */}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                  </CardContent>
-              </Card>
+    <div className="container mx-auto max-w-5xl p-4">
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-bold">New V3 Quote</h1>
+            <Button type="submit" className="text-lg">
+              Calculate Quote
+            </Button>
+          </div>
 
-              {/* Conditional Rendering: Only show if mode is AIR */}
-              {watchedMode === 'AIR' && (
-                <>
-                  {/* Shipment Details Card (no change) */}
-                  <Card>
-                    <CardHeader><CardTitle>Shipment Details</CardTitle></CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <FormField control={control} name="origin_code" render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Origin</FormLabel>
-                            <Combobox
-                                options={originOptions}
-                                value={field.value}
-                                onChange={(value) => {
-                                    // Ensure value is uppercase before setting
-                                    setValue('origin_code', value.toUpperCase(), { shouldValidate: true });
-                                }}
-                                onSearch={(query) => handleLocationSearch(query, setOriginOptions)}
-                                placeholder="Select Origin..."
-                                searchPlaceholder="Search locations..."
-                            />
-                            <FormMessage />
-                          </FormItem>
-                        )} />
-                        <FormField control={control} name="destination_code" render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Destination</FormLabel>
-                            <Combobox
-                                options={destinationOptions}
-                                value={field.value}
-                                 onChange={(value) => {
-                                    // Ensure value is uppercase before setting
-                                    setValue('destination_code', value.toUpperCase(), { shouldValidate: true });
-                                }}
-                                onSearch={(query) => handleLocationSearch(query, setDestinationOptions)}
-                                placeholder="Select Destination..."
-                                searchPlaceholder="Search locations..."
-                            />
-                            <FormMessage />
-                          </FormItem>
-                        )} />
-                      </div>
+          <Tabs defaultValue="details" className="w-full">
+            {/* These are the Tab "Buttons" */}
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="details">Step 1: Shipment Details</TabsTrigger>
+              <TabsTrigger value="cargo">Step 2: Cargo Details</TabsTrigger>
+            </TabsList>
 
-                      <Label>Dimensions & Weight</Label>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Pcs</TableHead><TableHead>Length (cm)</TableHead><TableHead>Width (cm)</TableHead>
-                            <TableHead>Height (cm)</TableHead><TableHead>Weight (kg)</TableHead><TableHead></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {pieceFields.map((item, index) => (
-                            <TableRow key={item.id}>
-                              <TableCell><FormField control={control} name={`pieces.${index}.pieces`} render={({ field }) => <FormItem><FormControl><Input type="number" {...field} /></FormControl></FormItem>} /></TableCell>
-                              <TableCell><FormField control={control} name={`pieces.${index}.length`} render={({ field }) => <FormItem><FormControl><Input type="number" {...field} /></FormControl></FormItem>} /></TableCell>
-                              <TableCell><FormField control={control} name={`pieces.${index}.width`} render={({ field }) => <FormItem><FormControl><Input type="number" {...field} /></FormControl></FormItem>} /></TableCell>
-                              <TableCell><FormField control={control} name={`pieces.${index}.height`} render={({ field }) => <FormItem><FormControl><Input type="number" {...field} /></FormControl></FormItem>} /></TableCell>
-                              <TableCell><FormField control={control} name={`pieces.${index}.weight`} render={({ field }) => <FormItem><FormControl><Input type="number" {...field} /></FormControl></FormItem>} /></TableCell>
-                              <TableCell><Button type="button" variant="destructive" size="sm" onClick={() => removePiece(index)}>X</Button></TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                      {/* Display validation errors for the pieces array */}
-                      {errors.pieces?.root?.message && <p className="text-sm font-medium text-destructive">{errors.pieces.root.message}</p>}
-                      {/* Display individual piece errors (optional) */}
-                      {errors.pieces?.map((pieceError, index) => (
-                        Object.values(pieceError || {}).map((fieldError: any) => (
-                          fieldError?.message && <p key={`${index}-${fieldError.message}`} className="text-sm font-medium text-destructive">Piece {index + 1}: {fieldError.message}</p>
-                        ))
-                      ))}
-                      <Button type="button" variant="outline" onClick={() => appendPiece({ pieces: 1, length: 0, width: 0, height: 0, weight: 0 })}>Add Piece</Button>
-                    </CardContent>
-                  </Card>
-
-                  {/* --- UPDATED: Parties Card --- */}
-                  <Card>
-                    <CardHeader><CardTitle>Parties</CardTitle><CardDescription>Select the companies involved.</CardDescription></CardHeader>
-                    <CardContent className="space-y-4">
-                      <FormField control={control} name="consignee_id" render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Consignee</FormLabel>
-                            <Combobox
-                              options={consigneeOptions}
-                              value={field.value}
-                              onChange={field.onChange} // RHF handles value update
-                              onSearch={(query) => handleCompanySearch(query, setConsigneeOptions)}
-                              placeholder="Select Consignee..." searchPlaceholder="Search companies..."
-                            />
-                            <FormMessage />
-                          </FormItem>
-                        )} />
-                      <FormField control={control} name="bill_to_id" render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Bill To Account {isBillToLocked && "(Locked to Consignee)"}</FormLabel>
-                            <Combobox
-                              options={billToOptions}
-                              value={field.value}
-                              onChange={field.onChange}
-                              onSearch={(query) => handleCompanySearch(query, setBillToOptions)}
-                              placeholder="Select Bill To..." searchPlaceholder="Search companies..."
-                              // Disable the combobox if the rule applies
-                              disabled={isBillToLocked} 
-                            />
-                             <FormDescription>For Collect shipments, Bill To is automatically set to Consignee.</FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )} />
-
-                      {/* --- NEW: Contact Dropdown --- */}
-                      <FormField
-                        control={control}
-                        name="contact_id"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Primary Contact (for Bill To)</FormLabel>
-                            <Select
-                              onValueChange={field.onChange}
-                              value={field.value ?? ""} // Handle undefined value
-                              disabled={!watchedBillToId || isLoadingContacts} // Disable if no Bill To or loading
-                            >
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue placeholder={
-                                    isLoadingContacts
-                                      ? "Loading..."
-                                      : !watchedBillToId
-                                      ? "Select a Bill To account first"
-                                      : contactOptions.length === 0
-                                      ? "No contacts found"
-                                      : "Select a contact..."
-                                  } />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {contactOptions.map(option => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      {/* --- */}
-
-                      <FormField control={control} name="shipper_id" render={({ field }) => (
-                          <FormItem className="flex flex-col">
-                            <FormLabel>Shipper</FormLabel>
-                            <Combobox
-                              options={shipperOptions}
-                              value={field.value}
-                              onChange={field.onChange}
-                              onSearch={(query) => handleCompanySearch(query, setShipperOptions)}
-                              placeholder="Select Shipper..." searchPlaceholder="Search companies..."
-                            />
-                            <FormMessage />
-                          </FormItem>
-                        )} />
-                    </CardContent>
-                  </Card>
-                  {/* --- End Parties Card --- */}
-
-                  {/* --- NEW: Buy Lines (Origin/Freight Charges) Card --- */}
-                   <Card>
-                    <CardHeader><CardTitle>Origin & Freight Charges</CardTitle></CardHeader>
-                    <CardContent className="space-y-4">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Description</TableHead>
-                            <TableHead>Currency</TableHead>
-                            <TableHead className="text-right">Amount</TableHead>
-                            <TableHead></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {buyLineFields.map((item, index) => (
-                            <TableRow key={item.id}>
-                              <TableCell>
-                                <FormField
-                                  control={control}
-                                  name={`buy_lines.${index}.description`}
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <FormControl>
-                                        <Input {...field} />
-                                      </FormControl>
-                                    </FormItem>
-                                  )}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <FormField
-                                  control={control}
-                                  name={`buy_lines.${index}.currency`}
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                        <FormControl>
-                                          <SelectTrigger>
-                                            <SelectValue />
-                                          </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                          {currencies.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                                        </SelectContent>
-                                      </Select>
-                                    </FormItem>
-                                  )} />
-                              </TableCell>
-                              <TableCell>
-                                <FormField
-                                  control={control}
-                                  name={`buy_lines.${index}.amount`}
-                                  render={({ field }) => (
-                                    <FormItem>
-                                      <FormControl>
-                                        <Input type="number" step="0.01" className="text-right" {...field} />
-                                      </FormControl>
-                                    </FormItem>
-                                  )} />
-                              </TableCell>
-                              <TableCell><Button type="button" variant="destructive" size="sm" onClick={() => removeBuyLine(index)}>X</Button></TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                      {/* Add validation messages if needed */}
-                      <Button type="button" variant="outline" onClick={() => appendBuyLine({ description: "", currency: "AUD", amount: 0 })}>Add Origin/Freight Charge</Button>
-                    </CardContent>
-                  </Card>
-
-                  {/* --- NEW: Agent Destination Lines (Conditional) --- */}
-                  {/* Only show this section for relevant export scenarios */}
-                  {(watchedScenario === 'EXPORT_D2D_PREPAID' || watchedScenario === 'EXPORT_D2D_COLLECT') && (
-                    <Card>
-                      <CardHeader><CardTitle>Agent Destination Charges (AUD)</CardTitle></CardHeader>
-                      <CardContent className="space-y-4">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Description</TableHead>
-                              <TableHead className="text-right">Amount (AUD)</TableHead>
-                              <TableHead></TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {agentLineFields.map((item, index) => (
-                              <TableRow key={item.id}>
-                                <TableCell>
-                                  <FormField
-                                    control={control}
-                                    name={`agent_dest_lines_aud.${index}.description`}
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <FormControl>
-                                          <Input {...field} />
-                                        </FormControl>
-                                      </FormItem>
-                                    )}
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  <FormField
-                                    control={control}
-                                    name={`agent_dest_lines_aud.${index}.amount`}
-                                    render={({ field }) => (
-                                      <FormItem>
-                                        <FormControl>
-                                          <Input type="number" step="0.01" className="text-right" {...field} />
-                                        </FormControl>
-                                      </FormItem>
-                                    )}
-                                  />
-                                </TableCell>
-                                <TableCell><Button type="button" variant="destructive" size="sm" onClick={() => removeAgentLine(index)}>X</Button></TableCell>
-                                {/* Hidden currency field as it's always AUD */}
-                                <Controller
-                                  name={`agent_dest_lines_aud.${index}.currency`}
-                                  control={control}
-                                  defaultValue="AUD"
-                                  render={({ field }) => <input type="hidden" {...field} />}
-                                />
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                        {/* Add validation messages if needed */}
-                        <Button type="button" variant="outline" onClick={() => appendAgentLine({ description: "", currency: "AUD", amount: 0 })}>Add Agent Charge</Button>
-                      </CardContent>
-                    </Card>
-                  )}
-                  {/* --- */}
-                </>
-              )} 
-                 
-            </div>
-
-            {/* Summary and Actions Card (no change) */}
-            <div className="space-y-6">
-              <Card>
-                <CardHeader><CardTitle>Quote Summary</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                    {/* Mode specific summary */}
-                    {watchedMode === 'AIR' && (
-                        <div className="space-y-2">
-                            <div className="flex justify-between"><span>Gross Wt:</span> <strong>{totalGrossWeight.toFixed(2)} kg</strong></div>
-                            <div className="flex justify-between"><span>Volume Wt:</span> <strong>{totalVolumetricWeight.toFixed(2)} kg</strong></div>
-                            <div className="flex justify-between text-lg font-bold"><span>Chargeable Wt:</span> <strong>{chargeableWeight} kg</strong></div>
-                        </div>
-                    )}
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting ? 'Calculating...' : 'Calculate Quote'}
-                    </Button>
-                </CardContent>
-              </Card>
-              
-              {submitError && (
-                  <Card className="bg-red-50 border-red-200"><CardContent className="p-4"><p className="text-red-700 font-semibold">Error: {submitError}</p></CardContent></Card>
-              )}
-      
-              {quoteResult && (
+            {/* --- TAB 1: ALL SHIPMENT DETAILS --- */}
+            <TabsContent value="details" className="mt-4">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                {/* --- Customer Card --- */}
                 <Card>
-                  <CardHeader><CardTitle>Calculation Result</CardTitle></CardHeader>
-                  <CardContent>
-                      <div className="space-y-2">
-                          <div className="flex justify-between"><span>Quote Number:</span> <strong>{quoteResult.quote_number}</strong></div>
-                          <div className="flex justify-between text-xl font-bold"><span>Grand Total:</span> <strong>{quoteResult.totals?.grand_total_pgk} PGK</strong></div>
-                      </div>
-                      <a href={`http://127.0.0.1:8000/api/v2/quotes/${quoteResult.id}/pdf/`} target="_blank" rel="noopener noreferrer">
-                          <Button className="w-full mt-4" variant="outline">Download PDF</Button>
-                      </a>
+                  <CardHeader>
+                    <CardTitle>Customer</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* --- REPLACED Customer ID Input --- */}
+                    <FormField
+                      control={form.control}
+                      name="customer_id"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>Customer</FormLabel>
+                          <CompanySearchCombobox
+                            value={selectedCustomer}
+                            onSelect={(company) => {
+                              setSelectedCustomer(company);
+                              const companyId = company ? parseInt(company.id) : null;
+                              field.onChange(companyId); // Update RHF state
+                              setSelectedCustomerId(companyId); // Update local state
+                              form.resetField("contact_id"); // Clear contact when customer changes
+                            }}
+                          />
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {/* --- END REPLACEMENT --- */}
+
+                    {/* --- Contact Select Field --- */}
+                    <FormField
+                      control={form.control}
+                      name="contact_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Contact</FormLabel>
+                          <Select
+                            onValueChange={(value) => field.onChange(parseInt(value))}
+                            value={field.value?.toString()} // Ensure value is string for Select
+                            disabled={!selectedCustomerId || isLoadingContacts} // Disable if no customer OR loading
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder={
+                                  isLoadingContacts ? "Loading contacts..." :
+                                  !selectedCustomerId ? "Select customer first" :
+                                  "Select a contact"
+                                } />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {isLoadingContacts ? (
+                                <SelectItem value="loading" disabled>Loading...</SelectItem>
+                              ) : contacts.length > 0 ? (
+                                // Map over fetched contacts
+                                contacts.map((contact) => (
+                                  <SelectItem key={contact.id} value={contact.id.toString()}>
+                                    {contact.first_name} {contact.last_name} ({contact.email})
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="no-contacts" disabled>
+                                  {selectedCustomerId ? "No contacts found" : "Select customer first"}
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {/* --- END UPDATE --- */}                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Routing</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="origin_airport_code"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Origin (IATA)</FormLabel>
+                          <FormControl>
+                            <Input placeholder="e.g., BNE" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="destination_airport_code"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Destination (IATA)</FormLabel>
+                          <FormControl>
+                            <Input placeholder="e.g., POM" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
                   </CardContent>
                 </Card>
-              )}
-            </div>
-          </div>
+
+                <Card className="md:col-span-2">
+                  <CardHeader>
+                    <CardTitle>Commercials</CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <FormField
+                      control={form.control}
+                      name="mode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Mode</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value?.toString()}>
+                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                            <SelectContent>
+                              {Object.values(V3_MODES).map((mode) => (
+                                <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    
+                    <FormField
+                      control={form.control}
+                      name="incoterm"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Incoterm</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value?.toString()}>
+                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                            <SelectContent>
+                              {Object.values(V3_INCOTERMS).map((term) => (
+                                <SelectItem key={term} value={term}>{term}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="payment_term"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Payment Term</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value?.toString()}>
+                            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                            <SelectContent>
+                              {Object.values(V3_PAYMENT_TERMS).map((term) => (
+                                <SelectItem key={term} value={term}>{term}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* --- TAB 2: CARGO DETAILS (DIMENSIONS) --- */}
+            <TabsContent value="cargo" className="mt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Cargo Details</CardTitle>
+                  <CardDescription>
+                    Add one line for each group of identical pieces.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* We map over the 'fields' from useFieldArray */}
+                  {fields.map((field, index) => (
+                    <Card key={field.id} className="relative p-4">
+                      {/* THIS IS THE NEW REMOVE BUTTON */}
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute -right-3 -top-3 h-7 w-7 rounded-full"
+                        onClick={() => remove(index)} // Calls remove function
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+
+                      <div className="grid grid-cols-5 gap-3">
+                        <FormField
+                          control={form.control}
+                          name={`dimensions.${index}.pieces`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Pieces</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} onChange={(e) => field.onChange(parseInt(e.target.value))}/>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name={`dimensions.${index}.length_cm`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Length (cm)</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} onChange={(e) => field.onChange(parseFloat(e.target.value))}/>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name={`dimensions.${index}.width_cm`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Width (cm)</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} onChange={(e) => field.onChange(parseFloat(e.target.value))}/>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name={`dimensions.${index}.height_cm`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Height (cm)</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} onChange={(e) => field.onChange(parseFloat(e.target.value))}/>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name={`dimensions.${index}.gross_weight_kg`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Weight (kg)</FormLabel>
+                              <FormControl>
+                                <Input type="number" {...field} onChange={(e) => field.onChange(parseFloat(e.target.value))}/>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </Card>
+                  ))}
+                  
+                  {/* "Add Piece" button */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={addPieceLine}
+                  >
+                    Add Piece Line
+                  </Button>
+
+                  {/* Show error if array is empty */}
+                  <FormMessage>
+                    {form.formState.errors.dimensions?.message}
+                  </FormMessage>
+                </CardContent>
+              </Card>
+
+              {/* Other details like Dangerous Goods */}
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle>Other Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <FormField
+                    control={form.control}
+                    name="is_dangerous_goods"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-4">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-1 leading-none">
+                          <FormLabel>Dangerous Goods</FormLabel>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </Card>
+
+            </TabsContent>
+          </Tabs>
         </form>
       </Form>
     </div>

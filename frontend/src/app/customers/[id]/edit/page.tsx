@@ -9,26 +9,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/auth-context";
-import { api } from "@/lib/api";
+import * as api from "@/lib/api";
+import { Customer } from "@/lib/types";
 
-// Define a clear "manifest" for our data shapes
-interface Address {
-  address_line_1: string;
-  city: string;
-  state_province: string;
-  postcode: string;
-  country: string;
-}
+type ErrorWithResponse = {
+  response?: {
+    data?: Record<string, unknown>;
+  };
+  message?: string;
+};
 
-interface Customer {
-  id: number;
-  company_name: string;
-  audience_type: string;
-  primary_address: Address;
-  contact_person_name: string;
-  contact_person_email: string;
-  contact_person_phone: string;
-}
+const isErrorWithResponse = (error: unknown): error is ErrorWithResponse => {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  return "response" in error;
+};
 
 export default function EditCustomerPage() {
   // Use our strong types instead of 'any'
@@ -43,17 +40,16 @@ export default function EditCustomerPage() {
     if (id && token) {
       const fetchCustomer = async () => {
         try {
-          const response = await api.get(`/customers/${id}/`, {
-            headers: { Authorization: `Token ${token}` },
-          });
+          const customerData = await api.getCustomer(token, id as string);
           // Ensure primary_address is not null for the form
-          if (!response.data.primary_address) {
-            response.data.primary_address = {
+          if (!customerData.primary_address) {
+            customerData.primary_address = {
               address_line_1: "", city: "", state_province: "", postcode: "", country: "",
             };
           }
-          setCustomer(response.data);
-        } catch (err) {
+          setCustomer(customerData);
+        } catch (fetchError) {
+          console.error(fetchError);
           setError("Failed to fetch customer data.");
         }
       };
@@ -68,10 +64,25 @@ export default function EditCustomerPage() {
 
   const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setCustomer((prev) => (prev ? {
-      ...prev,
-      primary_address: { ...prev.primary_address, [name]: value },
-    } : null));
+    setCustomer((prev) => {
+      if (!prev) return null;
+
+      const currentAddress = prev.primary_address || {
+        address_line_1: "",
+        city: "",
+        state_province: "",
+        postcode: "",
+        country: "",
+      };
+
+      return {
+        ...prev,
+        primary_address: {
+          ...currentAddress,
+          [name]: value,
+        },
+      };
+    });
   };
 
   const handleAudienceChange = (value: string) => {
@@ -88,22 +99,25 @@ export default function EditCustomerPage() {
     }
 
     try {
-      await api.put(`/customers/${id}/`, customer, {
-        headers: { Authorization: `Token ${token}` },
-      });
+      await api.updateCustomer(token, id as string, customer);
       router.push("/customers");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      // **SMARTER ERROR HANDLING LOGIC**
-      // Check if the error has a detailed response from the backend
-      if (err.response && err.response.data) {
-        // Format the detailed errors into a single string
-        const errorMessages = Object.entries(err.response.data)
-          .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-          .join('; ');
+
+      if (isErrorWithResponse(err) && err.response?.data) {
+        const errorData = err.response.data as Record<string, unknown>;
+        const errorMessages = Object.entries(errorData)
+          .map(([key, value]) => {
+            if (Array.isArray(value)) {
+              return `${key}: ${value.join(", ")}`;
+            }
+            return `${key}: ${String(value)}`;
+          })
+          .join("; ");
         setError(`Failed to update customer: ${errorMessages}`);
+      } else if (err instanceof Error) {
+        setError(err.message || "Failed to update customer. An unknown error occurred.");
       } else {
-        // Fallback to the generic message if no details are available
         setError("Failed to update customer. An unknown error occurred.");
       }
     }
@@ -147,25 +161,25 @@ export default function EditCustomerPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                <div>
                   <Label htmlFor="address_line_1">Street / Road</Label>
-                  <Input id="address_line_1" name="address_line_1" value={customer.primary_address.address_line_1} onChange={handleAddressChange} />
+                  <Input id="address_line_1" name="address_line_1" value={customer.primary_address?.address_line_1 ?? ''} onChange={handleAddressChange} />
                 </div>
                 <div>
                   <Label htmlFor="city">City / Suburb</Label>
-                  <Input id="city" name="city" value={customer.primary_address.city} onChange={handleAddressChange} />
+                  <Input id="city" name="city" value={customer.primary_address?.city ?? ''} onChange={handleAddressChange} />
                 </div>
                 <div>
                   <Label htmlFor="state_province">State / Province</Label>
-                  <Input id="state_province" name="state_province" value={customer.primary_address.state_province} onChange={handleAddressChange} />
+                  <Input id="state_province" name="state_province" value={customer.primary_address?.state_province ?? ''} onChange={handleAddressChange} />
                 </div>
               {isOverseas && (
                 <div>
                   <Label htmlFor="postcode">Postcode / ZIP</Label>
-                  <Input id="postcode" name="postcode" value={customer.primary_address.postcode} onChange={handleAddressChange} />
+                  <Input id="postcode" name="postcode" value={customer.primary_address?.postcode ?? ''} onChange={handleAddressChange} />
                 </div>
               )}
                <div>
                   <Label htmlFor="country">Country</Label>
-                  <Input id="country" name="country" value={customer.primary_address.country} onChange={handleAddressChange} />
+                  <Input id="country" name="country" value={customer.primary_address?.country ?? ''} onChange={handleAddressChange} />
                 </div>
             </div>
 

@@ -19,6 +19,16 @@ const ChargeLineSchema = z.object({
   currency: z.string().length(3, "Currency must be 3 letters."), // Could refine with z.enum later
   amount: z.coerce.number().positive("Amount must be positive."),
 });
+
+// --- NEW: Schema for a single dimension line ---
+// This is the individual line schema
+const dimensionLineSchema = z.object({
+  pieces: z.number().positive("Pcs must be at least 1").int(),
+  length_cm: z.number().positive("L must be positive"),
+  width_cm: z.number().positive("W must be positive"),
+  height_cm: z.number().positive("H must be positive"),
+  gross_weight_kg: z.number().positive("Kg must be positive"),
+});
 // ---
 
 // --- Mode-Specific Schemas ---
@@ -26,8 +36,8 @@ const ChargeLineSchema = z.object({
 const AirModeSchema = z.object({
   mode: z.literal("AIR"),
   scenario: z.enum([
-    "IMPORT_D2D_COLLECT", 
-    "EXPORT_D2D_PREPAID", 
+    "IMPORT_D2D_COLLECT",
+    "EXPORT_D2D_PREPAID",
     "IMPORT_A2D_AGENT_AUD",
     // Add other scenarios as needed
   ]),
@@ -38,7 +48,7 @@ const AirModeSchema = z.object({
   origin_code: z.string().length(3, "Origin must be a 3-letter code").toUpperCase(),
   destination_code: z.string().length(3, "Destination must be a 3-letter code").toUpperCase(),
   pieces: z.array(PieceSchema).min(1, "At least one piece is required."),
-  
+
   // --- ADD THESE FIELDS ---
   buy_lines: z.array(ChargeLineSchema).optional(), // Origin/Freight charges
   agent_dest_lines_aud: z.array(ChargeLineSchema).optional(), // Destination charges (AUD for exports)
@@ -49,7 +59,7 @@ const AirModeSchema = z.object({
 export const QuoteFormSchema = z.discriminatedUnion("mode", [
   AirModeSchema,
   // z.object({ mode: z.literal("SEA"), ... }),
-  // z.object({ mode: z.literal("CUSTOMS"), ... }), 
+  // z.object({ mode: z.literal("CUSTOMS"), ... }),
 ]);
 
 // Infer the TypeScript type from the schema
@@ -59,17 +69,28 @@ export type QuoteFormData = z.infer<typeof QuoteFormSchema>;
 
 // Define enums for our dropdowns
 // These should match the choices in the backend models
-export const V3_MODES = ["AIR", "SEA", "ROAD"] as const;
-export const V3_SHIPMENT_TYPES = ["IMPORT", "EXPORT", "DOMESTIC"] as const;
-export const V3_INCOTERMS = [
-  "EXW",
-  "FOB",
-  "DAP",
-  "DDP",
-  "CPT",
-  "CFR",
-] as const; // Add more as needed
-export const V3_PAYMENT_TERMS = ["PREPAID", "COLLECT"] as const;
+export const V3_MODES = {
+  AIR: "AIR",
+  SEA: "SEA",
+  ROAD: "ROAD",
+} as const;
+export const V3_SHIPMENT_TYPES = {
+  IMPORT: "IMPORT",
+  EXPORT: "EXPORT",
+  DOMESTIC: "DOMESTIC",
+} as const;
+export const V3_INCOTERMS = {
+  EXW: "EXW",
+  FOB: "FOB",
+  DAP: "DAP",
+  DDP: "DDP",
+  CPT: "CPT",
+  CFR: "CFR",
+} as const; // Add more as needed
+export const V3_PAYMENT_TERMS = {
+  PREPAID: "PREPAID",
+  COLLECT: "COLLECT",
+} as const;
 
 // Optional schema for manual overrides (Spot Rates)
 const manualCostOverrideSchema = z.object({
@@ -81,45 +102,39 @@ const manualCostOverrideSchema = z.object({
 });
 
 // The main V3 Quote Request Schema
-// This matches our V3QuoteComputeRequestSerializer on the backend
 export const quoteFormSchemaV3 = z.object({
   // --- Step 1: Customer ---
-  customer_id: z.number({ required_error: "Customer must be selected." }),
-  contact_id: z.number({ required_error: "Contact must be selected." }),
+  customer_id: z.number().min(1, { message: "Customer must be selected." }),
+  contact_id: z.number().min(1, { message: "Contact must be selected." }),
 
   // --- Step 2: Shipment Type ---
-  mode: z.nativeEnum(V3_MODES, {
-    required_error: "Mode of transport is required.",
+  mode: z.enum(Object.values(V3_MODES), {
+    error: "Mode of transport is required.",
   }),
-  shipment_type: z.nativeEnum(V3_SHIPMENT_TYPES, {
-    required_error: "Shipment type is required.",
+  shipment_type: z.enum(Object.values(V3_SHIPMENT_TYPES), {
+    error: "Shipment type is required.",
   }),
-  incoterm: z.nativeEnum(V3_INCOTERMS, {
-    required_error: "Incoterm is required.",
+  incoterm: z.enum(Object.values(V3_INCOTERMS), {
+    error: "Incoterm is required.",
   }),
-  payment_term: z.nativeEnum(V3_PAYMENT_TERMS).default("PREPAID"),
-  output_currency: z.string().length(3).optional(), // e.g. "USD"
+  payment_term: z.enum(Object.values(V3_PAYMENT_TERMS)),
 
   // --- Step 3: Details ---
   origin_airport_code: z
-    .string({ required_error: "Origin is required." })
+    .string()
+    .min(1, "Origin is required.")
     .length(3, "Must be a 3-letter IATA code."),
   destination_airport_code: z
-    .string({ required_error: "Destination is required." })
+    .string()
+    .min(1, "Destination is required.")
     .length(3, "Must be a 3-letter IATA code."),
 
-  pieces: z
-    .number({ required_error: "Number of pieces is required." })
-    .positive("Pieces must be at least 1.")
-    .int(),
-  gross_weight_kg: z
-    .number({ required_error: "Gross weight is required." })
-    .positive("Weight must be positive."),
-  volume_cbm: z
-    .number({ required_error: "Volume is required." })
-    .positive("Volume must be positive."),
+  is_dangerous_goods: z.boolean(),
 
-  is_dangerous_goods: z.boolean().default(false),
+  // --- Step 4: Dimensions (The Array) ---
+  dimensions: z
+    .array(dimensionLineSchema)
+    .min(1, "You must add at least one dimension line."), // <-- THIS IS THE FIX
 
   // --- Spot Rate Overrides ---
   overrides: z.array(manualCostOverrideSchema).optional(),
