@@ -15,15 +15,44 @@ import { API_BASE_URL } from './config';
 
 const API_URL = API_BASE_URL;
 
+async function handleResponse<T>(response: Response): Promise<{ data: T }> {
+    if (!response.ok) {
+      const errorData = (await response
+        .json()
+        .catch(() => ({}))) as Record<string, unknown>;
+      const message =
+        (typeof errorData.detail === 'string' && errorData.detail) ||
+        (typeof errorData.error === 'string' && errorData.error) ||
+        response.statusText ||
+        'An error occurred';
+      throw new Error(message);
+    }
+    const data = (await response
+      .json()
+      .catch(() => undefined)) as T;
+    return { data };
+}
+
 export const apiClient = {
   get: async <T>(url: string, options: RequestInit = {}): Promise<{ data: T }> => {
     const response = await fetch(`${API_URL}${url}`, options);
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'An error occurred');
-    }
-    const data = await response.json();
-    return { data };
+    return handleResponse<T>(response);
+  },
+  post: async <T>(
+    url: string,
+    payload: unknown,
+    options: RequestInit = {},
+  ): Promise<{ data: T }> => {
+    const response = await fetch(`${API_URL}${url}`, {
+      ...options,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers ?? {}),
+      },
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<T>(response);
   },
 };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react"; // <-- Add useEffect
+import { useState, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 // We must import useFieldArray
 import { useForm, useFieldArray } from "react-hook-form";
@@ -118,7 +118,7 @@ export default function NewQuotePage() {
         // Construct the URL with query parameter
         const response = await apiClient.get<Contact[]>(`/api/contacts/?customer_id=${customerId}`);
         setContacts(response.data); // Update state with fetched contacts
-      } catch (error) {
+      } catch (error: unknown) {
         console.error("Error fetching contacts:", error);
         // TODO: Show an error message to the user (e.g., using a Toast)
       } finally {
@@ -164,16 +164,13 @@ export default function NewQuotePage() {
       // setSelectedCustomerId(null); // Reset customer selection
       // TODO: Maybe redirect to the new quote's page: router.push(`/quotes/${response.data.id}`)
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("API Error:", error);
-      let errorMessage = "An unexpected error occurred.";
-      // Try to get a more specific error message from the response
-      if (error.response?.data?.detail) {
-        errorMessage = error.response.data.detail;
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      setApiError(errorMessage);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "An unexpected error occurred.";
+      setApiError(message);
       // TODO: Show error in a Toast notification for better UX
     } finally {
       setIsSubmitting(false); // Ensure loading state is turned off
@@ -535,9 +532,11 @@ export default function NewQuotePage() {
                 <AlertTitle>Quote Calculated Successfully!</AlertTitle>
                 <AlertDescription>
                   Quote Number:{" "}
-                  <Link href={`/quotes/${quoteResult.id}`} className="font-medium underline">
-                    {quoteResult.quote_number}
-                  </Link>
+                  <Button variant="link" asChild>
+                    <Link href={`/quotes/${quoteResult.id}`}>
+                      {quoteResult.quote_number}
+                    </Link>
+                  </Button>
                   <br />
                   Total (incl. GST): {quoteResult.latest_version.totals.total_sell_fcy_incl_gst}{" "}
                   {quoteResult.latest_version.totals.total_sell_fcy_currency}

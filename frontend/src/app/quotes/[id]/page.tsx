@@ -51,7 +51,7 @@ const formatDate = (dateString: string | undefined) => {
       month: 'short',
       year: 'numeric',
     });
-  } catch (error) {
+  } catch {
     return dateString; // Return original if parsing fails
   }
 }
@@ -73,9 +73,13 @@ export default function QuoteDisplayPage() {
       try {
         const response = await apiClient.get<V3QuoteComputeResponse>(`/api/v3/quotes/${quoteId}/`);
         setQuoteData(response.data);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Error fetching quote:", err);
-        setError(err.response?.data?.detail || "Failed to load quote details.");
+        const message =
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to load quote details.";
+        setError(message);
       } finally {
         setIsLoading(false);
       }

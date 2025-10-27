@@ -1,11 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { extractErrorFromResponse } from '@/lib/utils';
 import { useAuth } from '@/context/auth-context';
-import { API_BASE_URL } from '@/lib/config';
+import { apiClient } from '@/lib/api';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -15,33 +14,27 @@ export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     try {
-      const apiBase = API_BASE_URL;
-      const response = await fetch(`${apiBase}/api/auth/login/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password }),
-      });
+      const { data } = await apiClient.post<{
+        token: string;
+        role: string;
+        username: string;
+      }>('/api/auth/login/', { username, password });
 
-      if (response.ok) {
-        const data = await response.json();
-        // Update auth context (persists to localStorage and sets user state)
-        login(data.token, data.role, data.username);
-        // Redirect to the quotes page
-        router.push('/quotes');
-      } else {
-        const message = await extractErrorFromResponse(response, 'Login failed');
-        setError(message);
-      }
-    } catch {
-      setError('An error occurred during login');
+      login(data.token, data.role, data.username);
+      router.push('/quotes');
+    } catch (err: unknown) {
+      console.error('Login failed:', err);
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'An error occurred during login';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -55,8 +48,7 @@ export default function LoginPage() {
             Sign in to your account
           </h2>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <input type="hidden" name="remember" defaultValue="true" />
+        <form className="mt-8 space-y-6" method="post" onSubmit={(event) => void handleSubmit(event)}>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
               <label htmlFor="username" className="sr-only">
@@ -99,11 +91,7 @@ export default function LoginPage() {
           )}
 
           <div>
-            <Button
-              type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
+            <Button type="submit" disabled={loading} className="w-full">
               {loading ? 'Signing in...' : 'Sign in'}
             </Button>
           </div>
