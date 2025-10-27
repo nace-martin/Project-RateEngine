@@ -1,5 +1,7 @@
 'use client';
 
+'use client';
+
 import Link from 'next/link';
 import { Quote, QuoteStatus } from '@/lib/types';
 import { useAuth } from '@/context/auth-context';
@@ -7,6 +9,7 @@ import ProtectedRoute from '@/components/protected-route';
 import { useState, useEffect } from 'react';
 import { extractErrorFromResponse } from '@/lib/utils';
 import { API_BASE_URL } from '@/lib/config';
+import { Button } from '@/components/ui/button';
 
 export default function QuotesListPage() {
   const { user } = useAuth();
@@ -86,9 +89,9 @@ export default function QuotesListPage() {
         <main className="container mx-auto p-8">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-4xl font-bold">All Quotes</h1>
-            <Link href="/quotes/new" className="bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition-colors">
-              Create New Quote
-            </Link>
+            <Button asChild>
+              <Link href="/quotes/new">Create New Quote</Link>
+            </Button>
           </div>
           <div className="text-center py-8">Loading quotes...</div>
         </main>
@@ -101,9 +104,9 @@ export default function QuotesListPage() {
       <main className="container mx-auto p-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-4xl font-bold">All Quotes</h1>
-          <Link href="/quotes/new" className="bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition-colors">
-            Create New Quote
-          </Link>
+          <Button asChild>
+            <Link href="/quotes/new">Create New Quote</Link>
+          </Button>
         </div>
 
         <div className="bg-white shadow-sm rounded-md p-4 mb-4 flex flex-wrap gap-3 items-end">
@@ -212,9 +215,9 @@ export default function QuotesListPage() {
                       {new Date(quote.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <Link href={`/quotes/${quote.id}`} className="text-blue-600 hover:underline font-semibold">
-                        View Details
-                      </Link>
+                      <Button variant="link" asChild>
+                        <Link href={`/quotes/${quote.id}`}>View Details</Link>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -223,21 +226,23 @@ export default function QuotesListPage() {
             <div className="flex items-center justify-between p-4 border-t bg-gray-50">
               <div className="text-sm text-gray-600">Total: {count}</div>
               <div className="flex items-center gap-2">
-                <button
-                  className="px-3 py-1 rounded border text-sm disabled:opacity-50"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={!hasPrev || page <= 1}
                 >
                   Previous
-                </button>
+                </Button>
                 <span className="text-sm">Page {page}</span>
-                <button
-                  className="px-3 py-1 rounded border text-sm disabled:opacity-50"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => setPage((p) => p + 1)}
                   disabled={!hasNext}
                 >
                   Next
-                </button>
+                </Button>
               </div>
             </div>
           </div>

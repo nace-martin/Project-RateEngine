@@ -1,5 +1,6 @@
 'use client';
 
+import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { useAuth } from '@/context/auth-context';
 
@@ -15,10 +16,16 @@ export default function AppHeader() {
           <Link href="/" className="font-bold text-lg text-gray-800">RateEngine</Link>
           {isAuthenticated && (
             <nav className="flex items-center gap-3 text-sm">
-              <Link href="/quotes" className="text-gray-700 hover:text-blue-600 font-medium">Quotes</Link>
-              <Link href="/customers" className="text-gray-700 hover:text-blue-600 font-medium">Customers</Link>
+              <Button variant="link" asChild>
+                <Link href="/quotes">Quotes</Link>
+              </Button>
+              <Button variant="link" asChild>
+                <Link href="/customers">Customers</Link>
+              </Button>
               {canSeeSettings && (
-                <Link href="/settings" className="text-gray-700 hover:text-blue-600 font-medium">System Settings</Link>
+                <Button variant="link" asChild>
+                  <Link href="/settings">System Settings</Link>
+                </Button>
               )}
             </nav>
           )}
@@ -27,10 +34,12 @@ export default function AppHeader() {
           {isAuthenticated ? (
             <>
               <span>{user?.username} ({user?.role})</span>
-              <button onClick={logout} className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200">Logout</button>
+              <Button variant="secondary" size="sm" onClick={logout}>Logout</Button>
             </>
           ) : (
-            <Link href="/login" className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">Login</Link>
+            <Button asChild size="sm">
+              <Link href="/login">Login</Link>
+            </Button>
           )}
         </div>
       </div>

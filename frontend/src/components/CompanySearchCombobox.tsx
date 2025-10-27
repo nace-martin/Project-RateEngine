@@ -1,6 +1,8 @@
-// frontend/src/components/CompanySearchCombobox.tsx
-
 'use client';
+
+import { Button } from '@/components/ui/button';
+import { X } from 'lucide-react';
+// frontend/src/components/CompanySearchCombobox.tsx
 
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
@@ -132,16 +134,17 @@ export default function CompanySearchCombobox({
           disabled={disabled}
         />
         {value ? (
-          <button
+          <Button
             type="button"
-            className="absolute inset-y-0 right-2 flex items-center text-sm text-muted-foreground hover:text-foreground"
+            variant="ghost"
+            size="icon-sm"
+            className="absolute inset-y-0 right-2 flex items-center"
             onClick={handleClear}
             aria-label="Clear company selection"
           >
-            ×
-          </button>
-        ) : null}
-        {isOpen ? (
+            <X className="h-4 w-4" />
+          </Button>
+        ) : null}        {isOpen ? (
           <div className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-background shadow-sm">
             {fetchError ? (
               <div className="px-3 py-2 text-sm text-destructive">{fetchError}</div>
@@ -159,18 +162,19 @@ export default function CompanySearchCombobox({
             ) : null}
             {!fetchError && results.length > 0
               ? results.map((company) => (
-                  <button
+                  <Button
                     key={company.id}
                     type="button"
+                    variant="ghost"
                     onClick={() => handleSelect(company)}
                     className={cn(
-                      'flex w-full items-start px-3 py-2 text-left text-sm hover:bg-muted',
+                      'w-full justify-start font-normal',
                       value?.id === company.id ? 'bg-muted' : ''
                     )}
                   >
                     <span className="font-medium">{company.name}</span>
                     <span className="ml-2 text-xs text-muted-foreground">{company.id}</span>
-                  </button>
+                  </Button>
                 ))
               : null}
           </div>
