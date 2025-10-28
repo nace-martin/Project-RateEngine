@@ -161,3 +161,52 @@ class V3QuoteComputeResponseSerializer(serializers.ModelSerializer):
         ]
         # We order versions by '-version_number' in the model Meta,
         # so 'versions.first' will always be the newest one.
+
+class QuoteEnvelopeV3Serializer(serializers.ModelSerializer):
+    """
+    Serializer for CREATING a V3 Quote (envelope) only.
+    Matches the fields from the old V2 test payload.
+    """
+    customer_id = serializers.UUIDField(source='customer')
+    reference = serializers.CharField(source='quote_number', required=False)
+    date = serializers.DateField(write_only=True, required=False)
+    validity_days = serializers.IntegerField(write_only=True, default=7)
+    service_type = serializers.CharField(source='shipment_type')
+    terms = serializers.CharField(source='incoterm')
+    scope = serializers.CharField(write_only=True, required=False) # This field is ignored
+    sell_currency = serializers.CharField(source='output_currency')
+
+    class Meta:
+        model = Quote
+        fields = (
+            'id',
+            'customer_id',
+            'reference',
+            'date',
+            'validity_days',
+            'service_type',
+            'terms',
+            'scope',
+            'payment_term',
+            'sell_currency',
+            'created_at',
+        )
+        read_only_fields = ('id', 'created_at')
+
+    def create(self, validated_data):
+        from datetime import timedelta
+        from django.utils import timezone
+        from parties.models import Company
+
+        customer_uuid = validated_data.pop('customer')
+        customer = Company.objects.get(pk=customer_uuid)
+        validated_data['customer'] = customer
+
+        validity_days = validated_data.pop('validity_days', 7)
+        validated_data.pop('scope', None)
+        validated_data.pop('date', None)
+
+        quote = Quote.objects.create(**validated_data)
+        quote.valid_until = timezone.now().date() + timedelta(days=validity_days)
+        quote.save()
+        return quote

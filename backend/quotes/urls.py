@@ -13,6 +13,6 @@ router_v3.register(r'quotes', QuoteV3ViewSet, basename='quote-v3')
 
 urlpatterns = [
     # --- V3 ENDPOINTS ---
-    path('v3/', include(router_v3.urls)),
     path('v3/quotes/compute/', QuoteComputeV3APIView.as_view(), name='quote-compute-v3'),
+    path('v3/', include(router_v3.urls)),
 ]
