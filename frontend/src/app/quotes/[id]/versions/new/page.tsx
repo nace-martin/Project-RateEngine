@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { listStations, createQuoteVersion } from '@/lib/api';
+import type { QuoteVersionCreatePayload } from '@/lib/types';
 import { useAuth } from '@/context/auth-context';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -113,7 +114,7 @@ export default function NewQuoteVersionPage() {
         }
         const authToken = token;
 
-        const versionData = {
+        const versionData: QuoteVersionCreatePayload = {
             origin: parseInt(origin, 10),
             destination: parseInt(destination, 10),
             pieces,

@@ -8,6 +8,7 @@ import {
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
   V3QuoteVersion,
+  QuoteVersionCreatePayload,
 } from './types';
 import { API_BASE_URL } from './config';
 
@@ -142,7 +143,11 @@ export async function getQuoteVersions(token: string, quoteId: string): Promise<
     });
 }
 
-export async function createQuoteVersion(token: string, quoteId: string, data: Partial<V3QuoteVersion>): Promise<V3QuoteVersion> {
+export async function createQuoteVersion(
+  token: string,
+  quoteId: string,
+  data: QuoteVersionCreatePayload,
+): Promise<V3QuoteVersion> {
     return fetchWrapper<V3QuoteVersion>(`${API_URL}/api/v3/quotes/${quoteId}/versions/`, {
         method: 'POST',
         headers: {

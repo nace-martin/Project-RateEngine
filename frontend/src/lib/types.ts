@@ -171,17 +171,32 @@ export interface QuoteVersion {
   origin?: number;
   destination?: number;
   pieces: Piece[];
-  charges: {
-    stage: string;
-    code: string;
-    description: string;
-    basis: string;
-    qty: number;
-    unit_price: number;
-    side: string;
-    currency: string;
-  }[];
+  charges: QuoteVersionChargeInput[];
   created_at?: string;
+}
+
+export interface QuoteVersionChargeInput {
+  stage: string;
+  code: string;
+  description: string;
+  basis: string;
+  qty: number;
+  unit_price: number;
+  side: string;
+  currency: string;
+}
+
+export interface QuoteVersionCreatePayload {
+  origin: number;
+  destination: number;
+  pieces: Piece[];
+  charges: QuoteVersionChargeInput[];
+  volumetric_divisor: number;
+  volumetric_weight_kg: number;
+  chargeable_weight_kg: number;
+  sell_currency: string;
+  valid_from: string;
+  valid_to: string;
 }
 
 // This should mirror the BuyOffer dataclass from the backend
