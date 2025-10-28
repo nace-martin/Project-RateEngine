@@ -2,17 +2,12 @@ import {
   LoginData,
   User,
   Customer,
-  Quote,
-  QuoteVersion,
-  QuoteContext,
-  BuyOffer,
   RatecardFile,
   CompanySearchResult,
-  QuoteV2Request,
-  QuoteV2Response,
   Contact,
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
+  V3QuoteVersion,
 } from './types';
 import { API_BASE_URL } from './config';
 
@@ -83,19 +78,19 @@ export async function getMe(token: string): Promise<User> {
 }
 
 export async function getCustomers(token: string): Promise<Customer[]> {
-    return fetchWrapper<Customer[]>(`${API_URL}/api/v2/customers/`, {
+    return fetchWrapper<Customer[]>(`${API_URL}/api/v3/customers/`, {
       headers: { Authorization: `Token ${token}` },
     });
   }
 
   export async function getCustomer(token: string, id: string): Promise<Customer> {
-    return fetchWrapper<Customer>(`${API_URL}/api/v2/customers/${id}/`, {
+    return fetchWrapper<Customer>(`${API_URL}/api/v3/customers/${id}/`, {
       headers: { Authorization: `Token ${token}` },
     });
   }
 
   export async function createCustomer(token: string, data: Partial<Customer>): Promise<Customer> {
-    return fetchWrapper<Customer>(`${API_URL}/api/v2/customers/`, {
+    return fetchWrapper<Customer>(`${API_URL}/api/v3/customers/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -106,7 +101,7 @@ export async function getCustomers(token: string): Promise<Customer[]> {
   }
 
   export async function updateCustomer(token: string, id: string, data: Partial<Customer>): Promise<Customer> {
-    return fetchWrapper<Customer>(`${API_URL}/api/v2/customers/${id}/`, {
+    return fetchWrapper<Customer>(`${API_URL}/api/v3/customers/${id}/`, {
         method: 'PATCH',
         headers: {
             'Content-Type': 'application/json',
@@ -117,21 +112,21 @@ export async function getCustomers(token: string): Promise<Customer[]> {
 }
 
 
-  export async function getQuotes(token: string): Promise<Quote[]> {
-    return fetchWrapper<Quote[]>(`${API_URL}/api/v2/quotes/`, {
+  export async function getQuotes(token: string): Promise<V3QuoteComputeResponse[]> {
+    return fetchWrapper<V3QuoteComputeResponse[]>(`${API_URL}/api/v3/quotes/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
-export async function getQuote(token: string, id: string): Promise<Quote> {
-    return fetchWrapper<Quote>(`${API_URL}/api/v2/quotes/${id}/`, {
+export async function getQuote(token: string, id: string): Promise<V3QuoteComputeResponse> {
+    return fetchWrapper<V3QuoteComputeResponse>(`${API_URL}/api/v3/quotes/${id}/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
 
-export async function createQuote(token: string, data: Partial<Quote>): Promise<Quote> {
-    return fetchWrapper<Quote>(`${API_URL}/api/v2/quotes/`, {
+export async function createQuote(token: string, data: V3QuoteComputeRequest): Promise<V3QuoteComputeResponse> {
+    return fetchWrapper<V3QuoteComputeResponse>(`${API_URL}/api/v3/quotes/`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -141,14 +136,14 @@ export async function createQuote(token: string, data: Partial<Quote>): Promise<
     });
 }
 
-export async function getQuoteVersions(token: string, quoteId: string): Promise<QuoteVersion[]> {
-    return fetchWrapper<QuoteVersion[]>(`${API_URL}/api/v2/quotes/${quoteId}/versions/`, {
+export async function getQuoteVersions(token: string, quoteId: string): Promise<V3QuoteVersion[]> {
+    return fetchWrapper<V3QuoteVersion[]>(`${API_URL}/api/v3/quotes/${quoteId}/versions/`, {
         headers: { Authorization: `Token ${token}` },
     });
 }
 
-export async function createQuoteVersion(token: string, quoteId: string, data: Partial<QuoteVersion>): Promise<QuoteVersion> {
-    return fetchWrapper<QuoteVersion>(`${API_URL}/api/v2/quotes/${quoteId}/versions/`, {
+export async function createQuoteVersion(token: string, quoteId: string, data: Partial<V3QuoteVersion>): Promise<V3QuoteVersion> {
+    return fetchWrapper<V3QuoteVersion>(`${API_URL}/api/v3/quotes/${quoteId}/versions/`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -192,38 +187,12 @@ export async function uploadRateCard(token: string, file: File, name: string, fi
 }
 
 /**
- * Sends a quote request to the v2 calculation engine.
- * @param quoteDetails - The context for the quote, including origin, destination, and pieces.
+ * Sends a quote request to the V3 calculation engine.
+ * @param quoteRequest - The V3 compute payload.
  * @param token - The user's authentication token.
- * @returns A Promise that resolves to the calculated BuyOffer.
+ * @returns A Promise that resolves to the V3 compute response.
  */
-export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string): Promise<BuyOffer> {
-  const response = await fetch(`${API_URL}/api/v2/quotes/compute/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Token ${token}`,
-    },
-    body: JSON.stringify(quoteDetails),
-  });
-
-  if (!response.ok) {
-    const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    const errorMessage =
-      (typeof errorData.error === 'string' && errorData.error) ||
-      `An error occurred: ${response.statusText}`;
-    throw new Error(errorMessage);
-  }
-
-  return response.json();
-}
-
-/**
- * Creates a new quote using the V3 pricing engine.
- * @param quoteRequest The V3 compute payload captured from the UI.
- * @returns The newly created V3 quote object from the backend.
- */
-export async function createQuoteV3(
+export async function computeQuote(
   quoteRequest: V3QuoteComputeRequest,
   token: string,
 ): Promise<V3QuoteComputeResponse> {
@@ -262,46 +231,6 @@ export async function createQuoteV3(
 }
 
 /**
- * Creates a new quote using the V2 pricing engine.
- * @param quoteRequest The data for the new quote.
- * @returns The newly created quote object from the backend.
- */
-export async function createQuoteV2(quoteRequest: QuoteV2Request, token: string): Promise<QuoteV2Response> {
-  try {
-    const response = await fetch(`${API_URL}/api/v2/quotes/compute/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Token ${token}`,
-      },
-      body: JSON.stringify(quoteRequest),
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-      const errorMessage =
-        (typeof errorData === 'object' && errorData !== null && 'detail' in errorData
-          ? String((errorData as Record<string, unknown>).detail)
-          : undefined) ||
-        (typeof errorData === 'object' && errorData !== null && 'error' in errorData
-          ? String((errorData as Record<string, unknown>).error)
-          : undefined) ||
-        JSON.stringify(errorData);
-      console.error('API Error:', errorData);
-      throw new Error(`Failed to create quote: ${errorMessage}`);
-    }
-
-    return (await response.json()) as QuoteV2Response;
-  } catch (error) {
-    console.error('Error creating V2 quote:', error);
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Error creating V2 quote');
-  }
-}
-
-/**
  * Searches for companies by name.
  * @param query The search term.
  * @returns A list of matching companies.
@@ -319,7 +248,7 @@ export async function searchCompanies(query: string, token: string, signal?: Abo
   const params = new URLSearchParams({ q: trimmedQuery });
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/parties/search/?${params.toString()}`, {
+    const response = await fetch(`${API_URL}/api/v3/parties/search/?${params.toString()}`, {
       headers: {
         'Authorization': `Token ${token}`,
       },
@@ -341,43 +270,6 @@ export async function searchCompanies(query: string, token: string, signal?: Abo
 }
 
 /**
- * Fetches a single quote by its ID from the V2 endpoint.
- * @param quoteId The ID of the quote to fetch.
- * @returns The quote object.
- */
-export async function getQuoteV2(quoteId: string, token: string): Promise<QuoteV2Response> {
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!apiBaseUrl) {
-    throw new Error("API base URL is not configured");
-  }
-
-  const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
-
-  try {
-    const response = await fetch(`${normalizedBaseUrl}/api/v2/quotes/${quoteId}/`, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Token ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json()) as Record<string, unknown>;
-      console.error('API Error fetching quote:', errorData);
-      throw new Error(`Failed to fetch quote: ${response.statusText}`);
-    }
-
-    return (await response.json()) as QuoteV2Response;
-  } catch (error) {
-    console.error('Error fetching V2 quote:', error);
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Error fetching V2 quote');
-  }
-}
-
-/**
  * Fetches contacts for a specific company ID.
  * @param companyId The UUID of the company.
  * @returns A list of contacts.
@@ -386,7 +278,7 @@ export async function getCompanyContacts(companyId: string, token: string): Prom
   if (!companyId) return []; // Don't fetch if no company ID
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/parties/companies/${companyId}/contacts/`, {
+    const response = await fetch(`${API_URL}/api/v3/parties/companies/${companyId}/contacts/`, {
       headers: {
         'Authorization': `Token ${token}`,
       },
@@ -420,7 +312,7 @@ export async function searchLocations(query: string, token: string): Promise<{ v
   const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
 
   try {
-    const response = await fetch(`${normalizedBaseUrl}/api/v2/locations/search/?q=${query}`, {
+    const response = await fetch(`${normalizedBaseUrl}/api/v3/locations/search/?q=${query}`, {
       headers: {
         'Authorization': `Token ${token}`,
       },

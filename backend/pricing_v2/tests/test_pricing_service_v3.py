@@ -7,7 +7,7 @@ from django.utils import timezone
 
 # V3 Service and Dataclasses
 from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v2.dataclasses_v3 import V3QuoteRequest
+from pricing_v2.dataclasses_v3 import V3QuoteRequest, DimensionLine
 
 # Models
 from core.models import Airport, FxSnapshot, Currency
@@ -134,9 +134,15 @@ def test_compute_v3_efm_bne_pom_scenario(setup_v3_golden_test_data):
         incoterm="EXW",
         origin_airport_code="BNE",
         destination_airport_code="POM",
-        pieces=1,
-        gross_weight_kg=Decimal("110.00"),
-        volume_cbm=Decimal("0.1"), # 110kg is chargeable (0.1*167 = 16.7)
+        dimensions=[
+            DimensionLine(
+                pieces=1,
+                length_cm=Decimal("100.00"),
+                width_cm=Decimal("100.00"),
+                height_cm=Decimal("10.00"),
+                gross_weight_kg=Decimal("110.00")
+            )
+        ],
         output_currency="USD" # Override profile default
     )
     

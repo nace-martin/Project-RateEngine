@@ -1,10 +1,11 @@
 # backend/core/urls.py
 
 from django.urls import path
-from .views import LocationSearchAPIView
+from .views import LocationV3SearchView
 
 app_name = 'core'
 
 urlpatterns = [
-    path('v2/locations/search/', LocationSearchAPIView.as_view(), name='location-search-v2'),
+    # --- V3 ENDPOINT ---
+    path('v3/locations/search/', LocationV3SearchView.as_view(), name='location-search-v3'),
 ]

@@ -22,7 +22,7 @@ class QuoteRetrieveV3APITest(APITestCase):
         self.client.force_authenticate(user=self.user)
 
         self.quote = self._create_quote_with_versions()
-        self.url = reverse("quotes:quote-retrieve-v3", kwargs={"id": self.quote.id})
+        self.url = reverse("quotes:quote-v3-detail", kwargs={"pk": self.quote.id})
 
     def _create_quote_with_versions(self):
         customer = Company.objects.create(name="Test Customer Co.")

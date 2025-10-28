@@ -49,51 +49,6 @@ export interface CompanySearchResult {
   name: string;
 }
 
-export interface QuoteV2LineRequest {
-  currency: string;
-  amount: string;
-  description: string;
-}
-
-export interface QuoteV2AgentLineRequest {
-  amount: string;
-  description: string;
-}
-
-export interface QuoteV2Request {
-  scenario: string;
-  chargeable_kg: string;
-  bill_to_id: string;
-  shipper_id: string;
-  consignee_id: string;
-  origin_code: string;
-  destination_code: string;
-  buy_lines: QuoteV2LineRequest[];
-  agent_dest_lines_aud: QuoteV2AgentLineRequest[];
-}
-
-export interface QuoteV2Totals {
-  grand_total_pgk?: number;
-  [key: string]: unknown;
-}
-
-export interface QuoteV2Line {
-  section?: string;
-  description?: string;
-  sell_amount_pgk?: number | string;
-  [key: string]: unknown;
-}
-
-export interface QuoteV2Response {
-  id: string | number;
-  quote_number?: string;
-  totals?: QuoteV2Totals;
-  scenario?: string;
-  status?: string;
-  lines?: QuoteV2Line[];
-  [key: string]: unknown;
-}
-
 export interface Quote {
   id: number;
   client: Customer; // The related client object
@@ -283,7 +238,7 @@ export interface V3QuoteComputeRequest {
 // --- ADD V3 QUOTE RESPONSE TYPES ---
 // These should match the V3QuoteComputeResponseSerializer structure
 
-interface V3QuoteLine {
+export interface V3QuoteLine {
   id: string;
   service_component: {
     id: number;
@@ -305,7 +260,7 @@ interface V3QuoteLine {
   is_rate_missing: boolean;
 }
 
-interface V3QuoteTotal {
+export interface V3QuoteTotal {
   total_sell_fcy: string;
   total_sell_fcy_incl_gst: string;
   total_sell_fcy_currency: string;
@@ -313,7 +268,7 @@ interface V3QuoteTotal {
   notes?: string | null;
 }
 
-interface V3QuoteVersion {
+export interface V3QuoteVersion {
   id: string;
   version_number: number;
   status: string;

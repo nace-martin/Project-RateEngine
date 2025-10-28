@@ -1,64 +1,74 @@
 # backend/core/views.py
-from rest_framework.views import APIView
+
+from typing import List, Dict
+
+from django.db.models import Q  # Import Q for complex lookups
 from rest_framework.response import Response
-from django.db.models import Q # Import Q for complex lookups
+from rest_framework.views import APIView
+
 from .models import City, Airport
 from .serializers import LocationSearchSerializer
 
-# --- ADD THIS VIEW ---
-class LocationSearchAPIView(APIView):
+def _build_location_results(query: str) -> List[Dict[str, str]]:
     """
-    Provides a search endpoint for locations (Cities and Airports).
-    Accepts a query parameter `q`.
-    e.g., /api/v2/locations/search/?q=POM
+    Shared helper that performs the legacy location lookup logic.
     """
-    def get(self, request, *args, **kwargs):
-        query = request.query_params.get('q', '')
-        results = []
+    results: List[Dict[str, str]] = []
 
-        if len(query) >= 2: # Start searching after 2 characters
-            # Search Airports by IATA code or name
-            airports = Airport.objects.filter(
-                Q(iata_code__icontains=query) | Q(name__icontains=query) | Q(city__name__icontains=query)
-            ).select_related('city', 'city__country')[:5] # Limit results
+    if len(query) >= 2:  # Start searching after 2 characters
+        airports = Airport.objects.filter(
+            Q(iata_code__icontains=query) | Q(name__icontains=query) | Q(city__name__icontains=query)
+        ).select_related('city', 'city__country')[:5]  # Limit results
 
-            # Search Cities by name
-            cities = City.objects.filter(name__icontains=query).select_related('country')[:5] # Limit results
+        cities = City.objects.filter(name__icontains=query).select_related('country')[:5]  # Limit results
 
-            # Format results
-            for airport in airports:
-                display = f"{airport.city.name if airport.city else airport.name} ({airport.iata_code}), {airport.city.country.code if airport.city else 'N/A'}"
-                results.append({
+        for airport in airports:
+            city = airport.city
+            country_code = city.country.code if city else 'N/A'
+            city_name = city.name if city else airport.name
+            display = f"{city_name} ({airport.iata_code}), {country_code}"
+            results.append(
+                {
                     "id": airport.iata_code,
                     "code": airport.iata_code,
                     "display_name": display,
-                    "type": "airport"
-                })
+                    "type": "airport",
+                }
+            )
 
-            # Avoid adding city if we already have its airport listed prominently
-            airport_cities = {a.city.id for a in airports if a.city}
-            for city in cities:
-                if city.id not in airport_cities:
-                    display = f"{city.name}, {city.country.code}"
-                    # Try find associated airport code for display
-                    main_airport = Airport.objects.filter(city=city).first()
-                    if main_airport:
-                       display = f"{city.name} ({main_airport.iata_code}), {city.country.code}"
-                       code = main_airport.iata_code
-                    else:
-                        # Fallback if no specific airport linked - maybe less useful?
-                        # Consider if we should only return airports/cities *with* IATA codes
-                        code = city.name[:3].upper() # Less ideal fallback
+        airport_cities = {a.city.id for a in airports if a.city}
+        for city in cities:
+            if city.id in airport_cities:
+                continue
 
-                    results.append({
-                        "id": str(city.id), # Use city ID here
-                        "code": code, # Use airport code if possible, otherwise fallback
-                        "display_name": display,
-                        "type": "city"
-                    })
+            display = f"{city.name}, {city.country.code}"
+            main_airport = Airport.objects.filter(city=city).first()
+            if main_airport:
+                display = f"{city.name} ({main_airport.iata_code}), {city.country.code}"
+                code = main_airport.iata_code
+            else:
+                code = city.name[:3].upper()
 
-            # Simple sort (could be refined)
-            results.sort(key=lambda x: x['display_name'])
+            results.append(
+                {
+                    "id": str(city.id),
+                    "code": code,
+                    "display_name": display,
+                    "type": "city",
+                }
+            )
 
+        results.sort(key=lambda x: x['display_name'])
+
+    return results
+
+class LocationV3SearchView(APIView):
+    """
+    V3 endpoint for locations, currently sharing logic with the legacy view.
+    """
+
+    def get(self, request, *args, **kwargs):
+        query = request.query_params.get('q', '')
+        results = _build_location_results(query)
         serializer = LocationSearchSerializer(results, many=True)
         return Response(serializer.data)

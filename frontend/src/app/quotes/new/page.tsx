@@ -12,7 +12,7 @@ import type { Contact, CompanySearchResult } from "@/lib/types";
 // --- END ADD ---
 
 // --- Import api client (assuming you have one like in src/lib/api.ts) ---
-import { apiClient, getCompanyContacts, createQuoteV3 } from "@/lib/api"; // Import getCompanyContacts and V3 helper
+import { getCompanyContacts, computeQuote } from "@/lib/api"; // Import updated API helpers
 // --- END ADD ---
 
 // --- ADD IMPORTS ---
@@ -159,7 +159,7 @@ export default function NewQuotePage() {
 
     try {
       // Compute the quote using the V3 endpoint
-      const response = await createQuoteV3(data, token);
+      const response = await computeQuote(data, token);
 
       console.log("API Success Response:", response);
       setQuoteResult(response); // Store the successful result
