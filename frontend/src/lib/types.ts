@@ -36,12 +36,12 @@ export interface Customer {
 }
 
 export interface Contact {
-  id: number;
+  id: string;
   first_name: string;
   last_name: string;
   email: string;
   phone: string;
-  company: number;
+  company: string;
 }
 
 export interface CompanySearchResult {
@@ -246,6 +246,38 @@ export interface BuyOffer {
     rate: number;
   }[];
   // ... any other fields you expect from the backend
+}
+
+// --- V3 QUOTE REQUEST TYPES ---
+export interface V3DimensionInput {
+  pieces: number;
+  length_cm: number;
+  width_cm: number;
+  height_cm: number;
+  gross_weight_kg: number;
+}
+
+export interface V3ManualOverride {
+  service_component_id: number;
+  cost_fcy: number;
+  currency: string;
+  unit: string;
+  min_charge_fcy?: number;
+}
+
+export interface V3QuoteComputeRequest {
+  customer_id: string;
+  contact_id: string;
+  mode: string;
+  shipment_type: string;
+  incoterm: string;
+  payment_term: string;
+  origin_airport_code: string;
+  destination_airport_code: string;
+  dimensions: V3DimensionInput[];
+  is_dangerous_goods: boolean;
+  overrides?: V3ManualOverride[];
+  output_currency?: string;
 }
 
 // --- ADD V3 QUOTE RESPONSE TYPES ---

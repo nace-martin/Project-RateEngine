@@ -10,6 +10,9 @@ import {
   CompanySearchResult,
   QuoteV2Request,
   QuoteV2Response,
+  Contact,
+  V3QuoteComputeRequest,
+  V3QuoteComputeResponse,
 } from './types';
 import { API_BASE_URL } from './config';
 
@@ -216,18 +219,60 @@ export async function calculateQuoteV2(quoteDetails: QuoteContext, token: string
 }
 
 /**
+ * Creates a new quote using the V3 pricing engine.
+ * @param quoteRequest The V3 compute payload captured from the UI.
+ * @returns The newly created V3 quote object from the backend.
+ */
+export async function createQuoteV3(
+  quoteRequest: V3QuoteComputeRequest,
+  token: string,
+): Promise<V3QuoteComputeResponse> {
+  try {
+    const response = await fetch(`${API_URL}/api/v3/quotes/compute/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Token ${token}`,
+      },
+      body: JSON.stringify(quoteRequest),
+    });
+
+    if (!response.ok) {
+      const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      const errorMessage =
+        (typeof errorData === 'object' && errorData !== null && 'detail' in errorData
+          ? String((errorData as Record<string, unknown>).detail)
+          : undefined) ||
+        (typeof errorData === 'object' && errorData !== null && 'error' in errorData
+          ? String((errorData as Record<string, unknown>).error)
+          : undefined) ||
+        response.statusText;
+      console.error('V3 quote compute error:', errorData);
+      throw new Error(errorMessage ?? 'Failed to compute quote.');
+    }
+
+    return (await response.json()) as V3QuoteComputeResponse;
+  } catch (error) {
+    console.error('Error computing V3 quote:', error);
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Error computing V3 quote');
+  }
+}
+
+/**
  * Creates a new quote using the V2 pricing engine.
  * @param quoteRequest The data for the new quote.
  * @returns The newly created quote object from the backend.
  */
-export async function createQuoteV2(quoteRequest: QuoteV2Request): Promise<QuoteV2Response> {
+export async function createQuoteV2(quoteRequest: QuoteV2Request, token: string): Promise<QuoteV2Response> {
   try {
     const response = await fetch(`${API_URL}/api/v2/quotes/compute/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // If you have authentication, the token would go here
-        // 'Authorization': `Bearer ${token}`,
+        'Authorization': `Token ${token}`,
       },
       body: JSON.stringify(quoteRequest),
     });
@@ -261,7 +306,7 @@ export async function createQuoteV2(quoteRequest: QuoteV2Request): Promise<Quote
  * @param query The search term.
  * @returns A list of matching companies.
  */
-export async function searchCompanies(query: string, signal?: AbortSignal): Promise<CompanySearchResult[]> {
+export async function searchCompanies(query: string, token: string, signal?: AbortSignal): Promise<CompanySearchResult[]> {
   const trimmedQuery = query.trim();
   if (trimmedQuery.length < 2) {
     return [];
@@ -274,8 +319,15 @@ export async function searchCompanies(query: string, signal?: AbortSignal): Prom
   const params = new URLSearchParams({ q: trimmedQuery });
 
   try {
-    const response = await fetch(`${API_URL}/api/v2/parties/search/?${params.toString()}`, { signal });
+    const response = await fetch(`${API_URL}/api/v2/parties/search/?${params.toString()}`, {
+      headers: {
+        'Authorization': `Token ${token}`,
+      },
+      signal,
+    });
     if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('API Error searching companies:', response.status, errorData);
       throw new Error('Failed to search companies');
     }
     return (await response.json()) as CompanySearchResult[];
@@ -293,7 +345,7 @@ export async function searchCompanies(query: string, signal?: AbortSignal): Prom
  * @param quoteId The ID of the quote to fetch.
  * @returns The quote object.
  */
-export async function getQuoteV2(quoteId: string): Promise<QuoteV2Response> {
+export async function getQuoteV2(quoteId: string, token: string): Promise<QuoteV2Response> {
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!apiBaseUrl) {
     throw new Error("API base URL is not configured");
@@ -305,7 +357,7 @@ export async function getQuoteV2(quoteId: string): Promise<QuoteV2Response> {
     const response = await fetch(`${normalizedBaseUrl}/api/v2/quotes/${quoteId}/`, {
       headers: {
         'Content-Type': 'application/json',
-        // Add Authorization header if needed
+        'Authorization': `Token ${token}`,
       },
     });
 
@@ -330,23 +382,21 @@ export async function getQuoteV2(quoteId: string): Promise<QuoteV2Response> {
  * @param companyId The UUID of the company.
  * @returns A list of contacts.
  */
-export async function getCompanyContacts(companyId: string): Promise<{ id: string; first_name: string; last_name: string; email: string }[]> {
+export async function getCompanyContacts(companyId: string, token: string): Promise<Contact[]> {
   if (!companyId) return []; // Don't fetch if no company ID
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!apiBaseUrl) {
-    throw new Error("API base URL is not configured");
-  }
-
-  const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
-
   try {
-    const response = await fetch(`${normalizedBaseUrl}/api/v2/parties/companies/${companyId}/contacts/`);
+    const response = await fetch(`${API_URL}/api/v2/parties/companies/${companyId}/contacts/`, {
+      headers: {
+        'Authorization': `Token ${token}`,
+      },
+    });
     if (!response.ok) {
-      // Handle 404 specifically if needed, otherwise generic error
+      const errorData = await response.json().catch(() => ({}));
+      console.error('API Error fetching company contacts:', response.status, errorData);
       throw new Error("Failed to fetch contacts for the company");
     }
-    return await response.json();
+    return await response.json() as Contact[];
   } catch (error) {
     console.error('Error fetching company contacts:', error);
     // Return empty array on error to avoid breaking the UI
@@ -359,7 +409,7 @@ export async function getCompanyContacts(companyId: string): Promise<{ id: strin
  * @param query The search term.
  * @returns A list of matching locations.
  */
-export async function searchLocations(query: string): Promise<{ value: string; label: string }[]> {
+export async function searchLocations(query: string, token: string): Promise<{ value: string; label: string }[]> {
   if (query.length < 2) return [];
 
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
@@ -370,7 +420,11 @@ export async function searchLocations(query: string): Promise<{ value: string; l
   const normalizedBaseUrl = apiBaseUrl.replace(/\/$/, '');
 
   try {
-    const response = await fetch(`${normalizedBaseUrl}/api/v2/locations/search/?q=${query}`);
+    const response = await fetch(`${normalizedBaseUrl}/api/v2/locations/search/?q=${query}`, {
+      headers: {
+        'Authorization': `Token ${token}`,
+      },
+    });
     if (!response.ok) {
       throw new Error("Failed to search locations");
     }

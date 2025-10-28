@@ -104,8 +104,8 @@ const manualCostOverrideSchema = z.object({
 // The main V3 Quote Request Schema
 export const quoteFormSchemaV3 = z.object({
   // --- Step 1: Customer ---
-  customer_id: z.number().min(1, { message: "Customer must be selected." }),
-  contact_id: z.number().min(1, { message: "Contact must be selected." }),
+  customer_id: z.string().uuid({ message: "Customer must be selected." }),
+  contact_id: z.string().uuid({ message: "Contact must be selected." }),
 
   // --- Step 2: Shipment Type ---
   mode: z.enum(Object.values(V3_MODES), {

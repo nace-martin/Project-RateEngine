@@ -12,7 +12,7 @@ import type { Contact, CompanySearchResult } from "@/lib/types";
 // --- END ADD ---
 
 // --- Import api client (assuming you have one like in src/lib/api.ts) ---
-import { apiClient } from "@/lib/api";
+import { apiClient, getCompanyContacts, createQuoteV3 } from "@/lib/api"; // Import getCompanyContacts and V3 helper
 // --- END ADD ---
 
 // --- ADD IMPORTS ---
@@ -69,11 +69,12 @@ import {
 import CompanySearchCombobox from "@/components/CompanySearchCombobox";
 // --- END ADD ---
 
-
+import { useAuth } from "@/context/auth-context";
 
 export default function NewQuotePage() {
+  const { token } = useAuth(); // Retrieve token
   // --- ADD THIS STATE ---
-  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CompanySearchResult | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]); // To store fetched contacts
   const [isLoadingContacts, setIsLoadingContacts] = useState(false); // Loading indicator
@@ -86,8 +87,8 @@ export default function NewQuotePage() {
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3),
     defaultValues: {
-      customer_id: 0,
-      contact_id: 0,
+      customer_id: "",
+      contact_id: "",
       mode: "AIR",
       shipment_type: "IMPORT",
       incoterm: "EXW",
@@ -111,13 +112,13 @@ export default function NewQuotePage() {
   // --- ADD useEffect FOR FETCHING CONTACTS ---
   useEffect(() => {
     // Define the async function to fetch contacts
-    const fetchContacts = async (customerId: number) => {
+    const fetchContacts = async (customerId: string) => {
+      if (!token) return; // Don't fetch if no token
       setIsLoadingContacts(true);
       setContacts([]); // Clear previous contacts
       try {
-        // Construct the URL with query parameter
-        const response = await apiClient.get<Contact[]>(`/api/contacts/?customer_id=${customerId}`);
-        setContacts(response.data); // Update state with fetched contacts
+        const fetchedContacts = await getCompanyContacts(customerId, token); // Use the updated function
+        setContacts(fetchedContacts); // Update state with fetched contacts
       } catch (error: unknown) {
         console.error("Error fetching contacts:", error);
         // TODO: Show an error message to the user (e.g., using a Toast)
@@ -130,7 +131,7 @@ export default function NewQuotePage() {
     if (selectedCustomerId) {
       fetchContacts(selectedCustomerId);
     }
-  }, [selectedCustomerId]); // Dependency array: run effect when selectedCustomerId changes
+  }, [selectedCustomerId, token]); // Dependency array: run effect when selectedCustomerId or token changes
   // --- END ADD ---
 
   function addPieceLine() {
@@ -150,19 +151,22 @@ export default function NewQuotePage() {
     setQuoteResult(null); // Clear previous results
     console.log("Submitting V3 Form data:", data);
 
-    try {
-      // Make the POST request to the V3 compute endpoint
-      const response = await apiClient.post<V3QuoteComputeResponse>(
-        "/api/v3/quotes/compute/",
-        data
-      );
+    if (!token) {
+      setApiError("Authentication token not available. Please log in.");
+      setIsSubmitting(false);
+      return;
+    }
 
-      console.log("API Success Response:", response.data);
-      setQuoteResult(response.data); // Store the successful result
+    try {
+      // Compute the quote using the V3 endpoint
+      const response = await createQuoteV3(data, token);
+
+      console.log("API Success Response:", response);
+      setQuoteResult(response); // Store the successful result
       // Optional: Reset form after successful submission
       // form.reset();
       // setSelectedCustomerId(null); // Reset customer selection
-      // TODO: Maybe redirect to the new quote's page: router.push(`/quotes/${response.data.id}`)
+      // TODO: Maybe redirect to the new quote's page: router.push(`/quotes/${response.id}`)
 
     } catch (error: unknown) {
       console.error("API Error:", error);
@@ -223,7 +227,7 @@ export default function NewQuotePage() {
                             value={selectedCustomer}
                             onSelect={(company) => {
                               setSelectedCustomer(company);
-                              const companyId = company ? parseInt(company.id) : null;
+                              const companyId = company ? company.id : null;
                               field.onChange(companyId); // Update RHF state
                               setSelectedCustomerId(companyId); // Update local state
                               form.resetField("contact_id"); // Clear contact when customer changes
@@ -243,8 +247,8 @@ export default function NewQuotePage() {
                         <FormItem>
                           <FormLabel>Contact</FormLabel>
                           <Select
-                            onValueChange={(value) => field.onChange(parseInt(value))}
-                            value={field.value?.toString()} // Ensure value is string for Select
+                            onValueChange={field.onChange}
+                            value={field.value || undefined}
                             disabled={!selectedCustomerId || isLoadingContacts} // Disable if no customer OR loading
                           >
                             <FormControl>
@@ -262,7 +266,7 @@ export default function NewQuotePage() {
                               ) : contacts.length > 0 ? (
                                 // Map over fetched contacts
                                 contacts.map((contact) => (
-                                  <SelectItem key={contact.id} value={contact.id.toString()}>
+                                  <SelectItem key={contact.id} value={contact.id}>
                                     {contact.first_name} {contact.last_name} ({contact.email})
                                   </SelectItem>
                                 ))

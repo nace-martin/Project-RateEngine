@@ -1,5 +1,7 @@
 # backend/parties/views.py
 
+from uuid import UUID
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics, permissions # Add status import
@@ -74,8 +76,9 @@ class ContactListAPIView(generics.ListAPIView):
         if customer_id is not None:
             try:
                 # Filter contacts belonging to the specified company (customer)
-                queryset = queryset.filter(company_id=int(customer_id))
-            except ValueError:
+                customer_uuid = UUID(customer_id)
+                queryset = queryset.filter(company_id=customer_uuid)
+            except (ValueError, TypeError):
                 # Handle cases where customer_id is not a valid integer
                 # Return an empty queryset or raise an error
                 return Contact.objects.none()

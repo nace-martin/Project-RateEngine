@@ -61,8 +61,8 @@ class V3QuoteComputeRequestSerializer(serializers.Serializer):
     Validates the incoming payload for the V3 Compute API.
     Matches the V3QuoteRequest dataclass.
     """
-    customer_id = serializers.IntegerField()
-    contact_id = serializers.IntegerField()
+    customer_id = serializers.UUIDField()
+    contact_id = serializers.UUIDField()
     mode = serializers.CharField(max_length=10)
     shipment_type = serializers.CharField(max_length=10)
     incoterm = serializers.CharField(max_length=3)

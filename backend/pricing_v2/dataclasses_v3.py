@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import List, Optional, Dict
+from uuid import UUID
 from parties.models import CustomerCommercialProfile
 from core.models import FxSnapshot, Airport
 from services.models import ServiceComponent
@@ -74,8 +75,8 @@ class V3QuoteRequest:
     All input data required to compute a V3 Quote.
     NOW ACCEPTS DIMENSION LINES instead of totals.
     """
-    customer_id: int
-    contact_id: int
+    customer_id: UUID
+    contact_id: UUID
     mode: str
     shipment_type: str
     incoterm: str

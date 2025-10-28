@@ -11,6 +11,8 @@ import { searchCompanies } from '@/lib/api';
 import type { CompanySearchResult } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
+import { useAuth } from "@/context/auth-context";
+
 interface CompanySearchComboboxProps {
   label?: string;
   placeholder?: string;
@@ -30,6 +32,7 @@ export default function CompanySearchCombobox({
   helperText,
   disabled = false,
 }: CompanySearchComboboxProps) {
+  const { token } = useAuth(); // Retrieve token
   const [query, setQuery] = useState(value?.name ?? '');
   const [debouncedQuery, setDebouncedQuery] = useState(query);
   const [isOpen, setIsOpen] = useState(false);
@@ -53,9 +56,9 @@ export default function CompanySearchCombobox({
   useEffect(() => {
     const trimmed = debouncedQuery.trim();
 
-    if (trimmed.length < 2) {
+    if (!trimmed.length || !token) {
       setResults([]);
-      setFetchError(null);
+      setFetchError(token ? null : "Authentication token not available. Please log in.");
       setIsLoading(false);
       return;
     }
@@ -66,7 +69,7 @@ export default function CompanySearchCombobox({
     setIsLoading(true);
     setFetchError(null);
 
-    searchCompanies(trimmed, controller.signal)
+    searchCompanies(trimmed, token, controller.signal)
       .then((companies) => {
         if (!isActive) {
           return;
@@ -75,6 +78,7 @@ export default function CompanySearchCombobox({
       })
       .catch((error: Error) => {
         if (!isActive || error.name === 'AbortError') {
+          // console.log("Fetch aborted:", error.message); // Optional: for debugging
           return;
         }
         setFetchError(error.message || 'Unable to fetch companies right now.');
@@ -90,7 +94,7 @@ export default function CompanySearchCombobox({
       isActive = false;
       controller.abort();
     };
-  }, [debouncedQuery]);
+  }, [debouncedQuery, token]);
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
