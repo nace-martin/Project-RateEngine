@@ -34,7 +34,14 @@ async function handleResponse<T>(response: Response): Promise<{ data: T }> {
 
 export const apiClient = {
   get: async <T>(url: string, options: RequestInit = {}): Promise<{ data: T }> => {
-    const response = await fetch(`${API_URL}${url}`, options);
+    const token = localStorage.getItem('authToken');
+    const headers = {
+      ...(options.headers ?? {}),
+    };
+    if (token) {
+      headers['Authorization'] = `Token ${token}`;
+    }
+    const response = await fetch(`${API_URL}${url}`, { ...options, headers });
     return handleResponse<T>(response);
   },
   post: async <T>(
@@ -42,11 +49,13 @@ export const apiClient = {
     payload: unknown,
     options: RequestInit = {},
   ): Promise<{ data: T }> => {
+    const token = localStorage.getItem('authToken');
     const response = await fetch(`${API_URL}${url}`, {
       ...options,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(token && { Authorization: `Token ${token}` }),
         ...(options.headers ?? {}),
       },
       body: JSON.stringify(payload),

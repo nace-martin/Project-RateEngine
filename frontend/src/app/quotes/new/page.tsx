@@ -488,9 +488,11 @@ export default function NewQuotePage() {
                   </Button>
 
                   {/* Show error if array is empty */}
-                  <FormMessage>
-                    {form.formState.errors.dimensions?.message}
-                  </FormMessage>
+                  {form.formState.errors.dimensions?.message && (
+                    <p className="pt-2 text-sm font-medium text-destructive">
+                      {form.formState.errors.dimensions.message}
+                    </p>
+                  )}
                 </CardContent>
               </Card>
 

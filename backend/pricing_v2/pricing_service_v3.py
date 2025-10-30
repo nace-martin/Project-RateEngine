@@ -274,6 +274,7 @@ class PricingServiceV3:
     ) -> ServiceCostLine:
         """
         Calculates PGK cost from a user-provided spot rate override.
+        An override bypasses margin, so cost_pgk and sell_pgk are set to the same value.
         """
         _logger.info(f"Using MANUAL_OVERRIDE for {self._service_label(service)}")
         cost_fcy = Decimal(0)
@@ -296,14 +297,19 @@ class PricingServiceV3:
             override.currency
         )
         
+        # --- START FIX ---
+        # An override should set the sell price directly, bypassing margin.
+        # Therefore, we set sell_pgk equal to the calculated cost_pgk.
+        
         return ServiceCostLine(
             service_component=service,
             cost_pgk=cost_pgk,
-            sell_pgk=Decimal(0),
+            sell_pgk=cost_pgk,  # <-- SET SELL_PGK = COST_PGK
             cost_fcy=cost_fcy,
             cost_fcy_currency=override.currency,
             cost_source='MANUAL_OVERRIDE',
         )
+        # --- END FIX ---
         
     def _resolve_partner_ratecard(
         self, context: CalculationContext, service: ServiceComponent
@@ -638,6 +644,7 @@ class PricingServiceV3:
         """
         Applies customer-specific or default margins to COGS lines.
         Skips RATE_OFFER lines (which are already sell prices).
+        Skips MANUAL_OVERRIDE lines (which are also already sell prices).
         """
         _logger.info("Applying margins...")
         sell_lines: List[ServiceCostLine] = []
@@ -648,6 +655,14 @@ class PricingServiceV3:
                 sell_lines.append(line)
                 continue
             component_label = self._service_label(line.service_component)
+            
+            # --- START FIX ---
+            # Add a check for MANUAL_OVERRIDE to skip margin application
+            if line.cost_source == 'MANUAL_OVERRIDE':
+                _logger.info(f"Service {component_label} is MANUAL_OVERRIDE. Skipping margin. Sell={line.sell_pgk}")
+                sell_lines.append(line)
+                continue
+            # --- END FIX ---
 
             # NEW LOGIC: Check cost_type
             if line.service_component.cost_type == 'RATE_OFFER':
@@ -659,12 +674,9 @@ class PricingServiceV3:
             elif line.service_component.cost_type == 'COGS':
                 # This is a true cost. Apply margin.
                 
-                # --- FIX ---
-                # Use the existing 'default_margin_percent' field.
-                # This field has a default value on the model, so it will always exist.
+                # ... (rest of the margin logic remains the same)
                 margin_percent = context.customer_profile.default_margin_percent
-                # --- END FIX ---
-
+                
                 line.cost_pgk = line.cost_pgk.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 # Formula: Sell = Cost / (1 - Margin %)
                 line.sell_pgk = line.cost_pgk / (Decimal(1) - (margin_percent / Decimal(100)))
