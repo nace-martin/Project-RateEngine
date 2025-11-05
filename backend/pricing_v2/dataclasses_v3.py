@@ -53,7 +53,7 @@ class CalculationContext:
     origin_airport: Airport
     destination_airport: Airport
     incoterm_rule_key: tuple
-    overrides: Dict[int, 'ManualCostOverride']
+    overrides: Dict[UUID, 'ManualCostOverride']
 
 @dataclass
 class ManualCostOverride:
@@ -61,7 +61,7 @@ class ManualCostOverride:
     Represents a single spot rate manually provided by the user
     to override database lookups for a COGS service.
     """
-    service_component_id: int
+    service_component_id: UUID
     cost_fcy: Decimal
     currency: str  # e.g., 'USD', 'AUD'
     unit: str      # e.g., 'PER_KG', 'PER_SHIPMENT'

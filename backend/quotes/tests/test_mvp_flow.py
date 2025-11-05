@@ -4,7 +4,8 @@ from decimal import Decimal
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 
-from core.models import Airport, City, Country
+from django.utils import timezone
+from core.models import Airport, City, Country, FxSnapshot, Currency
 from parties.models import Company, Contact, CustomerCommercialProfile
 from services.models import ServiceComponent, IncotermRule, LEG_CHOICES
 from quotes.models import Quote
@@ -46,6 +47,15 @@ def _setup_test_data():
     )
     incoterm_rule.service_components.add(air_freight, dest_charges)
 
+    Currency.objects.get_or_create(code="PGK", defaults={"name": "Papua New Guinean Kina"})
+    Currency.objects.get_or_create(code="AUD", defaults={"name": "Australian Dollar"})
+
+    FxSnapshot.objects.create(
+        as_of_timestamp=timezone.now(),
+        source="test",
+        rates={"AUD": {"tt_buy": 1.0, "tt_sell": 1.0}, "USD": {"tt_buy": 1.0, "tt_sell": 1.0}},
+    )
+
     return air_freight, dest_charges
 
 
@@ -78,20 +88,20 @@ def test_v3_quote_creation_with_overrides_and_totals():
                 "length_cm": "120",
                 "width_cm": "80",
                 "height_cm": "70",
-                "gross_weight_kg": "85.000",
+                "gross_weight_kg": "85.00",
             }
         ],
         "payment_term": "PREPAID",
         "output_currency": "AUD",
         "overrides": [
             {
-                "service_component_id": air_freight.id,
+                "service_component_id": str(air_freight.id),
                 "cost_fcy": "7.10",
                 "currency": "AUD",
                 "unit": "PER_KG",
             },
             {
-                "service_component_id": dest_charges.id,
+                "service_component_id": str(dest_charges.id),
                 "cost_fcy": "120.00",
                 "currency": "AUD",
                 "unit": "PER_SHIPMENT",

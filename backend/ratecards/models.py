@@ -206,3 +206,4 @@ class PartnerRate(models.Model):
         verbose_name = "Partner Rate"
         verbose_name_plural = "Partner Rates"
         unique_together = [['lane', 'service_component']]
+

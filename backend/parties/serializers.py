@@ -1,41 +1,53 @@
 # backend/parties/serializers.py
 
 from rest_framework import serializers
-from .models import Company, Contact # Add Contact
+from .models import Company, Contact
 
-class CompanySearchSerializer(serializers.ModelSerializer):
-    """
-    A lightweight serializer for company search results.
-    """
+class CustomerV3Serializer(serializers.ModelSerializer):
+    """Serialize customer companies for the v3 API."""
+
     class Meta:
         model = Company
-        fields = ['id', 'name']
+        fields = [
+            "id",
+            "name",
+            "company_type",
+            "tax_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
 
-class CompanySerializer(serializers.ModelSerializer):
+    def validate_company_type(self, value: str) -> str:
+        """Ensure v3 customers always persist with the CUSTOMER company_type."""
+        if value != "CUSTOMER":
+            raise serializers.ValidationError("V3 customers must use company_type='CUSTOMER'.")
+        return value
+
+
+class CompanySearchV3Serializer(serializers.ModelSerializer):
+    """Lightweight serializer for search results."""
+
     class Meta:
         model = Company
-        fields = '__all__'
+        fields = ["id", "name"]
 
 
-# --- ADD THIS SERIALIZER ---
-class ContactSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the Contact model.
-    """
-    # Optionally display the company name instead of just the ID
-    # company_name = serializers.CharField(source='company.name', read_only=True)
+class ContactV3Serializer(serializers.ModelSerializer):
+    """Serialize contacts associated with a company."""
+
+    company_name = serializers.CharField(source="company.name", read_only=True)
 
     class Meta:
         model = Contact
         fields = [
-            'id',
-            'first_name',
-            'last_name',
-            'email',
-            'phone',
-            'company', # Keep the company ID for reference
-            # 'company_name', # Uncomment if you want the name displayed
+            "id",
+            "first_name",
+            "last_name",
+            "email",
+            "phone",
+            "is_primary",
+            "company",
+            "company_name",
         ]
-        read_only_fields = ['id', 'company'] # Company is set via URL/view logic
-
-# --- END ADD ---
+        read_only_fields = ["id", "company", "company_name"]

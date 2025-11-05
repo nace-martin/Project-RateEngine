@@ -2,7 +2,7 @@
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views_v3 import QuoteComputeV3APIView, QuoteV3ViewSet
+from .views import QuoteComputeV3APIView, QuoteV3ViewSet
 
 app_name = 'quotes'
 
