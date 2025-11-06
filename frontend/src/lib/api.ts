@@ -32,14 +32,28 @@ async function handleResponse<T>(response: Response): Promise<{ data: T }> {
     return { data };
 }
 
+function normalizeHeaders(init?: HeadersInit): Record<string, string> {
+  if (!init) {
+    return {};
+  }
+
+  if (init instanceof Headers) {
+    return Object.fromEntries(init.entries());
+  }
+
+  if (Array.isArray(init)) {
+    return Object.fromEntries(init);
+  }
+
+  return { ...init };
+}
+
 export const apiClient = {
   get: async <T>(url: string, options: RequestInit = {}): Promise<{ data: T }> => {
     const token = localStorage.getItem('authToken');
-    const headers = {
-      ...(options.headers ?? {}),
-    };
+    const headers = normalizeHeaders(options.headers);
     if (token) {
-      headers['Authorization'] = `Token ${token}`;
+      headers.Authorization = `Token ${token}`;
     }
     const response = await fetch(`${API_URL}${url}`, { ...options, headers });
     return handleResponse<T>(response);
@@ -50,13 +64,14 @@ export const apiClient = {
     options: RequestInit = {},
   ): Promise<{ data: T }> => {
     const token = localStorage.getItem('authToken');
+    const normalizedHeaders = normalizeHeaders(options.headers);
     const response = await fetch(`${API_URL}${url}`, {
       ...options,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Token ${token}` }),
-        ...(options.headers ?? {}),
+        ...normalizedHeaders,
       },
       body: JSON.stringify(payload),
     });
@@ -221,17 +236,23 @@ export async function computeQuote(
     });
 
     if (!response.ok) {
-      const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-      const errorMessage =
-        (typeof errorData === 'object' && errorData !== null && 'detail' in errorData
-          ? String((errorData as Record<string, unknown>).detail)
-          : undefined) ||
-        (typeof errorData === 'object' && errorData !== null && 'error' in errorData
-          ? String((errorData as Record<string, unknown>).error)
-          : undefined) ||
-        response.statusText;
-      console.error('V3 quote compute error:', errorData);
-      throw new Error(errorMessage ?? 'Failed to compute quote.');
+      let errorData: unknown;
+      let rawText: string | undefined;
+
+      try {
+        errorData = await response.json();
+      } catch {
+        rawText = await response.text().catch(() => undefined);
+      }
+
+      const message =
+        extractErrorMessage(errorData) ??
+        rawText ??
+        response.statusText ??
+        'Failed to compute quote.';
+
+      console.error('V3 quote compute error:', errorData ?? rawText ?? response.statusText);
+      throw new Error(message);
     }
 
     return (await response.json()) as V3QuoteComputeResponse;
@@ -242,6 +263,45 @@ export async function computeQuote(
     }
     throw new Error('Error computing V3 quote');
   }
+}
+
+function extractErrorMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+
+  const recordPayload = payload as Record<string, unknown>;
+
+  if (typeof recordPayload.detail === 'string') {
+    return recordPayload.detail;
+  }
+
+  if (typeof recordPayload.error === 'string') {
+    return recordPayload.error;
+  }
+
+  const [field, value] = Object.entries(recordPayload)[0] ?? [];
+  if (!field) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const first = value[0];
+    if (typeof first === 'string') {
+      return `${field}: ${first}`;
+    }
+    return `${field}: ${JSON.stringify(value)}`;
+  }
+
+  if (value && typeof value === 'object') {
+    return `${field}: ${JSON.stringify(value)}`;
+  }
+
+  if (value != null) {
+    return `${field}: ${String(value)}`;
+  }
+
+  return undefined;
 }
 
 /**

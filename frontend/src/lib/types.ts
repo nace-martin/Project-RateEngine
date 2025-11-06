@@ -221,18 +221,18 @@ export interface BuyOffer {
 // --- V3 QUOTE REQUEST TYPES ---
 export interface V3DimensionInput {
   pieces: number;
-  length_cm: number;
-  width_cm: number;
-  height_cm: number;
-  gross_weight_kg: number;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
+  gross_weight_kg: string;
 }
 
 export interface V3ManualOverride {
-  service_component_id: number;
-  cost_fcy: number;
+  service_component_id: string;
+  cost_fcy: string;
   currency: string;
   unit: string;
-  min_charge_fcy?: number;
+  min_charge_fcy?: string;
 }
 
 export interface V3QuoteComputeRequest {
@@ -241,11 +241,11 @@ export interface V3QuoteComputeRequest {
   mode: string;
   shipment_type: string;
   incoterm: string;
-  payment_term: string;
   origin_airport_code: string;
   destination_airport_code: string;
   dimensions: V3DimensionInput[];
-  is_dangerous_goods: boolean;
+  payment_term?: string;
+  is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];
   output_currency?: string;
 }

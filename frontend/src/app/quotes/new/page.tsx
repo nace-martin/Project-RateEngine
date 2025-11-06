@@ -16,7 +16,7 @@ import { getCompanyContacts, computeQuote } from "@/lib/api"; // Import updated 
 // --- END ADD ---
 
 // --- ADD IMPORTS ---
-import { V3QuoteComputeResponse } from "@/lib/types"; // Import response type
+import { V3QuoteComputeRequest, V3QuoteComputeResponse } from "@/lib/types"; // Import request/response types
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // For showing errors/success
 import Link from "next/link"; // To link to the created quote
 // --- END ADD ---
@@ -158,8 +158,41 @@ export default function NewQuotePage() {
     }
 
     try {
+      const toDecimalString = (value: number) =>
+        Number.isFinite(value) ? value.toString() : "0";
+      const payload: V3QuoteComputeRequest = {
+        customer_id: data.customer_id,
+        contact_id: data.contact_id,
+        mode: data.mode.toUpperCase(),
+        shipment_type: data.shipment_type.toUpperCase(),
+        incoterm: data.incoterm.toUpperCase(),
+        origin_airport_code: data.origin_airport_code.trim().toUpperCase(),
+        destination_airport_code: data.destination_airport_code.trim().toUpperCase(),
+        payment_term: data.payment_term,
+        is_dangerous_goods: data.is_dangerous_goods,
+        dimensions: data.dimensions.map((dimension) => ({
+          pieces: dimension.pieces,
+          length_cm: toDecimalString(dimension.length_cm),
+          width_cm: toDecimalString(dimension.width_cm),
+          height_cm: toDecimalString(dimension.height_cm),
+          gross_weight_kg: toDecimalString(dimension.gross_weight_kg),
+        })),
+      };
+
+      if (data.overrides?.length) {
+        payload.overrides = data.overrides.map((override) => ({
+          service_component_id: String(override.service_component_id),
+          cost_fcy: toDecimalString(override.cost_fcy),
+          currency: override.currency.trim().toUpperCase(),
+          unit: override.unit,
+          ...(override.min_charge_fcy !== undefined && {
+            min_charge_fcy: toDecimalString(override.min_charge_fcy),
+          }),
+        }));
+      }
+
       // Compute the quote using the V3 endpoint
-      const response = await computeQuote(data, token);
+      const response = await computeQuote(payload, token);
 
       console.log("API Success Response:", response);
       setQuoteResult(response); // Store the successful result
