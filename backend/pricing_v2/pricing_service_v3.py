@@ -274,7 +274,6 @@ class PricingServiceV3:
     ) -> ServiceCostLine:
         """
         Calculates PGK cost from a user-provided spot rate override.
-        An override bypasses margin, so cost_pgk and sell_pgk are set to the same value.
         """
         _logger.info(f"Using MANUAL_OVERRIDE for {self._service_label(service)}")
         cost_fcy = Decimal(0)
@@ -296,20 +295,16 @@ class PricingServiceV3:
             cost_fcy,
             override.currency
         )
-        
-        # --- START FIX ---
-        # An override should set the sell price directly, bypassing margin.
-        # Therefore, we set sell_pgk equal to the calculated cost_pgk.
-        
+
+        # Leave sell_pgk at zero so the margin application step can calculate it uniformly.
         return ServiceCostLine(
             service_component=service,
             cost_pgk=cost_pgk,
-            sell_pgk=cost_pgk,  # <-- SET SELL_PGK = COST_PGK
+            sell_pgk=Decimal(0),
             cost_fcy=cost_fcy,
             cost_fcy_currency=override.currency,
             cost_source='MANUAL_OVERRIDE',
         )
-        # --- END FIX ---
         
     def _resolve_partner_ratecard(
         self, context: CalculationContext, service: ServiceComponent
@@ -655,14 +650,6 @@ class PricingServiceV3:
                 sell_lines.append(line)
                 continue
             component_label = self._service_label(line.service_component)
-            
-            # --- START FIX ---
-            # Add a check for MANUAL_OVERRIDE to skip margin application
-            if line.cost_source == 'MANUAL_OVERRIDE':
-                _logger.info(f"Service {component_label} is MANUAL_OVERRIDE. Skipping margin. Sell={line.sell_pgk}")
-                sell_lines.append(line)
-                continue
-            # --- END FIX ---
 
             # NEW LOGIC: Check cost_type
             if line.service_component.cost_type == 'RATE_OFFER':

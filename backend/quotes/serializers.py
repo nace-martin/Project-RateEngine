@@ -5,7 +5,7 @@ from decimal import Decimal
 
 # Import our V3 models
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from services.models import ServiceComponent
+from services.models import ServiceComponent, IncotermRule
 from parties.models import Company
 
 class ManualCostOverrideSerializer(serializers.Serializer):
@@ -77,6 +77,27 @@ class V3QuoteComputeRequestSerializer(serializers.Serializer):
     is_dangerous_goods = serializers.BooleanField(required=False)
     
     overrides = ManualCostOverrideSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        """
+        Ensure the requested Incoterm is supported for the supplied mode/shipment_type.
+        """
+        mode = (attrs.get("mode") or "").upper()
+        shipment_type = (attrs.get("shipment_type") or "").upper()
+        incoterm = (attrs.get("incoterm") or "").upper()
+
+        if mode and shipment_type and incoterm:
+            exists = IncotermRule.objects.filter(
+                mode=mode,
+                shipment_type=shipment_type,
+                incoterm=incoterm,
+                is_active=True,
+            ).exists()
+            if not exists:
+                message = f"Incoterm {incoterm} is not supported for {mode} {shipment_type} shipments."
+                raise serializers.ValidationError({"incoterm": message})
+
+        return attrs
 
 
 # --- Response Serializers ---

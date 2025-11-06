@@ -1,19 +1,30 @@
 # In: backend/pricing_v2/tests/test_pricing_service_v3.py
+# (Replace the entire file with this)
 
+import logging
 import pytest
 import json
+import uuid
 from decimal import Decimal
+from datetime import timedelta
 from django.utils import timezone
+from django.test import TestCase
+from rest_framework.exceptions import ValidationError
 
 # V3 Service and Dataclasses
 from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v2.dataclasses_v3 import V3QuoteRequest, DimensionLine
+from pricing_v2.dataclasses_v3 import V3QuoteRequest, DimensionLine, ManualCostOverride
+
+# Serializer to test
+from quotes.serializers import V3QuoteComputeRequestSerializer
 
 # Models
 from core.models import Airport, FxSnapshot, Currency
 from parties.models import Company, Contact, CustomerCommercialProfile
 from services.models import ServiceComponent, IncotermRule
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+
+_logger = logging.getLogger(__name__)
 
 # Mark this whole file as needing database access
 pytestmark = pytest.mark.django_db
@@ -56,7 +67,7 @@ def setup_v3_golden_test_data():
         as_of_timestamp=timezone.now(),
         defaults={
             'rates': json.dumps(fx_rates_json),
-            'caf_percent': Decimal("2.00"),     # 2%
+            'caf_percent': Decimal("2.00"),      # 2%
             'fx_buffer_percent': Decimal("1.00") # 1%
         }
     )
@@ -115,6 +126,72 @@ def setup_v3_golden_test_data():
     return {
         'customer_id': customer.id,
         'contact_id': contact.id,
+    }
+
+@pytest.fixture
+def setup_exw_test_data(db):
+    """
+    Sets up the minimal data needed for the EXW validation test.
+    """
+    pgk, _ = Currency.objects.get_or_create(
+        code="PGK", defaults={"name": "Papua New Guinea Kina", "minor_units": 2}
+    )
+    unique_suffix = uuid.uuid4().hex
+    customer = Company.objects.create(
+        name=f"EXW Test Customer {unique_suffix}",
+        company_type="CUSTOMER",
+    )
+    contact = Contact.objects.create(
+        company=customer,
+        first_name="EXW",
+        last_name="Tester",
+        email=f"exw.tester.{unique_suffix}@example.com",
+    )
+    CustomerCommercialProfile.objects.create(
+        company=customer,
+        preferred_quote_currency=pgk,
+        default_margin_percent=Decimal("15.00"),
+    )
+    FxSnapshot.objects.create(
+        as_of_timestamp=timezone.now(),
+        source="unit-test",
+        rates=json.dumps({"PGK": {"tt_buy": "1.00", "tt_sell": "1.00"}}),
+        caf_percent=Decimal("0.00"),
+        fx_buffer_percent=Decimal("0.00"),
+    )
+    origin, _ = Airport.objects.get_or_create(iata_code="CNS", defaults={"name": "Cairns"})
+    destination, _ = Airport.objects.get_or_create(iata_code="HKG", defaults={"name": "Hong Kong"})
+
+    # --- THIS IS THE KEY ---
+    # We must create the *supported* rule so the serializer can find it
+    supported_rule = IncotermRule.objects.create(
+        mode="AIR",
+        shipment_type="IMPORT",
+        incoterm="DAP", # This is a "good" incoterm
+    )
+
+    dimension_payload = {
+        "pieces": 1,
+        "length_cm": Decimal("100.00"),
+        "width_cm": Decimal("100.00"),
+        "height_cm": Decimal("100.00"),
+        "gross_weight_kg": Decimal("100.00"),
+    }
+
+    # Return the base request data that we will modify in the test
+    return {
+        "customer_id": customer.id,
+        "contact_id": contact.id,
+        "mode": "AIR",
+        "shipment_type": "IMPORT",
+        "incoterm": "DAP", # Start with a "good" incoterm
+        "origin_airport_code": origin.iata_code,
+        "destination_airport_code": destination.iata_code,
+        "dimensions": [
+            dimension_payload
+        ],
+        "output_currency": "PGK",
+        "overrides": [],
     }
 
 
@@ -248,3 +325,127 @@ def test_compute_v3_efm_bne_pom_scenario(setup_v3_golden_test_data):
     # Total = 391.40 USD
     assert total.total_sell_fcy_incl_gst == Decimal("391.40")
     assert total.total_sell_fcy_currency == "USD"
+
+
+def test_manual_override_applies_margin(db):
+    """
+    Manual overrides should still receive the customer's default margin.
+    """
+    now = timezone.now() + timedelta(minutes=5)
+
+    pgk, _ = Currency.objects.get_or_create(
+        code="PGK", defaults={"name": "Papua New Guinea Kina", "minor_units": 2}
+    )
+
+    unique_suffix = uuid.uuid4().hex
+
+    customer = Company.objects.create(
+        name=f"Override Test Customer {unique_suffix}", company_type="CUSTOMER"
+    )
+    contact = Contact.objects.create(
+        company=customer,
+        first_name="Override",
+        last_name="Tester",
+        email=f"override.tester.{unique_suffix}@example.com",
+    )
+    CustomerCommercialProfile.objects.create(
+        company=customer,
+        preferred_quote_currency=pgk,
+        default_margin_percent=Decimal("20.00"),
+    )
+
+    FxSnapshot.objects.create(
+        as_of_timestamp=now,
+        source="unit-test",
+        rates=json.dumps({"PGK": {"tt_buy": "1.00", "tt_sell": "1.00"}}),
+        caf_percent=Decimal("0.00"),
+        fx_buffer_percent=Decimal("0.00"),
+    )
+
+    origin = Airport.objects.create(iata_code="AAA", name="Origin Airport")
+    destination = Airport.objects.create(iata_code="BBB", name="Destination Airport")
+
+    service = ServiceComponent.objects.create(
+        code="TEST_OVERRIDE",
+        description="Test Manual Override Service",
+        mode="AIR",
+        leg="ORIGIN",
+        category="TRANSPORT",
+        cost_type="COGS",
+        cost_source="BASE_COST",
+        unit="SHIPMENT",
+    )
+
+    rule = IncotermRule.objects.create(
+        mode="AIR",
+        shipment_type="IMPORT",
+        incoterm="TST",
+    )
+    rule.service_components.add(service)
+
+    override = ManualCostOverride(
+        service_component_id=service.id,
+        cost_fcy=Decimal("100.00"),
+        currency="PGK",
+        unit="PER_SHIPMENT",
+    )
+
+    request = V3QuoteRequest(
+        customer_id=customer.id,
+        contact_id=contact.id,
+        mode="AIR",
+        shipment_type="IMPORT",
+        incoterm="TST",
+        origin_airport_code=origin.iata_code,
+        destination_airport_code=destination.iata_code,
+        dimensions=[
+            DimensionLine(
+                pieces=1,
+                length_cm=Decimal("100.00"),
+                width_cm=Decimal("100.00"),
+                height_cm=Decimal("100.00"),
+                gross_weight_kg=Decimal("100.00"),
+            )
+        ],
+        output_currency="PGK",
+        overrides=[override],
+    )
+
+    quote = PricingServiceV3().compute_v3(request)
+
+    line = QuoteLine.objects.get(
+        quote_version__quote=quote,
+        service_component=service,
+    )
+
+    assert line.cost_pgk == Decimal("100.00")
+    assert line.sell_pgk > line.cost_pgk
+    # Check the 20% margin calculation
+    assert line.sell_pgk == Decimal("125.00") # 100 / (1 - 0.20) = 125
+
+
+# --- NEW TEST ---
+def test_serializer_fails_for_unsupported_incoterm(setup_exw_test_data):
+    """
+    Tests that the *serializer* correctly raises a ValidationError
+    if an unsupported Incoterm (like EXW) is used.
+    """
+    _logger.info("--- Testing unsupported Incoterm (EXW) ---")
+    
+    # 1. Get the base request data from the new fixture
+    request_data_dict = setup_exw_test_data
+    
+    # 2. Set the "bad" incoterm
+    request_data_dict["incoterm"] = "EXW" 
+    
+    # 3. Test the serializer directly
+    serializer = V3QuoteComputeRequestSerializer(data=request_data_dict)
+    
+    # 4. Assert that is_valid() raises the new ValidationError
+    with pytest.raises(ValidationError) as exc_info:
+        serializer.is_valid(raise_exception=True)
+    
+    # 5. Check the new, cleaner error message
+    assert "not supported for AIR IMPORT shipments" in str(exc_info.value)
+    
+    _logger.info(f"Correctly caught validation error: {exc_info.value}")
