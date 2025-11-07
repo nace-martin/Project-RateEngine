@@ -1,19 +1,28 @@
 'use client';
 
-'use client';
-
 import Link from 'next/link';
-import { Quote, QuoteStatus } from '@/lib/types';
+import { V3QuoteComputeResponse } from '@/lib/types';
 import { useAuth } from '@/context/auth-context';
 import ProtectedRoute from '@/components/protected-route';
-import { useState, useEffect } from 'react';
-import { extractErrorFromResponse } from '@/lib/utils';
-import { API_BASE_URL } from '@/lib/config';
+import { useState, useEffect, useCallback } from 'react';
+import { getQuotesV3 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { extractErrorFromResponse } from '@/lib/utils';
+
+// Corresponds to backend quotes.models.Quote.Status
+const QUOTE_STATUSES = [
+  'DRAFT',
+  'FINAL',
+  'SENT',
+  'ACCEPTED',
+  'LOST',
+  'EXPIRED',
+  'INCOMPLETE',
+] as const;
 
 export default function QuotesListPage() {
   const { user } = useAuth();
-  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -21,69 +30,44 @@ export default function QuotesListPage() {
   const [count, setCount] = useState(0);
   const [hasNext, setHasNext] = useState(false);
   const [hasPrev, setHasPrev] = useState(false);
-  const [organizations, setOrganizations] = useState<{ id: number; name: string }[]>([]);
-  const [orgId, setOrgId] = useState<string>('');
-  const [statusFilter, setStatusFilter] = useState<'' | QuoteStatus>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+
+  const fetchQuotes = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      setLoading(true);
+      const data = await getQuotesV3({ page, pageSize, status: statusFilter });
+
+      const results = Array.isArray(data.results)
+        ? (data.results as V3QuoteComputeResponse[])
+        : [];
+
+      setQuotes(results);
+      setCount(typeof data.count === 'number' ? data.count : results.length);
+      setHasNext(Boolean(data.next));
+      setHasPrev(Boolean(data.previous));
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching quotes:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load quotes';
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  }, [user, page, pageSize, statusFilter]);
 
   useEffect(() => {
-    const fetchQuotes = async () => {
-      if (!user) return;
-      
-      try {
-        setLoading(true);
-        const apiBase = API_BASE_URL;
-        const token = localStorage.getItem('authToken');
-        
-        const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-        if (statusFilter) params.set('status', statusFilter);
-
-        const res = await fetch(`${apiBase}/api/v2/quotes/?${params.toString()}`, {
-          headers: {
-            'Authorization': `Token ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!res.ok) {
-          const msg = await extractErrorFromResponse(res, `Failed to fetch quotes (${res.status})`);
-          throw new Error(msg);
-        }
-
-        const data = await res.json();
-        // Expect DRF paginated shape
-        const results = Array.isArray(data.results) ? (data.results as Quote[]) : [];
-        setQuotes(results);
-        setCount(typeof data.count === 'number' ? data.count : results.length);
-        setHasNext(Boolean(data.next));
-        setHasPrev(Boolean(data.previous));
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching quotes:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load quotes');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     if (user) {
       fetchQuotes();
     }
-  }, [user, page, pageSize, orgId, statusFilter]);
+  }, [user, fetchQuotes]);
 
-  useEffect(() => {
-    const staticOrganizations: { id: number; name: string }[] = [
-      { id: 1, name: 'Test Org 1' },
-      { id: 2, name: 'Test Org 2' },
-    ];
-    setOrganizations(staticOrganizations);
-  }, [user]);
-
-  // Function to determine if user can see COGS data
   const canViewCOGS = () => {
     return user?.role === 'manager' || user?.role === 'finance';
   };
 
-  if (loading) {
+  if (loading && quotes.length === 0) {
     return (
       <ProtectedRoute>
         <main className="container mx-auto p-8">
@@ -111,28 +95,21 @@ export default function QuotesListPage() {
 
         <div className="bg-white shadow-sm rounded-md p-4 mb-4 flex flex-wrap gap-3 items-end">
           <div>
-            <label className="block text-xs text-gray-600 mb-1">Organization</label>
-            <select
-              className="border rounded px-2 py-1 text-sm min-w-[220px]"
-              value={orgId}
-              onChange={(e) => { setOrgId(e.target.value); setPage(1); }}
-            >
-              <option value="">All</option>
-              {organizations.map((o) => (
-                <option key={o.id} value={String(o.id)}>{o.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
             <label className="block text-xs text-gray-600 mb-1">Status</label>
             <select
               className="border rounded px-2 py-1 text-sm"
               value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value as QuoteStatus); setPage(1); }}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+              }}
             >
               <option value="">All</option>
-              <option value={QuoteStatus.PENDING_RATE}>Pending Rate</option>
-              <option value={QuoteStatus.COMPLETE}>Complete</option>
+              {QUOTE_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
             </select>
           </div>
           <div>
@@ -140,7 +117,10 @@ export default function QuotesListPage() {
             <select
               className="border rounded px-2 py-1 text-sm"
               value={pageSize}
-              onChange={(e) => { setPageSize(parseInt(e.target.value, 10)); setPage(1); }}
+              onChange={(e) => {
+                setPageSize(parseInt(e.target.value, 10));
+                setPage(1);
+              }}
             >
               <option value={10}>10</option>
               <option value={25}>25</option>
@@ -160,16 +140,13 @@ export default function QuotesListPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Client</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quote #</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Route</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mode</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Weight (kg)</th>
                   {canViewCOGS() && (
-                    <>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Base Cost</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Margin Amt</th>
-                    </>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Cost (PGK)</th>
                   )}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Sell</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
@@ -179,37 +156,24 @@ export default function QuotesListPage() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {quotes.map((quote) => (
                   <tr key={quote.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{quote.client.name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.origin} → {quote.destination}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{quote.quote_number}</td>
+                    {/* Assuming customer name will be added to the serializer. For now, showing ID. */}
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.customer}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.origin_code} → {quote.destination_code}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.mode}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {quote.status === QuoteStatus.PENDING_RATE ? 'Pending Rate' : (quote.status || 'Complete')}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.chargeable_weight_kg}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{quote.status}</td>
                     {canViewCOGS() && (
-                      <>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {Intl.NumberFormat('en-US', {
-                            style: 'currency',
-                            currency: 'PGK',
-                            maximumFractionDigits: 2,
-                          }).format(Number(quote.base_cost ?? 0))}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {Intl.NumberFormat('en-US', {
-                            style: 'currency',
-                            currency: 'PGK',
-                            maximumFractionDigits: 2,
-                          }).format(Math.max(0, Number(quote.total_sell ?? 0) - Number(quote.base_cost ?? 0)))}
-                        </td>
-                      </>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {/* Total cost is not in the V3 response yet */}
+                        N/A
+                      </td>
                     )}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {Intl.NumberFormat('en-US', {
                         style: 'currency',
-                        currency: 'PGK',
+                        currency: quote.latest_version.totals.total_sell_fcy_currency,
                         maximumFractionDigits: 2,
-                      }).format(Number(quote.total_sell ?? 0))}
+                      }).format(Number(quote.latest_version.totals.total_sell_fcy))}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(quote.created_at).toLocaleDateString()}

@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/auth-context';
-import { apiClient } from '@/lib/api';
+import { login as apiLogin } from '@/lib/api';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -20,13 +20,8 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const { data } = await apiClient.post<{
-        token: string;
-        role: string;
-        username: string;
-      }>('/api/auth/login/', { username, password });
-
-      login(data.token, data.role, data.username);
+      const { token, user } = await apiLogin({ username, password });
+      login(token, user);
       router.push('/quotes');
     } catch (err: unknown) {
       console.error('Login failed:', err);
