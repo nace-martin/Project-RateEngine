@@ -10,7 +10,6 @@ from django.db.models import Prefetch
 from .models import Quote, QuoteVersion
 
 # Our V3 Service and Dataclasses
-from pricing_v2.pricing_service_v3 import PricingServiceV3
 from pricing_v2.dataclasses_v3 import V3QuoteRequest, ManualCostOverride, DimensionLine
 
 # Our new V3 Serializers
@@ -99,41 +98,3 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         versions = quote.versions.all().order_by('-version_number')
         serializer = QuoteVersionSerializer(versions, many=True)
         return Response(serializer.data)
-
-
-class QuoteComputeV3APIView(APIView):
-    """
-    Main V3 API Endpoint for computing and saving a new quote.
-    """
-    permission_classes = [permissions.IsAuthenticated] # Protect this endpoint
-
-    def post(self, request, *args, **kwargs):
-        serializer = V3QuoteComputeRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        quote_request = _build_quote_request_from_validated_data(serializer.validated_data)
-        service = PricingServiceV3()
-
-        try:
-            quote_instance = service.compute_v3(quote_request)
-        except Exception as exc:  # pragma: no cover - defensive logging around service failures
-            _logger.exception("Failed to compute V3 quote")
-            return Response(
-                {"detail": str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Re-fetch the quote with the latest version prefetched to avoid N+1 query
-        quote_with_prefetch = Quote.objects.prefetch_related(
-            Prefetch(
-                'versions',
-                queryset=QuoteVersion.objects.order_by('-version_number'),
-                to_attr='latest_version_list'
-            )
-        ).get(pk=quote_instance.pk)
-
-        response_serializer = V3QuoteComputeResponseSerializer(
-            quote_with_prefetch,
-            context={"request": request},
-        )
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
