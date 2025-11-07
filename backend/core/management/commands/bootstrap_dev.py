@@ -29,3 +29,5 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"TOKEN: {token.key}"))
         except Exception:
             self.stdout.write("DRF authtoken not installed; skipping token.")
+
+        self.stdout.write(self.style.SUCCESS("Bootstrap complete."))

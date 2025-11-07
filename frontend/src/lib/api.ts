@@ -91,6 +91,21 @@ export async function getContactsForCompany(
 
 // --- Quotes V3 ---
 
+export async function getQuotesV3(): Promise<V3QuoteComputeResponse[]> {
+  const url = API_BASE_URL + '/api/v3/quotes/';
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch quotes.');
+  }
+
+  return response.json();
+}
+
 export async function computeQuoteV3(
   data: V3QuoteComputeRequest,
 ): Promise<V3QuoteComputeResponse> {
@@ -132,39 +147,6 @@ export async function getQuoteV3(
   return response.json();
 }
 
-export async function getQuotesV3(params: {
-  page: number;
-  pageSize: number;
-  status?: string;
-}): Promise<{
-  results: V3QuoteComputeResponse[];
-  count: number;
-  next: string | null;
-  previous: string | null;
-}> {
-  const url = new URL(API_BASE_URL + '/api/v3/quotes/');
-  url.searchParams.append('page', String(params.page));
-  url.searchParams.append('page_size', String(params.pageSize));
-  if (params.status) {
-    url.searchParams.append('status', params.status);
-  }
-
-  const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    console.error('Get quotes error:', errorData);
-    throw new Error(
-      `Failed to fetch quotes: ${JSON.stringify(errorData.detail) || response.statusText}`,
-    );
-  }
-
-  return response.json();
-}
 
 // --- Rate Cards ---
 

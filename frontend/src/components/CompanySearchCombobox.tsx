@@ -7,7 +7,7 @@ import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { searchCompanies } from '@/lib/api';
+import { getCompanies } from '@/lib/api';
 import type { CompanySearchResult } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -64,12 +64,11 @@ export default function CompanySearchCombobox({
     }
 
     let isActive = true;
-    const controller = new AbortController();
 
     setIsLoading(true);
     setFetchError(null);
 
-    searchCompanies(trimmed, token, controller.signal)
+    getCompanies(trimmed)
       .then((companies) => {
         if (!isActive) {
           return;
@@ -77,8 +76,7 @@ export default function CompanySearchCombobox({
         setResults(companies);
       })
       .catch((error: Error) => {
-        if (!isActive || error.name === 'AbortError') {
-          // console.log("Fetch aborted:", error.message); // Optional: for debugging
+        if (!isActive) {
           return;
         }
         setFetchError(error.message || 'Unable to fetch companies right now.');
@@ -92,7 +90,6 @@ export default function CompanySearchCombobox({
 
     return () => {
       isActive = false;
-      controller.abort();
     };
   }, [debouncedQuery, token]);
 
