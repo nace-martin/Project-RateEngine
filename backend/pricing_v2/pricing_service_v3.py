@@ -104,21 +104,39 @@ class PricingServiceV3:
 
     def _get_service_components(self) -> List[ServiceComponent]:
         """
-        Gets the list of services to be quoted based on the incoterm.
+        Gets the list of services to be quoted based on a cascading rules engine.
         """
-        try:
-            rule = IncotermRule.objects.get(
-                mode=self.shipment.mode,
-                shipment_type=self.shipment.shipment_type,
-                incoterm=self.shipment.incoterm
-            )
-            return list(rule.service_components.filter(is_active=True))
-        except IncotermRule.DoesNotExist:
-            # Fallback to a default set if no rule found?
-            return list(ServiceComponent.objects.filter(
-                mode=self.shipment.mode, 
-                is_active=True
-            ))
+        rules_to_try = [
+            # Most specific rule
+            {'incoterm': self.shipment.incoterm, 'service_level': self.shipment.service_level, 'payment_term': self.shipment.payment_term},
+            # Fallback to service level
+            {'incoterm': self.shipment.incoterm, 'service_level': self.shipment.service_level},
+            # Fallback to any service level
+            {'incoterm': self.shipment.incoterm},
+        ]
+
+        for rule_kwargs in rules_to_try:
+            try:
+                rule = IncotermRule.objects.get(
+                    mode=self.shipment.mode,
+                    shipment_type=self.shipment.shipment_type,
+                    **rule_kwargs
+                )
+                return list(rule.service_components.filter(is_active=True))
+            except IncotermRule.DoesNotExist:
+                continue
+            except IncotermRule.MultipleObjectsReturned:
+                # If multiple rules match, we need to decide which one to use.
+                # For now, we'll just use the first one.
+                rule = IncotermRule.objects.filter(
+                    mode=self.shipment.mode,
+                    shipment_type=self.shipment.shipment_type,
+                    **rule_kwargs
+                ).first()
+                return list(rule.service_components.filter(is_active=True))
+
+        # If no rule is found, return an empty list of services
+        return []
 
     # --- REFACTORED: This method now returns a PartnerRate object ---
     def _get_buy_rate(self, component: ServiceComponent) -> Optional[PartnerRate]:

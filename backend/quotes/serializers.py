@@ -56,6 +56,8 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     
     incoterm = serializers.CharField(max_length=3)
     payment_term = serializers.ChoiceField(choices=Quote.PaymentTerm.choices)
+    origin_address = serializers.CharField(required=False, allow_blank=True)
+    destination_address = serializers.CharField(required=False, allow_blank=True)
     is_dangerous_goods = serializers.BooleanField(default=False)
     output_currency = serializers.CharField(max_length=3, required=False, default='PGK')
     dimensions = V3DimensionInputSerializer(many=True, required=True)

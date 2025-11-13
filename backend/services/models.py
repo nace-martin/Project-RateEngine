@@ -105,32 +105,38 @@ class IncotermRule(models.Model):
     Maps a combination of Mode, Shipment Type, and Incoterm to the set of
     ServiceComponents that are typically included in the scope of work.
     """
+    SERVICE_LEVEL_CHOICES = [
+        ('D2D', 'Door-to-Door'),
+        ('A2D', 'Airport-to-Door'),
+        ('D2A', 'Door-to-Airport'),
+        ('A2A', 'Airport-to-Airport'),
+    ]
+    PAYMENT_TERM_CHOICES = [
+        ('PREPAID', 'Prepaid'),
+        ('COLLECT', 'Collect'),
+    ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, db_index=True)
     shipment_type = models.CharField(
         max_length=10, choices=[('IMPORT', 'Import'), ('EXPORT', 'Export'), ('DOMESTIC', 'Domestic')],
         db_index=True
     )
-    # Using CharField for Incoterm code flexibility
     incoterm = models.CharField(max_length=3, db_index=True)
+    service_level = models.CharField(max_length=3, choices=SERVICE_LEVEL_CHOICES, db_index=True, default='D2D')
+    payment_term = models.CharField(max_length=10, choices=PAYMENT_TERM_CHOICES, db_index=True, default='PREPAID')
     description = models.CharField(max_length=255, blank=True)
-    # ManyToManyField defines the set of services included for this rule
     service_components = models.ManyToManyField(
         ServiceComponent,
         related_name='incoterm_rules',
         help_text="Select the services included in the scope for this Incoterm rule."
     )
-
-    # Optional: More complex rules could go here later, e.g., JSON logic
-    # leg_rules_json = models.JSONField(null=True, blank=True)
-
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        return f"{self.mode} {self.shipment_type} {self.incoterm}"
+        return f"{self.mode} {self.shipment_type} {self.incoterm} {self.service_level} {self.payment_term}"
 
     class Meta:
-        unique_together = ('mode', 'shipment_type', 'incoterm')
-        ordering = ['mode', 'shipment_type', 'incoterm']
+        unique_together = ('mode', 'shipment_type', 'incoterm', 'service_level', 'payment_term')
+        ordering = ['mode', 'shipment_type', 'incoterm', 'service_level', 'payment_term']
         verbose_name = "Incoterm Rule"
         verbose_name_plural = "Incoterm Rules"

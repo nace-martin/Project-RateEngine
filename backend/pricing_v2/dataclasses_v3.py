@@ -26,14 +26,27 @@ class Piece:
 @dataclass(frozen=True)
 class ShipmentDetails:
     """Holds all physical and routing details of the shipment."""
-    mode: str                  # e.g., 'AIR'
-    shipment_type: str         # e.g., 'IMPORT', 'EXPORT'
-    origin_code: str           # Airport/Port code (e.g., 'BNE')
-    destination_code: str      # Airport/Port code (e.g., 'POM')
-    incoterm: str              # e.g., 'EXW'
-    payment_term: str          # e.g., 'PREPAID'
+    mode: str
+    shipment_type: str
+    origin_code: str
+    destination_code: str
+    incoterm: str
+    payment_term: str
     is_dangerous_goods: bool
     pieces: List[Piece]
+    origin_address: Optional[str] = None
+    destination_address: Optional[str] = None
+
+    @property
+    def service_level(self) -> str:
+        if self.origin_address and self.destination_address:
+            return "D2D"
+        elif self.origin_address:
+            return "D2A"
+        elif self.destination_address:
+            return "A2D"
+        else:
+            return "A2A"
 
 @dataclass(frozen=True)
 class ManualOverride:

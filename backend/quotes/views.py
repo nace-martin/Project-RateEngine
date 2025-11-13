@@ -122,13 +122,15 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         
         shipment_details = ShipmentDetails(
             mode=data['mode'],
-            shipment_type=shipment_type, # <-- Use calculated type
+            shipment_type=shipment_type,
             origin_code=origin_code,
             destination_code=destination_code,
             incoterm=data['incoterm'],
             payment_term=data['payment_term'],
             is_dangerous_goods=data['is_dangerous_goods'],
-            pieces=[Piece(**p) for p in data['dimensions']]
+            pieces=[Piece(**p) for p in data['dimensions']],
+            origin_address=data.get('origin_address'),
+            destination_address=data.get('destination_address')
         )
         
         overrides = [ManualOverride(**o) for o in data.get('overrides', [])]
