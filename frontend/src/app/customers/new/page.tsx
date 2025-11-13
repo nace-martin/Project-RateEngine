@@ -76,7 +76,7 @@ export default function NewCustomerPage() {
         formData.audience_type === 'LOCAL_PNG_CUSTOMER' ? null : formData.primary_address,
     };
 
-    const res = await fetch(`${API_BASE_URL}/api/v2/customers/`, {
+    const res = await fetch(`${API_BASE_URL}/api/v3/customers/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

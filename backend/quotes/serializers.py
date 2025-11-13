@@ -1,238 +1,119 @@
-# In: backend/quotes/serializers.py
+# backend/quotes/serializers.py
 
-from rest_framework import serializers
 from decimal import Decimal
-
-# Import our V3 models
+from rest_framework import serializers
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from services.models import ServiceComponent, IncotermRule
-from parties.models import Company
+from services.models import ServiceComponent
+from parties.models import Company, Contact
+# --- ADDED IMPORTS ---
+from core.models import Airport, Port
+# --- END IMPORTS ---
 
-class ManualCostOverrideSerializer(serializers.Serializer):
-    """
-    Serializer for the V3QuoteRequest's 'overrides' field.
-    Matches the ManualCostOverride dataclass.
-    """
+# --- V3 Serializers ---
+
+class V3DimensionInputSerializer(serializers.Serializer):
+    """Serializer for the 'dimensions' list in the compute request."""
+    pieces = serializers.IntegerField(min_value=1)
+    length_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    width_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    height_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    gross_weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+
+class V3ManualOverrideSerializer(serializers.Serializer):
+    """Serializer for the 'overrides' list in the compute request."""
     service_component_id = serializers.UUIDField()
-    cost_fcy = serializers.DecimalField(max_digits=10, decimal_places=2)
+    cost_fcy = serializers.DecimalField(max_digits=12, decimal_places=2)
     currency = serializers.CharField(max_length=3)
     unit = serializers.CharField(max_length=20)
-    min_charge_fcy = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    min_charge_fcy = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
 
-
-class DimensionLineSerializer(serializers.Serializer):
+class QuoteComputeRequestSerializer(serializers.Serializer):
     """
-    Serializer for a single dimension line in the V3QuoteRequest.
-    Matches the DimensionLine dataclass.
-    """
-    pieces = serializers.IntegerField()
-    length_cm = serializers.DecimalField(max_digits=10, decimal_places=2)
-    width_cm = serializers.DecimalField(max_digits=10, decimal_places=2)
-    height_cm = serializers.DecimalField(max_digits=10, decimal_places=2)
-    gross_weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2)
-
-    def validate_pieces(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Pieces must be positive.")
-        return value
-
-    def validate_length_cm(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Length must be positive.")
-        return value
-
-    def validate_width_cm(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Width must be positive.")
-        return value
-
-    def validate_height_cm(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Height must be positive.")
-        return value
-
-    def validate_gross_weight_kg(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Gross weight per piece must be positive.")
-        return value
-
-
-class V3QuoteComputeRequestSerializer(serializers.Serializer):
-    """
-    Validates the incoming payload for the V3 Compute API.
-    Matches the V3QuoteRequest dataclass.
+    Validates the V3 compute request from the frontend.
+    This is what the user *sends*.
     """
     customer_id = serializers.UUIDField()
     contact_id = serializers.UUIDField()
-    mode = serializers.CharField(max_length=10)
-    shipment_type = serializers.CharField(max_length=10)
+    mode = serializers.CharField() # We'll validate choices in the view
+    
+    # --- UPDATED FIELDS ---
+    # We now accept a valid IATA code (string) and look up the Airport object.
+    origin_airport = serializers.SlugRelatedField(
+        slug_field='iata_code',
+        queryset=Airport.objects.all(),
+        required=False # Allow null if mode is SEA
+    )
+    destination_airport = serializers.SlugRelatedField(
+        slug_field='iata_code',
+        queryset=Airport.objects.all(),
+        required=False # Allow null if mode is SEA
+    )
+    
+    # TODO: Add origin_port and destination_port when SEA mode is built
+    
+    # 'shipment_type' is REMOVED. It will be determined by the view logic.
+    # --- END UPDATES ---
+    
     incoterm = serializers.CharField(max_length=3)
-    origin_airport_code = serializers.CharField(max_length=3)
-    destination_airport_code = serializers.CharField(max_length=3)
-    
-    dimensions = DimensionLineSerializer(many=True, allow_empty=False)
-    
-    payment_term = serializers.CharField(max_length=10, required=False)
-    output_currency = serializers.CharField(max_length=3, required=False)
-    is_dangerous_goods = serializers.BooleanField(required=False)
-    
-    overrides = ManualCostOverrideSerializer(many=True, required=False)
+    payment_term = serializers.ChoiceField(choices=Quote.PaymentTerm.choices)
+    is_dangerous_goods = serializers.BooleanField(default=False)
+    output_currency = serializers.CharField(max_length=3, required=False, default='PGK')
+    dimensions = V3DimensionInputSerializer(many=True, required=True)
+    overrides = V3ManualOverrideSerializer(many=True, required=False)
 
-    def validate(self, attrs):
-        """
-        Ensure the requested Incoterm is supported for the supplied mode/shipment_type.
-        """
-        mode = (attrs.get("mode") or "").upper()
-        shipment_type = (attrs.get("shipment_type") or "").upper()
-        incoterm = (attrs.get("incoterm") or "").upper()
+    def validate_dimensions(self, value):
+        if not value or len(value) == 0:
+            raise serializers.ValidationError("At least one dimension line is required.")
+        return value
 
-        if mode and shipment_type and incoterm:
-            exists = IncotermRule.objects.filter(
-                mode=mode,
-                shipment_type=shipment_type,
-                incoterm=incoterm,
-                is_active=True,
-            ).exists()
-            if not exists:
-                message = f"Incoterm {incoterm} is not supported for {mode} {shipment_type} shipments."
-                raise serializers.ValidationError({"incoterm": message})
+# --- V3 RESPONSE SERIALIZERS ---
+# These define what the API *returns* to the frontend.
 
-        return attrs
-
-
-# --- Response Serializers ---
-# These serialize our database models to return to the frontend
-
-class ServiceComponentSerializer(serializers.ModelSerializer):
+class V3ServiceComponentSerializer(serializers.ModelSerializer):
     class Meta:
         model = ServiceComponent
-        fields = ['id', 'description', 'category', 'unit']
+        fields = ('id', 'code', 'description', 'category', 'unit')
 
-class QuoteLineSerializer(serializers.ModelSerializer):
-    service_component = ServiceComponentSerializer(read_only=True)
-    
+class V3QuoteLineSerializer(serializers.ModelSerializer):
+    service_component = V3ServiceComponentSerializer()
     class Meta:
         model = QuoteLine
-        fields = [
-            'id',
-            'service_component',
-            'cost_pgk',
-            'cost_fcy',
-            'cost_fcy_currency',
-            'sell_pgk',
-            'sell_pgk_incl_gst',
-            'sell_fcy',
-            'sell_fcy_incl_gst',
-            'sell_fcy_currency',
-            'exchange_rate',
-            'cost_source',
-            'cost_source_description',
-            'is_rate_missing',
-        ]
+        exclude = ('quote_version',) # Exclude the parent link
 
-class QuoteTotalSerializer(serializers.ModelSerializer):
+class V3QuoteTotalSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuoteTotal
-        fields = [
-            'total_sell_fcy',
-            'total_sell_fcy_incl_gst',
-            'total_sell_fcy_currency',
-            'has_missing_rates',
-            'notes',
-        ]
+        exclude = ('quote_version',) # Exclude the parent link
 
-class QuoteVersionSerializer(serializers.ModelSerializer):
-    lines = QuoteLineSerializer(many=True, read_only=True)
-    totals = QuoteTotalSerializer(read_only=True)
-
+class V3QuoteVersionSerializer(serializers.ModelSerializer):
+    lines = V3QuoteLineSerializer(many=True)
+    totals = V3QuoteTotalSerializer()
     class Meta:
         model = QuoteVersion
-        fields = [
-            'id',
-            'version_number',
-            'status',
-            'created_at',
-            'lines',
-            'totals',
-        ]
+        exclude = ('quote',) # Exclude the parent link
 
-class V3QuoteComputeResponseSerializer(serializers.ModelSerializer):
+class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
-    Serializes the main Quote object, nesting the LATEST version.
+    The main serializer for the Quote model, used for GET requests
+    and as the response for the compute endpoint.
     """
-    latest_version = serializers.SerializerMethodField()
-
+    latest_version = V3QuoteVersionSerializer(read_only=True)
+    
+    # --- UPDATED FIELDS ---
+    # Use StringRelatedField to return the IATA code (e.g., "BNE")
+    origin_airport = serializers.StringRelatedField()
+    destination_airport = serializers.StringRelatedField()
+    # TODO: Add origin_port and destination_port
+    # --- END UPDATES ---
+    
     class Meta:
         model = Quote
-        fields = [
-            'id',
-            'quote_number',
-            'customer',
-            'contact',
-            'mode',
-            'shipment_type',
-            'incoterm',
-            'payment_term',
-            'output_currency',
-            'origin_code',
-            'destination_code',
-            'status',
-            'valid_until',
-            'created_at',
-            'latest_version',
-        ]
-
-    def get_latest_version(self, obj):
-        # Check for prefetched data first
-        if hasattr(obj, 'latest_version_list') and obj.latest_version_list:
-            return QuoteVersionSerializer(obj.latest_version_list[0], context=self.context).data
-
-        # Fallback to direct query if not prefetched
-        latest = obj.versions.order_by('-version_number').first()
-        if latest:
-            return QuoteVersionSerializer(latest, context=self.context).data
-        return None
-
-class QuoteEnvelopeV3Serializer(serializers.ModelSerializer):
-    """
-    Serializer for CREATING a V3 Quote (envelope) only.
-    Matches the fields from the old V2 test payload.
-    """
-    customer_id = serializers.PrimaryKeyRelatedField(queryset=Company.objects.all(), source='customer')
-    reference = serializers.CharField(source='quote_number', required=False)
-    date = serializers.DateField(write_only=True, required=False)
-    validity_days = serializers.IntegerField(write_only=True, default=7)
-    service_type = serializers.CharField(source='shipment_type')
-    terms = serializers.CharField(source='incoterm')
-    scope = serializers.CharField(write_only=True, required=False) # This field is ignored
-    sell_currency = serializers.CharField(source='output_currency')
-
-    class Meta:
-        model = Quote
+        # --- UPDATED FIELDS ---
         fields = (
-            'id',
-            'customer_id',
-            'reference',
-            'date',
-            'validity_days',
-            'service_type',
-            'terms',
-            'scope',
-            'payment_term',
-            'sell_currency',
-            'created_at',
+            'id', 'quote_number', 'customer', 'contact', 'mode', 
+            'shipment_type', 'incoterm', 'payment_term', 'output_currency', 
+            'origin_airport', 'destination_airport', # Replaced _code fields
+            # 'origin_port', 'destination_port', # Add when ready for SEA
+            'status', 'valid_until', 'created_at', 'latest_version'
         )
-        read_only_fields = ('id', 'created_at')
-
-    def create(self, validated_data):
-        from datetime import timedelta
-        from django.utils import timezone
-
-        validity_days = validated_data.pop('validity_days', 7)
-        validated_data.pop('scope', None)
-        validated_data.pop('date', None)
-
-        quote = Quote.objects.create(**validated_data)
-        quote.valid_until = timezone.now().date() + timedelta(days=validity_days)
-        quote.save()
-        return quote
+        # --- END UPDATES ---

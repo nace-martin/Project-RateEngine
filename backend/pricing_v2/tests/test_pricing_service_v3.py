@@ -1,451 +1,206 @@
-# In: backend/pricing_v2/tests/test_pricing_service_v3.py
-# (Replace the entire file with this)
+# backend/pricing_v2/tests/test_pricing_service_v3.py
 
-import logging
-import pytest
-import json
+"""V3 pricing regression tests aligned to the new dataclasses."""
+
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import timedelta
+
+import pytest
 from django.utils import timezone
-from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
-# V3 Service and Dataclasses
 from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v2.dataclasses_v3 import V3QuoteRequest, DimensionLine, ManualCostOverride
+from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece
 
-# Serializer to test
-from quotes.serializers import V3QuoteComputeRequestSerializer
-
-# Models
-from core.models import Airport, FxSnapshot, Currency
-from parties.models import Company, Contact, CustomerCommercialProfile
+from core.models import Currency, Country, City, Airport, FxSnapshot, Policy
+from quotes.serializers import QuoteComputeRequestSerializer
 from services.models import ServiceComponent, IncotermRule
-from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 
-_logger = logging.getLogger(__name__)
 
-# Mark this whole file as needing database access
 pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def setup_v3_golden_test_data():
-    """
-    Sets up all required data for the V3 golden test.
-    This assumes the migrations for services, ratecards, etc., have been run.
-    """
-    
-    # === 1. Create Customer and Contact ===
-    customer, _ = Company.objects.get_or_create(
-        name="Test Customer V3",
-        defaults={'company_type': 'CUSTOMER'}
-    )
-    contact, _ = Contact.objects.get_or_create(
-        company=customer,
-        email="test@customerv3.com",
-        defaults={'first_name': 'Test', 'last_name': 'User'}
-    )
-    
-    # === 2. Create Customer Commercial Profile ===
-    # We set a 30% default margin
-    usd, _ = Currency.objects.get_or_create(code='USD')
-    profile = CustomerCommercialProfile.objects.create(
-        company=customer,
-        default_margin_percent=Decimal("30.00"),
-        preferred_quote_currency=usd
-    )
-    
-    # === 3. Create FX Snapshot ===
-    # We set specific FX rates for our calculation
-    fx_rates_json = {
-        "AUD": {"tt_buy": "2.20", "tt_sell": "2.10"},
-        "USD": {"tt_buy": "3.40", "tt_sell": "0.30"}
-    }
-    fx, _ = FxSnapshot.objects.get_or_create(
-        as_of_timestamp=timezone.now(),
-        defaults={
-            'rates': json.dumps(fx_rates_json),
-            'caf_percent': Decimal("2.00"),      # 2%
-            'fx_buffer_percent': Decimal("1.00") # 1%
-        }
-    )
-    
-    # === 4. Ensure Airports exist ===
-    # These should be seeded, but we ensure they're here
-    bne, _ = Airport.objects.get_or_create(iata_code="BNE", defaults={'name': "Brisbane"})
-    pom, _ = Airport.objects.get_or_create(iata_code="POM", defaults={'name': "Port Moresby"})
-    
-    # === 5. Find Services (seeded by migrations) ===
-    # These are our COGS services
-    try:
-        service_freight = ServiceComponent.objects.get(description__iexact="Freight")
-        service_pickup = ServiceComponent.objects.get(description__iexact="Origin Pickup")
-        service_fuel = ServiceComponent.objects.get(description__iexact="Fuel Surcharge (Origin Pickup)")
-        service_security = ServiceComponent.objects.get(description__iexact="Origin Security (X-Ray)")
-    except ServiceComponent.DoesNotExist as e:
-        pytest.fail(f"Could not find seeded service. Have migrations been run? Missing: {e}")
-    
-    # These are our PGK base-cost services
-    service_handling, _ = ServiceComponent.objects.get_or_create(
-        description="Import Handling",
-        defaults={
-            'code': 'HDL_IMP',
-            'category': 'DESTINATION', 'unit': 'PER_SHIPMENT', 'cost_type': 'COGS',
-            'cost_source': 'BASE_COST', 'base_pgk_cost': Decimal("150.00"),
-            'tax_rate': Decimal("0.10") # 10% GST
-        }
-    )
-    service_clearance, _ = ServiceComponent.objects.get_or_create(
-        description="Import Customs Clearance",
-        defaults={
-            'code': 'CLX_IMP',
-            'category': 'DESTINATION', 'unit': 'PER_SHIPMENT', 'cost_type': 'COGS',
-            'cost_source': 'BASE_COST', 'base_pgk_cost': Decimal("350.00"),
-            'tax_rate': Decimal("0.00") # 0% GST
-        }
-    )
-    
-    # === 6. Ensure Incoterm Rule exists ===
-    # We link all our services to the AIR/IMPORT/EXW rule
-    rule, _ = IncotermRule.objects.get_or_create(
-        mode='AIR',
-        shipment_type='IMPORT',
-        incoterm='EXW'
-    )
-    rule.service_components.set([
-        service_freight,
-        service_pickup,
-        service_fuel,
-        service_security,
-        service_handling,
-        service_clearance
-    ])
-
-    return {
-        'customer_id': customer.id,
-        'contact_id': contact.id,
-    }
-
-@pytest.fixture
-def setup_exw_test_data(db):
-    """
-    Sets up the minimal data needed for the EXW validation test.
-    """
-    pgk, _ = Currency.objects.get_or_create(
-        code="PGK", defaults={"name": "Papua New Guinea Kina", "minor_units": 2}
-    )
-    unique_suffix = uuid.uuid4().hex
-    customer = Company.objects.create(
-        name=f"EXW Test Customer {unique_suffix}",
-        company_type="CUSTOMER",
-    )
-    contact = Contact.objects.create(
-        company=customer,
-        first_name="EXW",
-        last_name="Tester",
-        email=f"exw.tester.{unique_suffix}@example.com",
-    )
-    CustomerCommercialProfile.objects.create(
-        company=customer,
-        preferred_quote_currency=pgk,
-        default_margin_percent=Decimal("15.00"),
-    )
-    FxSnapshot.objects.create(
-        as_of_timestamp=timezone.now(),
-        source="unit-test",
-        rates=json.dumps({"PGK": {"tt_buy": "1.00", "tt_sell": "1.00"}}),
-        caf_percent=Decimal("0.00"),
-        fx_buffer_percent=Decimal("0.00"),
-    )
-    origin, _ = Airport.objects.get_or_create(iata_code="CNS", defaults={"name": "Cairns"})
-    destination, _ = Airport.objects.get_or_create(iata_code="HKG", defaults={"name": "Hong Kong"})
-
-    # --- THIS IS THE KEY ---
-    # We must create the *supported* rule so the serializer can find it
-    supported_rule = IncotermRule.objects.create(
-        mode="AIR",
-        shipment_type="IMPORT",
-        incoterm="DAP", # This is a "good" incoterm
-    )
-
-    dimension_payload = {
-        "pieces": 1,
-        "length_cm": Decimal("100.00"),
-        "width_cm": Decimal("100.00"),
-        "height_cm": Decimal("100.00"),
-        "gross_weight_kg": Decimal("100.00"),
-    }
-
-    # Return the base request data that we will modify in the test
-    return {
-        "customer_id": customer.id,
-        "contact_id": contact.id,
-        "mode": "AIR",
-        "shipment_type": "IMPORT",
-        "incoterm": "DAP", # Start with a "good" incoterm
-        "origin_airport_code": origin.iata_code,
-        "destination_airport_code": destination.iata_code,
-        "dimensions": [
-            dimension_payload
-        ],
-        "output_currency": "PGK",
-        "overrides": [],
-    }
-
-
-def test_compute_v3_efm_bne_pom_scenario(setup_v3_golden_test_data):
-    """
-    A "Golden Test" to verify the end-to-end calculation for a specific
-    110kg shipment using the seeded EFM BNE->POM rate card.
-    """
-    
-    # === 1. Define the Request ===
-    # This matches our manual calculation
-    request_data = V3QuoteRequest(
-        customer_id=setup_v3_golden_test_data['customer_id'],
-        contact_id=setup_v3_golden_test_data['contact_id'],
-        mode="AIR",
-        shipment_type="IMPORT",
-        incoterm="EXW",
-        origin_airport_code="BNE",
-        destination_airport_code="POM",
-        dimensions=[
-            DimensionLine(
-                pieces=1,
-                length_cm=Decimal("100.00"),
-                width_cm=Decimal("100.00"),
-                height_cm=Decimal("10.00"),
-                gross_weight_kg=Decimal("110.00")
-            )
-        ],
-        output_currency="USD" # Override profile default
-    )
-    
-    # === 2. Run the Service ===
-    service = PricingServiceV3()
-    new_quote = service.compute_v3(request_data)
-    
-    # === 3. Assertions ===
-    assert new_quote is not None
-    assert new_quote.customer.id == request_data.customer_id
-    assert new_quote.origin_code == "BNE"
-    assert new_quote.output_currency == "USD"
-    
-    # Check that saved objects exist
-    version = QuoteVersion.objects.get(quote=new_quote, version_number=1)
-    total = QuoteTotal.objects.get(quote_version=version)
-    lines = list(QuoteLine.objects.filter(quote_version=version).order_by('service_component__description'))
-    
-    assert total.has_missing_rates is False
-    assert len(lines) == 6 # We expecting 6 service lines
-    
-    # --- "Golden" Value Assertions ---
-    # These values are pre-calculated manually based on the test setup data.
-    
-    # FX Rates Used:
-    # Cost (AUD->PGK): tt_buy=2.20, caf=2%. Rate = 2.20 * (1 + 0.02) = 2.244
-    # Sell (PGK->USD): tt_sell=0.30, buf=1%. Rate = 0.30 * (1 - 0.01) = 0.297
-    # Margin: 30%. Sell = Cost / (1 - 0.30) = Cost / 0.70
-    
-    # Helper to find a line
-    def get_line(name):
-        found = [l for l in lines if l.service_component.description == name]
-        assert len(found) > 0, f"Could not find line: {name}"
-        return found[0]
-
-    # Line 1: Freight (AUD)
-    # 110kg @ $6.75/kg (BNE +100kg tier) = 742.50 AUD
-    # Cost_PGK = 742.50 / 2.244 = 330.88 PGK
-    # Sell_PGK = 330.88 / 0.70 = 472.69 PGK
-    # Sell_USD = 472.69 * 0.297 = 140.38 USD
-    line_frt = get_line("Freight")
-    assert line_frt.cost_fcy == Decimal("742.50")
-    assert line_frt.cost_pgk == Decimal("330.88")
-    assert line_frt.sell_pgk == Decimal("472.69")
-    assert line_frt.sell_fcy_incl_gst == Decimal("140.38") # 0% tax
-
-    # Line 2: Fuel Surcharge (Origin Pickup) (% of Pickup)
-    # Base service (Pickup) cost is 37.88 PGK (see below)
-    # Cost_PGK = 37.88 * 20% = 7.58 PGK
-    # Sell_PGK = 7.58 / 0.70 = 10.83 PGK
-    # Sell_USD = 10.83 * 0.297 = 3.22 USD
-    line_fuel = get_line("Fuel Surcharge (Origin Pickup)")
-    assert line_fuel.cost_pgk == Decimal("7.58")
-    assert line_fuel.sell_pgk == Decimal("10.83")
-    assert line_fuel.sell_fcy_incl_gst == Decimal("3.22") # 0% tax
-
-    # Line 3: Import Customs Clearance (PGK)
-    # Cost_PGK = 350.00 PGK (from BASE_COST)
-    # Sell_PGK = 350.00 / 0.70 = 500.00 PGK
-    # Sell_USD = 500.00 * 0.297 = 148.50 USD
-    line_clx = get_line("Import Customs Clearance")
-    assert line_clx.cost_pgk == Decimal("350.00")
-    assert line_clx.sell_pgk == Decimal("500.00")
-    assert line_clx.sell_fcy_incl_gst == Decimal("148.50") # 0% tax
-    
-    # Line 4: Import Handling (PGK)
-    # Cost_PGK = 150.00 PGK (from BASE_COST)
-    # Sell_PGK = 150.00 / 0.70 = 214.29 PGK
-    # Sell_PGK_GST = 214.29 * 1.10 = 235.72 PGK
-    # Sell_USD_GST = 235.72 * 0.297 = 70.00 USD
-    line_hdl = get_line("Import Handling")
-    assert line_hdl.cost_pgk == Decimal("150.00")
-    assert line_hdl.sell_pgk == Decimal("214.29")
-    assert line_hdl.sell_pgk_incl_gst == Decimal("235.72")
-    assert line_hdl.sell_fcy_incl_gst == Decimal("70.00") # 10% tax
-
-    # Line 5: Origin Pickup (AUD)
-    # 110kg @ $0.26/kg = 28.60 AUD. Min $85.00.
-    # Cost_AUD = 85.00 AUD
-    # Cost_PGK = 85.00 / 2.244 = 37.88 PGK
-    # Sell_PGK = 37.88 / 0.70 = 54.11 PGK
-    # Sell_USD = 54.11 * 0.297 = 16.07 USD
-    line_pic = get_line("Origin Pickup")
-    assert line_pic.cost_fcy == Decimal("85.00")
-    assert line_pic.cost_pgk == Decimal("37.88")
-    assert line_pic.sell_pgk == Decimal("54.11")
-    assert line_pic.sell_fcy_incl_gst == Decimal("16.07") # 0% tax
-
-    # Line 6: Origin Security (X-Ray) (AUD)
-    # 110kg @ $0.36/kg = 39.60 AUD. Min $70.00.
-    # Cost_AUD = 70.00 AUD
-    # Cost_PGK = 70.00 / 2.244 = 31.19 PGK
-    # Sell_PGK = 31.19 / 0.70 = 44.56 PGK
-    # Sell_USD = 44.56 * 0.297 = 13.23 USD
-    line_sec = get_line("Origin Security (X-Ray)")
-    assert line_sec.cost_fcy == Decimal("70.00")
-    assert line_sec.cost_pgk == Decimal("31.19")
-    assert line_sec.sell_pgk == Decimal("44.56")
-    assert line_sec.sell_fcy_incl_gst == Decimal("13.23") # 0% tax
-
-    # === Final Total Assertion ===
-    # Total = 140.38 + 3.22 + 148.50 + 70.00 + 16.07 + 13.23
-    # Total = 391.40 USD
-    assert total.total_sell_fcy_incl_gst == Decimal("391.40")
-    assert total.total_sell_fcy_currency == "USD"
-
-
-def test_manual_override_applies_margin(db):
-    """
-    Manual overrides should still receive the customer's default margin.
-    """
-    now = timezone.now() + timedelta(minutes=5)
+def v3_test_data(db):
+    """Seeds the minimum reference data the V3 engine expects."""
 
     pgk, _ = Currency.objects.get_or_create(
         code="PGK", defaults={"name": "Papua New Guinea Kina", "minor_units": 2}
     )
-
-    unique_suffix = uuid.uuid4().hex
-
-    customer = Company.objects.create(
-        name=f"Override Test Customer {unique_suffix}", company_type="CUSTOMER"
+    usd, _ = Currency.objects.get_or_create(
+        code="USD", defaults={"name": "US Dollar", "minor_units": 2}
     )
-    contact = Contact.objects.create(
-        company=customer,
-        first_name="Override",
-        last_name="Tester",
-        email=f"override.tester.{unique_suffix}@example.com",
+
+    country_pg, _ = Country.objects.get_or_create(
+        code="PG", defaults={"name": "Papua New Guinea"}
     )
-    CustomerCommercialProfile.objects.create(
-        company=customer,
-        preferred_quote_currency=pgk,
-        default_margin_percent=Decimal("20.00"),
+    country_au, _ = Country.objects.get_or_create(
+        code="AU", defaults={"name": "Australia"}
+    )
+    city_pom, _ = City.objects.get_or_create(country=country_pg, name="Port Moresby")
+    city_bne, _ = City.objects.get_or_create(country=country_au, name="Brisbane")
+
+    origin, _ = Airport.objects.get_or_create(
+        iata_code="BNE", defaults={"name": "Brisbane", "city": city_bne}
+    )
+    destination, _ = Airport.objects.get_or_create(
+        iata_code="POM", defaults={"name": "Port Moresby", "city": city_pom}
+    )
+
+    Policy.objects.create(
+        name="Unit Test Policy",
+        margin_pct=Decimal("0.30"),
+        caf_import_pct=Decimal("0.02"),
+        caf_export_pct=Decimal("0.01"),
+        effective_from=timezone.now() - timedelta(days=1),
+        is_active=True,
     )
 
     FxSnapshot.objects.create(
-        as_of_timestamp=now,
+        as_of_timestamp=timezone.now(),
         source="unit-test",
-        rates=json.dumps({"PGK": {"tt_buy": "1.00", "tt_sell": "1.00"}}),
-        caf_percent=Decimal("0.00"),
-        fx_buffer_percent=Decimal("0.00"),
+        rates={
+            "USD": {"tt_buy": "3.40", "tt_sell": "0.30"}
+        },
+        caf_percent=Decimal("0.02"),
+        fx_buffer_percent=Decimal("0.01"),
     )
 
-    origin = Airport.objects.create(iata_code="AAA", name="Origin Airport")
-    destination = Airport.objects.create(iata_code="BBB", name="Destination Airport")
-
-    service = ServiceComponent.objects.create(
-        code="TEST_OVERRIDE",
-        description="Test Manual Override Service",
+    freight = ServiceComponent.objects.create(
+        code="FRT_AIR",
+        description="Freight - Air",
         mode="AIR",
         leg="ORIGIN",
         category="TRANSPORT",
         cost_type="COGS",
         cost_source="BASE_COST",
+        base_pgk_cost=Decimal("200.00"),
         unit="SHIPMENT",
+        tax_rate=Decimal("0.00"),
     )
-
-    rule = IncotermRule.objects.create(
+    handling = ServiceComponent.objects.create(
+        code="HAND_DEST",
+        description="Import Handling",
         mode="AIR",
-        shipment_type="IMPORT",
-        incoterm="TST",
+        leg="DESTINATION",
+        category="HANDLING",
+        cost_type="COGS",
+        cost_source="BASE_COST",
+        base_pgk_cost=Decimal("50.00"),
+        unit="SHIPMENT",
+        tax_rate=Decimal("0.10"),
     )
-    rule.service_components.add(service)
-
-    override = ManualCostOverride(
-        service_component_id=service.id,
-        cost_fcy=Decimal("100.00"),
-        currency="PGK",
-        unit="PER_SHIPMENT",
-    )
-
-    request = V3QuoteRequest(
-        customer_id=customer.id,
-        contact_id=contact.id,
+    fuel = ServiceComponent.objects.create(
+        code="FUEL_PCT",
+        description="Fuel Surcharge",
         mode="AIR",
-        shipment_type="IMPORT",
-        incoterm="TST",
-        origin_airport_code=origin.iata_code,
-        destination_airport_code=destination.iata_code,
-        dimensions=[
-            DimensionLine(
-                pieces=1,
-                length_cm=Decimal("100.00"),
-                width_cm=Decimal("100.00"),
-                height_cm=Decimal("100.00"),
-                gross_weight_kg=Decimal("100.00"),
-            )
-        ],
-        output_currency="PGK",
-        overrides=[override],
+        leg="ORIGIN",
+        category="ACCESSORIAL",
+        cost_type="COGS",
+        cost_source="BASE_COST",
+        base_pgk_cost=Decimal("0.00"),
+        unit="SHIPMENT",
+        tiering_json={"percent_of": "FRT_AIR", "percent": "0.10"},
+        tax_rate=Decimal("0.00"),
     )
 
-    quote = PricingServiceV3().compute_v3(request)
+    rule = IncotermRule.objects.create(mode="AIR", shipment_type="IMPORT", incoterm="DAP")
+    rule.service_components.set([freight, handling, fuel])
 
-    line = QuoteLine.objects.get(
-        quote_version__quote=quote,
-        service_component=service,
+    return {
+        "origin": origin,
+        "destination": destination,
+    }
+
+
+def _build_quote_input(v3_test_data: dict) -> QuoteInput:
+    return QuoteInput(
+        customer_id=uuid.uuid4(),
+        contact_id=uuid.uuid4(),
+        output_currency="USD",
+        shipment=ShipmentDetails(
+            mode="AIR",
+            shipment_type="IMPORT",
+            origin_code=v3_test_data["origin"].iata_code,
+            destination_code=v3_test_data["destination"].iata_code,
+            incoterm="DAP",
+            payment_term="PREPAID",
+            is_dangerous_goods=False,
+            pieces=[
+                Piece(
+                    pieces=1,
+                    length_cm=Decimal("120.00"),
+                    width_cm=Decimal("80.00"),
+                    height_cm=Decimal("80.00"),
+                    gross_weight_kg=Decimal("100.00"),
+                )
+            ],
+        ),
     )
 
-    assert line.cost_pgk == Decimal("100.00")
-    assert line.sell_pgk > line.cost_pgk
-    # Check the 20% margin calculation
-    assert line.sell_pgk == Decimal("125.00") # 100 / (1 - 0.20) = 125
+
+def test_pricing_service_v3_calculates_quote_charges(v3_test_data):
+    quote_input = _build_quote_input(v3_test_data)
+    service = PricingServiceV3(quote_input)
+    charges = service.calculate_charges()
+
+    assert len(charges.lines) == 3
+
+    lines = {line.service_component_code: line for line in charges.lines}
+    freight_line = lines["FRT_AIR"]
+    handling_line = lines["HAND_DEST"]
+    fuel_line = lines["FUEL_PCT"]
+
+    # Base PGK costs
+    assert freight_line.cost_pgk == Decimal("200.00")
+    assert handling_line.cost_pgk == Decimal("50.00")
+    assert fuel_line.cost_pgk == Decimal("20.00")  # 10% of freight
+
+    margin_multiplier = Decimal("1.30")
+    pgk_to_usd = Decimal("1.00") / Decimal("0.30")
+
+    expected_freight_sell_pgk = (Decimal("200.00") * margin_multiplier).quantize(Decimal("0.01"))
+    expected_handling_sell_pgk = (Decimal("50.00") * margin_multiplier).quantize(Decimal("0.01"))
+    expected_fuel_sell_pgk = (Decimal("20.00") * margin_multiplier).quantize(Decimal("0.01"))
+
+    assert freight_line.sell_pgk == expected_freight_sell_pgk
+    assert handling_line.sell_pgk == expected_handling_sell_pgk
+    assert fuel_line.sell_pgk == expected_fuel_sell_pgk
+
+    assert handling_line.sell_pgk_incl_gst == (
+        expected_handling_sell_pgk * Decimal("1.10")
+    ).quantize(Decimal("0.01"))
+
+    expected_freight_sell_fcy = (expected_freight_sell_pgk * pgk_to_usd).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    assert freight_line.sell_fcy == expected_freight_sell_fcy
+    assert freight_line.sell_fcy_currency == "USD"
+
+    assert charges.totals.total_cost_pgk == Decimal("270.00")
+    assert charges.totals.total_sell_pgk == Decimal("351.00")
+    assert charges.totals.total_sell_pgk_incl_gst == Decimal("357.50")
+    assert charges.totals.total_sell_fcy_currency == "USD"
+    assert charges.totals.has_missing_rates is False
 
 
-# --- NEW TEST ---
-def test_serializer_fails_for_unsupported_incoterm(setup_exw_test_data):
-    """
-    Tests that the *serializer* correctly raises a ValidationError
-    if an unsupported Incoterm (like EXW) is used.
-    """
-    _logger.info("--- Testing unsupported Incoterm (EXW) ---")
-    
-    # 1. Get the base request data from the new fixture
-    request_data_dict = setup_exw_test_data
-    
-    # 2. Set the "bad" incoterm
-    request_data_dict["incoterm"] = "EXW" 
-    
-    # 3. Test the serializer directly
-    serializer = V3QuoteComputeRequestSerializer(data=request_data_dict)
-    
-    # 4. Assert that is_valid() raises the new ValidationError
-    with pytest.raises(ValidationError) as exc_info:
+def test_quote_compute_serializer_requires_dimensions(v3_test_data):
+    payload = {
+        "customer_id": str(uuid.uuid4()),
+        "contact_id": str(uuid.uuid4()),
+        "mode": "AIR",
+        "origin_airport": v3_test_data["origin"].iata_code,
+        "destination_airport": v3_test_data["destination"].iata_code,
+        "incoterm": "DAP",
+        "payment_term": "PREPAID",
+        "is_dangerous_goods": False,
+        "output_currency": "USD",
+        "dimensions": [],
+        "overrides": [],
+    }
+
+    serializer = QuoteComputeRequestSerializer(data=payload)
+
+    with pytest.raises(ValidationError):
         serializer.is_valid(raise_exception=True)
-    
-    # 5. Check the new, cleaner error message
-    assert "not supported for AIR IMPORT shipments" in str(exc_info.value)
-    
-    _logger.info(f"Correctly caught validation error: {exc_info.value}")
