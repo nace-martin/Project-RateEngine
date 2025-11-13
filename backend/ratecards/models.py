@@ -3,19 +3,24 @@
 import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from core.models import City, Airport, Port # Import location models
+from django.core.exceptions import ValidationError
+from core.models import City, Airport, Port
 from parties.models import Company
 from services.models import ServiceComponent, UNIT_CHOICES as SERVICE_UNIT_CHOICES
 
-MODE_CHOICES = [('AIR', _('Air')), ('SEA', _('Sea')), ('ROAD', _('Road'))]
-SHIPMENT_TYPE_CHOICES = [
-    ('GENERAL', _('General Cargo')),
-    ('FCL', _('FCL')),
-    ('LCL', _('LCL')),
-    ('BULK', _('Bulk')),
+# Simplified for our focus on the AIR module.
+MODE_CHOICES = [
+    ('AIR', _('Air')),
+    # ('SEA', _('Sea')),  # Defer until Sea module is built
+    # ('ROAD', _('Road')), # Defer until Road module is built
 ]
 
-
+SHIPMENT_TYPE_CHOICES = [
+    ('GENERAL', _('General Cargo')),
+    # ('FCL', _('FCL')), # This is SEA
+    # ('LCL', _('LCL')), # This is SEA
+    # ('BULK', _('Bulk')), # This is SEA
+]
 
 
 # ##############################################################################
@@ -36,7 +41,7 @@ class PartnerRateCard(models.Model):
     name = models.CharField(
         max_length=255,
         unique=True,
-        help_text="A descriptive name, e.g., 'EFM AUD Import Airfreight 2025'"
+        help_text="A descriptive name, e.g., 'EFM AUD Import Rates 2025'"
     )
     currency_code = models.CharField(
         max_length=3,
@@ -49,18 +54,6 @@ class PartnerRateCard(models.Model):
     valid_until = models.DateField(
         null=True, blank=True,
         help_text="The date this rate card expires."
-    )
-    mode = models.CharField(
-        max_length=10,
-        choices=MODE_CHOICES,  # Assumes MODE_CHOICES is defined in this file or imported
-        default='AIR',
-        help_text="The freight mode this card applies to (e.g., AIR, SEA)."
-    )
-    shipment_type = models.CharField(
-        max_length=20,
-        choices=SHIPMENT_TYPE_CHOICES, # Assumes SHIPMENT_TYPE_CHOICES is defined or imported
-        default='GENERAL',
-        help_text="The shipment type this card applies to (e.g., GENERAL, FCL, LCL)."
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -77,44 +70,103 @@ class PartnerRateCard(models.Model):
 class PartnerRateLane(models.Model):
     """
     Defines a specific lane (route) within a PartnerRateCard.
-    e.g., BNE -> POM.
+    e.g., BNE -> POM (AIR, GENERAL)
     """
     rate_card = models.ForeignKey(
         PartnerRateCard,
         on_delete=models.CASCADE,
         related_name="lanes"
     )
+    
+    mode = models.CharField(
+        max_length=10,
+        choices=MODE_CHOICES,
+        default='AIR',
+        help_text="The freight mode this lane applies to (AIR only, for now)."
+    )
+    shipment_type = models.CharField(
+        max_length=20,
+        choices=SHIPMENT_TYPE_CHOICES,
+        default='GENERAL',
+        help_text="The shipment type this lane applies to (General Cargo only, for now)."
+    )
+
+    # --- Location Fields (Air) ---
     origin_airport = models.ForeignKey(
         'core.Airport',
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name='partner_origin_lanes',
-        help_text="Origin airport for this lane."
+        help_text="Origin airport (for AIR mode)."
     )
     destination_airport = models.ForeignKey(
         'core.Airport',
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name='partner_destination_lanes',
-        help_text="Destination airport for this lane."
+        help_text="Destination airport (for AIR mode)."
     )
-    # TODO: Add origin/destination Country/City/Port fields as needed for Sea/Road.
+
+    # --- Location Fields (Sea) ---
+    origin_port = models.ForeignKey(
+        'core.Port',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='partner_origin_lanes_sea',
+        help_text="Origin port (for SEA mode - NOT YET SUPPORTED)."
+    )
+    destination_port = models.ForeignKey(
+        'core.Port',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='partner_destination_lanes_sea',
+        help_text="Destination port (for SEA mode - NOT YET SUPPORTED)."
+    )
+
+    def clean(self):
+        """
+        Validates that the lane's locations and shipment type are
+        consistent with the selected mode.
+        """
+        super().clean()
+        
+        # --- AIR Mode Validation (Only mode supported) ---
+        if self.mode == 'AIR':
+            if not self.origin_airport or not self.destination_airport:
+                raise ValidationError(
+                    "For AIR mode, Origin Airport and Destination Airport are required."
+                )
+            if self.origin_port or self.destination_port:
+                raise ValidationError("For AIR mode, Port fields must be empty.")
+            if self.shipment_type not in ['GENERAL']:
+                raise ValidationError(
+                    "For AIR mode, Shipment Type must be 'General Cargo'."
+                )
+
+        # --- Block other modes for now ---
+        else:
+            raise ValidationError(f"Mode '{self.get_mode_display()}' is not yet supported.")
 
     def __str__(self):
-        return f"{self.origin_airport} -> {self.destination_airport} ({self.rate_card.name})"
+        if self.mode == 'AIR':
+            return f"{self.origin_airport} -> {self.destination_airport} (AIR)"
+        return f"Unsupported Lane ({self.rate_card.name})"
 
     class Meta:
         verbose_name = "Partner Rate Lane"
         verbose_name_plural = "Partner Rate Lanes"
-        unique_together = [['rate_card', 'origin_airport', 'destination_airport']]
-        ordering = ['origin_airport', 'destination_airport']
+        unique_together = [
+            ['rate_card', 'origin_airport', 'destination_airport', 'shipment_type'],
+            ['rate_card', 'origin_port', 'destination_port', 'shipment_type'],
+        ]
+        ordering = ['mode', 'origin_airport', 'origin_port']
 
 
 class PartnerRate(models.Model):
     """
     The actual rate line for a specific service on a specific lane.
     This is the "rate sheet" that links a ServiceComponent (like 'Freight')
-    to its buy-side cost (e.g., min charge, per-kg tiers) in a foreign currency.
+    to its buy-side cost in a foreign currency.
     """
     lane = models.ForeignKey(
         PartnerRateLane,
@@ -130,28 +182,61 @@ class PartnerRate(models.Model):
     )
     unit = models.CharField(
         max_length=20,
-        choices=SERVICE_UNIT_CHOICES, # <-- Use the imported choices
+        choices=SERVICE_UNIT_CHOICES,
         default='PER_KG',
         help_text="The unit of measure for this rate."
     )
     min_charge_fcy = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=0.00,
+        null=True, blank=True, # <-- Made nullable
         help_text="Minimum charge in the card's foreign currency (FCY)."
     )
-    flat_fee_fcy = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
+
+    # --- REFACTORED RATE FIELDS ---
+    rate_per_kg_fcy = models.DecimalField(
+        max_digits=10, decimal_places=4,
         null=True, blank=True,
-        help_text="A flat fee for 'PER_SHIPMENT' units, in FCY."
+        help_text="For 'PER_KG' units. The rate per kilogram in FCY."
     )
-    tiering_json = models.JSONField(
+    rate_per_shipment_fcy = models.DecimalField(
+        max_digits=10, decimal_places=2,
         null=True, blank=True,
-        help_text="For 'PER_KG' units. Stores tier breaks and rates. "
-                  "e.g., [{'break': 0, 'rate': 5.50}, {'break': 100, 'rate': 5.00}]"
+        help_text="For 'SHIPMENT' units. A flat fee per shipment in FCY."
     )
+    # --- END REFACTOR ---
     
+    # --- REMOVED: flat_fee_fcy (renamed), tiering_json (too complex) ---
+
+    # --- ADDED VALIDATION METHOD ---
+    def clean(self):
+        """
+        Validate that the correct rate field is filled in based on the unit.
+        """
+        super().clean()
+        if self.unit == 'PER_KG':
+            if self.rate_per_kg_fcy is None:
+                raise ValidationError({
+                    'rate_per_kg_fcy': "For a 'PER_KG' unit, you must provide a 'Rate Per KG'."
+                })
+            if self.rate_per_shipment_fcy is not None:
+                raise ValidationError({
+                    'rate_per_shipment_fcy': "Cannot have a 'Rate Per Shipment' with a 'PER_KG' unit."
+                })
+
+        elif self.unit == 'SHIPMENT':
+            if self.rate_per_shipment_fcy is None:
+                raise ValidationError({
+                    'rate_per_shipment_fcy': "For a 'SHIPMENT' unit, you must provide a 'Rate Per Shipment'."
+                })
+            if self.rate_per_kg_fcy is not None:
+                raise ValidationError({
+                    'rate_per_kg_fcy': "Cannot have a 'Rate Per KG' with a 'SHIPMENT' unit."
+                })
+        
+        # Add more validation for other units like CBM, TEU when we add them
+    # --- END OF ADDED METHOD ---
+
     def __str__(self):
         return f"{self.service_component} on {self.lane}"
 
@@ -159,4 +244,3 @@ class PartnerRate(models.Model):
         verbose_name = "Partner Rate"
         verbose_name_plural = "Partner Rates"
         unique_together = [['lane', 'service_component']]
-

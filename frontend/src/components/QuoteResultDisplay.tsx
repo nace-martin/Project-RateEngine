@@ -56,7 +56,7 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
             )}
           </div>
           <CardDescription className="text-lg">
-            {quote.origin_code} to {quote.destination_code} ({quote.mode})
+            {quote.origin_airport} to {quote.destination_airport} ({quote.mode})
           </CardDescription>
         </CardHeader>
         <CardContent>

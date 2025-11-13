@@ -3,11 +3,13 @@
 from typing import List, Dict
 
 from django.db.models import Q  # Import Q for complex lookups
+from rest_framework import generics, filters
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import City, Airport
-from .serializers import LocationSearchSerializer
+from .serializers import LocationSearchSerializer, AirportSearchSerializer
 
 def _build_location_results(query: str) -> List[Dict[str, str]]:
     """
@@ -72,3 +74,20 @@ class LocationV3SearchView(APIView):
         results = _build_location_results(query)
         serializer = LocationSearchSerializer(results, many=True)
         return Response(serializer.data)
+
+
+class AirportSearchAPIView(generics.ListAPIView):
+    """
+    Provides a searchable list of airports.
+    Usage: /api/v3/core/airports/search/?search=BNE
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AirportSearchSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['iata_code', 'name', 'city__name']
+
+    def get_queryset(self):
+        """
+        Optimize the query by pre-fetching the related city and country.
+        """
+        return Airport.objects.select_related('city__country').all()

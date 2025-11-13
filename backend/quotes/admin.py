@@ -1,51 +1,70 @@
 # backend/quotes/admin.py
 
 from django.contrib import admin
-from .models import Quote, QuoteLine, QuoteTotal, QuoteVersion, OverrideNote
+from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
 
 class QuoteLineInline(admin.TabularInline):
     model = QuoteLine
     extra = 0
-    readonly_fields = ('id',)
+    readonly_fields = [f.name for f in QuoteLine._meta.fields] # Make all fields read-only
+    can_delete = False
 
 class QuoteTotalInline(admin.StackedInline):
     model = QuoteTotal
+    readonly_fields = [f.name for f in QuoteTotal._meta.fields]
     can_delete = False
-
-class QuoteVersionInline(admin.TabularInline):
-    """Shows quote versions related to a Quote."""
-    model = QuoteVersion
-    extra = 0
-    fields = ('version_number', 'status', 'reason', 'created_at', 'created_by')
-    readonly_fields = ('version_number', 'created_at', 'created_by')
-    ordering = ('-version_number',)
-    can_delete = False
-    show_change_link = True
-
+    
 class OverrideNoteInline(admin.TabularInline):
-    """Shows override notes related to a Quote Version."""
     model = OverrideNote
     extra = 0
-    fields = ('field', 'new_value', 'reason', 'created_at', 'created_by')
-    readonly_fields = ('created_at', 'created_by')
-    ordering = ('-created_at',)
+    readonly_fields = [f.name for f in OverrideNote._meta.fields]
     can_delete = False
 
-@admin.register(QuoteVersion)
 class QuoteVersionAdmin(admin.ModelAdmin):
+    model = QuoteVersion
     list_display = ('quote', 'version_number', 'status', 'created_at', 'created_by')
     list_filter = ('status', 'created_at')
-    search_fields = ('quote__quote_number',)
-    readonly_fields = ('created_at', 'created_by', 'payload_json', 'policy', 'fx_snapshot')
     inlines = [QuoteTotalInline, QuoteLineInline, OverrideNoteInline]
+    readonly_fields = ('quote', 'version_number', 'payload_json', 'policy', 'fx_snapshot', 'status', 'reason', 'created_at', 'created_by')
 
-@admin.register(Quote)
+class QuoteVersionInline(admin.TabularInline):
+    model = QuoteVersion
+    extra = 0
+    fields = ('version_number', 'status', 'created_at', 'created_by')
+    readonly_fields = ('version_number', 'status', 'created_at', 'created_by')
+    can_delete = False
+    show_change_link = True # Allow clicking to the full version
+
 class QuoteAdmin(admin.ModelAdmin):
-    inlines = [QuoteVersionInline]
-    list_display = ('quote_number', 'customer', 'mode', 'shipment_type', 'incoterm', 'status', 'created_at')
-    list_filter = ('mode', 'shipment_type', 'status', 'created_at')
+    model = Quote
+    
+    # --- UPDATED FIELDS ---
+    list_display = (
+        'quote_number', 
+        'customer', 
+        'mode', 
+        'shipment_type', # <-- Show our new field
+        'origin_airport', # <-- Show new field
+        'destination_airport', # <-- Show new field
+        'status', 
+        'created_at', 
+        'created_by'
+    )
+    list_filter = ('status', 'mode', 'shipment_type', 'created_at')
     search_fields = ('quote_number', 'customer__name')
-    readonly_fields = ('id', 'quote_number', 'created_at', 'updated_at')
+    # --- END UPDATES ---
+    
+    inlines = [QuoteVersionInline]
+    
+    # Make fields read-only in the admin, as they are set by the compute logic
+    readonly_fields = (
+        'quote_number', 'customer', 'contact', 'mode', 'shipment_type', 
+        'incoterm', 'payment_term', 'output_currency', 
+        'origin_airport', 'destination_airport', 'origin_port', 'destination_port',
+        'policy', 'fx_snapshot', 'is_dangerous_goods', 'status', 
+        'request_details_json', 'created_at', 'created_by', 'updated_at'
+    )
 
-# Register OverrideNote if direct access needed (optional)
-# admin.site.register(OverrideNote)
+# Register your models
+admin.site.register(Quote, QuoteAdmin)
+admin.site.register(QuoteVersion, QuoteVersionAdmin)

@@ -30,7 +30,7 @@ export default function CustomersPage() {
   useEffect(() => {
     const getCustomers = async () => {
       try {
-        const res = await apiClient.get<Customer[]>('/api/v2/customers/');
+        const res = await apiClient.get<Customer[]>('/api/v3/customers/');
         setCustomers(res.data);
         setError(null);
       } catch (err) {

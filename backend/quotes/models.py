@@ -10,8 +10,10 @@ from django.utils.translation import gettext_lazy as _
 
 # Import models needed for V3 ForeignKeys
 from parties.models import Company, Contact
-from core.models import Policy, FxSnapshot
-from services.models import MODE_CHOICES, ServiceComponent  # Import ServiceComponent
+# --- UPDATED IMPORT ---
+from core.models import Policy, FxSnapshot, Airport, Port
+# --- END UPDATE ---
+from services.models import MODE_CHOICES, ServiceComponent
 
 
 # --- V3 Refactored Quote Model ---
@@ -63,26 +65,44 @@ class Quote(models.Model):
     )
     payment_term = models.CharField(max_length=10, choices=PaymentTerm.choices, default='PREPAID')
 
-    # --- FIX: Changed from ForeignKey to CharField to match service logic ---
     output_currency = models.CharField(
         max_length=3,
         help_text="The 3-letter ISO currency code the quote is presented in.",
         default='PGK'
     )
-    # --- END FIX ---
 
     valid_until = models.DateField(
         null=True, blank=True,
         help_text="Date the quote expires."
     )
-    origin_code = models.CharField(
-        max_length=10, null=True, blank=True,
-        help_text="Origin location code (e.g., Airport IATA, Port UN/LOCODE)."
+
+    # --- REFACTORED LOCATION FIELDS ---
+    # Removed origin_code and destination_code CharFields
+    origin_airport = models.ForeignKey(
+        'core.Airport',
+        on_delete=models.PROTECT, null=True, blank=True,
+        related_name='quotes_as_origin',
+        help_text="Origin airport (for AIR mode)."
     )
-    destination_code = models.CharField(
-        max_length=10, null=True, blank=True,
-        help_text="Destination location code."
+    destination_airport = models.ForeignKey(
+        'core.Airport',
+        on_delete=models.PROTECT, null=True, blank=True,
+        related_name='quotes_as_destination',
+        help_text="Destination airport (for AIR mode)."
     )
+    origin_port = models.ForeignKey(
+        'core.Port',
+        on_delete=models.PROTECT, null=True, blank=True,
+        related_name='quotes_as_origin_port',
+        help_text="Origin port (for SEA mode)."
+    )
+    destination_port = models.ForeignKey(
+        'core.Port',
+        on_delete=models.PROTECT, null=True, blank=True,
+        related_name='quotes_as_destination_port',
+        help_text="Destination port (for SEA mode)."
+    )
+    # --- END REFACTOR ---
 
     policy = models.ForeignKey(
         Policy,
@@ -115,17 +135,18 @@ class Quote(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.quote_number:
+            # Note: This is a simple counter. For production, a more robust
+            # sequential ID generator might be needed to avoid race conditions.
             last_quote = Quote.objects.all().order_by('created_at').last()
             last_id = 0
             if last_quote and last_quote.quote_number and '-' in last_quote.quote_number:
                 try:
                     last_id = int(last_quote.quote_number.split('-')[1])
                 except (ValueError, IndexError):
-                    last_id = 0  # Handle legacy or malformed quote numbers
+                    last_id = 0
             self.quote_number = f"QT-{last_id + 1}"
 
         if not self.valid_until:
-            # Use timezone.now() if created_at isn't set yet
             created = self.created_at or timezone.now()
             self.valid_until = (created + timedelta(days=7)).date()
 
@@ -142,10 +163,8 @@ class QuoteVersion(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     quote = models.ForeignKey(Quote, on_delete=models.CASCADE, related_name='versions')
 
-    # --- FIX: Renamed from version_no to match _save_quote_v3 method ---
     version_number = models.PositiveIntegerField(help_text="Sequential version number (e.g., 1, 2, 3).")
 
-    # --- FIX: Made payload_json and fx_snapshot nullable, as _save_quote_v3 doesn't set them ---
     payload_json = models.JSONField(
         help_text="The V3 API request payload used for this calculation.",
         null=True, blank=True
@@ -161,7 +180,6 @@ class QuoteVersion(models.Model):
         help_text="FX snapshot used for this version.",
         null=True, blank=True
     )
-    # --- END FIX ---
 
     status = models.CharField(
         max_length=20, choices=Quote.Status.choices, default=Quote.Status.DRAFT,
@@ -179,10 +197,8 @@ class QuoteVersion(models.Model):
     )
 
     class Meta:
-        # --- FIX: Updated fields ---
         unique_together = ('quote', 'version_number')
         ordering = ['quote', '-version_number']
-        # --- END FIX ---
 
     def __str__(self):
         return f"{self.quote.quote_number} - v{self.version_number}"
@@ -197,13 +213,11 @@ class QuoteLine(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    # --- FIX: Links to QuoteVersion, not Quote ---
     quote_version = models.ForeignKey(
         QuoteVersion,
         related_name='lines',
         on_delete=models.CASCADE
     )
-    # --- FIX: Links to ServiceComponent ---
     service_component = models.ForeignKey(
         ServiceComponent,
         on_delete=models.PROTECT,
@@ -230,7 +244,7 @@ class QuoteLine(models.Model):
     is_rate_missing = models.BooleanField(default=False)
 
     def __str__(self):
-        name = self.service_component.name if self.service_component else 'Manual Line'
+        name = self.service_component.description if self.service_component else 'Manual Line'
         return f"v{self.quote_version.version_number} - {name}"
 
 
@@ -241,7 +255,6 @@ class QuoteTotal(models.Model):
     This is the V3-aligned model that matches the _save_quote_v3 method.
     """
 
-    # --- FIX: Links to QuoteVersion, not Quote ---
     quote_version = models.OneToOneField(
         QuoteVersion,
         primary_key=True,

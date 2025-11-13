@@ -86,7 +86,7 @@ export default function QuotesPage() {
           <p className="mb-4 text-lg text-muted-foreground">
             You haven&apos;t created any quotes yet.
           </p>
-          <Button asChild>
+          <Button variant="secondary" asChild>
             <Link href="/quotes/new">
               <PlusCircle className="mr-2 h-4 w-4" />
               Create New Quote
@@ -115,8 +115,8 @@ export default function QuotesPage() {
                   <Link href={`/quotes/${quote.id}`}>{quote.quote_number}</Link>
                 </Button>
               </TableCell>
-              <TableCell>{quote.origin_code}</TableCell>
-              <TableCell>{quote.destination_code}</TableCell>
+              <TableCell>{quote.origin_airport}</TableCell>
+              <TableCell>{quote.destination_airport}</TableCell>
               <TableCell>
                 <Badge
                   variant={
@@ -145,7 +145,7 @@ export default function QuotesPage() {
     <div className="container mx-auto p-4">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-3xl font-bold">Quotes Dashboard</h1>
-        <Button asChild>
+        <Button variant="secondary" asChild>
           <Link href="/quotes/new">
             <PlusCircle className="mr-2 h-4 w-4" />
             New Quote

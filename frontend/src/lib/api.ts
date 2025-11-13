@@ -1,12 +1,12 @@
 // frontend/src/lib/api.ts
-
+import axios from 'axios';
 import { API_BASE_URL } from './config';
 import {
   LoginData,
   User,
-  Company,
   CompanySearchResult,
   Contact,
+  AirportSearchResult,
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
   RatecardFile,
@@ -19,6 +19,26 @@ const getToken = (): string | null => {
   }
   return localStorage.getItem('authToken');
 };
+
+export const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = getToken();
+    if (token) {
+      config.headers.Authorization = `Token ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  },
+);
 
 // --- Auth ---
 
@@ -86,6 +106,26 @@ export async function getContactsForCompany(
   if (!response.ok) {
     throw new Error('Failed to fetch contacts');
   }
+  return response.json();
+}
+
+// --- Airport Search ---
+
+export async function searchAirports(
+  query: string,
+): Promise<AirportSearchResult[]> {
+  const url =
+    API_BASE_URL + `/api/v3/core/airports/search/?search=${encodeURIComponent(query)}`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to search airports');
+  }
+
   return response.json();
 }
 

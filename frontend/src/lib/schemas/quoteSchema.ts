@@ -1,6 +1,6 @@
 // frontend/src/lib/schemas/quoteSchema.ts
 
-import { z } from 'zod';
+import { z } from 'zod'
 
 // --- V3 Schemas ---
 
@@ -8,14 +8,13 @@ import { z } from 'zod';
 // These should match the choices in the backend models
 export const V3_MODES = {
   AIR: 'AIR',
-  SEA: 'SEA',
-  ROAD: 'ROAD',
-} as const;
-export const V3_SHIPMENT_TYPES = {
-  IMPORT: 'IMPORT',
-  EXPORT: 'EXPORT',
-  DOMESTIC: 'DOMESTIC',
-} as const;
+  // SEA: 'SEA', // Add when sea is ready
+  // ROAD: 'ROAD',
+} as const
+
+// This is no longer needed, as the backend auto-detects it.
+// export const V3_SHIPMENT_TYPES = { ... };
+
 export const V3_INCOTERMS = {
   EXW: 'EXW',
   FOB: 'FOB',
@@ -23,14 +22,13 @@ export const V3_INCOTERMS = {
   DDP: 'DDP',
   CPT: 'CPT',
   CFR: 'CFR',
-} as const; // Add more as needed
+} as const
 export const V3_PAYMENT_TERMS = {
   PREPAID: 'PREPAID',
   COLLECT: 'COLLECT',
-} as const;
+} as const
 
 // This is the individual dimension line schema
-// Updated to use string coercion to match V3DimensionInput type
 const dimensionLineSchema = z.object({
   pieces: z.coerce
     .number({ invalid_type_error: 'Must be a number' })
@@ -60,17 +58,16 @@ const dimensionLineSchema = z.object({
     .refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
       message: 'Kg must be > 0',
     }),
-});
+})
 
 // Optional schema for manual overrides (Spot Rates)
-// Updated service_component_id to string (for UUID)
 const manualCostOverrideSchema = z.object({
   service_component_id: z.string().min(1, 'Service must be selected.'),
   cost_fcy: z.coerce.string().min(1, 'Cost is required'),
   currency: z.string().length(3, 'Must be 3-letter code'),
   unit: z.string().min(1, 'Unit is required'),
   min_charge_fcy: z.coerce.string().optional(),
-});
+})
 
 // The main V3 Quote Request Schema
 export const quoteFormSchemaV3 = z.object({
@@ -82,25 +79,26 @@ export const quoteFormSchemaV3 = z.object({
   mode: z.nativeEnum(V3_MODES, {
     error: 'Mode of transport is required.',
   }),
-  shipment_type: z.nativeEnum(V3_SHIPMENT_TYPES, {
-    error: 'Shipment type is required.',
-  }),
+  // --- REMOVED 'shipment_type' ---
   incoterm: z.nativeEnum(V3_INCOTERMS, {
     error: 'Incoterm is required.',
   }),
   payment_term: z.nativeEnum(V3_PAYMENT_TERMS),
 
   // --- Step 3: Details ---
-  origin_airport_code: z
+  // --- UPDATED: We now send the IATA code as the ID ---
+  // We will change the input to a dropdown later
+  origin_airport: z
     .string()
-    .min(1, 'Origin is required.')
+    .min(3, 'Origin is required.')
     .length(3, 'Must be a 3-letter IATA code.')
     .toUpperCase(),
-  destination_airport_code: z
+  destination_airport: z
     .string()
-    .min(1, 'Destination is required.')
+    .min(3, 'Destination is required.')
     .length(3, 'Must be a 3-letter IATA code.')
     .toUpperCase(),
+  // --- END UPDATE ---
 
   is_dangerous_goods: z.boolean().default(false),
   output_currency: z.string().length(3).optional(),
@@ -112,7 +110,7 @@ export const quoteFormSchemaV3 = z.object({
 
   // --- Spot Rate Overrides ---
   overrides: z.array(manualCostOverrideSchema).optional(),
-});
+})
 
 // This creates a TypeScript type from our schema
-export type QuoteFormSchemaV3 = z.infer<typeof quoteFormSchemaV3>;
+export type QuoteFormSchemaV3 = z.infer<typeof quoteFormSchemaV3>

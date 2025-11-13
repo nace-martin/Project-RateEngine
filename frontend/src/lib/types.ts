@@ -1,6 +1,6 @@
-// --- AUTH TYPES ---
+// frontend/src/lib/types.ts
 
-// This defines the structure of a single Client object
+// --- AUTH TYPES ---
 export interface LoginData {
   username: string;
   password: string;
@@ -13,23 +13,10 @@ export interface User {
 }
 
 // --- PARTIES (COMPANY/CONTACT) TYPES ---
-
-export interface Address {
-  address_line_1: string;
-  address_line_2?: string;
-  city: string; // This comes from the City model
-  country: string; // This comes from the Country model
-  postal_code: string;
-}
-
 export interface Company {
   id: string; // UUID
   name: string;
   company_type: 'CUSTOMER' | 'SUPPLIER';
-  tax_id: string;
-  // These fields are from the old 'Customer' type, can be added if/when needed
-  // primary_address: Address | null;
-  // contacts: Contact[];
 }
 
 export interface Contact {
@@ -38,12 +25,17 @@ export interface Contact {
   last_name: string;
   email: string;
   phone: string;
-  company: string; // Company UUID
 }
 
 export interface CompanySearchResult {
   id: string; // Company UUID
   name: string;
+}
+
+export interface AirportSearchResult {
+  iata_code: string;
+  name: string;
+  city_country: string;
 }
 
 export interface RatecardFile {
@@ -58,29 +50,9 @@ export interface RatecardFile {
 }
 
 // --- MISC HELPER TYPES ---
-
-/**
- * Branded type for decimal strings (e.g., "12.34")
- */
 export type DecimalString = string & { __decimalStringBrand: never };
 
-export interface ShipmentPiece {
-  /**
-   * Quantity is expected to be an integer
-   */
-  quantity: number;
-  length_cm: number;
-  width_cm: number;
-  height_cm: number;
-  /**
-   * Weight in kg, as a decimal string (to match Quote)
-   */
-  weight_kg: DecimalString;
-}
-
 // --- V3 QUOTE REQUEST TYPES ---
-// These define the payload for POST /api/v3/quotes/compute/
-
 export interface V3DimensionInput {
   pieces: number;
   length_cm: string;
@@ -97,26 +69,33 @@ export interface V3ManualOverride {
   min_charge_fcy?: string;
 }
 
+// --- THIS IS THE UPDATED INTERFACE ---
 export interface V3QuoteComputeRequest {
   customer_id: string;
   contact_id: string;
   mode: string;
-  shipment_type: string;
   incoterm: string;
-  origin_airport_code: string;
-  destination_airport_code: string;
+  
+  // These fields are new
+  origin_airport: string;       // e.g., "BNE"
+  destination_airport: string;  // e.g., "POM"
+  // TODO: Add port fields when sea is ready
+  
+  // These fields were removed:
+  // shipment_type: string;
+  // origin_airport_code: string;
+  // destination_airport_code: string;
+
   dimensions: V3DimensionInput[];
   payment_term?: string;
   is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];
   output_currency?: string;
 }
+// --- END UPDATE ---
+
 
 // --- V3 QUOTE RESPONSE TYPES ---
-// These define the response from GET /api/v3/quotes/:id
-// and POST /api/v3/quotes/compute/
-
-// Minimal type for the nested ServiceComponent
 export interface V3ServiceComponent {
   id: string; // UUID
   code: string;
@@ -128,7 +107,7 @@ export interface V3ServiceComponent {
 export interface V3QuoteLine {
   id: string; // UUID
   service_component: V3ServiceComponent;
-  cost_pgk: string; // Decimals come as strings
+  cost_pgk: string;
   cost_fcy?: string | null;
   cost_fcy_currency?: string | null;
   sell_pgk: string;
@@ -159,20 +138,22 @@ export interface V3QuoteVersion {
   totals: V3QuoteTotal;
 }
 
-// This is the main type for the compute response
-// and the GET /api/v3/quotes/:id response
 export interface V3QuoteComputeResponse {
   id: string; // UUID
   quote_number: string;
   customer: string; // Customer UUID
   contact: string; // Contact UUID
   mode: string;
-  shipment_type: string;
+  shipment_type: string; // The backend calculates and returns this
   incoterm: string;
   payment_term: string;
   output_currency: string;
-  origin_code: string;
-  destination_code: string;
+  
+  // The backend now returns the validated objects
+  origin_airport: string; // "BNE"
+  destination_airport: string; // "POM"
+  // TODO: Add port fields
+  
   status: string;
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
