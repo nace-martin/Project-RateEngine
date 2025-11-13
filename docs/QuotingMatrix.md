@@ -124,7 +124,7 @@ sequenceDiagram
 | **Client Requirements** | Transit time, carrier preference, insurance, consolidation/direct | Alters carrier/routing choice. | Allow optional toggles. |
 | **Surcharges** | Fuel, CAF, Security, War Risk, Peak season | Applied to INTL leg. | Add separate surcharge sets for international vs domestic carriers. |
 | **Market Constraints** | Airline capacity, seasonal embargoes | Impacts availability. | Fallback to manual/agent rate. |
-| **BUY Source (V2 Engine)** | - Rate Cards (HTML)<br>- Spot Quotes (UI) | The V2 engine uses adapters to normalize pricing from different sources into a common `BuyOffer` format. It then selects the best offer based on a deterministic set of rules (e.g., pinned spot > rate card). If no offer is available, it returns an `is_incomplete` response. | The system is designed to be resilient. A failure in one adapter will not affect others. The `is_incomplete` response prevents crashes and provides a clear reason for the missing price. |
+| **V3 Engine** | The V3 engine uses a deterministic, pure-function approach to calculate quotes. It normalizes input, calculates buy-side costs, maps them to sell-side prices, and applies taxes and rounding. | The system is designed for auditability and resilience. If a rate is missing, it returns an `is_incomplete` response with a clear reason. | |
 
 
 ---
