@@ -123,7 +123,7 @@ export default function LocationSearchCombobox({
               {results.map((location) => (
                 <CommandItem
                   key={`${location.type}-${location.id}`}
-                  value={location.id}
+                  value={`${location.display_name} ${location.code} ${location.type}`}
                   onSelect={() => handleSelect(location)}
                 >
                   <Check
