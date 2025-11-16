@@ -27,6 +27,28 @@ export const V3_PAYMENT_TERMS = {
   PREPAID: 'PREPAID',
   COLLECT: 'COLLECT',
 } as const
+export const V3_SERVICE_SCOPES = {
+  D2D: 'D2D',
+  D2A: 'D2A',
+  A2D: 'A2D',
+  A2A: 'A2A',
+} as const
+
+export const V3_LOCATION_TYPES = {
+  AIRPORT: 'AIRPORT',
+  PORT: 'PORT',
+  ADDRESS: 'ADDRESS',
+  CITY: 'CITY',
+} as const
+
+const airportCodeSchema = z
+  .string()
+  .trim()
+  .transform((val) => val.toUpperCase())
+  .refine(
+    (val) => val === '' || /^[A-Z]{3}$/.test(val),
+    'Must be a 3-letter IATA code or empty.',
+  )
 
 // This is the individual dimension line schema
 const dimensionLineSchema = z.object({
@@ -70,47 +92,76 @@ const manualCostOverrideSchema = z.object({
 })
 
 // The main V3 Quote Request Schema
-export const quoteFormSchemaV3 = z.object({
-  // --- Step 1: Customer ---
-  customer_id: z.string().uuid({ message: 'Customer must be selected.' }),
-  contact_id: z.string().uuid({ message: 'Contact must be selected.' }),
+export const quoteFormSchemaV3 = z
+  .object({
+    // --- Step 1: Customer ---
+    customer_id: z.string().uuid({ message: 'Customer must be selected.' }),
+    contact_id: z.string().uuid({ message: 'Contact must be selected.' }),
 
-  // --- Step 2: Shipment Type ---
-  mode: z.nativeEnum(V3_MODES, {
-    error: 'Mode of transport is required.',
-  }),
-  // --- REMOVED 'shipment_type' ---
-  incoterm: z.nativeEnum(V3_INCOTERMS, {
-    error: 'Incoterm is required.',
-  }),
-  payment_term: z.nativeEnum(V3_PAYMENT_TERMS),
+    // --- Step 2: Shipment Type ---
+    mode: z.nativeEnum(V3_MODES, {
+      error: 'Mode of transport is required.',
+    }),
+    // --- REMOVED 'shipment_type' ---
+    incoterm: z.nativeEnum(V3_INCOTERMS, {
+      error: 'Incoterm is required.',
+    }),
+    payment_term: z.nativeEnum(V3_PAYMENT_TERMS),
+    service_scope: z.nativeEnum(V3_SERVICE_SCOPES, {
+      error: 'Service scope is required.',
+    }),
 
-  // --- Step 3: Details ---
-  // --- UPDATED: We now send the IATA code as the ID ---
-  // We will change the input to a dropdown later
-  origin_airport: z
-    .string()
-    .min(3, 'Origin is required.')
-    .length(3, 'Must be a 3-letter IATA code.')
-    .toUpperCase(),
-  destination_airport: z
-    .string()
-    .min(3, 'Destination is required.')
-    .length(3, 'Must be a 3-letter IATA code.')
-    .toUpperCase(),
-  // --- END UPDATE ---
+    // --- Step 3: Details ---
+    // --- UPDATED: Legacy airport fields are optional ---
+    origin_airport: airportCodeSchema.default(''),
+    destination_airport: airportCodeSchema.default(''),
+    // --- END UPDATE ---
+    origin_location_type: z.nativeEnum(V3_LOCATION_TYPES).default('AIRPORT'),
+    origin_location_id: z
+      .string()
+      .min(1, 'Origin is required.'),
+    destination_location_type: z.nativeEnum(V3_LOCATION_TYPES).default('AIRPORT'),
+    destination_location_id: z
+      .string()
+      .min(1, 'Destination is required.'),
 
-  is_dangerous_goods: z.boolean().default(false),
-  output_currency: z.string().length(3).optional(),
+    is_dangerous_goods: z.boolean().default(false),
+    output_currency: z.string().length(3).optional(),
 
-  // --- Step 4: Dimensions (The Array) ---
-  dimensions: z
-    .array(dimensionLineSchema)
-    .min(1, 'You must add at least one dimension line.'),
+    // --- Step 4: Dimensions (The Array) ---
+    dimensions: z
+      .array(dimensionLineSchema)
+      .min(1, 'You must add at least one dimension line.'),
 
-  // --- Spot Rate Overrides ---
-  overrides: z.array(manualCostOverrideSchema).optional(),
-})
+    // --- Spot Rate Overrides ---
+    overrides: z.array(manualCostOverrideSchema).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const ensureAirportCode = (
+      locationType: string,
+      airportField: 'origin_airport' | 'destination_airport',
+      value: string,
+    ) => {
+      if (locationType === V3_LOCATION_TYPES.AIRPORT && value.length !== 3) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [airportField],
+          message: 'Select an airport or provide a valid IATA code.',
+        });
+      }
+    };
+
+    ensureAirportCode(
+      data.origin_location_type,
+      'origin_airport',
+      data.origin_airport,
+    );
+    ensureAirportCode(
+      data.destination_location_type,
+      'destination_airport',
+      data.destination_airport,
+    );
+  })
 
 // This creates a TypeScript type from our schema
 export type QuoteFormSchemaV3 = z.infer<typeof quoteFormSchemaV3>

@@ -43,9 +43,9 @@ class QuoteAdmin(admin.ModelAdmin):
         'quote_number', 
         'customer', 
         'mode', 
-        'shipment_type', # <-- Show our new field
-        'origin_airport', # <-- Show new field
-        'destination_airport', # <-- Show new field
+        'shipment_type',
+        'origin_location',
+        'destination_location',
         'status', 
         'created_at', 
         'created_by'
@@ -60,7 +60,7 @@ class QuoteAdmin(admin.ModelAdmin):
     readonly_fields = (
         'quote_number', 'customer', 'contact', 'mode', 'shipment_type', 
         'incoterm', 'payment_term', 'output_currency', 
-        'origin_airport', 'destination_airport', 'origin_port', 'destination_port',
+        'origin_location', 'destination_location',
         'policy', 'fx_snapshot', 'is_dangerous_goods', 'status', 
         'request_details_json', 'created_at', 'created_by', 'updated_at'
     )

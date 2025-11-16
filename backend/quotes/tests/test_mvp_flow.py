@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 
 from django.utils import timezone
-from core.models import Airport, City, Country, FxSnapshot, Currency
+from core.models import Airport, City, Country, FxSnapshot, Currency, Policy, Location
 from parties.models import Company, Contact, CustomerCommercialProfile
 from services.models import ServiceComponent, IncotermRule, LEG_CHOICES
 from quotes.models import Quote
@@ -55,8 +55,32 @@ def _setup_test_data():
         source="test",
         rates={"AUD": {"tt_buy": 1.0, "tt_sell": 1.0}, "USD": {"tt_buy": 1.0, "tt_sell": 1.0}},
     )
+    Policy.objects.get_or_create(
+        name="Test Policy",
+        defaults={
+            "margin_pct": Decimal("0.00"),
+            "caf_import_pct": Decimal("0.00"),
+            "caf_export_pct": Decimal("0.00"),
+            "effective_from": timezone.now(),
+            "is_active": True,
+        },
+    )
 
     return air_freight, dest_charges
+
+
+def _ensure_location_for_airport(airport):
+    location, _ = Location.objects.get_or_create(
+        airport=airport,
+        defaults={
+            "kind": Location.Kind.AIRPORT,
+            "name": airport.name or airport.iata_code,
+            "code": airport.iata_code,
+            "country": airport.city.country if airport.city else None,
+            "city": airport.city,
+        },
+    )
+    return location
 
 
 def test_v3_quote_creation_with_overrides_and_totals():
@@ -67,6 +91,8 @@ def test_v3_quote_creation_with_overrides_and_totals():
     _, client = _mk_user_and_client()
     bne = _mk_airport("BNE", "Brisbane", "AU")
     pom = _mk_airport("POM", "Port Moresby", "PG")
+    origin_location = _ensure_location_for_airport(bne)
+    destination_location = _ensure_location_for_airport(pom)
     cust = _mk_customer()
     contact = Contact.objects.create(company=cust, first_name='Test', last_name='User', email='test@user.com')
     air_freight, dest_charges = _setup_test_data()
@@ -78,10 +104,10 @@ def test_v3_quote_creation_with_overrides_and_totals():
         "customer_id": str(cust.id),
         "contact_id": str(contact.id),
         "mode": "AIR",
-        "shipment_type": "IMPORT",
         "incoterm": "DAP",
-        "origin_airport_code": "BNE",
-        "destination_airport_code": "POM",
+        "service_scope": "A2A",
+        "origin_location_id": str(origin_location.id),
+        "destination_location_id": str(destination_location.id),
         "dimensions": [
             {
                 "pieces": 1,
@@ -92,7 +118,6 @@ def test_v3_quote_creation_with_overrides_and_totals():
             }
         ],
         "payment_term": "PREPAID",
-        "output_currency": "AUD",
         "overrides": [
             {
                 "service_component_id": str(air_freight.id),
@@ -113,9 +138,38 @@ def test_v3_quote_creation_with_overrides_and_totals():
     
     response_data = r.json()
     
-    # With 0% margin, sell should equal cost
-    # Chargeable weight is 112kg
-    # Air freight cost = 112 * 7.10 = 795.20
+    # Current chargeable weight logic uses gross weight (85kg)
+    # Air freight cost = 85 * 7.10 = 603.50
     # Dest charges cost = 120.00
-    # Total cost = 795.20 + 120.00 = 915.20
-    assert response_data['latest_version']['totals']['total_sell_fcy'] == '915.20'
+    # Total cost = 723.50
+    assert response_data['latest_version']['totals']['total_sell_fcy'] == '723.50'
+
+
+def test_v3_quote_rejects_legacy_airport_fields():
+    _, client = _mk_user_and_client()
+    cust = _mk_customer("Legacy Contract Co")
+    contact = Contact.objects.create(company=cust, first_name='Legacy', last_name='Field', email='legacy@example.com')
+
+    payload = {
+        "customer_id": str(cust.id),
+        "contact_id": str(contact.id),
+        "mode": "AIR",
+        "incoterm": "DAP",
+        "service_scope": "A2A",
+        "origin_airport_code": "BNE",
+        "destination_airport_code": "POM",
+        "dimensions": [
+            {
+                "pieces": 1,
+                "length_cm": "10",
+                "width_cm": "10",
+                "height_cm": "10",
+                "gross_weight_kg": "10.00",
+            }
+        ],
+        "payment_term": "PREPAID",
+    }
+
+    response = client.post("/api/v3/quotes/compute/", data=payload, format="json")
+    assert response.status_code == 400
+    assert "origin_location_id" in response.json()

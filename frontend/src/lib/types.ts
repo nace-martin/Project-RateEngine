@@ -38,6 +38,13 @@ export interface AirportSearchResult {
   city_country: string;
 }
 
+export interface LocationSearchResult {
+  id: string;            // Backend identifier (IATA, UUID, etc.)
+  code: string;          // Display-friendly code (IATA, port code, etc.)
+  display_name: string;  // "Brisbane (BNE), AU"
+  type: string;          // e.g., "airport", "city", "port", "address"
+}
+
 export interface RatecardFile {
   id: string; // This is a UUID
   name: string;
@@ -75,11 +82,16 @@ export interface V3QuoteComputeRequest {
   contact_id: string;
   mode: string;
   incoterm: string;
+  service_scope: 'D2D' | 'D2A' | 'A2D' | 'A2A';
   
   // These fields are new
-  origin_airport: string;       // e.g., "BNE"
+  origin_airport: string;       // e.g., "BNE" (legacy field, blank for non-air)
   destination_airport: string;  // e.g., "POM"
   // TODO: Add port fields when sea is ready
+  origin_location_type: 'AIRPORT' | 'PORT' | 'ADDRESS' | 'CITY';
+  origin_location_id: string;   // Backend location identifier (IATA, UUID, etc.)
+  destination_location_type: 'AIRPORT' | 'PORT' | 'ADDRESS' | 'CITY';
+  destination_location_id: string;
   
   // These fields were removed:
   // shipment_type: string;
@@ -147,6 +159,7 @@ export interface V3QuoteComputeResponse {
   shipment_type: string; // The backend calculates and returns this
   incoterm: string;
   payment_term: string;
+  service_scope: string;
   output_currency: string;
   
   // The backend now returns the validated objects

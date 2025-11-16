@@ -15,6 +15,16 @@ import uuid
 # --- Core Shipment & Quote Inputs ---
 
 @dataclass(frozen=True)
+class LocationRef:
+    """Normalized location reference passed into the pricing service."""
+    id: uuid.UUID
+    kind: str
+    code: Optional[str]
+    name: str
+    country_code: Optional[str]
+    currency_code: Optional[str] = None
+
+@dataclass(frozen=True)
 class Piece:
     """Represents a single piece line item (e.g., 10 pieces @ 50x50x50cm)."""
     pieces: int
@@ -28,12 +38,14 @@ class ShipmentDetails:
     """Holds all physical and routing details of the shipment."""
     mode: str                  # e.g., 'AIR'
     shipment_type: str         # e.g., 'IMPORT', 'EXPORT'
-    origin_code: str           # Airport/Port code (e.g., 'BNE')
-    destination_code: str      # Airport/Port code (e.g., 'POM')
     incoterm: str              # e.g., 'EXW'
     payment_term: str          # e.g., 'PREPAID'
     is_dangerous_goods: bool
     pieces: List[Piece]
+    service_scope: Optional[str] = None  # e.g., 'D2D'
+    direction: Optional[str] = None
+    origin_location: Optional[LocationRef] = None
+    destination_location: Optional[LocationRef] = None
 
 @dataclass(frozen=True)
 class ManualOverride:

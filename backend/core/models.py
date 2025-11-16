@@ -21,6 +21,14 @@ class Currency(models.Model):
 class Country(models.Model):
     code = models.CharField(max_length=2, primary_key=True, help_text="ISO 3166-1 alpha-2 country code.")
     name = models.CharField(max_length=100)
+    currency = models.ForeignKey(
+        Currency,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='countries',
+        help_text="Default currency used in this country."
+    )
 
     def __str__(self):
         return self.name
@@ -67,6 +75,67 @@ class Port(models.Model):
     class Meta:
          ordering = ['unlocode'] # Add default ordering
 # --- END ADD ---
+
+class Location(models.Model):
+    """
+    Generic location wrapper that can represent airports, ports, cities, or free-form addresses.
+    """
+
+    class Kind(models.TextChoices):
+        AIRPORT = 'AIRPORT', _('Airport')
+        PORT = 'PORT', _('Port')
+        CITY = 'CITY', _('City')
+        ADDRESS = 'ADDRESS', _('Address')
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=20, choices=Kind.choices, db_index=True)
+    name = models.CharField(max_length=255, help_text="Human-readable label for the location.")
+    code = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Reference code (e.g., IATA, UNLOCODE, or city short code)."
+    )
+    country = models.ForeignKey(
+        Country,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='locations'
+    )
+    city = models.ForeignKey(
+        City,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='locations'
+    )
+    airport = models.ForeignKey(
+        Airport,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='locations'
+    )
+    port = models.ForeignKey(
+        Port,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='locations'
+    )
+    address_line = models.CharField(max_length=255, blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        label = self.code or self.name
+        return f"{label} ({self.kind})"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['kind', 'code'], name='idx_location_kind_code'),
+        ]
+        ordering = ['name']
 
 # --- NEW Models based on the Backend Design Spec ---
 

@@ -3,10 +3,10 @@
 from decimal import Decimal
 from rest_framework import serializers
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from services.models import ServiceComponent
+from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
-from core.models import Airport, Port
+from core.models import Location
 # --- END IMPORTS ---
 
 # --- V3 Serializers ---
@@ -36,28 +36,25 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     contact_id = serializers.UUIDField()
     mode = serializers.CharField() # We'll validate choices in the view
     
-    # --- UPDATED FIELDS ---
-    # We now accept a valid IATA code (string) and look up the Airport object.
-    origin_airport = serializers.SlugRelatedField(
-        slug_field='iata_code',
-        queryset=Airport.objects.all(),
-        required=False # Allow null if mode is SEA
+    service_scope = serializers.ChoiceField(
+        choices=SERVICE_SCOPE_CHOICES,
+        required=True,
+        help_text="Required scope selection for V3 engine."
     )
-    destination_airport = serializers.SlugRelatedField(
-        slug_field='iata_code',
-        queryset=Airport.objects.all(),
-        required=False # Allow null if mode is SEA
+    origin_location_id = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.filter(is_active=True),
+        source='origin_location',
+        help_text="UUID of the origin Location object."
     )
-    
-    # TODO: Add origin_port and destination_port when SEA mode is built
-    
-    # 'shipment_type' is REMOVED. It will be determined by the view logic.
-    # --- END UPDATES ---
+    destination_location_id = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.filter(is_active=True),
+        source='destination_location',
+        help_text="UUID of the destination Location object."
+    )
     
     incoterm = serializers.CharField(max_length=3)
     payment_term = serializers.ChoiceField(choices=Quote.PaymentTerm.choices)
     is_dangerous_goods = serializers.BooleanField(default=False)
-    output_currency = serializers.CharField(max_length=3, required=False, default='PGK')
     dimensions = V3DimensionInputSerializer(many=True, required=True)
     overrides = V3ManualOverrideSerializer(many=True, required=False)
 
@@ -65,6 +62,19 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
         if not value or len(value) == 0:
             raise serializers.ValidationError("At least one dimension line is required.")
         return value
+
+    def validate(self, attrs):
+        legacy_errors = {}
+        if 'origin_airport_code' in self.initial_data or 'origin_airport' in self.initial_data:
+            legacy_errors['origin_location_id'] = ["Use 'origin_location_id' (UUID) instead of legacy airport fields."]
+        if 'destination_airport_code' in self.initial_data or 'destination_airport' in self.initial_data:
+            legacy_errors['destination_location_id'] = ["Use 'destination_location_id' (UUID) instead of legacy airport fields."]
+        if 'shipment_type' in self.initial_data:
+            legacy_errors['shipment_type'] = ["Shipment type is derived automatically and should not be provided."]
+        if legacy_errors:
+            raise serializers.ValidationError(legacy_errors)
+
+        return attrs
 
 # --- V3 RESPONSE SERIALIZERS ---
 # These define what the API *returns* to the frontend.
@@ -101,8 +111,8 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     
     # --- UPDATED FIELDS ---
     # Use StringRelatedField to return the IATA code (e.g., "BNE")
-    origin_airport = serializers.StringRelatedField()
-    destination_airport = serializers.StringRelatedField()
+    origin_location = serializers.StringRelatedField()
+    destination_location = serializers.StringRelatedField()
     # TODO: Add origin_port and destination_port
     # --- END UPDATES ---
     
@@ -111,8 +121,8 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         # --- UPDATED FIELDS ---
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
-            'shipment_type', 'incoterm', 'payment_term', 'output_currency', 
-            'origin_airport', 'destination_airport', # Replaced _code fields
+            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
+            'origin_location', 'destination_location',
             # 'origin_port', 'destination_port', # Add when ready for SEA
             'status', 'valid_until', 'created_at', 'latest_version'
         )

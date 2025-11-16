@@ -19,6 +19,32 @@ UNIT_CHOICES = [
     ('KM', 'Per KM'),
 ]
 AUDIENCE_CHOICES = [('BUY', 'Buy Side'), ('SELL', 'Sell Side'), ('BOTH', 'Both')]
+SHIPMENT_DIRECTION_CHOICES = [
+    ('IMPORT', 'Import'),
+    ('EXPORT', 'Export'),
+    ('DOMESTIC', 'Domestic'),
+]
+PAYMENT_TERM_CHOICES = [
+    ('PREPAID', 'Prepaid'),
+    ('COLLECT', 'Collect'),
+]
+SERVICE_SCOPE_CHOICES = [
+    ('D2D', 'Door to Door'),
+    ('D2A', 'Door to Airport'),
+    ('A2D', 'Airport to Door'),
+    ('A2A', 'Airport to Airport'),
+]
+OUTPUT_CURRENCY_TYPE_CHOICES = [
+    ('DESTINATION', 'Match Destination Currency'),
+    ('ORIGIN', 'Match Origin Currency'),
+    ('PGK', 'Force PGK'),
+    ('USD', 'Force USD'),
+]
+LEG_OWNER_CHOICES = [
+    ('COMPANY', 'Company Managed'),
+    ('CUSTOMER', 'Customer Managed'),
+    ('THIRD_PARTY', '3rd Party / Partner'),
+]
 
 # Optional: Define choices for category for consistency
 CATEGORY_CHOICES = [
@@ -134,3 +160,76 @@ class IncotermRule(models.Model):
         ordering = ['mode', 'shipment_type', 'incoterm']
         verbose_name = "Incoterm Rule"
         verbose_name_plural = "Incoterm Rules"
+
+
+class ServiceRule(models.Model):
+    """
+    Defines the full routing/quoting scope for a given combination of mode,
+    direction, incoterm, payment term, and user-selected service scope.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, db_index=True)
+    direction = models.CharField(max_length=10, choices=SHIPMENT_DIRECTION_CHOICES, db_index=True)
+    incoterm = models.CharField(max_length=3, null=True, blank=True, db_index=True)
+    payment_term = models.CharField(max_length=10, choices=PAYMENT_TERM_CHOICES, db_index=True)
+    service_scope = models.CharField(max_length=3, choices=SERVICE_SCOPE_CHOICES, db_index=True)
+    description = models.CharField(max_length=255, blank=True)
+
+    output_currency_type = models.CharField(
+        max_length=20,
+        choices=OUTPUT_CURRENCY_TYPE_CHOICES,
+        default='DESTINATION',
+        help_text="Determines how the sell/output currency should be derived."
+    )
+    notes = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    effective_from = models.DateField(null=True, blank=True)
+    effective_until = models.DateField(null=True, blank=True)
+
+    service_components = models.ManyToManyField(
+        ServiceComponent,
+        through='ServiceRuleComponent',
+        related_name='service_rules'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.mode} {self.direction} {self.incoterm or 'N/A'} {self.payment_term} {self.service_scope}"
+
+    class Meta:
+        unique_together = ('mode', 'direction', 'incoterm', 'payment_term', 'service_scope')
+        ordering = ['mode', 'direction', 'incoterm', 'payment_term', 'service_scope']
+        verbose_name = "Service Rule"
+        verbose_name_plural = "Service Rules"
+
+
+class ServiceRuleComponent(models.Model):
+    """
+    Through table linking ServiceRules to ServiceComponents with ownership metadata.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    service_rule = models.ForeignKey(ServiceRule, on_delete=models.CASCADE, related_name='rule_components')
+    service_component = models.ForeignKey(ServiceComponent, on_delete=models.CASCADE, related_name='component_rules')
+    sequence = models.PositiveIntegerField(default=0, help_text="Ordering of the component within the rule.")
+    leg_owner = models.CharField(
+        max_length=20,
+        choices=LEG_OWNER_CHOICES,
+        default='COMPANY',
+        help_text="Who owns/manages this component within the scope."
+    )
+    is_mandatory = models.BooleanField(default=True, help_text="Marks whether the component is required for the scope.")
+    notes = models.CharField(max_length=255, null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('service_rule', 'service_component')
+        ordering = ['service_rule', 'sequence', 'service_component__code']
+        verbose_name = "Service Rule Component"
+        verbose_name_plural = "Service Rule Components"
+
+    def __str__(self):
+        return f"{self.service_rule} -> {self.service_component}"

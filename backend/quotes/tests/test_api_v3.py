@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 
 from parties.models import Company, Contact
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+from core.models import Location
 
 
 class QuoteRetrieveV3APITest(APITestCase):
@@ -33,6 +34,17 @@ class QuoteRetrieveV3APITest(APITestCase):
             email=f"jane{uuid4().hex[:6]}@example.com",
         )
 
+        origin_location = Location.objects.create(
+            kind=Location.Kind.AIRPORT,
+            name="Los Angeles",
+            code="LAX",
+        )
+        destination_location = Location.objects.create(
+            kind=Location.Kind.AIRPORT,
+            name="Port Moresby",
+            code="POM",
+        )
+
         quote = Quote.objects.create(
             customer=customer,
             contact=contact,
@@ -41,8 +53,8 @@ class QuoteRetrieveV3APITest(APITestCase):
             incoterm="DAP",
             payment_term=Quote.PaymentTerm.PREPAID,
             output_currency="USD",
-            origin_code="LAX",
-            destination_code="POM",
+            origin_location=origin_location,
+            destination_location=destination_location,
             status=Quote.Status.FINAL,
             created_by=self.user,
         )

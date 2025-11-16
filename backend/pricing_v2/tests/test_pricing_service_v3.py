@@ -11,9 +11,9 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece
+from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
 
-from core.models import Currency, Country, City, Airport, FxSnapshot, Policy
+from core.models import Currency, Country, City, Airport, FxSnapshot, Policy, Location
 from quotes.serializers import QuoteComputeRequestSerializer
 from services.models import ServiceComponent, IncotermRule
 
@@ -31,13 +31,23 @@ def v3_test_data(db):
     usd, _ = Currency.objects.get_or_create(
         code="USD", defaults={"name": "US Dollar", "minor_units": 2}
     )
+    aud, _ = Currency.objects.get_or_create(
+        code="AUD", defaults={"name": "Australian Dollar", "minor_units": 2}
+    )
 
     country_pg, _ = Country.objects.get_or_create(
         code="PG", defaults={"name": "Papua New Guinea"}
     )
+    if not country_pg.currency:
+        country_pg.currency = pgk
+        country_pg.save(update_fields=['currency'])
+
     country_au, _ = Country.objects.get_or_create(
         code="AU", defaults={"name": "Australia"}
     )
+    if not country_au.currency:
+        country_au.currency = aud
+        country_au.save(update_fields=['currency'])
     city_pom, _ = City.objects.get_or_create(country=country_pg, name="Port Moresby")
     city_bne, _ = City.objects.get_or_create(country=country_au, name="Brisbane")
 
@@ -46,6 +56,27 @@ def v3_test_data(db):
     )
     destination, _ = Airport.objects.get_or_create(
         iata_code="POM", defaults={"name": "Port Moresby", "city": city_pom}
+    )
+
+    origin_location, _ = Location.objects.get_or_create(
+        airport=origin,
+        defaults={
+            "kind": Location.Kind.AIRPORT,
+            "name": origin.name,
+            "code": origin.iata_code,
+            "country": country_au,
+            "city": city_bne,
+        },
+    )
+    destination_location, _ = Location.objects.get_or_create(
+        airport=destination,
+        defaults={
+            "kind": Location.Kind.AIRPORT,
+            "name": destination.name,
+            "code": destination.iata_code,
+            "country": country_pg,
+            "city": city_pom,
+        },
     )
 
     Policy.objects.create(
@@ -111,19 +142,39 @@ def v3_test_data(db):
     return {
         "origin": origin,
         "destination": destination,
+        "origin_location": origin_location,
+        "destination_location": destination_location,
     }
 
 
 def _build_quote_input(v3_test_data: dict) -> QuoteInput:
+    origin_loc = v3_test_data["origin_location"]
+    dest_loc = v3_test_data["destination_location"]
+
+    origin_ref = LocationRef(
+        id=origin_loc.id,
+        kind=origin_loc.kind,
+        code=origin_loc.code,
+        name=origin_loc.name,
+        country_code=origin_loc.country.code if origin_loc.country else None,
+        currency_code=origin_loc.country.currency.code if origin_loc.country and origin_loc.country.currency else None,
+    )
+    destination_ref = LocationRef(
+        id=dest_loc.id,
+        kind=dest_loc.kind,
+        code=dest_loc.code,
+        name=dest_loc.name,
+        country_code=dest_loc.country.code if dest_loc.country else None,
+        currency_code=dest_loc.country.currency.code if dest_loc.country and dest_loc.country.currency else None,
+    )
+
     return QuoteInput(
         customer_id=uuid.uuid4(),
         contact_id=uuid.uuid4(),
-        output_currency="USD",
+        output_currency="PGK",
         shipment=ShipmentDetails(
             mode="AIR",
             shipment_type="IMPORT",
-            origin_code=v3_test_data["origin"].iata_code,
-            destination_code=v3_test_data["destination"].iata_code,
             incoterm="DAP",
             payment_term="PREPAID",
             is_dangerous_goods=False,
@@ -136,6 +187,10 @@ def _build_quote_input(v3_test_data: dict) -> QuoteInput:
                     gross_weight_kg=Decimal("100.00"),
                 )
             ],
+            service_scope="A2A",
+            direction="IMPORT",
+            origin_location=origin_ref,
+            destination_location=destination_ref,
         ),
     )
 
@@ -158,7 +213,6 @@ def test_pricing_service_v3_calculates_quote_charges(v3_test_data):
     assert fuel_line.cost_pgk == Decimal("20.00")  # 10% of freight
 
     margin_multiplier = Decimal("1.30")
-    pgk_to_usd = Decimal("1.00") / Decimal("0.30")
 
     expected_freight_sell_pgk = (Decimal("200.00") * margin_multiplier).quantize(Decimal("0.01"))
     expected_handling_sell_pgk = (Decimal("50.00") * margin_multiplier).quantize(Decimal("0.01"))
@@ -172,16 +226,13 @@ def test_pricing_service_v3_calculates_quote_charges(v3_test_data):
         expected_handling_sell_pgk * Decimal("1.10")
     ).quantize(Decimal("0.01"))
 
-    expected_freight_sell_fcy = (expected_freight_sell_pgk * pgk_to_usd).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    assert freight_line.sell_fcy == expected_freight_sell_fcy
-    assert freight_line.sell_fcy_currency == "USD"
+    assert freight_line.sell_fcy == expected_freight_sell_pgk
+    assert freight_line.sell_fcy_currency == "PGK"
 
     assert charges.totals.total_cost_pgk == Decimal("270.00")
     assert charges.totals.total_sell_pgk == Decimal("351.00")
     assert charges.totals.total_sell_pgk_incl_gst == Decimal("357.50")
-    assert charges.totals.total_sell_fcy_currency == "USD"
+    assert charges.totals.total_sell_fcy_currency == "PGK"
     assert charges.totals.has_missing_rates is False
 
 
@@ -190,12 +241,12 @@ def test_quote_compute_serializer_requires_dimensions(v3_test_data):
         "customer_id": str(uuid.uuid4()),
         "contact_id": str(uuid.uuid4()),
         "mode": "AIR",
-        "origin_airport": v3_test_data["origin"].iata_code,
-        "destination_airport": v3_test_data["destination"].iata_code,
+        "origin_location_id": str(v3_test_data["origin_location"].id),
+        "destination_location_id": str(v3_test_data["destination_location"].id),
         "incoterm": "DAP",
         "payment_term": "PREPAID",
+        "service_scope": "A2A",
         "is_dangerous_goods": False,
-        "output_currency": "USD",
         "dimensions": [],
         "overrides": [],
     }

@@ -11,9 +11,9 @@ from django.utils.translation import gettext_lazy as _
 # Import models needed for V3 ForeignKeys
 from parties.models import Company, Contact
 # --- UPDATED IMPORT ---
-from core.models import Policy, FxSnapshot, Airport, Port
+from core.models import Policy, FxSnapshot, Location
 # --- END UPDATE ---
-from services.models import MODE_CHOICES, ServiceComponent
+from services.models import MODE_CHOICES, ServiceComponent, SERVICE_SCOPE_CHOICES
 
 
 # --- V3 Refactored Quote Model ---
@@ -64,6 +64,13 @@ class Quote(models.Model):
         help_text="Incoterm code (e.g., EXW, FOB, DAP). Null for Domestic."
     )
     payment_term = models.CharField(max_length=10, choices=PaymentTerm.choices, default='PREPAID')
+    service_scope = models.CharField(
+        max_length=3,
+        choices=SERVICE_SCOPE_CHOICES,
+        null=True,
+        blank=True,
+        help_text="User-selected scope (e.g., D2D, D2A) used by the v1.1 engine."
+    )
 
     output_currency = models.CharField(
         max_length=3,
@@ -78,29 +85,21 @@ class Quote(models.Model):
 
     # --- REFACTORED LOCATION FIELDS ---
     # Removed origin_code and destination_code CharFields
-    origin_airport = models.ForeignKey(
-        'core.Airport',
-        on_delete=models.PROTECT, null=True, blank=True,
+    origin_location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='quotes_as_origin',
-        help_text="Origin airport (for AIR mode)."
+        help_text="Generic origin location (airport, port, city, address)."
     )
-    destination_airport = models.ForeignKey(
-        'core.Airport',
-        on_delete=models.PROTECT, null=True, blank=True,
+    destination_location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='quotes_as_destination',
-        help_text="Destination airport (for AIR mode)."
-    )
-    origin_port = models.ForeignKey(
-        'core.Port',
-        on_delete=models.PROTECT, null=True, blank=True,
-        related_name='quotes_as_origin_port',
-        help_text="Origin port (for SEA mode)."
-    )
-    destination_port = models.ForeignKey(
-        'core.Port',
-        on_delete=models.PROTECT, null=True, blank=True,
-        related_name='quotes_as_destination_port',
-        help_text="Destination port (for SEA mode)."
+        help_text="Generic destination location (airport, port, city, address)."
     )
     # --- END REFACTOR ---
 

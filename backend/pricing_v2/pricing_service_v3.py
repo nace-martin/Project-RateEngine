@@ -8,10 +8,12 @@ process.
 """
 
 import json
+import logging
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 from django.utils import timezone
 import uuid
+from django.conf import settings
 
 # --- UPDATED IMPORTS ---
 # We now import the *correct* V3 dataclasses and remove the old ones.
@@ -28,11 +30,12 @@ from .dataclasses_v3 import (
 
 from core.models import FxSnapshot, Policy, Surcharge, LocalTariff
 from ratecards.models import PartnerRateLane, PartnerRate
-from services.models import ServiceComponent, IncotermRule
+from services.models import ServiceComponent, IncotermRule, ServiceRule
 
 # A constant for our home currency
 HOME_CURRENCY = "PGK"
 DEFAULT_POLICY_NAME = "Default Policy"
+logger = logging.getLogger(__name__)
 
 class PricingServiceV3:
     """
@@ -51,13 +54,19 @@ class PricingServiceV3:
         self.context = self._build_calculation_context()
         self.sell_lines: List[CalculatedChargeLine] = []
         self.calculated_component_costs = {}
+        self.service_rule: Optional[ServiceRule] = None
+        self.output_currency_code: str = quote_input.output_currency or HOME_CURRENCY
+        self.context['service_rule'] = None
+        self.override_map = {override.service_component_id: override for override in quote_input.overrides}
 
     def calculate_charges(self) -> QuoteCharges:
         """
         Main entry point for the calculation.
         """
+        self._resolve_service_rule()
         # 1. Get all applicable service components
         service_components = self._get_service_components()
+        self._apply_output_currency_policy()
         service_components = sorted(
             service_components,
             key=lambda comp: 1 if self._is_percentage_based_component(comp) else 0
@@ -65,8 +74,14 @@ class PricingServiceV3:
 
         # 2. Calculate each line
         for component in service_components:
-            buy_rate = self._get_buy_rate(component)
-            cost_info = self._calculate_buy_cost(component, buy_rate)
+            override = self.override_map.get(component.id)
+            buy_rate = None
+            if override:
+                cost_info = self._calculate_override_cost(component, override)
+            else:
+                buy_rate = self._get_buy_rate(component)
+                cost_info = self._calculate_buy_cost(component, buy_rate)
+
             self.calculated_component_costs[component.code] = cost_info
             sell_rate = self._calculate_sell_rate(component, cost_info['cost_pgk'])
             line = self._create_charge_line(component, buy_rate, cost_info, sell_rate)
@@ -106,6 +121,16 @@ class PricingServiceV3:
         """
         Gets the list of services to be quoted based on the incoterm.
         """
+        service_rule_components = self._get_service_rule_components()
+        if service_rule_components is not None:
+            if self._is_service_rule_shadow_mode_enabled():
+                legacy_components = self._get_incoterm_rule_components()
+                self._log_service_rule_diff(service_rule_components, legacy_components)
+            return service_rule_components
+
+        return self._get_incoterm_rule_components()
+
+    def _get_incoterm_rule_components(self) -> List[ServiceComponent]:
         try:
             rule = IncotermRule.objects.get(
                 mode=self.shipment.mode,
@@ -114,11 +139,127 @@ class PricingServiceV3:
             )
             return list(rule.service_components.filter(is_active=True))
         except IncotermRule.DoesNotExist:
-            # Fallback to a default set if no rule found?
             return list(ServiceComponent.objects.filter(
-                mode=self.shipment.mode, 
+                mode=self.shipment.mode,
                 is_active=True
             ))
+
+    def _get_service_rule_components(self) -> Optional[List[ServiceComponent]]:
+        """
+        Returns resolved ServiceRule components if a rule is loaded.
+        """
+        if not self.service_rule:
+            return None
+
+        rule_components = (
+            self.service_rule.rule_components.select_related('service_component')
+            .order_by('sequence', 'service_component__code')
+        )
+        components: List[ServiceComponent] = []
+        for rc in rule_components:
+            component = rc.service_component
+            if component.is_active:
+                components.append(component)
+        return components
+
+    def _is_service_rule_shadow_mode_enabled(self) -> bool:
+        return getattr(settings, "SERVICE_RULE_SHADOW_MODE", False)
+
+    def _log_service_rule_diff(
+        self,
+        service_rule_components: List[ServiceComponent],
+        incoterm_components: List[ServiceComponent],
+    ) -> None:
+        service_codes = [c.code for c in service_rule_components]
+        legacy_codes = [c.code for c in incoterm_components]
+        missing = [code for code in legacy_codes if code not in service_codes]
+        extras = [code for code in service_codes if code not in legacy_codes]
+
+        if missing or extras:
+            logger.info(
+                "ServiceRule shadow diff detected",
+                extra={
+                    "service_rule_id": getattr(self.service_rule, "id", None),
+                    "mode": self.shipment.mode,
+                    "direction": self.shipment.shipment_type,
+                    "incoterm": self.shipment.incoterm,
+                    "payment_term": self.shipment.payment_term,
+                    "service_scope": getattr(self.shipment, "service_scope", None),
+                    "missing_components": missing,
+                    "extra_components": extras,
+                }
+            )
+
+    def _resolve_service_rule(self) -> None:
+        """
+        Resolves the ServiceRule matching the shipment context, if any.
+        """
+        service_scope = getattr(self.shipment, "service_scope", None)
+        if not service_scope:
+            self.service_rule = None
+            self.context["service_rule"] = None
+            return
+
+        incoterm = self.shipment.incoterm or None
+        try:
+            rule = (
+                ServiceRule.objects.filter(
+                    mode=self.shipment.mode,
+                    direction=self.shipment.shipment_type,
+                    incoterm=incoterm,
+                    payment_term=self.shipment.payment_term,
+                    service_scope=service_scope,
+                    is_active=True,
+                )
+                .order_by("-effective_from")
+                .first()
+            )
+        except Exception:
+            rule = None
+
+        self.service_rule = rule
+        self.context["service_rule"] = rule
+
+    def _apply_output_currency_policy(self) -> None:
+        """
+        Applies ServiceRule-driven currency logic when available.
+        """
+        derived_currency = None
+        if self.service_rule:
+            derived_currency = self._derive_currency_from_rule(self.service_rule)
+
+        if derived_currency:
+            self.output_currency_code = derived_currency
+            self.quote_input.output_currency = derived_currency
+
+    def _derive_currency_from_rule(self, rule: ServiceRule) -> Optional[str]:
+        ccy_type = rule.output_currency_type or "DESTINATION"
+        if ccy_type == "PGK":
+            return HOME_CURRENCY
+        if ccy_type == "USD":
+            return "USD"
+        if ccy_type == "ORIGIN":
+            code = self._get_origin_currency_code()
+            return code or HOME_CURRENCY
+        if ccy_type == "DESTINATION":
+            code = self._get_destination_currency_code()
+            return code or HOME_CURRENCY
+        return None
+
+    def _get_origin_currency_code(self) -> Optional[str]:
+        location = getattr(self.shipment, "origin_location", None)
+        if not location:
+            return None
+        return location.currency_code
+
+    def _get_destination_currency_code(self) -> Optional[str]:
+        location = getattr(self.shipment, "destination_location", None)
+        if not location:
+            return None
+        return location.currency_code
+
+    def get_output_currency(self) -> str:
+        return self.output_currency_code
 
     # --- REFACTORED: This method now returns a PartnerRate object ---
     def _get_buy_rate(self, component: ServiceComponent) -> Optional[PartnerRate]:
@@ -126,23 +267,23 @@ class PricingServiceV3:
         Finds the buy-side (cost) rate for a given service component.
         """
         # This is the core of the V3 "Buy Source Adapter" logic
-        
-        # 1. Check for a manual override first
-        for override in self.quote_input.overrides:
-            if override.service_component_id == component.id:
-                # TODO: Handle overrides
-                print(f"Handle override for {component.code}")
-                return None # Placeholder
+        origin_code = (
+            self.shipment.origin_location.code if self.shipment.origin_location else None
+        )
+        destination_code = (
+            self.shipment.destination_location.code if self.shipment.destination_location else None
+        )
+        if not origin_code or not destination_code:
+            return None
 
-        # 2. Find a matching PartnerRate
-        # We find the lane based on the new (corrected) FKs
+        # Find a matching PartnerRate based on the shipment context
         try:
             rate = PartnerRate.objects.get(
                 lane__mode=self.shipment.mode,
                 lane__shipment_type=self.shipment.shipment_type,
                 # TODO: Add supplier/audience logic
-                lane__origin_airport__iata_code=self.shipment.origin_code,
-                lane__destination_airport__iata_code=self.shipment.destination_code,
+                lane__origin_airport__iata_code=origin_code,
+                lane__destination_airport__iata_code=destination_code,
                 service_component=component
             )
             return rate
@@ -190,7 +331,7 @@ class PricingServiceV3:
         tax_multiplier = Decimal("1.0") + tax_rate
         sell_pgk_incl_gst = (sell_rate_pgk * tax_multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-        sell_fcy_currency = self.quote_input.output_currency
+        sell_fcy_currency = self.output_currency_code
         sell_fcy = self._convert_pgk_to_currency(sell_rate_pgk, sell_fcy_currency)
         sell_fcy_incl_gst = self._convert_pgk_to_currency(sell_pgk_incl_gst, sell_fcy_currency)
         
@@ -257,8 +398,40 @@ class PricingServiceV3:
             "is_rate_missing": cost_pgk == zero,
         }
 
-    def _convert_pgk_to_currency(self, amount_pgk: Decimal, currency: str) -> Decimal:
-        if currency == "PGK":
+    def _calculate_override_cost(self, component: ServiceComponent, override: ManualOverride) -> dict:
+        """
+        Converts a manual override into the standard cost structure.
+        """
+        zero = Decimal("0.00")
+        chargeable_weight = Decimal(self.context["chargeable_weight_kg"])
+        unit = (override.unit or "").upper()
+
+        cost_fcy = override.cost_fcy
+        if unit in {"PER_KG", "KG"}:
+            cost_fcy = cost_fcy * chargeable_weight
+        elif unit in {"PER_SHIPMENT", "SHIPMENT"}:
+            pass  # already shipment-level
+        # other units default to shipment behavior
+
+        if override.min_charge_fcy and cost_fcy < override.min_charge_fcy:
+            cost_fcy = override.min_charge_fcy
+
+        currency = override.currency or self.output_currency_code or HOME_CURRENCY
+        fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=True)
+        cost_pgk = (cost_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        return {
+            "cost_pgk": cost_pgk,
+            "cost_fcy": cost_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "cost_fcy_currency": currency,
+            "exchange_rate": fx_rate.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP),
+            "cost_source": "MANUAL_OVERRIDE",
+            "cost_source_description": "Manual override",
+            "is_rate_missing": cost_fcy == zero,
+        }
+
+    def _convert_pgk_to_currency(self, amount_pgk: Decimal, currency: Optional[str]) -> Decimal:
+        if not currency or currency == "PGK":
             return amount_pgk
         rate = self._get_exchange_rate("PGK", currency)
         converted = amount_pgk * rate
@@ -353,7 +526,7 @@ class PricingServiceV3:
             total_sell_pgk_incl_gst=total_sell_pgk_incl_gst,
             total_sell_fcy=total_sell_fcy,
             total_sell_fcy_incl_gst=total_sell_fcy_incl_gst,
-            total_sell_fcy_currency=self.quote_input.output_currency,
+            total_sell_fcy_currency=self.output_currency_code,
             has_missing_rates=has_missing_rates,
             notes=notes
         )

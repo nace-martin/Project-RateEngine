@@ -11,9 +11,14 @@ from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
 from pricing_v2.pricing_service_v3 import PricingServiceV3
 from pricing_v2.dataclasses_v3 import (
-    QuoteInput, QuoteCharges, ShipmentDetails, Piece, ManualOverride
+    QuoteInput,
+    QuoteCharges,
+    ShipmentDetails,
+    Piece,
+    ManualOverride,
+    LocationRef,
 )
-from core.models import FxSnapshot, Policy, Airport # --- ADDED IMPORT ---
+from core.models import FxSnapshot, Policy, Location
 from parties.models import Company, Contact
 
 class QuoteComputeV3APIView(generics.CreateAPIView):
@@ -37,23 +42,27 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
                 
-            # --- NEW: Get location objects ---
             mode = validated_data.get('mode')
-            origin_airport = validated_data.get('origin_airport')
-            destination_airport = validated_data.get('destination_airport')
-            
-            # --- NEW: Shipment Type Classification Logic ---
+            origin_location: Location = validated_data.get('origin_location')
+            destination_location: Location = validated_data.get('destination_location')
+
+            if not origin_location or not destination_location:
+                return Response(
+                    {"detail": "Origin and destination locations are required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # --- Shipment Type Classification Logic ---
             shipment_type = None
             if mode == 'AIR':
-                if not origin_airport or not destination_airport:
+                org_country = origin_location.country.code if origin_location.country else None
+                dest_country = destination_location.country.code if destination_location.country else None
+
+                if not org_country or not dest_country:
                     return Response(
-                        {"detail": "Origin and Destination airport are required for AIR mode."},
-                        status=status.HTTP_400_BAD_REQUEST
+                        {"detail": "Origin and destination locations must include countries for AIR mode."},
+                        status=status.HTTP_400_BAD_REQUEST,
                     )
-                
-                # Get country codes from the master data
-                org_country = origin_airport.city.country.code
-                dest_country = destination_airport.city.country.code
                 
                 if org_country == 'PG' and dest_country == 'PG':
                     shipment_type = Quote.ShipmentType.DOMESTIC
@@ -82,11 +91,17 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
             try:
                 # 1. Prepare input for PricingServiceV3
-                quote_input = self._build_quote_input(validated_data, shipment_type)
+                quote_input = self._build_quote_input(
+                    validated_data,
+                    shipment_type,
+                    origin_location,
+                    destination_location,
+                )
                 
                 # 2. Call the pricing service
                 service = PricingServiceV3(quote_input)
                 calculated_charges = service.calculate_charges()
+                derived_output_currency = service.get_output_currency()
                 
                 # 3. Save to DB
                 quote = self._save_quote_v3(
@@ -95,7 +110,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                     shipment_type, # <-- Pass calculated type
                     calculated_charges, 
                     service.get_fx_snapshot(),
-                    service.get_policy()
+                    service.get_policy(),
+                    derived_output_currency,
                 )
                 
                 # 4. Serialize and return the created quote
@@ -112,23 +128,23 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    def _build_quote_input(self, data, shipment_type):
+    def _build_quote_input(self, data, shipment_type, origin_location: Location, destination_location: Location):
         """Helper to convert serializer data to PricingService dataclasses."""
-        
-        # --- Use validated objects ---
-        origin_code = data['origin_airport'].iata_code
-        destination_code = data['destination_airport'].iata_code
-        # ---
+
+        origin_ref = self._location_to_ref(origin_location)
+        destination_ref = self._location_to_ref(destination_location)
         
         shipment_details = ShipmentDetails(
             mode=data['mode'],
-            shipment_type=shipment_type, # <-- Use calculated type
-            origin_code=origin_code,
-            destination_code=destination_code,
+            shipment_type=shipment_type,
             incoterm=data['incoterm'],
             payment_term=data['payment_term'],
             is_dangerous_goods=data['is_dangerous_goods'],
-            pieces=[Piece(**p) for p in data['dimensions']]
+            pieces=[Piece(**p) for p in data['dimensions']],
+            service_scope=data.get('service_scope'),
+            direction=shipment_type,
+            origin_location=origin_ref,
+            destination_location=destination_ref,
         )
         
         overrides = [ManualOverride(**o) for o in data.get('overrides', [])]
@@ -136,13 +152,28 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         return QuoteInput(
             customer_id=data['customer_id'],
             contact_id=data['contact_id'],
-            output_currency=data.get('output_currency', 'PGK'),
+            output_currency='PGK',
             shipment=shipment_details,
             overrides=overrides
         )
 
+    def _location_to_ref(self, location: Location):
+        country_code = location.country.code if location.country else None
+        currency_code = None
+        if location.country and location.country.currency:
+            currency_code = location.country.currency.code
+
+        return LocationRef(
+            id=location.id,
+            kind=location.kind,
+            code=location.code,
+            name=location.name,
+            country_code=country_code,
+            currency_code=currency_code,
+        )
+
     @transaction.atomic
-    def _save_quote_v3(self, request, validated_data, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy):
+    def _save_quote_v3(self, request, validated_data, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str):
         """
         Helper to save the quote, version, lines, and totals to the database.
         """
@@ -157,10 +188,10 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             shipment_type=shipment_type, # <-- Save calculated type
             incoterm=validated_data['incoterm'],
             payment_term=validated_data['payment_term'],
-            output_currency=validated_data.get('output_currency', 'PGK'),
-            origin_airport=validated_data.get('origin_airport'), # <-- Save new field
-            destination_airport=validated_data.get('destination_airport'), # <-- Save new field
-            # TODO: save origin_port / destination_port when SEA is added
+            service_scope=validated_data.get('service_scope'),
+            output_currency=output_currency or 'PGK',
+            origin_location=validated_data.get('origin_location'),
+            destination_location=validated_data.get('destination_location'),
             policy=policy,
             fx_snapshot=snapshot,
             is_dangerous_goods=validated_data['is_dangerous_goods'],

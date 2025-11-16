@@ -4,7 +4,11 @@ import { useState, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray } from "react-hook-form";
 import { Trash2, Loader2 } from "lucide-react";
-import type { Contact, CompanySearchResult } from "@/lib/types";
+import type {
+  Contact,
+  CompanySearchResult,
+  LocationSearchResult,
+} from "@/lib/types";
 import { getContactsForCompany, computeQuoteV3 } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -13,6 +17,8 @@ import {
   V3_MODES,
   V3_INCOTERMS,
   V3_PAYMENT_TERMS,
+  V3_SERVICE_SCOPES,
+  V3_LOCATION_TYPES,
 } from "@/lib/schemas/quoteSchema";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,10 +46,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import AirportSearchCombobox from "@/components/AirportSearchCombobox";
+import LocationSearchCombobox from "@/components/LocationSearchCombobox";
 import CompanySearchCombobox from "@/components/CompanySearchCombobox";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
+
+const SUPPORTED_LOCATION_TYPES = new Set<QuoteFormSchemaV3["origin_location_type"]>(
+  Object.values(V3_LOCATION_TYPES),
+);
 
 export default function NewQuotePage() {
   const { user } = useAuth();
@@ -54,6 +64,8 @@ export default function NewQuotePage() {
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [originLocation, setOriginLocation] = useState<LocationSearchResult | null>(null);
+  const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3),
@@ -65,8 +77,13 @@ export default function NewQuotePage() {
       mode: "AIR",
       incoterm: "EXW",
       payment_term: "PREPAID",
+      service_scope: V3_SERVICE_SCOPES.A2A,
       origin_airport: "",
       destination_airport: "",
+      origin_location_type: V3_LOCATION_TYPES.AIRPORT,
+      origin_location_id: "",
+      destination_location_type: V3_LOCATION_TYPES.AIRPORT,
+      destination_location_id: "",
       is_dangerous_goods: false,
       dimensions: [],
     },
@@ -78,6 +95,71 @@ export default function NewQuotePage() {
     control: form.control,
     name: "dimensions",
   });
+
+  const originLocationId = form.watch("origin_location_id");
+  const destinationLocationId = form.watch("destination_location_id");
+
+  useEffect(() => {
+    if (!originLocationId) {
+      setOriginLocation(null);
+    }
+  }, [originLocationId]);
+
+  useEffect(() => {
+    if (!destinationLocationId) {
+      setDestinationLocation(null);
+    }
+  }, [destinationLocationId]);
+
+  const normalizeLocationType = (
+    rawType?: string | null,
+  ): QuoteFormSchemaV3["origin_location_type"] => {
+    if (!rawType) {
+      return V3_LOCATION_TYPES.AIRPORT;
+    }
+    const upper = rawType.toUpperCase() as QuoteFormSchemaV3["origin_location_type"];
+    if (SUPPORTED_LOCATION_TYPES.has(upper)) {
+      return upper;
+    }
+    return V3_LOCATION_TYPES.AIRPORT;
+  };
+
+  const setLocationFields = (
+    kind: "origin" | "destination",
+    location: LocationSearchResult | null,
+    onLocationIdChange: (value: string) => void,
+  ) => {
+    const normalizedType = location
+      ? normalizeLocationType(location.type)
+      : V3_LOCATION_TYPES.AIRPORT;
+    const locationId = location?.id ?? "";
+    const airportCode =
+      normalizedType === V3_LOCATION_TYPES.AIRPORT
+        ? (location?.code ?? "").toUpperCase()
+        : "";
+
+    onLocationIdChange(locationId);
+
+    if (kind === "origin") {
+      form.setValue("origin_location_type", normalizedType, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      form.setValue("origin_airport", airportCode, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    } else {
+      form.setValue("destination_location_type", normalizedType, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+      form.setValue("destination_airport", airportCode, {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
+    }
+  };
 
   useEffect(() => {
     const fetchContacts = async (customerId: string) => {
@@ -238,28 +320,38 @@ export default function NewQuotePage() {
               <CardContent className="space-y-4">
                 <FormField
                   control={form.control}
-                  name="origin_airport"
+                  name="origin_location_id"
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
-                      <FormLabel>Origin Airport</FormLabel>
-                      <AirportSearchCombobox
+                      <FormLabel>Origin Location</FormLabel>
+                      <LocationSearchCombobox
                         value={field.value || null}
-                        onSelect={(code) => field.onChange(code ?? "")}
+                        selectedLabel={originLocation?.display_name ?? null}
+                        onSelect={(selection) => {
+                          setOriginLocation(selection);
+                          setLocationFields("origin", selection, field.onChange);
+                        }}
                       />
+                      <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
                 <FormField
                   control={form.control}
-                  name="destination_airport"
+                  name="destination_location_id"
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
-                      <FormLabel>Destination Airport</FormLabel>
-                      <AirportSearchCombobox
+                      <FormLabel>Destination Location</FormLabel>
+                      <LocationSearchCombobox
                         value={field.value || null}
-                        onSelect={(code) => field.onChange(code ?? "")}
+                        selectedLabel={destinationLocation?.display_name ?? null}
+                        onSelect={(selection) => {
+                          setDestinationLocation(selection);
+                          setLocationFields("destination", selection, field.onChange);
+                        }}
                       />
+                      <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -271,7 +363,7 @@ export default function NewQuotePage() {
               <CardHeader>
                 <CardTitle>Shipment & Terms</CardTitle>
               </CardHeader>
-              <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <FormField
                   control={form.control}
                   name="mode"
@@ -340,6 +432,31 @@ export default function NewQuotePage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="service_scope"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Service Scope</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select scope" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.values(V3_SERVICE_SCOPES).map((scope) => (
+                            <SelectItem key={scope} value={scope}>
+                              {scope}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>Door/Airport selection for pricing logic.</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
