@@ -1,0 +1,51 @@
+from django.urls import reverse
+from rest_framework.test import APITestCase
+
+from core.models import Country, City, Airport, Location
+
+
+class LocationSearchViewTests(APITestCase):
+    def setUp(self):
+        self.country = Country.objects.create(code='AU', name='Australia')
+        self.city = City.objects.create(name='Brisbane', country=self.country)
+        self.airport = Airport.objects.create(
+            iata_code='BNE',
+            name='Brisbane International',
+            city=self.city,
+        )
+        self.airport_location = Location.objects.create(
+            kind=Location.Kind.AIRPORT,
+            name='Brisbane International Airport',
+            code='BNE',
+            country=self.country,
+            city=self.city,
+            airport=self.airport,
+        )
+        self.city_location = Location.objects.create(
+            kind=Location.Kind.CITY,
+            name=self.city.name,
+            code='BRI',
+            country=self.country,
+            city=self.city,
+        )
+
+    def test_airport_search_returns_location_uuid(self):
+        url = reverse('core:location-search-v3')
+        response = self.client.get(url, {'q': 'BNE'})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ids = {item['id'] for item in payload}
+
+        self.assertIn(str(self.airport_location.id), ids)
+        self.assertTrue(all(len(item['id']) == 36 for item in payload))
+
+    def test_city_search_returns_city_location_uuid(self):
+        url = reverse('core:location-search-v3')
+        response = self.client.get(url, {'q': 'Bris'})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        ids = {item['id'] for item in payload}
+
+        self.assertIn(str(self.city_location.id), ids)
