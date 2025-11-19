@@ -117,6 +117,7 @@ export interface V3ManualOverride {
   currency: string;
   unit: string;
   min_charge_fcy?: string;
+  valid_until?: string;
 }
 
 export interface V3QuoteComputeRequest {
@@ -200,36 +201,8 @@ export interface V3QuoteComputeResponse {
   latest_version: V3QuoteVersion;
 }
 
-export interface QuoteVersionPieceInput {
-  length_cm: number;
-  width_cm: number;
-  height_cm: number;
-  weight_kg: number;
-  count: number;
-}
-
-export interface QuoteVersionChargeInput {
-  stage: string;
-  code: string;
-  description: string;
-  basis: string;
-  qty: number;
-  unit_price: number;
-  side: string;
-  currency: string;
-}
+export type QuoteVersionChargeInput = V3ManualOverride;
 
 export interface QuoteVersionCreatePayload {
-  origin: number;
-  destination: number;
-  pieces: QuoteVersionPieceInput[];
   charges: QuoteVersionChargeInput[];
-  volumetric_divisor: number;
-  volumetric_weight_kg: number;
-  chargeable_weight_kg: number;
-  sell_currency: string;
-  valid_from: string;
-  valid_to: string;
-  notes?: string;
-  internal_notes?: string;
 }

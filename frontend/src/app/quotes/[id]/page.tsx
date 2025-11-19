@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
-import { computeQuoteV3, getQuoteV3 } from "@/lib/api"; // Updated import
+import { createQuoteVersion, getQuoteV3 } from "@/lib/api"; // Updated import
 import {
+  QuoteVersionCreatePayload,
   V3ManualOverride,
-  V3QuoteComputeRequest,
   V3QuoteComputeResponse,
   V3QuoteLine,
 } from "@/lib/types"; // Updated import
@@ -35,7 +35,6 @@ import { Loader2 } from "lucide-react";
 export default function QuoteDetailPage() {
   const { user } = useAuth();
   const params = useParams();
-  const router = useRouter();
   const id = params.id as string;
 
   const [quote, setQuote] = useState<V3QuoteComputeResponse | null>(null);
@@ -92,25 +91,42 @@ export default function QuoteDetailPage() {
   };
 
   const handleRecalculate = async () => {
-    if (!quote?.latest_version?.payload_json) {
-      setRecalculateError("Original request payload is unavailable.");
+    if (!quote) {
+      setRecalculateError("Quote data is unavailable.");
       return;
     }
-    const basePayload =
-      quote.latest_version.payload_json as V3QuoteComputeRequest;
-    const payload: V3QuoteComputeRequest = {
-      ...basePayload,
-      overrides: manualOverrides,
+    if (manualOverrides.length === 0) {
+      setRecalculateError("Add at least one manual rate before recalculating.");
+      return;
+    }
+    const payload: QuoteVersionCreatePayload = {
+      charges: manualOverrides.map((override) => {
+        const normalized: V3ManualOverride = {
+          service_component_id: override.service_component_id,
+          cost_fcy: override.cost_fcy,
+          currency: override.currency.toUpperCase(),
+          unit: override.unit,
+        };
+        if (override.min_charge_fcy) {
+          normalized.min_charge_fcy = override.min_charge_fcy;
+        }
+        if (override.valid_until) {
+          normalized.valid_until = override.valid_until;
+        }
+        return normalized;
+      }),
     };
-
     setRecalculateLoading(true);
     setRecalculateError(null);
     setRecalculateSuccess(false);
     try {
-      const newQuote = await computeQuoteV3(payload);
-      setQuote(newQuote);
+      const updatedQuote = await createQuoteVersion(null, quote.id, payload);
+      setQuote(updatedQuote);
+      setManualOverrides(
+        updatedQuote.latest_version?.payload_json?.overrides ??
+          payload.charges,
+      );
       setRecalculateSuccess(true);
-      router.push(`/quotes/${newQuote.id}`);
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Failed to finalize quote.";
