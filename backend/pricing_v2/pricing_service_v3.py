@@ -23,11 +23,13 @@ from .dataclasses_v3 import (
     Piece,
     ManualOverride,
     CalculatedChargeLine,
-    CalculatedTotals
+    CalculatedTotals,
+    LocationRef,
 )
 # --- END UPDATED IMPORTS ---
+from quotes.tax_policy import apply_gst_policy
 
-from core.models import FxSnapshot, Policy, Surcharge, LocalTariff
+from core.models import FxSnapshot, Policy, Surcharge, LocalTariff, Location
 from ratecards.models import PartnerRateLane, PartnerRate
 from services.models import ServiceComponent, ServiceRule
 
@@ -35,6 +37,43 @@ from services.models import ServiceComponent, ServiceRule
 HOME_CURRENCY = "PGK"
 DEFAULT_POLICY_NAME = "Default Policy"
 logger = logging.getLogger(__name__)
+
+# --- TAX ADAPTERS ---
+class TaxVersionAdapter:
+    """
+    Translates the V3 Shipment/Context into the 'version' object
+    expected by quotes.tax_policy.apply_gst_policy.
+    """
+    def __init__(self, service):
+        self.origin = service.shipment.origin_location
+        self.destination = service.shipment.destination_location
+
+        # Create a fake quotation object with just the service_type attribute
+        self.quotation = type('Quotation', (), {
+            'service_type': service.shipment.shipment_type
+        })()
+
+        # TODO: If you add an 'export_evidence' checkbox to the UI, map it here.
+        self.policy_snapshot = {"export_evidence": False}
+
+
+class TaxChargeAdapter:
+    """
+    Translates a V3 ServiceComponent into the 'charge' object
+    expected by quotes.tax_policy.apply_gst_policy.
+    """
+    def __init__(self, component):
+        self.code = component.code
+        self.stage = component.leg
+
+        # CRITICAL: Map Freight to 'AIR' stage to ensure International Linehaul is 0%
+        if component.mode == 'AIR' and component.category == 'TRANSPORT':
+            self.stage = 'AIR'
+
+        # Fields the policy will mutate
+        self.is_taxable = False
+        self.gst_percentage = 0
+# --------------------
 
 class PricingServiceV3:
     """
@@ -101,11 +140,33 @@ class PricingServiceV3:
         """
         Pre-fetches all common data needed for the calculation.
         """
-        # TODO: Implement chargeable weight calculation
-        chargeable_weight_kg = self.shipment.pieces[0].gross_weight_kg
+        # --- 1. Calculate Chargeable Weight ---
+        # Logic: Iterate through all pieces to find the Max(Total Gross, Total Volumetric)
+        # Standard Air Freight Divisor: 6000 ccm/kg
+
+        total_gross_weight = Decimal("0.00")
+        total_volumetric_weight = Decimal("0.00")
+        volumetric_divisor = Decimal("6000.0")
+
+        for piece in self.shipment.pieces:
+            # A. Sum up the physical gross weight
+            # Assumption: piece.gross_weight_kg is the TOTAL weight for this line (all pieces)
+            total_gross_weight += piece.gross_weight_kg
+            
+            # B. Calculate volumetric weight for this line
+            # Formula: (L x W x H) / 6000 * Number of Pieces
+            volume_per_piece_kg = (piece.length_cm * piece.width_cm * piece.height_cm) / volumetric_divisor
+            total_volumetric_weight += (volume_per_piece_kg * piece.pieces)
+
+        # The Chargeable Weight is whichever is heavier
+        chargeable_weight_kg = max(total_gross_weight, total_volumetric_weight)
         
+        # Round to 2 decimal places for calculation consistency
+        chargeable_weight_kg = chargeable_weight_kg.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # --------------------------------------
+
         # Get the latest active policy and FX snapshot
-        # In a real app, this would be more robust
+        # In a real app, you might want to handle "Policy.DoesNotExist" errors gracefully here
         policy = Policy.objects.filter(is_active=True).latest('effective_from')
         fx_snapshot = FxSnapshot.objects.latest('as_of_timestamp')
 
@@ -221,18 +282,39 @@ class PricingServiceV3:
     def get_output_currency(self) -> str:
         return self.output_currency_code
 
+    def _resolve_iata_code(self, location_ref: Optional[LocationRef]) -> Optional[str]:
+        """
+        Resolves the correct IATA Airport Code for a given location.
+        If the location is a City or Address, it looks up the linked Airport from the DB.
+        """
+        if not location_ref:
+            return None
+
+        # Fast Path: If it's already an airport, use the code directly.
+        if location_ref.kind == "AIRPORT" and location_ref.code:
+            return location_ref.code
+
+        # Slow Path: It's a City/Address. We must find the 'gateway' airport.
+        try:
+            loc_obj = Location.objects.get(id=location_ref.id)
+            if getattr(loc_obj, 'airport', None):
+                return loc_obj.airport.iata_code
+        except Exception as e:
+            logger.warning(f"Could not resolve airport for location {location_ref.name}: {e}")
+
+        # Fallback: Try using the location's own code (might be same as airport)
+        return location_ref.code
+
     # --- REFACTORED: This method now returns a PartnerRate object ---
     def _get_buy_rate(self, component: ServiceComponent) -> Optional[PartnerRate]:
         """
         Finds the buy-side (cost) rate for a given service component.
         """
-        # This is the core of the V3 "Buy Source Adapter" logic
-        origin_code = (
-            self.shipment.origin_location.code if self.shipment.origin_location else None
-        )
-        destination_code = (
-            self.shipment.destination_location.code if self.shipment.destination_location else None
-        )
+        # --- UPDATED LOGIC ---
+        # Resolve the actual AIRPORT codes, even if the location is a City
+        origin_code = self._resolve_iata_code(self.shipment.origin_location)
+        destination_code = self._resolve_iata_code(self.shipment.destination_location)
+        # ---------------------
         if not origin_code or not destination_code:
             return None
 
@@ -248,10 +330,11 @@ class PricingServiceV3:
             )
             return rate
         except PartnerRate.DoesNotExist:
-            print(f"No PartnerRate found for {component.code}")
+            # Debug log only
+            # print(f"No PartnerRate found for {component.code} on {origin_code}->{destination_code}")
             return None
         except Exception as e:
-            print(f"Error finding PartnerRate: {e}")
+            logger.error(f"Error finding PartnerRate: {e}")
             return None
 
     # --- REFACTORED: This method now returns a simple Decimal ---
@@ -266,7 +349,6 @@ class PricingServiceV3:
         sell_pgk = base_cost * (Decimal("1.0") + margin)
         return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-    # --- REFACTORED: This method now builds the new CalculatedChargeLine ---
     def _create_charge_line(
         self,
         component: ServiceComponent,
@@ -275,7 +357,7 @@ class PricingServiceV3:
         sell_rate_pgk: Decimal
     ) -> CalculatedChargeLine:
         """
-        Creates the final, auditable charge line.
+        Creates the final, auditable charge line with TAX POLICY applied.
         """
         cost_pgk = cost_info['cost_pgk']
         cost_fcy = cost_info['cost_fcy']
@@ -285,11 +367,21 @@ class PricingServiceV3:
         cost_source_desc = cost_info['cost_source_description']
         is_rate_missing = cost_info['is_rate_missing']
 
-        tax_rate = component.tax_rate or Decimal("0.0")
-        if (self.shipment.shipment_type or "").upper() == "IMPORT" and component.leg != "DESTINATION":
-            tax_rate = Decimal("0.0")
-        tax_multiplier = Decimal("1.0") + tax_rate
+        # --- START TAX INTEGRATION ---
+        # 1. Build the adapters
+        version_adapter = TaxVersionAdapter(self)
+        charge_adapter = TaxChargeAdapter(component)
+
+        # 2. Apply the policy (this updates charge_adapter in place)
+        apply_gst_policy(version_adapter, charge_adapter)
+
+        # 3. Calculate Tax
+        tax_pct = Decimal(str(charge_adapter.gst_percentage)) / Decimal("100.0")
+        tax_multiplier = Decimal("1.0") + tax_pct
+
+        # 4. Apply Tax to Sell Rate
         sell_pgk_incl_gst = (sell_rate_pgk * tax_multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # --- END TAX INTEGRATION ---
 
         sell_fcy_currency = self.output_currency_code
         sell_fcy = self._convert_pgk_to_currency(sell_rate_pgk, sell_fcy_currency)

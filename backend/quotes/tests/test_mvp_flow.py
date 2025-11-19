@@ -149,11 +149,11 @@ def test_v3_quote_creation_with_overrides_and_totals():
     
     response_data = r.json()
     
-    # Current chargeable weight logic uses gross weight (85kg)
-    # Air freight cost = 85 * 7.10 = 603.50
+    # Dimensions: 120 x 80 x 70 = 672,000 ccm -> 112kg volumetric vs 85kg gross
+    # Air freight cost = 112 * 7.10 = 795.20
     # Dest charges cost = 120.00
-    # Total cost = 723.50
-    assert response_data['latest_version']['totals']['total_sell_fcy'] == '723.50'
+    # Total cost = 915.20
+    assert response_data['latest_version']['totals']['total_sell_fcy'] == '915.20'
 
 
 def test_v3_quote_rejects_legacy_airport_fields():
