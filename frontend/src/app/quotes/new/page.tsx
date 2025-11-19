@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, type Resolver } from "react-hook-form";
 import { Trash2, Loader2 } from "lucide-react";
 import type {
   Contact,
   CompanySearchResult,
   LocationSearchResult,
+  V3QuoteComputeRequest,
 } from "@/lib/types";
 import { getContactsForCompany, computeQuoteV3 } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -55,6 +56,35 @@ const SUPPORTED_LOCATION_TYPES = new Set<QuoteFormSchemaV3["origin_location_type
   Object.values(V3_LOCATION_TYPES),
 );
 
+const buildQuoteComputePayload = (
+  data: QuoteFormSchemaV3,
+): V3QuoteComputeRequest => ({
+  customer_id: data.customer_id,
+  contact_id: data.contact_id,
+  mode: data.mode,
+  incoterm: data.incoterm,
+  payment_term: data.payment_term,
+  service_scope: data.service_scope,
+  origin_location_id: data.origin_location_id,
+  destination_location_id: data.destination_location_id,
+  dimensions: data.dimensions.map((dimension) => ({
+    pieces: dimension.pieces,
+    length_cm: dimension.length_cm,
+    width_cm: dimension.width_cm,
+    height_cm: dimension.height_cm,
+    gross_weight_kg: dimension.gross_weight_kg,
+  })),
+  overrides: data.overrides?.map((override) => ({
+    service_component_id: override.service_component_id,
+    cost_fcy: override.cost_fcy,
+    currency: override.currency,
+    unit: override.unit,
+    min_charge_fcy: override.min_charge_fcy,
+  })),
+  is_dangerous_goods: data.is_dangerous_goods ?? false,
+  output_currency: data.output_currency || undefined,
+});
+
 export default function NewQuotePage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -68,7 +98,7 @@ export default function NewQuotePage() {
   const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
-    resolver: zodResolver(quoteFormSchemaV3),
+    resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
     mode: "onChange",
     reValidateMode: "onChange",
     defaultValues: {
@@ -203,7 +233,8 @@ export default function NewQuotePage() {
     }
 
     try {
-      const response = await computeQuoteV3(data);
+      const payload = buildQuoteComputePayload(data);
+      const response = await computeQuoteV3(payload);
       router.push(`/quotes/${response.id}`);
     } catch (error: unknown) {
       console.error("API Error:", error);

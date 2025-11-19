@@ -133,14 +133,16 @@ export default function HomePage() {
                 </Button>
               </TableCell>
               <TableCell>
-                {quote.origin_airport} → {quote.destination_airport}
+                {quote.origin_location}
+                {" -> "}
+                {quote.destination_location}
               </TableCell>
               <TableCell>
                 <Badge
                   variant={
                     quote.latest_version.totals.has_missing_rates
                       ? "destructive"
-                      : "success"
+                      : "secondary"
                   }
                 >
                   {quote.status}
@@ -161,10 +163,8 @@ export default function HomePage() {
     );
   };
 
-  const greeting =
-    user?.first_name || user?.username
-      ? `Welcome back, ${user.first_name || user.username}`
-      : "Welcome to RateEngine";
+  const displayName = user?.username;
+  const greeting = displayName ? `Welcome back, ${displayName}` : "Welcome to RateEngine";
 
   return (
     <ProtectedRoute>

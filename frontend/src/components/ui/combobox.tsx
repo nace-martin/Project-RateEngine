@@ -1,5 +1,6 @@
-// src/components/ui/combobox.tsx
 "use client";
+
+// src/components/ui/combobox.tsx
 
 import * as React from "react";
 import { Check, ChevronsUpDown } from "lucide-react";

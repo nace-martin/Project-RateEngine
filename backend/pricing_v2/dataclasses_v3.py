@@ -55,6 +55,7 @@ class ManualOverride:
     currency: str
     unit: str
     min_charge_fcy: Optional[Decimal] = None
+    valid_until: Optional[str] = None
 
 @dataclass(frozen=True)
 class QuoteInput:

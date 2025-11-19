@@ -15,7 +15,7 @@ from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, Locati
 
 from core.models import Currency, Country, City, Airport, FxSnapshot, Policy, Location
 from quotes.serializers import QuoteComputeRequestSerializer
-from services.models import ServiceComponent, IncotermRule
+from services.models import ServiceComponent, ServiceRule, ServiceRuleComponent
 
 
 pytestmark = pytest.mark.django_db
@@ -136,8 +136,19 @@ def v3_test_data(db):
         tax_rate=Decimal("0.00"),
     )
 
-    rule = IncotermRule.objects.create(mode="AIR", shipment_type="IMPORT", incoterm="DAP")
-    rule.service_components.set([freight, handling, fuel])
+    rule = ServiceRule.objects.create(
+        mode="AIR",
+        direction="IMPORT",
+        incoterm="DAP",
+        payment_term="PREPAID",
+        service_scope="A2A",
+        description="Unit Test Rule",
+    )
+    ServiceRuleComponent.objects.bulk_create([
+        ServiceRuleComponent(service_rule=rule, service_component=freight, sequence=1),
+        ServiceRuleComponent(service_rule=rule, service_component=handling, sequence=2),
+        ServiceRuleComponent(service_rule=rule, service_component=fuel, sequence=3),
+    ])
 
     return {
         "origin": origin,

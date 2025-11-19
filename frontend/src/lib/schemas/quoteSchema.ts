@@ -53,7 +53,7 @@ const airportCodeSchema = z
 // This is the individual dimension line schema
 const dimensionLineSchema = z.object({
   pieces: z.coerce
-    .number({ invalid_type_error: 'Must be a number' })
+    .number()
     .min(1, 'Pcs must be at least 1')
     .int(),
   length_cm: z.coerce
@@ -89,6 +89,7 @@ const manualCostOverrideSchema = z.object({
   currency: z.string().length(3, 'Must be 3-letter code'),
   unit: z.string().min(1, 'Unit is required'),
   min_charge_fcy: z.coerce.string().optional(),
+  valid_until: z.string().optional(),
 })
 
 // The main V3 Quote Request Schema

@@ -114,3 +114,5 @@ coverage/
 
 # Visual Studio (Windows)
 .vs/
+
+gha-creds-*.json

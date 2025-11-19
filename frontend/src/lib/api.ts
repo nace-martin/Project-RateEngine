@@ -11,6 +11,9 @@ import {
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
   RatecardFile,
+  Customer,
+  QuoteVersionCreatePayload,
+  StationSummary,
 } from './types';
 
 // Helper to get the token
@@ -19,6 +22,32 @@ const getToken = (): string | null => {
     return null;
   }
   return localStorage.getItem('authToken');
+};
+
+const resolveAuthToken = (tokenOverride?: string | null): string => {
+  const token = tokenOverride ?? getToken();
+  if (!token) {
+    throw new Error('Authentication token not available. Please log in.');
+  }
+  return token;
+};
+
+const parseErrorResponse = async (response: Response): Promise<string> => {
+  try {
+    const data = await response.json();
+    if (typeof data === 'string') {
+      return data;
+    }
+    if (data && typeof data === 'object') {
+      if ('detail' in data && typeof data.detail === 'string') {
+        return data.detail;
+      }
+      return JSON.stringify(data);
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return response.statusText || 'Unknown error';
 };
 
 export const apiClient = axios.create({
@@ -43,6 +72,15 @@ apiClient.interceptors.request.use(
 
 // --- Auth ---
 
+type RawLoginResponse = {
+  token?: string;
+  role?: string;
+  username?: string;
+  id?: number;
+  user_id?: number;
+  user?: Partial<User>;
+};
+
 export async function login(
   data: LoginData,
 ): Promise<{ token: string; user: User }> {
@@ -59,8 +97,34 @@ export async function login(
     throw new Error('Login failed. Please check your username and password.');
   }
 
-  const result = await response.json();
-  return result;
+  const rawResult = (await response.json()) as RawLoginResponse | null;
+  const result: RawLoginResponse = rawResult ?? {};
+  const token = typeof result.token === 'string' ? result.token : null;
+
+  if (!token) {
+    throw new Error('Login response did not include an auth token.');
+  }
+
+  const rawUser = result.user && typeof result.user === 'object' ? result.user : undefined;
+  const idCandidates = [
+    rawUser?.id,
+    result.id,
+    result.user_id,
+  ];
+  const normalizedUser: User = {
+    id: idCandidates.find((value): value is number => typeof value === 'number') ?? 0,
+    username:
+      (rawUser && typeof rawUser.username === 'string' && rawUser.username) ??
+      (typeof result.username === 'string' ? result.username : data.username),
+    role:
+      (rawUser && typeof rawUser.role === 'string' && rawUser.role) ??
+      (typeof result.role === 'string' ? result.role : 'sales'),
+  };
+
+  return {
+    token,
+    user: normalizedUser,
+  };
 }
 
 export async function getMe(): Promise<User> {
@@ -156,7 +220,7 @@ export async function getQuotesV3(): Promise<V3QuoteComputeResponse[]> {
   const url = API_BASE_URL + '/api/v3/quotes/';
   const response = await fetch(url, {
     headers: {
-      Authorization: `Token ${getToken()}`,
+      Authorization: `Token ${resolveAuthToken()}`,
     },
   });
 
@@ -175,17 +239,33 @@ export async function computeQuoteV3(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Token ${getToken()}`,
+      Authorization: `Token ${resolveAuthToken()}`,
     },
     body: JSON.stringify(data),
   });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    console.error('Quote compute error:', errorData);
-    throw new Error(
-      `Failed to create quote: ${JSON.stringify(errorData.detail) || response.statusText}`,
-    );
+    let errorData: unknown = null;
+    try {
+      errorData = await response.json();
+    } catch {
+      // ignore parse errors so we can still surface a useful message
+    }
+    console.error('Quote compute error:', errorData || response.statusText);
+
+    let message = response.statusText || 'Unknown error';
+    if (typeof errorData === 'string') {
+      message = errorData;
+    } else if (errorData && typeof errorData === 'object') {
+      const payload = errorData as Record<string, unknown>;
+      if ('detail' in payload && typeof payload.detail === 'string') {
+        message = payload.detail;
+      } else if (Object.keys(payload).length > 0) {
+        message = JSON.stringify(payload);
+      }
+    }
+
+    throw new Error(`Failed to create quote: ${message}`);
   }
 
   return response.json();
@@ -197,7 +277,7 @@ export async function getQuoteV3(
   const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `Token ${getToken()}`,
+      Authorization: `Token ${resolveAuthToken()}`,
     },
   });
 
@@ -214,16 +294,18 @@ export async function getQuoteV3(
 export async function uploadRatecard(
   file: File,
   supplierId: string,
+  tokenOverride?: string | null,
 ): Promise<RatecardFile> {
   const url = API_BASE_URL + '/api/v3/ratecards/upload/';
   const formData = new FormData();
   formData.append('file', file);
   formData.append('supplier_id', supplierId);
 
+  const token = resolveAuthToken(tokenOverride);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Token ${getToken()}`,
+      Authorization: `Token ${token}`,
     },
     body: formData,
   });
@@ -237,4 +319,123 @@ export async function uploadRatecard(
   }
 
   return response.json();
+}
+
+export async function getRateCards(tokenOverride?: string | null): Promise<RatecardFile[]> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + '/api/v3/ratecards/';
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return [];
+    }
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch rate cards: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function getCustomer(tokenOverride: string | null | undefined, customerId: string): Promise<Customer> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/customers/${customerId}/`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch customer: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function updateCustomer(
+  tokenOverride: string | null | undefined,
+  customerId: string,
+  payload: Partial<Customer>,
+): Promise<Customer> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/customers/${customerId}/`;
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update customer: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function listStations(tokenOverride?: string | null): Promise<StationSummary[]> {
+  const token = resolveAuthToken(tokenOverride);
+  const searchFallback = 'a'; // basic seed term to return a reasonable list
+  const url = API_BASE_URL + `/api/v3/core/airports/search/?search=${encodeURIComponent(searchFallback)}`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch stations: ${detail}`);
+  }
+
+  const airports: AirportSearchResult[] = await response.json();
+  return airports.map((airport, index) => ({
+    id: index + 1,
+    iata_code: airport.iata_code,
+    name: airport.name,
+    city_country: airport.city_country,
+  }));
+}
+
+export async function createQuoteVersion(
+  tokenOverride: string | null | undefined,
+  quoteId: string,
+  payload: QuoteVersionCreatePayload,
+) {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/versions/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create quote version: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function uploadRateCard(
+  tokenOverride: string | null | undefined,
+  file: File,
+  supplierId: string,
+  _fileType?: string,
+) {
+  void _fileType;
+  return uploadRatecard(file, supplierId, tokenOverride);
 }

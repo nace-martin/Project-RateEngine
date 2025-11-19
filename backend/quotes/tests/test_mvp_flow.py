@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from core.models import Airport, City, Country, FxSnapshot, Currency, Policy, Location
 from parties.models import Company, Contact, CustomerCommercialProfile
-from services.models import ServiceComponent, IncotermRule, LEG_CHOICES
+from services.models import ServiceComponent, ServiceRule, ServiceRuleComponent, LEG_CHOICES
 from quotes.models import Quote
 
 pytestmark = pytest.mark.django_db
@@ -39,13 +39,24 @@ def _setup_test_data():
     air_freight = ServiceComponent.objects.create(code='AIR_FREIGHT', description='Air Freight', cost_type='COGS', unit='PER_KG', mode='AIR', leg=LEG_CHOICES[1][0])
     dest_charges = ServiceComponent.objects.create(code='DEST_CHARGES', description='Destination Charges', cost_type='COGS', unit='PER_SHIPMENT', mode='AIR', leg=LEG_CHOICES[2][0])
 
-    # Create an incoterm rule
-    incoterm_rule, _ = IncotermRule.objects.get_or_create(
+    service_rule, _ = ServiceRule.objects.get_or_create(
         mode='AIR',
-        shipment_type='IMPORT',
-        incoterm='DAP'
+        direction='IMPORT',
+        incoterm='DAP',
+        payment_term='PREPAID',
+        service_scope='A2A',
+        defaults={'description': 'Test rule'},
     )
-    incoterm_rule.service_components.add(air_freight, dest_charges)
+    ServiceRuleComponent.objects.update_or_create(
+        service_rule=service_rule,
+        service_component=air_freight,
+        defaults={'sequence': 1},
+    )
+    ServiceRuleComponent.objects.update_or_create(
+        service_rule=service_rule,
+        service_component=dest_charges,
+        defaults={'sequence': 2},
+    )
 
     Currency.objects.get_or_create(code="PGK", defaults={"name": "Papua New Guinean Kina"})
     Currency.objects.get_or_create(code="AUD", defaults={"name": "Australian Dollar"})

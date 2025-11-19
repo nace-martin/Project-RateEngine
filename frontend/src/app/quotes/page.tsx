@@ -115,14 +115,14 @@ export default function QuotesPage() {
                   <Link href={`/quotes/${quote.id}`}>{quote.quote_number}</Link>
                 </Button>
               </TableCell>
-              <TableCell>{quote.origin_airport}</TableCell>
-              <TableCell>{quote.destination_airport}</TableCell>
+              <TableCell>{quote.origin_location}</TableCell>
+              <TableCell>{quote.destination_location}</TableCell>
               <TableCell>
                 <Badge
                   variant={
                     quote.latest_version.totals.has_missing_rates
                       ? "destructive"
-                      : "success"
+                      : "secondary"
                   }
                 >
                   {quote.status}

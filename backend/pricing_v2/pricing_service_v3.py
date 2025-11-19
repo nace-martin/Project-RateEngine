@@ -13,7 +13,6 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 from django.utils import timezone
 import uuid
-from django.conf import settings
 
 # --- UPDATED IMPORTS ---
 # We now import the *correct* V3 dataclasses and remove the old ones.
@@ -30,7 +29,7 @@ from .dataclasses_v3 import (
 
 from core.models import FxSnapshot, Policy, Surcharge, LocalTariff
 from ratecards.models import PartnerRateLane, PartnerRate
-from services.models import ServiceComponent, IncotermRule, ServiceRule
+from services.models import ServiceComponent, ServiceRule
 
 # A constant for our home currency
 HOME_CURRENCY = "PGK"
@@ -122,27 +121,17 @@ class PricingServiceV3:
         Gets the list of services to be quoted based on the incoterm.
         """
         service_rule_components = self._get_service_rule_components()
-        if service_rule_components is not None:
-            if self._is_service_rule_shadow_mode_enabled():
-                legacy_components = self._get_incoterm_rule_components()
-                self._log_service_rule_diff(service_rule_components, legacy_components)
+        if service_rule_components:
             return service_rule_components
 
-        return self._get_incoterm_rule_components()
-
-    def _get_incoterm_rule_components(self) -> List[ServiceComponent]:
-        try:
-            rule = IncotermRule.objects.get(
-                mode=self.shipment.mode,
-                shipment_type=self.shipment.shipment_type,
-                incoterm=self.shipment.incoterm
-            )
-            return list(rule.service_components.filter(is_active=True))
-        except IncotermRule.DoesNotExist:
-            return list(ServiceComponent.objects.filter(
-                mode=self.shipment.mode,
-                is_active=True
-            ))
+        logger.warning(
+            "No ServiceRule resolved for %s %s %s %s",
+            self.shipment.mode,
+            self.shipment.shipment_type,
+            self.shipment.incoterm,
+            getattr(self.shipment, "service_scope", None),
+        )
+        return []
 
     def _get_service_rule_components(self) -> Optional[List[ServiceComponent]]:
         """
@@ -161,34 +150,6 @@ class PricingServiceV3:
             if component.is_active:
                 components.append(component)
         return components
-
-    def _is_service_rule_shadow_mode_enabled(self) -> bool:
-        return getattr(settings, "SERVICE_RULE_SHADOW_MODE", False)
-
-    def _log_service_rule_diff(
-        self,
-        service_rule_components: List[ServiceComponent],
-        incoterm_components: List[ServiceComponent],
-    ) -> None:
-        service_codes = [c.code for c in service_rule_components]
-        legacy_codes = [c.code for c in incoterm_components]
-        missing = [code for code in legacy_codes if code not in service_codes]
-        extras = [code for code in service_codes if code not in legacy_codes]
-
-        if missing or extras:
-            logger.info(
-                "ServiceRule shadow diff detected",
-                extra={
-                    "service_rule_id": getattr(self.service_rule, "id", None),
-                    "mode": self.shipment.mode,
-                    "direction": self.shipment.shipment_type,
-                    "incoterm": self.shipment.incoterm,
-                    "payment_term": self.shipment.payment_term,
-                    "service_scope": getattr(self.shipment, "service_scope", None),
-                    "missing_components": missing,
-                    "extra_components": extras,
-                }
-            )
 
     def _resolve_service_rule(self) -> None:
         """
@@ -230,7 +191,6 @@ class PricingServiceV3:
 
         if derived_currency:
             self.output_currency_code = derived_currency
-            self.quote_input.output_currency = derived_currency
 
     def _derive_currency_from_rule(self, rule: ServiceRule) -> Optional[str]:
         ccy_type = rule.output_currency_type or "DESTINATION"

@@ -12,6 +12,21 @@ export interface User {
   role: string;
 }
 
+export interface QuoteCustomerRef {
+  id: string;
+  name?: string | null;
+  company_name?: string | null;
+  email?: string | null;
+}
+
+export interface QuoteContactRef {
+  id: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+}
+
 // --- PARTIES (COMPANY/CONTACT) TYPES ---
 export interface Company {
   id: string; // UUID
@@ -54,6 +69,34 @@ export interface RatecardFile {
   valid_until: string;
   status: string;
   created_at: string; // ISO date string
+  file_type?: string;
+}
+
+export interface StationSummary {
+  id: number;
+  iata_code: string;
+  name?: string;
+  city_country?: string;
+}
+
+export interface CustomerAddress {
+  address_line_1: string;
+  address_line_2?: string;
+  city: string;
+  state_province?: string;
+  postcode?: string;
+  country: string;
+}
+
+export interface Customer {
+  id: string;
+  company_name: string;
+  audience_type: string;
+  address_description?: string | null;
+  primary_address?: CustomerAddress | null;
+  contact_person_name?: string;
+  contact_person_email?: string;
+  contact_person_phone?: string;
 }
 
 // --- MISC HELPER TYPES ---
@@ -76,35 +119,20 @@ export interface V3ManualOverride {
   min_charge_fcy?: string;
 }
 
-// --- THIS IS THE UPDATED INTERFACE ---
 export interface V3QuoteComputeRequest {
   customer_id: string;
   contact_id: string;
   mode: string;
   incoterm: string;
   service_scope: 'D2D' | 'D2A' | 'A2D' | 'A2A';
-  
-  // These fields are new
-  origin_airport: string;       // e.g., "BNE" (legacy field, blank for non-air)
-  destination_airport: string;  // e.g., "POM"
-  // TODO: Add port fields when sea is ready
-  origin_location_type: 'AIRPORT' | 'PORT' | 'ADDRESS' | 'CITY';
-  origin_location_id: string;   // Backend location identifier (IATA, UUID, etc.)
-  destination_location_type: 'AIRPORT' | 'PORT' | 'ADDRESS' | 'CITY';
+  origin_location_id: string;
   destination_location_id: string;
-  
-  // These fields were removed:
-  // shipment_type: string;
-  // origin_airport_code: string;
-  // destination_airport_code: string;
-
   dimensions: V3DimensionInput[];
-  payment_term?: string;
+  payment_term: string;
   is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];
   output_currency?: string;
 }
-// --- END UPDATE ---
 
 
 // --- V3 QUOTE RESPONSE TYPES ---
@@ -146,6 +174,7 @@ export interface V3QuoteVersion {
   version_number: number;
   status: string;
   created_at: string; // ISO date string
+  payload_json?: V3QuoteComputeRequest;
   lines: V3QuoteLine[];
   totals: V3QuoteTotal;
 }
@@ -153,8 +182,8 @@ export interface V3QuoteVersion {
 export interface V3QuoteComputeResponse {
   id: string; // UUID
   quote_number: string;
-  customer: string; // Customer UUID
-  contact: string; // Contact UUID
+  customer: string | QuoteCustomerRef;
+  contact: string | QuoteContactRef;
   mode: string;
   shipment_type: string; // The backend calculates and returns this
   incoterm: string;
@@ -162,13 +191,45 @@ export interface V3QuoteComputeResponse {
   service_scope: string;
   output_currency: string;
   
-  // The backend now returns the validated objects
-  origin_airport: string; // "BNE"
-  destination_airport: string; // "POM"
-  // TODO: Add port fields
+  origin_location: string;
+  destination_location: string;
   
   status: string;
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
   latest_version: V3QuoteVersion;
+}
+
+export interface QuoteVersionPieceInput {
+  length_cm: number;
+  width_cm: number;
+  height_cm: number;
+  weight_kg: number;
+  count: number;
+}
+
+export interface QuoteVersionChargeInput {
+  stage: string;
+  code: string;
+  description: string;
+  basis: string;
+  qty: number;
+  unit_price: number;
+  side: string;
+  currency: string;
+}
+
+export interface QuoteVersionCreatePayload {
+  origin: number;
+  destination: number;
+  pieces: QuoteVersionPieceInput[];
+  charges: QuoteVersionChargeInput[];
+  volumetric_divisor: number;
+  volumetric_weight_kg: number;
+  chargeable_weight_kg: number;
+  sell_currency: string;
+  valid_from: string;
+  valid_to: string;
+  notes?: string;
+  internal_notes?: string;
 }

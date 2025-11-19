@@ -21,7 +21,9 @@ export default function LoginPage() {
 
     try {
       const { token, user } = await apiLogin({ username, password });
-      login(token, user);
+      const resolvedRole = user?.role ?? 'sales';
+      const resolvedUsername = user?.username ?? username;
+      login(token, resolvedRole, resolvedUsername);
       router.push('/quotes');
     } catch (err: unknown) {
       console.error('Login failed:', err);
