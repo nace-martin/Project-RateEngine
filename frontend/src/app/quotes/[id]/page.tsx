@@ -33,7 +33,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2 } from "lucide-react";
 
 export default function QuoteDetailPage() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const params = useParams();
   const id = params.id as string;
 
@@ -120,7 +120,7 @@ export default function QuoteDetailPage() {
     setRecalculateError(null);
     setRecalculateSuccess(false);
     try {
-      const updatedQuote = await createQuoteVersion(null, quote.id, payload);
+      const updatedQuote = await createQuoteVersion(token, quote.id, payload);
       setQuote(updatedQuote);
       setManualOverrides(
         updatedQuote.latest_version?.payload_json?.overrides ??
