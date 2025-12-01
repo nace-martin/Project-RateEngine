@@ -5,7 +5,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -42,24 +41,22 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
   const currency = totals.total_sell_fcy_currency;
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="overflow-hidden">
+      <CardHeader className="bg-muted/30 pb-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-3xl">
-            Quote: {quote.quote_number}
-          </CardTitle>
+          <div>
+            <CardTitle className="text-2xl font-bold text-primary">Quote Summary</CardTitle>
+            <CardDescription>Final breakdown and totals</CardDescription>
+          </div>
           {totals.has_missing_rates && (
-            <Badge variant="destructive" className="text-base">
-              Incomplete - Missing Rates
+            <Badge variant="destructive" className="text-sm px-3 py-1">
+              Incomplete
             </Badge>
           )}
         </div>
-        <CardDescription className="text-lg">
-          {quote.origin_location} to {quote.destination_location} ({quote.mode})
-        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+      <CardContent className="p-6">
+        <div className="mb-8 grid grid-cols-2 gap-6 md:grid-cols-4">
           <InfoBox label="Status" value={quote.status} />
           <InfoBox label="Incoterm" value={quote.incoterm} />
           <InfoBox label="Payment Term" value={quote.payment_term} />
@@ -69,14 +66,11 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
           />
         </div>
 
-        <Separator />
-
-        <div className="mt-6">
-          <h3 className="mb-4 text-xl font-semibold">Charges</h3>
+        <div className="rounded-lg border shadow-sm overflow-hidden">
           <Table>
-            <TableHeader>
+            <TableHeader className="bg-muted/50">
               <TableRow>
-                <TableHead>Category</TableHead>
+                <TableHead className="w-[150px]">Category</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="text-right">Sell (Ex. GST)</TableHead>
                 <TableHead className="text-right">Sell (Inc. GST)</TableHead>
@@ -84,22 +78,24 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
             </TableHeader>
             <TableBody>
               {version.lines.map((line: V3QuoteLine) => (
-                <TableRow key={line.id}>
-                  <TableCell>
+                <TableRow key={line.id} className="hover:bg-muted/30">
+                  <TableCell className="font-medium text-muted-foreground">
                     {line.service_component.category}
                   </TableCell>
                   <TableCell>
-                    {line.service_component.description}
-                    {line.is_rate_missing && (
-                      <Badge variant="outline" className="ml-2">
-                        Missing
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {line.service_component.description}
+                      {line.is_rate_missing && (
+                        <Badge variant="destructive" className="text-[10px] h-5 px-1.5">
+                          Missing
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-mono text-foreground">
                     {formatCurrency(line.sell_fcy, currency)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-mono font-medium text-foreground">
                     {formatCurrency(line.sell_fcy_incl_gst, currency)}
                   </TableCell>
                 </TableRow>
@@ -109,26 +105,35 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
         </div>
       </CardContent>
 
-      <Separator />
-
-      <CardFooter className="mt-6 flex flex-col items-end space-y-2">
-        <div className="flex w-full max-w-sm justify-between">
-          <span className="text-muted-foreground">Total (Excl. GST)</span>
-          <span className="font-medium">
-            {formatCurrency(totals.total_sell_fcy, currency)}
-          </span>
+      <div className="bg-muted/30 p-6">
+        <div className="flex flex-col items-end space-y-3">
+          <div className="flex w-full max-w-sm justify-between text-sm">
+            <span className="text-muted-foreground">Total (Excl. GST)</span>
+            <span className="font-medium font-mono">
+              {formatCurrency(totals.total_sell_fcy, currency)}
+            </span>
+          </div>
+          <div className="flex w-full max-w-sm justify-between text-sm">
+            <span className="text-muted-foreground">GST</span>
+            <span className="font-medium font-mono">
+              {formatCurrency(
+                (parseFloat(totals.total_sell_fcy_incl_gst || "0") - parseFloat(totals.total_sell_fcy || "0")).toString(),
+                currency
+              )}
+            </span>
+          </div>
+          <Separator className="my-2 w-full max-w-sm" />
+          <div className="flex w-full max-w-sm justify-between items-end">
+            <span className="text-base font-semibold text-foreground">Total Amount</span>
+            <div className="text-right">
+              <span className="block text-3xl font-bold text-primary tracking-tight">
+                {formatCurrency(totals.total_sell_fcy_incl_gst, currency)}
+              </span>
+              <span className="text-xs text-muted-foreground uppercase font-medium">{currency}</span>
+            </div>
+          </div>
         </div>
-        <div className="flex w-full max-w-sm justify-between text-2xl font-bold">
-          <span className="text-primary">Total (Incl. GST)</span>
-          <span className="text-primary">
-            {formatCurrency(totals.total_sell_fcy_incl_gst, currency)}
-          </span>
-        </div>
-        <div className="flex w-full max-w-sm justify-between">
-          <span className="text-muted-foreground">Currency</span>
-          <span className="font-medium">{currency}</span>
-        </div>
-      </CardFooter>
+      </div>
     </Card>
   );
 }

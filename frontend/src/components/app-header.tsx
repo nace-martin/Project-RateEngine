@@ -1,52 +1,22 @@
 'use client';
 
-import { Button } from '@/components/ui/button';
-import Link from 'next/link';
-import { useAuth } from '@/context/auth-context';
-
-const navButtonClasses =
-  'text-sm font-medium text-primary hover:text-primary hover:bg-primary/10 focus-visible:ring-primary/40';
+import { usePathname } from 'next/navigation';
 
 export default function AppHeader() {
-  const { user, logout, isAuthenticated } = useAuth();
+  const pathname = usePathname();
 
-  const canSeeSettings = user?.role === 'manager' || user?.role === 'finance';
+  // Simple breadcrumb-like title based on path
+  const getTitle = () => {
+    if (pathname === '/') return 'Dashboard';
+    const parts = pathname.split('/').filter(Boolean);
+    return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' / ');
+  };
 
   return (
-    <header className="w-full border-b bg-white">
-      <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="font-bold text-lg text-primary">RateEngine</Link>
-          {isAuthenticated && (
-            <nav className="flex items-center gap-3 text-sm">
-              <Button variant="ghost" className={navButtonClasses} asChild>
-                <Link href="/quotes">Quotes</Link>
-              </Button>
-              <Button variant="ghost" className={navButtonClasses} asChild>
-                <Link href="/customers">Customers</Link>
-              </Button>
-              {canSeeSettings && (
-                <Button variant="ghost" className={navButtonClasses} asChild>
-                  <Link href="/settings">System Settings</Link>
-                </Button>
-              )}
-            </nav>
-          )}
-        </div>
-        <div className="text-sm text-gray-700 flex items-center gap-3">
-          {isAuthenticated ? (
-            <>
-              <span>{user?.username} ({user?.role})</span>
-              <Button variant="outline" size="sm" onClick={logout}>Logout</Button>
-            </>
-          ) : (
-            <Button asChild size="sm">
-              <Link href="/login">Login</Link>
-            </Button>
-          )}
-        </div>
-      </div>
+    <header className="w-full h-16 border-b bg-white/50 backdrop-blur-sm flex items-center px-6 sticky top-0 z-10">
+      <h2 className="text-lg font-semibold text-foreground capitalize">
+        {getTitle()}
+      </h2>
     </header>
   );
 }
-

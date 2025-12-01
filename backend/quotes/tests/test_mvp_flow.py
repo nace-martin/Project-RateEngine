@@ -1,8 +1,8 @@
-
 import pytest
 from decimal import Decimal
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APITestCase
 from django.contrib.auth import get_user_model
+import json
 
 from django.utils import timezone
 from core.models import Airport, City, Country, FxSnapshot, Currency, Policy, Location
@@ -184,3 +184,179 @@ def test_v3_quote_rejects_legacy_airport_fields():
     response = client.post("/api/v3/quotes/compute/", data=payload, format="json")
     assert response.status_code == 400
     assert "origin_location_id" in response.json()
+
+# --- V3 Weight Break Tier Rating Tests ---
+
+class WeightBreakTierRatingTestCase(APITestCase):
+    def setUp(self):
+        # 1. Setup User and Client
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="tier_tester", email="tier_tester@example.com", password="pass", is_staff=True, role='manager'
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+        # 2. Setup Currencies, FX, and Policy
+        Currency.objects.get_or_create(code="PGK", defaults={"name": "Papua New Guinean Kina"})
+        Currency.objects.get_or_create(code="AUD", defaults={"name": "Australian Dollar"})
+        FxSnapshot.objects.create(
+            as_of_timestamp=timezone.now(),
+            source="test",
+            # Use 1:1 AUD:PGK for easy cost assertion
+            rates={"AUD": {"tt_buy": "2.50", "tt_sell": "2.60"}, "USD": {"tt_buy": 1.0, "tt_sell": 1.0}},
+        )
+        Policy.objects.get_or_create(
+            name="Test Policy",
+            defaults={
+                "margin_pct": Decimal("0.15"), # 15% margin
+                "caf_import_pct": Decimal("0.05"), # 5% CAF on buy rates
+                "effective_from": timezone.now(),
+                "is_active": True,
+            },
+        )
+
+        # 3. Setup Locations
+        bne_ap = _mk_airport("BNE", "Brisbane", "AU")
+        pom_ap = _mk_airport("POM", "Port Moresby", "PG")
+        self.origin_loc = _ensure_location_for_airport(bne_ap)
+        self.dest_loc = _ensure_location_for_airport(pom_ap)
+
+        # 4. Setup Customer
+        self.customer = _mk_customer("Tiered Rate Customer")
+        self.contact = Contact.objects.create(company=self.customer, first_name='Tier', last_name='Test', email='tier@test.com')
+        CustomerCommercialProfile.objects.get_or_create(company=self.customer, defaults={'default_margin_percent': 0})
+        
+        # 5. Setup Service Component with TIERED rates
+        self.air_freight_tiered = ServiceComponent.objects.create(
+            code='FRT_AIR',
+            description='Air Freight (Tiered)',
+            mode='AIR',
+            leg='MAIN',
+            tiering_json={
+                "type": "weight_break",
+                "currency": "AUD",
+                "minimum_charge": "330.00",
+                "breaks": [
+                    { "min_kg": 45,   "rate_per_kg": "7.05" },
+                    { "min_kg": 100,  "rate_per_kg": "6.75" },
+                    { "min_kg": 250,  "rate_per_kg": "6.55" },
+                    { "min_kg": 500,  "rate_per_kg": "6.25" },
+                    { "min_kg": 1000, "rate_per_kg": "5.95" }
+                ]
+            }
+        )
+        
+        # 6. Setup a simple destination charge for total calculation
+        self.dest_charges_simple = ServiceComponent.objects.create(
+            code='DEST_HAND', description='Destination Handling', mode='AIR', leg='DESTINATION', base_pgk_cost="150.00"
+        )
+        
+        # 7. Setup the Service Rule to include these components
+        service_rule, _ = ServiceRule.objects.get_or_create(
+            mode='AIR', direction='IMPORT', incoterm='EXW', payment_term='COLLECT', service_scope='D2D',
+            defaults={'description': 'Test Tiered Rule'},
+        )
+        ServiceRuleComponent.objects.get_or_create(
+            service_rule=service_rule, service_component=self.air_freight_tiered, defaults={'sequence': 1}
+        )
+        ServiceRuleComponent.objects.get_or_create(
+            service_rule=service_rule, service_component=self.dest_charges_simple, defaults={'sequence': 2}
+        )
+
+    def _get_quote_line(self, response_data, component_code):
+        """Helper to find a specific charge line in the quote response."""
+        lines = response_data['latest_version']['lines']
+        for line in lines:
+            if line['service_component']['code'] == component_code:
+                return line
+        return None
+
+    def test_quote_with_mid_tier_weight(self):
+        """Tests a chargeable weight that falls into the 100kg tier."""
+        payload = {
+            "customer_id": str(self.customer.id), "contact_id": str(self.contact.id), "mode": "AIR",
+            "incoterm": "EXW", "service_scope": "D2D", "payment_term": "COLLECT",
+            "origin_location_id": str(self.origin_loc.id), "destination_location_id": str(self.dest_loc.id),
+            "dimensions": [{"pieces": 1, "length_cm": 10, "width_cm": 10, "height_cm": 10, "gross_weight_kg": "120.00"}] # 120kg falls in 100kg tier
+        }
+        
+        r = self.client.post("/api/v3/quotes/compute/", data=payload, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        
+        response_data = r.json()
+        
+        # --- Assertions for FRT_AIR line ---
+        frt_line = self._get_quote_line(response_data, 'FRT_AIR')
+        self.assertIsNotNone(frt_line)
+        
+        # Cost Calculation:
+        # Rate = 6.75 AUD per kg
+        # Cost FCY = 120kg * 6.75 = 810.00 AUD
+        self.assertEqual(frt_line['cost_fcy'], '810.00')
+        self.assertEqual(frt_line['cost_fcy_currency'], 'AUD')
+        self.assertEqual(frt_line['cost_source'], 'TIERED_RATECARD')
+        
+        # Cost PGK = Cost FCY * (FX Rate * (1 + CAF))
+        # Cost PGK = 810.00 * (2.50 * 1.05) = 810.00 * 2.625 = 2126.25 PGK
+        self.assertEqual(frt_line['cost_pgk'], '2126.25')
+
+        # Sell Calculation:
+        # Sell PGK = Cost PGK * (1 + Margin)
+        # Sell PGK = 2126.25 * 1.15 = 2445.19 PGK
+        self.assertEqual(frt_line['sell_pgk'], '2445.19')
+
+    def test_quote_with_minimum_charge(self):
+        """Tests a chargeable weight below the lowest tier, which should trigger the minimum."""
+        payload = {
+            "customer_id": str(self.customer.id), "contact_id": str(self.contact.id), "mode": "AIR",
+            "incoterm": "EXW", "service_scope": "D2D", "payment_term": "COLLECT",
+            "origin_location_id": str(self.origin_loc.id), "destination_location_id": str(self.dest_loc.id),
+            "dimensions": [{"pieces": 1, "length_cm": 10, "width_cm": 10, "height_cm": 10, "gross_weight_kg": "20.00"}] # 20kg is below 45kg tier
+        }
+
+        r = self.client.post("/api/v3/quotes/compute/", data=payload, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        response_data = r.json()
+        
+        frt_line = self._get_quote_line(response_data, 'FRT_AIR')
+        self.assertIsNotNone(frt_line)
+        
+        # Cost Calculation:
+        # Rate for 20kg would be 7.05 -> 20 * 7.05 = 141.00 AUD
+        # This is LESS than the minimum of 330.00 AUD, so minimum applies.
+        self.assertEqual(frt_line['cost_fcy'], '330.00') # <-- Should be the minimum charge
+        self.assertEqual(frt_line['cost_fcy_currency'], 'AUD')
+
+        # Cost PGK = 330.00 * (2.50 * 1.05) = 330.00 * 2.625 = 866.25 PGK
+        self.assertEqual(frt_line['cost_pgk'], '866.25')
+        
+        # Sell PGK = 866.25 * 1.15 = 996.19 PGK
+        self.assertEqual(frt_line['sell_pgk'], '996.19')
+
+    def test_quote_with_highest_tier(self):
+        """Tests a chargeable weight that falls into the highest tier."""
+        payload = {
+            "customer_id": str(self.customer.id), "contact_id": str(self.contact.id), "mode": "AIR",
+            "incoterm": "EXW", "service_scope": "D2D", "payment_term": "COLLECT",
+            "origin_location_id": str(self.origin_loc.id), "destination_location_id": str(self.dest_loc.id),
+            "dimensions": [{"pieces": 1, "length_cm": 10, "width_cm": 10, "height_cm": 10, "gross_weight_kg": "1500.00"}] # 1500kg falls in 1000kg tier
+        }
+        
+        r = self.client.post("/api/v3/quotes/compute/", data=payload, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        response_data = r.json()
+
+        frt_line = self._get_quote_line(response_data, 'FRT_AIR')
+        self.assertIsNotNone(frt_line)
+
+        # Cost Calculation:
+        # Rate = 5.95 AUD per kg
+        # Cost FCY = 1500kg * 5.95 = 8925.00 AUD
+        self.assertEqual(frt_line['cost_fcy'], '8925.00')
+        
+        # Cost PGK = 8925.00 * (2.50 * 1.05) = 8925.00 * 2.625 = 23428.13 PGK
+        self.assertEqual(frt_line['cost_pgk'], '23428.13')
+        
+        # Sell PGK = 23428.13 * 1.15 = 26942.35 PGK
+        self.assertEqual(frt_line['sell_pgk'], '26942.35')

@@ -60,17 +60,7 @@ export interface LocationSearchResult {
   type: string;          // e.g., "airport", "city", "port", "address"
 }
 
-export interface RatecardFile {
-  id: string; // This is a UUID
-  name: string;
-  supplier_name: string;
-  currency_code: string;
-  valid_from: string;
-  valid_until: string;
-  status: string;
-  created_at: string; // ISO date string
-  file_type?: string;
-}
+
 
 export interface StationSummary {
   id: number;
@@ -191,10 +181,10 @@ export interface V3QuoteComputeResponse {
   payment_term: string;
   service_scope: string;
   output_currency: string;
-  
+
   origin_location: string;
   destination_location: string;
-  
+
   status: string;
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
@@ -205,4 +195,53 @@ export type QuoteVersionChargeInput = V3ManualOverride;
 
 export interface QuoteVersionCreatePayload {
   charges: QuoteVersionChargeInput[];
+}
+
+// --- CHARGE ENGINE TYPES (STEP 2) ---
+
+export interface BuyCharge {
+  component: string; // component_code
+  source: string;
+  supplier_id?: string | null;
+  currency: string;
+  method: string;
+  unit?: string | null;
+  min_charge: string;
+  flat_amount?: string | null;
+  rate_per_unit?: string | null;
+  percent_value?: string | null;
+  percent_of_component?: string | null;
+  description: string;
+}
+
+export interface SellLine {
+  line_type: 'COMPONENT' | 'CAF' | 'SURCHARGE';
+  component?: string | null; // component_code
+  description: string;
+  cost_pgk: string;
+  sell_pgk: string;
+  sell_fcy: string;
+  sell_currency: string;
+  margin_percent: string;
+  exchange_rate: string;
+  source: string;
+}
+
+export interface QuoteComputeTotals {
+  cost_pgk: string;
+  sell_pgk: string;
+  caf_pgk: string;
+  currency: string;
+  [key: string]: string | undefined; // For dynamic keys like sell_aud, caf_aud
+}
+
+export interface QuoteComputeResult {
+  quote_id: string;
+  quote_number: string;
+  buy_lines: BuyCharge[];
+  sell_lines: SellLine[];
+  totals: QuoteComputeTotals;
+  exchange_rates: Record<string, string>;
+  computation_date: string;
+  notes: string[];
 }

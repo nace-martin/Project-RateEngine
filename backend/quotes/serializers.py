@@ -7,6 +7,7 @@ from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
 from core.models import Location
+from parties.serializers import CustomerV3Serializer, ContactV3Serializer
 # --- END IMPORTS ---
 
 # --- V3 Serializers ---
@@ -102,6 +103,32 @@ class V3QuoteVersionSerializer(serializers.ModelSerializer):
         model = QuoteVersion
         exclude = ('quote',) # Exclude the parent link
 
+# --- V3 RESPONSE SERIALIZERS ---
+# These define what the API *returns* to the frontend.
+
+class V3ServiceComponentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ServiceComponent
+        fields = ('id', 'code', 'description', 'category', 'unit')
+
+class V3QuoteLineSerializer(serializers.ModelSerializer):
+    service_component = V3ServiceComponentSerializer()
+    class Meta:
+        model = QuoteLine
+        exclude = ('quote_version',) # Exclude the parent link
+
+class V3QuoteTotalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuoteTotal
+        exclude = ('quote_version',) # Exclude the parent link
+
+class V3QuoteVersionSerializer(serializers.ModelSerializer):
+    lines = V3QuoteLineSerializer(many=True)
+    totals = V3QuoteTotalSerializer()
+    class Meta:
+        model = QuoteVersion
+        exclude = ('quote',) # Exclude the parent link
+
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
     The main serializer for the Quote model, used for GET requests
@@ -110,12 +137,12 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     latest_version = V3QuoteVersionSerializer(read_only=True)
     
     # --- UPDATED FIELDS ---
+    customer = CustomerV3Serializer(read_only=True)
+    contact = ContactV3Serializer(read_only=True)
+    
     # Use StringRelatedField to return the IATA code (e.g., "BNE")
     origin_location = serializers.StringRelatedField()
     destination_location = serializers.StringRelatedField()
-    # TODO: Add origin_port and destination_port
-    # --- END UPDATES ---
-    
     class Meta:
         model = Quote
         # --- UPDATED FIELDS ---

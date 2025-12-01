@@ -405,25 +405,95 @@ class PricingServiceV3:
             is_rate_missing=is_rate_missing
         )
 
+    def _calculate_weight_break_cost(self, component: ServiceComponent) -> Optional[dict]:
+        """
+        Calculates cost for components with tiered, weight-based rating.
+        This logic is driven by a 'tiering_json' field on the ServiceComponent.
+        """
+        data = component.tiering_json
+        if not isinstance(data, dict) or data.get("type") != "weight_break":
+            return None
+
+        chargeable_weight = self.context["chargeable_weight_kg"]
+        currency = data.get("currency", HOME_CURRENCY)
+        min_charge = Decimal(str(data.get("minimum_charge", "0.00")))
+        breaks = data.get("breaks", [])
+
+        if not breaks:
+            return None
+
+        # Find the correct rate for the chargeable weight
+        # Tiers should be sorted from highest min_kg to lowest
+        selected_rate = None
+        sorted_breaks = sorted(
+            breaks,
+            key=lambda x: Decimal(str(x.get("min_kg", "0"))),
+            reverse=True,
+        )
+        
+        for tier in sorted_breaks:
+            if chargeable_weight >= Decimal(str(tier.get("min_kg", "0"))):
+                selected_rate = Decimal(str(tier.get("rate_per_kg")))
+                break
+        
+        # If weight is below the lowest break, there's no per-kg rate.
+        # The charge is simply the minimum.
+        if selected_rate is None:
+            cost_fcy = min_charge
+        else:
+            # Calculate the cost and then apply the minimum
+            calculated_cost = chargeable_weight * selected_rate
+            cost_fcy = max(calculated_cost, min_charge)
+
+        # Convert to home currency
+        fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=True)
+        cost_pgk = (cost_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        return {
+            "cost_pgk": cost_pgk,
+            "cost_fcy": cost_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "cost_fcy_currency": currency,
+            "exchange_rate": fx_rate.quantize(Decimal("0.0001")),
+            "cost_source": "TIERED_RATECARD",
+            "cost_source_description": f"Tiered rate for {chargeable_weight}kg",
+            "is_rate_missing": False,
+        }
+
     def _calculate_buy_cost(self, component: ServiceComponent, buy_rate: Optional[PartnerRate]) -> dict:
         """
         Normalises buy-side costs into PGK while keeping FCY audit info.
+        This is the primary cost calculation router.
         """
-        zero = Decimal("0.00")
-        chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
+        # --- TIERED & COMPLEX PRICING FIRST ---
+        # 1. Check for weight-break pricing
+        weight_break_cost = self._calculate_weight_break_cost(component)
+        if weight_break_cost:
+            return weight_break_cost
 
+        # 2. Check for percentage-based pricing
         percent_cost = self._percentage_based_cost(component)
         if percent_cost:
             return percent_cost
+        
+        # --- SIMPLE PRICING LAST ---
+        zero = Decimal("0.00")
+        chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
 
         if buy_rate:
             currency = buy_rate.lane.rate_card.currency_code or "PGK"
-            if buy_rate.unit == 'KG' and buy_rate.rate_per_kg_fcy:
+            # Note: This logic now correctly handles 'PER_KG' vs 'KG' from older data
+            unit = (buy_rate.unit or "").upper()
+            
+            if unit in ("KG", "PER_KG") and buy_rate.rate_per_kg_fcy:
                 cost_fcy = buy_rate.rate_per_kg_fcy * chargeable_weight
-            elif buy_rate.unit == 'SHIPMENT' and buy_rate.rate_per_shipment_fcy:
+            elif unit == "SHIPMENT" and buy_rate.rate_per_shipment_fcy:
                 cost_fcy = buy_rate.rate_per_shipment_fcy
             else:
                 cost_fcy = zero
+
+            # Apply minimum charge if applicable
+            if buy_rate.min_charge_fcy and cost_fcy < buy_rate.min_charge_fcy:
+                cost_fcy = buy_rate.min_charge_fcy
 
             fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=True)
             cost_pgk = (cost_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

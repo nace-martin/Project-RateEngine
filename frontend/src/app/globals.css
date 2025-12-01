@@ -1,72 +1,13 @@
-/* Tailwind v4: import the full framework */
-
 @import "tailwindcss";
+@plugin "tailwindcss-animate";
+@source "../";
 
-/* Theme tokens */
-:root {
-  --background: 210 20% 98%; /* #F9FAFB */
-  --foreground: 214 34% 20%; /* #172B4D */
-
-  --card: 0 0% 100%;
-  --card-foreground: 214 34% 20%;
-
-  --popover: 0 0% 100%;
-  --popover-foreground: 214 34% 20%;
-
-  --primary: 217 100% 52%; /* #0D6EFD */
-  --primary-hover: 217 100% 46%; /* hover blue */
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 28 97% 53%; /* #FD7E14 burnt orange */
-  --secondary-hover: 27 98% 47%; /* #E86C02 */
-  --secondary-foreground: 0 0% 100%;
-
-  --muted: 214 16% 94%; /* subtle grey blocks */
-  --muted-foreground: 215 10% 45%; /* #6B7280 body copy */
-
-  --accent: 15 100% 67%; /* coral accent */
-  --accent-foreground: 0 0% 100%;
-
-  --destructive: 354 70% 53%; /* #DC3545 */
-  --destructive-foreground: 0 0% 100%;
-
-  --success: 152 67% 33%; /* #198754 */
-  --warning: 45 100% 50%; /* #FFC107 */
-
-  --placeholder: 215 9% 65%; /* #9CA3AF */
-
-  --border: 214 13% 91%; /* #E5E7EB */
-  --input: 214 13% 91%;
-  --ring: 217 100% 52%;
-
-  --radius: 0.625rem;
-
-  --chart-1: 217 100% 52%;
-  --chart-2: 210 40% 62%;
-  --chart-3: 200 60% 50%;
-  --chart-4: 35 85% 58%;
-  --chart-5: 160 55% 50%;
-
-  --sidebar: 0 0% 100%;
-  --sidebar-foreground: 214 34% 20%;
-  --sidebar-primary: 217 100% 52%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 210 16% 92%;
-  --sidebar-accent-foreground: 214 34% 20%;
-  --sidebar-border: 214 13% 91%;
-  --sidebar-ring: 217 100% 52%;
-}
-
-/* Map Tailwind color tokens */
 @theme {
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
-
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
 
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
@@ -74,41 +15,133 @@
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
 
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
   --color-muted: hsl(var(--muted));
   --color-muted-foreground: hsl(var(--muted-foreground));
 
   --color-accent: hsl(var(--accent));
   --color-accent-foreground: hsl(var(--accent-foreground));
 
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
 
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
 
-  --radius: var(--radius);
+  --color-sidebar: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+
+    to {
+      height: 0;
+    }
+  }
 }
 
-/* Base resets to use the tokens */
-* {
-  border-color: hsl(var(--border));
-}
-body {
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
+@layer base {
+  :root {
+    /* Premium Palette - Deep Indigo & Slate */
+    --background: 210 40% 98%;
+    /* Soft blue-grey tint #F0F4F8 */
+    --foreground: 222 47% 11%;
+    /* Deep navy #0F172A */
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Primary - Vibrant Indigo */
+    --primary: 221 83% 53%;
+    /* #2563EB */
+    --primary-foreground: 210 40% 98%;
+
+    /* Secondary - Slate/Grey for subtle actions */
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222 47% 11.2%;
+
+    /* Muted - For backgrounds and borders */
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    /* Accent - Coral/Orange for highlights */
+    --accent: 15 100% 65%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Destructive - Red */
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Success - Green */
+    --success: 142 76% 36%;
+    --success-foreground: 355.7 100% 97.3%;
+
+    /* Warning - Amber */
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 89%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.75rem;
+
+    /* Chart Colors */
+    --chart-1: 221 83% 53%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
 }
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: var(--border);
   }
+
   body {
-    @apply bg-background text-foreground font-sans;
-  }
-  input::placeholder,
-  textarea::placeholder,
-  select::placeholder {
-    color: hsl(var(--placeholder));
+    background-color: var(--background);
+    color: var(--foreground);
   }
 }

@@ -1,0 +1,343 @@
+from dataclasses import asdict
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from django.shortcuts import get_object_or_404
+from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser
+import csv
+import io
+from decimal import Decimal
+
+from quotes.models import Quote
+from services.models import ServiceRule, ServiceComponent
+from .resolvers import QuoteContextBuilder, BuyChargeResolver
+
+from rest_framework import viewsets
+from .models import Zone, RateCard, RateLine, RateBreak, QuoteSpotRate, QuoteSpotCharge
+from .serializers import (
+    ZoneSerializer, RateCardSerializer, RateLineSerializer,
+    QuoteSpotRateSerializer, QuoteSpotChargeSerializer
+)
+
+class ZoneViewSet(viewsets.ModelViewSet):
+    queryset = Zone.objects.all()
+    serializer_class = ZoneSerializer
+
+class QuoteSpotRateViewSet(viewsets.ModelViewSet):
+    queryset = QuoteSpotRate.objects.all()
+    serializer_class = QuoteSpotRateSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        quote_id = self.request.query_params.get('quote')
+        if quote_id:
+            queryset = queryset.filter(quote_id=quote_id)
+        return queryset
+
+class QuoteSpotChargeViewSet(viewsets.ModelViewSet):
+    queryset = QuoteSpotCharge.objects.all()
+    serializer_class = QuoteSpotChargeSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        spot_rate_id = self.request.query_params.get('spot_rate')
+        if spot_rate_id:
+            queryset = queryset.filter(spot_rate_id=spot_rate_id)
+        return queryset
+
+class RateCardViewSet(viewsets.ModelViewSet):
+    queryset = RateCard.objects.all()
+    serializer_class = RateCardSerializer
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser])
+    def import_csv(self, request, pk=None):
+        rate_card = self.get_object()
+        file_obj = request.FILES.get('file')
+        
+        if not file_obj:
+            return Response({"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            decoded_file = file_obj.read().decode('utf-8')
+            io_string = io.StringIO(decoded_file)
+            reader = csv.DictReader(io_string)
+            
+            created_count = 0
+            errors = []
+            
+            # Expected columns: Component, Method, MinCharge, Unit, Rates, Description
+            
+            for row_idx, row in enumerate(reader, start=1):
+                try:
+                    component_code = row.get('Component', '').strip()
+                    method = row.get('Method', 'FLAT').strip().upper()
+                    min_charge = row.get('MinCharge', '0').strip() or '0'
+                    unit = row.get('Unit', '').strip() or None
+                    rates_str = row.get('Rates', '').strip()
+                    description = row.get('Description', '').strip()
+                    
+                    if not component_code:
+                        continue # Skip empty rows
+
+                    # Find Component
+                    component = ServiceComponent.objects.filter(code=component_code).first()
+                    if not component:
+                        errors.append(f"Row {row_idx}: Component '{component_code}' not found.")
+                        continue
+
+                    # Create Line
+                    line = RateLine.objects.create(
+                        card=rate_card,
+                        component=component,
+                        method=method,
+                        min_charge=Decimal(min_charge),
+                        unit=unit,
+                        description=description
+                    )
+                    
+                    # Parse Rates/Breaks
+                    if method == 'WEIGHT_BREAK':
+                        # Format: 0-45:10.00; 45-100:8.00
+                        breaks = rates_str.split(';')
+                        for brk in breaks:
+                            if not brk.strip(): continue
+                            parts = brk.split(':')
+                            if len(parts) != 2:
+                                errors.append(f"Row {row_idx}: Invalid break format '{brk}'. Expected 'Range:Rate'.")
+                                continue
+                            
+                            range_part, rate_part = parts
+                            rate = Decimal(rate_part.strip())
+                            
+                            range_vals = range_part.split('-')
+                            from_val = Decimal(range_vals[0].strip())
+                            to_val = None
+                            if len(range_vals) > 1 and range_vals[1].strip().lower() not in ['max', '', 'inf']:
+                                to_val = Decimal(range_vals[1].strip())
+                                
+                            RateBreak.objects.create(
+                                line=line,
+                                from_value=from_val,
+                                to_value=to_val,
+                                rate=rate
+                            )
+                    elif method == 'PERCENT':
+                        # Rate column contains percentage e.g. 0.20
+                        line.percent_value = Decimal(rates_str) if rates_str else Decimal("0")
+                        line.save()
+                    elif method in ['FLAT', 'PER_UNIT']:
+                        # Rate column contains the rate if per unit, or just min charge if flat?
+                        # Usually PER_UNIT has a rate. We store it as a single break 0-Max.
+                        if rates_str:
+                            rate = Decimal(rates_str)
+                            RateBreak.objects.create(
+                                line=line,
+                                from_value=0,
+                                to_value=None,
+                                rate=rate
+                            )
+                            
+                    created_count += 1
+                    
+                except Exception as e:
+                    errors.append(f"Row {row_idx}: {str(e)}")
+            
+            return Response({
+                "message": f"Imported {created_count} lines.",
+                "errors": errors
+            }, status=status.HTTP_200_OK if not errors else status.HTTP_207_MULTI_STATUS)
+            
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class RateLineViewSet(viewsets.ModelViewSet):
+    queryset = RateLine.objects.all()
+    serializer_class =  RateLineSerializer
+
+class QuoteComputeView(APIView):
+    """
+    Debug endpoint to run the V3 Resolver pipeline for a given quote.
+    Returns the list of resolved BuyCharges.
+    """
+    def get(self, request, quote_id):
+        # 1. Load Quote and Build Context
+        try:
+            context = QuoteContextBuilder.build(quote_id)
+        except Quote.DoesNotExist:
+            return Response({"error": "Quote not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Determine Components to Resolve
+        # Logic borrowed/adapted from PricingServiceV3._resolve_service_rule
+        # In a real implementation, we might want to centralize this component-finding logic.
+        components = []
+        
+        # Try to find a ServiceRule
+        service_scope = getattr(context.quote, "service_scope", None)
+        if service_scope:
+            incoterm = context.quote.incoterm or None
+            rule = ServiceRule.objects.filter(
+                mode=context.quote.mode,
+                direction=context.quote.shipment_type,
+                incoterm=incoterm,
+                payment_term=context.quote.payment_term,
+                service_scope=service_scope,
+                is_active=True,
+            ).order_by("-effective_from").first()
+            
+            if rule:
+                components = list(rule.service_components.filter(is_active=True))
+        
+        # Fallback: If no rule found, or for debugging, maybe just return empty or 
+        # we could allow passing component codes in query params?
+        # For now, if no components found, we return empty list.
+        
+        # 3. Resolve Charges
+        resolver = BuyChargeResolver(context)
+        buy_charges = resolver.resolve_all(components)
+        
+        # 4. Serialize
+        data = [asdict(charge) for charge in buy_charges]
+        
+        return Response({
+            "quote_id": quote_id,
+            "components_resolved": [c.code for c in components],
+            "buy_charges": data
+        })
+
+class QuoteComputeV3View(APIView):
+    """
+    Complete quote computation endpoint using ChargeEngine.
+    
+    Returns full buy/sell breakdown with CAF, margins, and FX conversions.
+    
+    GET /api/v3/quotes/<quote_id>/compute_v3/
+    
+    Response:
+    {
+      "quote_id": "...",
+      "buy_lines": [...],
+      "sell_lines": [...],
+      "totals": {
+        "cost_pgk": "1250.00",
+        "sell_pgk": "1625.00",
+        "sell_aud": "706.52",
+        "caf_pgk": "62.50",
+        "caf_aud": "27.17"
+      },
+      "exchange_rates": {...},
+      "computation_date": "2025-11-25"
+    }
+    """
+    def get(self, request, quote_id):
+        from .charge_engine import ChargeEngine
+        
+        try:
+            # 1. Build context
+            context = QuoteContextBuilder.build(quote_id)
+        except Quote.DoesNotExist:
+            return Response(
+                {"error": "Quote not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Context error: {str(e)}"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # 2. Determine components from ServiceRule
+            components = []
+            service_scope = getattr(context.quote, "service_scope", None)
+            
+            if service_scope:
+                incoterm = context.quote.incoterm or None
+                rule = ServiceRule.objects.filter(
+                    mode=context.quote.mode,
+                    direction=context.quote.shipment_type,
+                    incoterm=incoterm,
+                    payment_term=context.quote.payment_term,
+                    service_scope=service_scope,
+                    is_active=True
+                ).order_by("-effective_from").first()
+                
+                if rule:
+                    components = list(rule.service_components.filter(is_active=True))
+            
+            # 3. Resolve buy charges
+            resolver = BuyChargeResolver(context)
+            buy_charges = resolver.resolve_all(components)
+            
+            # 4. Run ChargeEngine to get sell charges
+            engine = ChargeEngine(context)
+            result = engine.calculate_sell_charges(buy_charges)
+            
+            # 5. Serialize result
+            sell_currency = result.sell_currency.lower()
+            
+            response_data = {
+                "quote_id": quote_id,
+                "quote_number": context.quote.quote_number,
+                "buy_lines": [self._serialize_buy_charge(bc) for bc in result.buy_lines],
+                "sell_lines": [self._serialize_sell_line(sl) for sl in result.sell_lines],
+                "totals": {
+                    "cost_pgk": str(result.total_cost_pgk),
+                    "sell_pgk": str(result.total_sell_pgk),
+                    f"sell_{sell_currency}": str(result.total_sell_fcy),
+                    "caf_pgk": str(result.caf_pgk),
+                    f"caf_{sell_currency}": str(result.caf_fcy),
+                    "currency": result.sell_currency
+                },
+                "exchange_rates": {
+                    k: str(v) for k, v in result.exchange_rates.items()
+                },
+                "computation_date": result.computation_date,
+                "notes": result.notes
+            }
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            import traceback
+            return Response(
+                {
+                    "error": f"Computation error: {str(e)}",
+                    "traceback": traceback.format_exc()
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _serialize_buy_charge(self, bc):
+        """Serialize BuyCharge dataclass to dict."""
+        return {
+            "component": bc.component_code,
+            "source": bc.source,
+            "supplier_id": bc.supplier_id,
+            "currency": bc.currency,
+            "method": bc.method,
+            "unit": bc.unit,
+            "min_charge": str(bc.min_charge),
+            "flat_amount": str(bc.flat_amount) if bc.flat_amount else None,
+            "rate_per_unit": str(bc.rate_per_unit) if bc.rate_per_unit else None,
+            "percent_value": str(bc.percent_value) if bc.percent_value else None,
+            "percent_of_component": bc.percent_of_component,
+            "description": bc.description
+        }
+    
+    def _serialize_sell_line(self, sl):
+        """Serialize SellLine dataclass to dict."""
+        return {
+            "line_type": sl.line_type,
+            "component": sl.component_code,
+            "description": sl.description,
+            "cost_pgk": str(sl.cost_pgk),
+            "sell_pgk": str(sl.sell_pgk),
+            "sell_fcy": str(sl.sell_fcy),
+            "sell_currency": sl.sell_currency,
+            "margin_percent": str(sl.margin_percent * 100),  # Convert to %
+            "exchange_rate": str(sl.exchange_rate),
+            "source": sl.source
+        }

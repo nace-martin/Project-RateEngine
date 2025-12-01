@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, PlusCircle, ArrowRight } from "lucide-react";
+import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign } from "lucide-react";
 import ProtectedRoute from "@/components/protected-route";
 import { useAuth } from "@/context/auth-context";
 import { getQuotesV3 } from "@/lib/api";
@@ -199,42 +199,45 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader>
-              <CardTitle>Quotes in progress</CardTitle>
-              <CardDescription>Drafts and recently sent quotes.</CardDescription>
+        <section className="grid gap-6 md:grid-cols-3">
+          <Card className="relative overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Quotes in Progress</CardTitle>
+              <FileText className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <p className="text-4xl font-semibold">{metrics.totalQuotes}</p>
+              <div className="text-3xl font-bold">{metrics.totalQuotes}</div>
+              <p className="text-xs text-muted-foreground mt-1">Drafts and active quotes</p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Ready to send</CardTitle>
-              <CardDescription>No missing rates detected.</CardDescription>
+          <Card className="relative overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Ready to Send</CardTitle>
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             </CardHeader>
             <CardContent>
-              <p className="text-4xl font-semibold">{metrics.readyCount}</p>
+              <div className="text-3xl font-bold">{metrics.readyCount}</div>
+              <p className="text-xs text-muted-foreground mt-1">Fully rated and approved</p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Pipeline value</CardTitle>
-              <CardDescription>Includes GST where applicable.</CardDescription>
+          <Card className="relative overflow-hidden">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Pipeline Value</CardTitle>
+              <DollarSign className="h-4 w-4 text-primary" />
             </CardHeader>
             <CardContent>
-              <p className="text-4xl font-semibold">
+              <div className="text-3xl font-bold text-primary">
                 {formatCurrency(metrics.pipelineValue, metrics.currency)}
-              </p>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Total value (inc. GST)</p>
             </CardContent>
           </Card>
         </section>
 
-        <Card>
+        <Card className="col-span-4">
           <CardHeader>
-            <CardTitle>Recent activity</CardTitle>
-            <CardDescription>Latest quotes you and the team touched.</CardDescription>
+            <CardTitle>Recent Activity</CardTitle>
+            <CardDescription>Latest quotes managed by you and your team.</CardDescription>
           </CardHeader>
           <CardContent>{renderRecentQuotes()}</CardContent>
         </Card>

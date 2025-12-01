@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 from decimal import Decimal
+from dataclasses import replace
 
 from django.db import transaction
 from django.db.models import Q
@@ -57,7 +58,7 @@ def _decode_station_identifier(identifier: int) -> str:
 
 
 class ManualChargeSerializer(serializers.Serializer):
-    service_component = serializers.PrimaryKeyRelatedField(queryset=ServiceComponent.objects.all())
+    service_component_id = serializers.PrimaryKeyRelatedField(queryset=ServiceComponent.objects.all())
     cost_fcy = serializers.DecimalField(max_digits=12, decimal_places=2)
     currency = serializers.CharField(max_length=3)
     unit = serializers.CharField(max_length=20)
@@ -659,28 +660,31 @@ class QuoteVersionCreateAPIView(APIView):
         serializer = ManualChargeSerializer(data=request.data.get("charges", []), many=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
-        if not quote_input.overrides:
-            quote_input.overrides = []
+        
+        # Because QuoteInput is a frozen dataclass, we must build a new list of overrides
+        # and then create a new QuoteInput instance.
+        
+        # Start with existing overrides, keyed by component ID for easy replacement
+        # The list comprehension at the end handles the case where quote_input.overrides is None
+        current_overrides = {
+            str(o.service_component_id): o for o in (quote_input.overrides or [])
+        }
 
-        # Add new overrides (ensuring currency is UPPERCASE for FX lookup)
+        # Add or update with the new overrides from the request
         for charge in serializer.validated_data:
-            # Remove any existing override for this component to avoid duplicates
-            quote_input.overrides = [
-                o for o in quote_input.overrides 
-                if str(o.service_component_id) != str(charge["service_component"].id)
-            ]
-            
-            quote_input.overrides.append(
-                ManualOverride(
-                    service_component_id=charge["service_component"].id,
-                    cost_fcy=charge["cost_fcy"],
-                    currency=charge["currency"].upper(), # CRITICAL: Normalize for FX lookup
-                    unit=charge["unit"],
-                    min_charge_fcy=charge.get("min_charge_fcy") or Decimal("0.0"),
-                    valid_until=charge.get("valid_until")
-                )
+            new_override = ManualOverride(
+                service_component_id=charge["service_component_id"].id,
+                cost_fcy=charge["cost_fcy"],
+                currency=charge["currency"].upper(),
+                unit=charge["unit"],
+                min_charge_fcy=charge.get("min_charge_fcy") or Decimal("0.0"),
+                valid_until=charge.get("valid_until")
             )
+            current_overrides[str(new_override.service_component_id)] = new_override
+        
+        # Create a new QuoteInput with the updated overrides list
+        final_overrides = list(current_overrides.values())
+        quote_input = replace(quote_input, overrides=final_overrides)
 
         # 4. Run the REAL Pricing Engine
         # This applies FX, CAF, and Margins based on the Policy

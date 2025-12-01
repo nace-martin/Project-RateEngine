@@ -7,7 +7,7 @@ import { X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { getCompanies } from '@/lib/api';
+import { searchCompanies } from '@/lib/api';
 import type { CompanySearchResult } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -68,8 +68,8 @@ export default function CompanySearchCombobox({
     setIsLoading(true);
     setFetchError(null);
 
-    getCompanies(trimmed)
-      .then((companies) => {
+    searchCompanies(trimmed)
+      .then((companies: CompanySearchResult[]) => {
         if (!isActive) {
           return;
         }
@@ -163,20 +163,20 @@ export default function CompanySearchCombobox({
             ) : null}
             {!fetchError && results.length > 0
               ? results.map((company) => (
-                  <Button
-                    key={company.id}
-                    type="button"
-                    variant="ghost"
-                    onClick={() => handleSelect(company)}
-                    className={cn(
-                      'w-full justify-start font-normal',
-                      value?.id === company.id ? 'bg-muted' : ''
-                    )}
-                  >
-                    <span className="font-medium">{company.name}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{company.id}</span>
-                  </Button>
-                ))
+                <Button
+                  key={company.id}
+                  type="button"
+                  variant="ghost"
+                  onClick={() => handleSelect(company)}
+                  className={cn(
+                    'w-full justify-start font-normal',
+                    value?.id === company.id ? 'bg-muted' : ''
+                  )}
+                >
+                  <span className="font-medium">{company.name}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{company.id}</span>
+                </Button>
+              ))
               : null}
           </div>
         ) : null}

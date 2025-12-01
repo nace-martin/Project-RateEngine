@@ -1,0 +1,322 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { createRateCardV3, searchCompanies, searchLocations } from '@/lib/api';
+import { CompanySearchResult, LocationSearchResult } from '@/lib/types';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import { ArrowLeft, Check, ChevronsUpDown } from 'lucide-react';
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+} from "@/components/ui/command"
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover"
+import { cn } from "@/lib/utils"
+export default function CreateRateCardPage() {
+    const router = useRouter();
+    const [suppliers, setSuppliers] = useState<CompanySearchResult[]>([]);
+    const [saving, setSaving] = useState(false);
+
+    // Form State
+    const [name, setName] = useState('');
+    const [supplierId, setSupplierId] = useState('');
+    const [supplierSearchOpen, setSupplierSearchOpen] = useState(false);
+    const [mode, setMode] = useState('AIR');
+
+    // Location State
+    const [originLocationId, setOriginLocationId] = useState('');
+    const [destinationLocationId, setDestinationLocationId] = useState('');
+    const [originSearchOpen, setOriginSearchOpen] = useState(false);
+    const [destinationSearchOpen, setDestinationSearchOpen] = useState(false);
+    const [originLocations, setOriginLocations] = useState<LocationSearchResult[]>([]);
+    const [destinationLocations, setDestinationLocations] = useState<LocationSearchResult[]>([]);
+    const [currency, setCurrency] = useState('AUD');
+    const [scope, setScope] = useState('BUY');
+    const [priority, setPriority] = useState('100');
+    const [validFrom, setValidFrom] = useState('');
+
+    useEffect(() => {
+        async function loadData() {
+            try {
+                // Pre-load some suppliers and locations? Or search on demand.
+                const s = await searchCompanies('');
+                setSuppliers(s);
+                const l = await searchLocations('');
+                setOriginLocations(l);
+                setDestinationLocations(l);
+            } catch (err) {
+                console.error(err);
+            }
+        }
+        loadData();
+    }, []);
+
+    const handleSave = async () => {
+        try {
+            setSaving(true);
+            const payload = {
+                name,
+                supplier: supplierId,
+                mode,
+                origin_location_id: originLocationId,
+                destination_location_id: destinationLocationId,
+                currency,
+                scope,
+                priority: parseInt(priority),
+                valid_from: validFrom || new Date().toISOString().split('T')[0],
+            };
+
+            const newCard = await createRateCardV3(payload);
+            router.push(`/pricing/rate-cards/${newCard.id}`);
+        } catch (err) {
+            console.error(err);
+            alert('Failed to create rate card');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="container mx-auto py-8 space-y-6">
+            <div className="flex items-center gap-4">
+                <Button variant="ghost" onClick={() => router.back()}>
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Back
+                </Button>
+                <h1 className="text-3xl font-bold tracking-tight">Create Rate Card</h1>
+            </div>
+
+            <Card className="max-w-2xl">
+                <CardHeader>
+                    <CardTitle>Rate Card Details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label>Name</Label>
+                        <Input value={name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="e.g. EFM AU - BNE to POM" />
+                    </div>
+
+                    <div className="space-y-2 flex flex-col">
+                        <Label>Supplier</Label>
+                        <Popover open={supplierSearchOpen} onOpenChange={setSupplierSearchOpen}>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="outline"
+                                    role="combobox"
+                                    aria-expanded={supplierSearchOpen}
+                                    className="justify-between"
+                                >
+                                    {supplierId
+                                        ? suppliers.find((s) => s.id.toString() === supplierId)?.name
+                                        : "Select supplier..."}
+                                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[400px] p-0">
+                                <Command>
+                                    <CommandInput placeholder="Search supplier..." />
+                                    <CommandEmpty>No supplier found.</CommandEmpty>
+                                    <CommandGroup>
+                                        {suppliers.map((supplier) => (
+                                            <CommandItem
+                                                key={supplier.id}
+                                                value={supplier.name}
+                                                onSelect={() => {
+                                                    setSupplierId(supplier.id.toString())
+                                                    setSupplierSearchOpen(false)
+                                                }}
+                                            >
+                                                <Check
+                                                    className={cn(
+                                                        "mr-2 h-4 w-4",
+                                                        supplierId === supplier.id.toString() ? "opacity-100" : "opacity-0"
+                                                    )}
+                                                />
+                                                {supplier.name}
+                                            </CommandItem>
+                                        ))}
+                                    </CommandGroup>
+                                </Command>
+                            </PopoverContent>
+                        </Popover>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Mode</Label>
+                            <Select value={mode} onValueChange={setMode}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="AIR">Air</SelectItem>
+                                    <SelectItem value="OCEAN">Ocean</SelectItem>
+                                    <SelectItem value="ROAD">Road</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Scope</Label>
+                            <Select value={scope} onValueChange={setScope}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="BUY">Buy (Cost)</SelectItem>
+                                    <SelectItem value="SELL">Sell (Price)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2 flex flex-col">
+                            <Label>Origin Location</Label>
+                            <Popover open={originSearchOpen} onOpenChange={setOriginSearchOpen}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={originSearchOpen}
+                                        className="justify-between"
+                                    >
+                                        {originLocationId
+                                            ? originLocations.find((l) => l.id === originLocationId)?.name
+                                            : "Select Origin..."}
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[300px] p-0">
+                                    <Command>
+                                        <CommandInput placeholder="Search origin..." onValueChange={async (val) => {
+                                            const res = await searchLocations(val);
+                                            setOriginLocations(res);
+                                        }} />
+                                        <CommandEmpty>No location found.</CommandEmpty>
+                                        <CommandGroup>
+                                            {originLocations.map((loc) => (
+                                                <CommandItem
+                                                    key={loc.id}
+                                                    value={loc.name}
+                                                    onSelect={() => {
+                                                        setOriginLocationId(loc.id)
+                                                        setOriginSearchOpen(false)
+                                                    }}
+                                                >
+                                                    <Check
+                                                        className={cn(
+                                                            "mr-2 h-4 w-4",
+                                                            originLocationId === loc.id ? "opacity-100" : "opacity-0"
+                                                        )}
+                                                    />
+                                                    {loc.name} ({loc.code})
+                                                </CommandItem>
+                                            ))}
+                                        </CommandGroup>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+                        <div className="space-y-2 flex flex-col">
+                            <Label>Destination Location</Label>
+                            <Popover open={destinationSearchOpen} onOpenChange={setDestinationSearchOpen}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="outline"
+                                        role="combobox"
+                                        aria-expanded={destinationSearchOpen}
+                                        className="justify-between"
+                                    >
+                                        {destinationLocationId
+                                            ? destinationLocations.find((l) => l.id === destinationLocationId)?.name
+                                            : "Select Destination..."}
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[300px] p-0">
+                                    <Command>
+                                        <CommandInput placeholder="Search destination..." onValueChange={async (val) => {
+                                            const res = await searchLocations(val);
+                                            setDestinationLocations(res);
+                                        }} />
+                                        <CommandEmpty>No location found.</CommandEmpty>
+                                        <CommandGroup>
+                                            {destinationLocations.map((loc) => (
+                                                <CommandItem
+                                                    key={loc.id}
+                                                    value={loc.name}
+                                                    onSelect={() => {
+                                                        setDestinationLocationId(loc.id)
+                                                        setDestinationSearchOpen(false)
+                                                    }}
+                                                >
+                                                    <Check
+                                                        className={cn(
+                                                            "mr-2 h-4 w-4",
+                                                            destinationLocationId === loc.id ? "opacity-100" : "opacity-0"
+                                                        )}
+                                                    />
+                                                    {loc.name} ({loc.code})
+                                                </CommandItem>
+                                            ))}
+                                        </CommandGroup>
+                                    </Command>
+                                </PopoverContent>
+                            </Popover>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Currency</Label>
+                            <Select value={currency} onValueChange={setCurrency}>
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="AUD">AUD</SelectItem>
+                                    <SelectItem value="PGK">PGK</SelectItem>
+                                    <SelectItem value="USD">USD</SelectItem>
+                                    <SelectItem value="EUR">EUR</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Priority</Label>
+                            <Input type="number" value={priority} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPriority(e.target.value)} />
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label>Valid From</Label>
+                        <Input type="date" value={validFrom} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValidFrom(e.target.value)} />
+                    </div>
+
+                    <div className="pt-4 flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => router.back()}>Cancel</Button>
+                        <Button onClick={handleSave} disabled={saving}>
+                            {saving ? 'Creating...' : 'Create Rate Card'}
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        </div>
+    );
+}

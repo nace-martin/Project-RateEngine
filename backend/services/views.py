@@ -1,3 +1,7 @@
-from django.shortcuts import render
+from rest_framework import viewsets
+from .models import ServiceComponent
+from .serializers import ServiceComponentSerializer
 
-# Create your views here.
+class ServiceComponentViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ServiceComponent.objects.all().order_by('code')
+    serializer_class = ServiceComponentSerializer

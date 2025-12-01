@@ -10,10 +10,10 @@ import {
   LocationSearchResult,
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
-  RatecardFile,
   Customer,
   QuoteVersionCreatePayload,
   StationSummary,
+  QuoteComputeResult,
 } from './types';
 
 // Helper to get the token
@@ -114,10 +114,10 @@ export async function login(
   const normalizedUser: User = {
     id: idCandidates.find((value): value is number => typeof value === 'number') ?? 0,
     username:
-      (rawUser && typeof rawUser.username === 'string' && rawUser.username) ??
+      ((rawUser && typeof rawUser.username === 'string') ? rawUser.username : undefined) ??
       (typeof result.username === 'string' ? result.username : data.username),
     role:
-      (rawUser && typeof rawUser.role === 'string' && rawUser.role) ??
+      ((rawUser && typeof rawUser.role === 'string') ? rawUser.role : undefined) ??
       (typeof result.role === 'string' ? result.role : 'sales'),
   };
 
@@ -144,7 +144,7 @@ export async function getMe(): Promise<User> {
 
 // --- Parties (Companies/Contacts) ---
 
-export async function getCompanies(
+export async function searchCompanies(
   query: string,
 ): Promise<CompanySearchResult[]> {
   const url = API_BASE_URL + `/api/v3/parties/companies/search/?q=${query}`;
@@ -288,58 +288,30 @@ export async function getQuoteV3(
   return response.json();
 }
 
+export async function getQuoteCompute(
+  quoteId: string,
+): Promise<QuoteComputeResult> {
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/compute_v3/`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch quote computation: ${detail}`);
+  }
+
+  return response.json();
+}
+
 
 // --- Rate Cards ---
 
-export async function uploadRatecard(
-  file: File,
-  supplierId: string,
-  tokenOverride?: string | null,
-): Promise<RatecardFile> {
-  const url = API_BASE_URL + '/api/v3/ratecards/upload/';
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('supplier_id', supplierId);
 
-  const token = resolveAuthToken(tokenOverride);
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${token}`,
-    },
-    body: formData,
-  });
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    console.error('Rate card upload error:', errorData);
-    throw new Error(
-      `Failed to upload rate card: ${errorData.detail || response.statusText}`,
-    );
-  }
 
-  return response.json();
-}
-
-export async function getRateCards(tokenOverride?: string | null): Promise<RatecardFile[]> {
-  const token = resolveAuthToken(tokenOverride);
-  const url = API_BASE_URL + '/api/v3/ratecards/';
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    if (response.status === 404) {
-      return [];
-    }
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to fetch rate cards: ${detail}`);
-  }
-
-  return response.json();
-}
 
 export async function getCustomer(tokenOverride: string | null | undefined, customerId: string): Promise<Customer> {
   const token = resolveAuthToken(tokenOverride);
@@ -430,12 +402,321 @@ export async function createQuoteVersion(
   return response.json();
 }
 
-export async function uploadRateCard(
-  tokenOverride: string | null | undefined,
-  file: File,
-  supplierId: string,
-  _fileType?: string,
-) {
-  void _fileType;
-  return uploadRatecard(file, supplierId, tokenOverride);
+
+
+// --- Pricing V3 Zones ---
+export interface Zone {
+  id: string;
+  code: string;
+  name: string;
+  mode: string;
+  partner?: string;
+  members: { id: string; location_name: string; location_code: string }[];
+}
+
+export async function getZones(): Promise<Zone[]> {
+  const url = API_BASE_URL + '/api/v3/zones/';
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch zones');
+  return response.json();
+}
+
+export async function createZone(data: Partial<Zone>): Promise<Zone> {
+  const url = API_BASE_URL + '/api/v3/zones/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to create zone');
+  return response.json();
+}
+
+// --- Pricing V3 Rate Cards ---
+export interface RateBreak {
+  id: string;
+  from_value: number;
+  to_value: number | null;
+  rate: number;
+}
+
+export interface RateLine {
+  id: string;
+  component: string;
+  component_code?: string;
+  method: string;
+  unit: string | null;
+  min_charge: number;
+  percent_value: number | null;
+  percent_of_component: string | null;
+  description: string;
+  breaks: RateBreak[];
+}
+
+export interface RateCard {
+  id: string;
+  name: string;
+  supplier: string;
+  supplier_name?: string;
+  mode: string;
+  origin_zone: string;
+  origin_zone_name?: string;
+  destination_zone: string;
+  destination_zone_name?: string;
+  currency: string;
+  scope: string;
+  valid_from: string;
+  valid_until: string | null;
+  priority: number;
+  lines?: RateLine[];
+}
+
+export async function getRateCardsV3(): Promise<RateCard[]> {
+  const url = API_BASE_URL + '/api/v3/rate-cards/';
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch rate cards');
+  return response.json();
+}
+
+export async function createRateCardV3(data: Partial<RateCard>): Promise<RateCard> {
+  const url = API_BASE_URL + '/api/v3/rate-cards/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create rate card: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function importRateCardCSV(id: string, file: File): Promise<{ message: string; errors: string[] }> {
+  const url = API_BASE_URL + `/api/v3/rate-cards/${id}/import_csv/`;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: formData,
+  });
+
+  if (!response.ok && response.status !== 207) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to import CSV: ${detail}`);
+  }
+  return response.json();
+}
+
+// --- Spot Rates ---
+
+export interface SpotCharge {
+  id?: string;
+  spot_rate: string;
+  component: string;
+  component_code?: string;
+  component_description?: string;
+  method: string;
+  unit?: string;
+  rate: string;
+  min_charge: string;
+  percent_value?: string;
+  percent_of_component?: string;
+  description: string;
+}
+
+export interface SpotRate {
+  id: string;
+  quote: string;
+  supplier: string;
+  supplier_name?: string;
+  origin_location: string;
+  origin_location_name?: string;
+  destination_location: string;
+  destination_location_name?: string;
+  mode: string;
+  currency: string;
+  valid_until?: string;
+  notes: string;
+  created_at?: string;
+  charges: SpotCharge[];
+}
+
+export async function getSpotRates(quoteId: string): Promise<SpotRate[]> {
+  const url = API_BASE_URL + `/api/v3/spot-rates/?quote=${quoteId}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` }
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch spot rates: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function createSpotRate(data: Partial<SpotRate>): Promise<SpotRate> {
+  const url = API_BASE_URL + '/api/v3/spot-rates/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create spot rate: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function updateSpotRate(id: string, data: Partial<SpotRate>): Promise<SpotRate> {
+  const url = API_BASE_URL + `/api/v3/spot-rates/${id}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update spot rate: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function deleteSpotRate(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v3/spot-rates/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` }
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete spot rate: ${detail}`);
+  }
+}
+
+export async function createSpotCharge(data: Partial<SpotCharge>): Promise<SpotCharge> {
+  const url = API_BASE_URL + '/api/v3/spot-charges/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create spot charge: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function updateSpotCharge(id: string, data: Partial<SpotCharge>): Promise<SpotCharge> {
+  const url = API_BASE_URL + `/api/v3/spot-charges/${id}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update spot charge: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function deleteSpotCharge(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v3/spot-charges/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` }
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete spot charge: ${detail}`);
+  }
+}
+
+export async function getRateCardV3(id: string): Promise<RateCard> {
+  const url = API_BASE_URL + `/api/v3/rate-cards/${id}/`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch rate card details');
+  return response.json();
+}
+
+export async function createRateLine(data: Partial<RateLine>): Promise<RateLine> {
+  const url = API_BASE_URL + '/api/v3/rate-lines/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create rate line: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function updateRateLine(id: string, data: Partial<RateLine>): Promise<RateLine> {
+  const url = API_BASE_URL + `/api/v3/rate-lines/${id}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update rate line: ${detail}`);
+  }
+  return response.json();
+}
+
+// --- Services ---
+export interface ServiceComponent {
+  id: string;
+  code: string;
+  description: string;
+  mode: string;
+  category: string;
+}
+
+export async function getServiceComponents(): Promise<ServiceComponent[]> {
+  const url = API_BASE_URL + '/api/v3/services/';
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch service components');
+  return response.json();
 }
