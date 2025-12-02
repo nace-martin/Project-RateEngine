@@ -52,9 +52,7 @@ import CompanySearchCombobox from "@/components/CompanySearchCombobox";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
 
-const SUPPORTED_LOCATION_TYPES = new Set<QuoteFormSchemaV3["origin_location_type"]>(
-  Object.values(V3_LOCATION_TYPES),
-);
+
 
 const buildQuoteComputePayload = (
   data: QuoteFormSchemaV3,
@@ -141,37 +139,18 @@ export default function NewQuotePage() {
     }
   }, [destinationLocationId]);
 
-  const normalizeLocationType = (
-    rawType?: string | null,
-  ): QuoteFormSchemaV3["origin_location_type"] => {
-    if (!rawType) {
-      return V3_LOCATION_TYPES.AIRPORT;
-    }
-    const upper = rawType.toUpperCase() as QuoteFormSchemaV3["origin_location_type"];
-    if (SUPPORTED_LOCATION_TYPES.has(upper)) {
-      return upper;
-    }
-    return V3_LOCATION_TYPES.AIRPORT;
-  };
-
   const setLocationFields = (
     kind: "origin" | "destination",
     location: LocationSearchResult | null,
     onLocationIdChange: (value: string) => void,
   ) => {
-    const normalizedType = location
-      ? normalizeLocationType(location.type)
-      : V3_LOCATION_TYPES.AIRPORT;
     const locationId = location?.id ?? "";
-    const airportCode =
-      normalizedType === V3_LOCATION_TYPES.AIRPORT
-        ? (location?.code ?? "").toUpperCase()
-        : "";
+    const airportCode = (location?.code ?? "").toUpperCase();
 
     onLocationIdChange(locationId);
 
     if (kind === "origin") {
-      form.setValue("origin_location_type", normalizedType, {
+      form.setValue("origin_location_type", V3_LOCATION_TYPES.AIRPORT, {
         shouldDirty: true,
         shouldValidate: true,
       });
@@ -180,7 +159,7 @@ export default function NewQuotePage() {
         shouldValidate: true,
       });
     } else {
-      form.setValue("destination_location_type", normalizedType, {
+      form.setValue("destination_location_type", V3_LOCATION_TYPES.AIRPORT, {
         shouldDirty: true,
         shouldValidate: true,
       });

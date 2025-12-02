@@ -66,42 +66,19 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
           />
         </div>
 
-        <div className="rounded-lg border shadow-sm overflow-hidden">
-          <Table>
-            <TableHeader className="bg-muted/50">
-              <TableRow>
-                <TableHead className="w-[150px]">Category</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="text-right">Sell (Ex. GST)</TableHead>
-                <TableHead className="text-right">Sell (Inc. GST)</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {version.lines.map((line: V3QuoteLine) => (
-                <TableRow key={line.id} className="hover:bg-muted/30">
-                  <TableCell className="font-medium text-muted-foreground">
-                    {line.service_component.category}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {line.service_component.description}
-                      {line.is_rate_missing && (
-                        <Badge variant="destructive" className="text-[10px] h-5 px-1.5">
-                          Missing
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-foreground">
-                    {formatCurrency(line.sell_fcy, currency)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono font-medium text-foreground">
-                    {formatCurrency(line.sell_fcy_incl_gst, currency)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="space-y-8">
+          <ChargeSection title="Origin Charges" lines={version.lines.filter(l => l.service_component.leg === 'ORIGIN')} currency={currency} />
+          <ChargeSection title="Freight Charges" lines={version.lines.filter(l => l.service_component.leg === 'MAIN')} currency={currency} />
+          <ChargeSection title="Destination Charges" lines={version.lines.filter(l => l.service_component.leg === 'DESTINATION')} currency={currency} />
+
+          {/* Catch-all for any others */}
+          {version.lines.some(l => !['ORIGIN', 'MAIN', 'DESTINATION'].includes(l.service_component.leg)) && (
+            <ChargeSection
+              title="Other Charges"
+              lines={version.lines.filter(l => !['ORIGIN', 'MAIN', 'DESTINATION'].includes(l.service_component.leg))}
+              currency={currency}
+            />
+          )}
         </div>
       </CardContent>
 
@@ -135,6 +112,53 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function ChargeSection({ title, lines, currency }: { title: string, lines: V3QuoteLine[], currency: string }) {
+  if (lines.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border shadow-sm overflow-hidden">
+      <div className="bg-muted/50 px-4 py-2 border-b">
+        <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">{title}</h3>
+      </div>
+      <Table>
+        <TableHeader className="bg-muted/20">
+          <TableRow>
+            <TableHead className="w-[150px]">Category</TableHead>
+            <TableHead>Description</TableHead>
+            <TableHead className="text-right">Sell (Ex. GST)</TableHead>
+            <TableHead className="text-right">Sell (Inc. GST)</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {lines.map((line) => (
+            <TableRow key={line.id} className="hover:bg-muted/30">
+              <TableCell className="font-medium text-muted-foreground">
+                {line.service_component.category}
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  {line.service_component.description}
+                  {line.is_rate_missing && (
+                    <Badge variant="destructive" className="text-[10px] h-5 px-1.5">
+                      Missing
+                    </Badge>
+                  )}
+                </div>
+              </TableCell>
+              <TableCell className="text-right font-mono text-foreground">
+                {formatCurrency(line.sell_fcy, currency)}
+              </TableCell>
+              <TableCell className="text-right font-mono font-medium text-foreground">
+                {formatCurrency(line.sell_fcy_incl_gst, currency)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 

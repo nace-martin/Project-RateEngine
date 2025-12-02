@@ -83,7 +83,7 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
 class V3ServiceComponentSerializer(serializers.ModelSerializer):
     class Meta:
         model = ServiceComponent
-        fields = ('id', 'code', 'description', 'category', 'unit')
+        fields = ('id', 'code', 'description', 'category', 'unit', 'leg')
 
 class V3QuoteLineSerializer(serializers.ModelSerializer):
     service_component = V3ServiceComponentSerializer()

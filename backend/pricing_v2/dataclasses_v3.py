@@ -18,7 +18,6 @@ import uuid
 class LocationRef:
     """Normalized location reference passed into the pricing service."""
     id: uuid.UUID
-    kind: str
     code: Optional[str]
     name: str
     country_code: Optional[str]
@@ -80,6 +79,7 @@ class CalculatedChargeLine:
     service_component_id: uuid.UUID
     service_component_code: str
     service_component_desc: str
+    leg: str  # 'ORIGIN', 'MAIN', 'DESTINATION'
     cost_pgk: Decimal
     sell_pgk: Decimal
     sell_pgk_incl_gst: Decimal

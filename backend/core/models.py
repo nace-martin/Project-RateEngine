@@ -78,22 +78,16 @@ class Port(models.Model):
 
 class Location(models.Model):
     """
-    Generic location wrapper that can represent airports, ports, cities, or free-form addresses.
+    Represents an airport location using standard IATA codes.
+    Service scope (D2D, A2D, etc.) determines the service level.
     """
 
-    class Kind(models.TextChoices):
-        AIRPORT = 'AIRPORT', _('Airport')
-        PORT = 'PORT', _('Port')
-        CITY = 'CITY', _('City')
-        ADDRESS = 'ADDRESS', _('Address')
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    kind = models.CharField(max_length=20, choices=Kind.choices, db_index=True)
     name = models.CharField(max_length=255, help_text="Human-readable label for the location.")
     code = models.CharField(
-        max_length=10,
-        blank=True,
-        help_text="Reference code (e.g., IATA, UNLOCODE, or city short code)."
+        max_length=3,
+        db_index=True,
+        help_text="IATA airport code (e.g., BNE, POM, SYD)"
     )
     country = models.ForeignKey(
         Country,
@@ -128,12 +122,12 @@ class Location(models.Model):
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
-        label = self.code or self.name
-        return f"{label} ({self.kind})"
+        return f"{self.code} - {self.name}"
 
     class Meta:
         indexes = [
-            models.Index(fields=['kind', 'code'], name='idx_location_kind_code'),
+            models.Index(fields=['code']),
+            models.Index(fields=['country', 'code']),
         ]
         ordering = ['name']
 

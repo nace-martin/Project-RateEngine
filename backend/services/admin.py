@@ -2,10 +2,42 @@
 
 from django.contrib import admin
 from .models import (
+    ServiceCode,
     ServiceComponent,
     ServiceRule,
     ServiceRuleComponent,
 )
+
+@admin.register(ServiceCode)
+class ServiceCodeAdmin(admin.ModelAdmin):
+    list_display = (
+        'code', 'description', 'location_type', 'service_category',
+        'pricing_method', 'is_taxable', 'gl_code', 'is_active'
+    )
+    list_filter = ('location_type', 'service_category', 'pricing_method', 'is_taxable', 'is_active')
+    search_fields = ('code', 'description', 'gl_code')
+    ordering = ('code',)
+    list_editable = ('is_active', 'is_taxable')
+    readonly_fields = ('created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('code', 'description', 'is_active')
+        }),
+        ('Classification', {
+            'fields': ('location_type', 'service_category', 'pricing_method')
+        }),
+        ('Accounting & Tax', {
+            'fields': ('is_taxable', 'gl_code', 'revenue_account', 'cost_account')
+        }),
+        ('Validation Rules', {
+            'fields': ('requires_weight', 'requires_dimensions', 'is_mandatory')
+        }),
+        ('Metadata', {
+            'fields': ('notes', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
 @admin.register(ServiceComponent)
 class ServiceComponentAdmin(admin.ModelAdmin):

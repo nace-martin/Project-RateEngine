@@ -1,6 +1,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional, Dict
 from dataclasses import dataclass
+from datetime import date  # Added for date checks
 
 from django.db.models import Q
 
@@ -14,6 +15,9 @@ from .models import (
     LocalFeeRule, Zone, ZoneMember,
     ChargeMethod, ChargeUnit
 )
+# Import the new Buy-Side Adapter models
+from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
+
 from .engine_types import BuyCharge, ChargeBreak
 
 @dataclass
@@ -40,18 +44,7 @@ class QuoteContextBuilder:
         ).get(id=quote_id)
         
         # 1. Calculate Chargeable Weight (Simplified replication of v3 logic)
-        # In a real scenario, we might want to share this logic or call a utility
-        # For now, we assume the quote might have it or we recalculate it if pieces are available.
-        # Since Quote model doesn't store chargeable weight directly (it's calculated), 
-        # we'll implement a basic calculator here assuming we can access pieces.
-        # Note: The Quote model in `quotes/models.py` doesn't seem to link pieces directly?
-        # Wait, `pricing_service_v3` uses `quote_input.shipment.pieces`.
-        # `Quote` model doesn't seem to have pieces relation in the file I viewed?
-        # Ah, `pricing_service_v3` takes `QuoteInput`.
-        # Let's assume for this task we can get it or default to 0.
-        # We'll default to 100kg for now if we can't find pieces, to avoid blocking.
         # In a real implementation, we'd fetch the Shipment/Pieces linked to the quote.
-        
         chargeable_weight = Decimal("100.00") 
         # TODO: Implement actual weight calculation by fetching related pieces
         
@@ -127,6 +120,12 @@ class ContractRateResolver:
         self.context = context
 
     def resolve_for_component(self, component: ServiceComponent) -> List[BuyCharge]:
+        # 1. Try to resolve using new Partner Rate Cards (Airport-to-Airport Lanes)
+        partner_charges = self._resolve_partner_rates(component)
+        if partner_charges:
+            return partner_charges
+
+        # 2. Fallback to Zone-based Contract Rates (Legacy/Generic)
         if not self.context.origin_zones or not self.context.destination_zones:
             return []
 
@@ -139,22 +138,12 @@ class ContractRateResolver:
             # valid_from/until checks
         ).order_by('priority', '-valid_from')
         
-        # Filter for validity dates in python to be safe or use Q objects
-        # For now, simple filter
-        
         for card in cards:
             # Check if this card has the component
             try:
                 lines = card.lines.filter(component=component)
                 if not lines.exists():
                     continue
-                line = lines.first() # Take the first one if multiple exist (e.g. Min + PerKg)
-                # Wait, if multiple exist, we might want ALL of them?
-                # The current resolver structure returns List[BuyCharge].
-                # But `resolve_for_component` iterates cards and returns immediately on first match?
-                # "return [BuyCharge(...)]"
-                # If a card has multiple lines for the same component (e.g. Pick-Up Min + PerKg),
-                # we should return ALL of them from that card.
                 
                 card_charges = []
                 for line in lines:
@@ -188,6 +177,99 @@ class ContractRateResolver:
         
         return []
 
+    def _resolve_partner_rates(self, component: ServiceComponent) -> List[BuyCharge]:
+        """
+        Resolves rates from the new PartnerRateCard system (feat-003) which uses
+        direct Airport/Port lanes instead of Zones.
+        """
+        origin_loc = self.context.origin_location
+        dest_loc = self.context.destination_location
+
+        # Ensure we have locations
+        if not origin_loc or not dest_loc:
+            return []
+            
+        # Extract direct airport references
+        # Note: getattr handles cases where the relation might be missing on the model instance temporarily
+        origin_airport = getattr(origin_loc, 'airport', None)
+        dest_airport = getattr(dest_loc, 'airport', None)
+
+        # Fallback: If location is a City (or has no direct airport link), try to resolve via City
+        if not origin_airport and origin_loc.city:
+            # Find the primary airport for this city (or just the first one found)
+            # In a real system, we might need more logic to pick the "main" airport
+            from core.models import Airport
+            origin_airport = Airport.objects.filter(city=origin_loc.city).first()
+
+        if not dest_airport and dest_loc.city:
+            from core.models import Airport
+            dest_airport = Airport.objects.filter(city=dest_loc.city).first()
+
+        if not origin_airport or not dest_airport:
+            return []
+
+        today = date.today()
+
+        # Find matching lanes for these airports
+        # We query lanes directly as they hold the location logic
+        lanes = PartnerRateLane.objects.filter(
+            mode='AIR', # Currently strictly AIR as per model spec
+            origin_airport=origin_airport,
+            destination_airport=dest_airport,
+        ).select_related('rate_card', 'rate_card__supplier')
+
+        # Filter lanes by Rate Card validity
+        valid_lanes = []
+        for lane in lanes:
+            card = lane.rate_card
+            if card.valid_from and card.valid_from > today:
+                continue
+            if card.valid_until and card.valid_until < today:
+                continue
+            valid_lanes.append(lane)
+
+        # Iterate through valid lanes to find one that has a rate for this component
+        for lane in valid_lanes:
+            # Check for rates matching the component
+            partner_rates = lane.rates.filter(service_component=component)
+            
+            if not partner_rates.exists():
+                continue
+
+            results = []
+            for rate in partner_rates:
+                # Map PartnerRate (New Model) to BuyCharge (Engine Types)
+                
+                # Determine Charge Method based on Unit
+                method = 'PER_UNIT'
+                rate_val = Decimal("0.00")
+                flat_val = None
+
+                if rate.unit == 'PER_KG':
+                    method = 'PER_UNIT'
+                    rate_val = rate.rate_per_kg_fcy or Decimal("0.00")
+                elif rate.unit == 'SHIPMENT':
+                    method = 'FLAT'
+                    flat_val = rate.rate_per_shipment_fcy or Decimal("0.00")
+                
+                results.append(BuyCharge(
+                    source='CONTRACT', # We map this to CONTRACT so it's treated as a standard rate
+                    supplier_id=lane.rate_card.supplier.id,
+                    component_code=component.code,
+                    currency=lane.rate_card.currency_code,
+                    method=method,
+                    unit=rate.unit,
+                    min_charge=rate.min_charge_fcy or Decimal("0.00"),
+                    rate_per_unit=rate_val,
+                    flat_amount=flat_val,
+                    description=f"Partner Rate: {lane.rate_card.name}",
+                    breaks=[] # No breaks in this simple model yet
+                ))
+            
+            return results # Return rates from the first matching lane found
+
+        return []
+
 class LocalFeeResolver:
     def __init__(self, context: QuoteContext):
         self.context = context
@@ -212,8 +294,7 @@ class LocalFeeResolver:
                 currency=rule.currency,
                 method=rule.method,
                 unit=rule.unit,
-                min_charge=Decimal("0.00"), # LocalFeeRule doesn't have min_charge in my model? Checking Step 3...
-                                            # Step 3 model: flat_amount, rate_per_unit. No min_charge.
+                min_charge=Decimal("0.00"), 
                 flat_amount=rule.flat_amount,
                 rate_per_unit=rule.rate_per_unit,
                 description=f"Local fee for {component.code}"
@@ -236,7 +317,7 @@ class BuyChargeResolver:
                 all_charges.extend(charges)
                 continue
                 
-            # 2. Contract
+            # 2. Contract (Zones OR Partner Lanes)
             charges = self.contract_resolver.resolve_for_component(component)
             if charges:
                 all_charges.extend(charges)
@@ -249,6 +330,5 @@ class BuyChargeResolver:
                 continue
                 
             # No rate found
-            # We could log this or return a "Missing" charge
             
         return all_charges

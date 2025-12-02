@@ -122,8 +122,8 @@ export default function LocationSearchCombobox({
             <CommandGroup>
               {results.map((location) => (
                 <CommandItem
-                  key={`${location.type}-${location.id}`}
-                  value={`${location.display_name} ${location.code} ${location.type}`}
+                  key={location.id}
+                  value={`${location.display_name} ${location.code}`}
                   onSelect={() => handleSelect(location)}
                 >
                   <Check
@@ -135,7 +135,7 @@ export default function LocationSearchCombobox({
                   <div className="flex flex-col">
                     <span className="font-medium">{location.display_name}</span>
                     <span className="text-xs text-muted-foreground">
-                      {location.code} • {location.type.toUpperCase()}
+                      {location.code}
                     </span>
                   </div>
                 </CommandItem>

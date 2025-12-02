@@ -75,6 +75,151 @@ COST_SOURCE_CHOICES = [
 ]
 # ---
 
+# --- NEW: Choices for Pricing Method (Service Codes) ---
+PRICING_METHOD_CHOICES = [
+    ('FX_CAF_MARGIN', 'FX + CAF + Margin (Origin Charges)'),
+    ('PASSTHROUGH', 'Pass-through (Destination Charges)'),
+    ('RATE_OF_BASE', 'Percentage of Base (Fuel Surcharges)'),
+    ('STANDARD_RATE', 'Standard Rate (Freight)'),
+]
+
+SERVICE_CATEGORY_CHOICES = [
+    ('PICKUP', 'Pickup & Collection'),
+    ('DELIVERY', 'Delivery & Cartage'),
+    ('CLEARANCE', 'Customs Clearance'),
+    ('FREIGHT', 'Main Freight'),
+    ('HANDLING', 'Handling & Terminal'),
+    ('DOCUMENTATION', 'Documentation Fees'),
+    ('AGENCY', 'Agency Fees'),
+    ('SCREENING', 'Security & Screening'),
+    ('FUEL_SURCHARGE', 'Fuel Surcharge'),
+    ('OTHER', 'Other Charges'),
+]
+# ---
+
+
+class ServiceCode(models.Model):
+    """
+    Master table for service codes with embedded classification and GL mapping.
+    Replaces ad-hoc categorization logic with deterministic service code classification.
+    """
+    code = models.CharField(
+        max_length=20, 
+        unique=True, 
+        primary_key=True,
+        help_text="Service code in format [LOCATION]-[TYPE]-[SUBTYPE], e.g., 'ORG-PICKUP-STD'"
+    )
+    description = models.CharField(
+        max_length=200,
+        help_text="Human-readable description of this service"
+    )
+    
+    # Classification
+    location_type = models.CharField(
+        max_length=20,
+        choices=LEG_CHOICES,
+        db_index=True,
+        help_text="Where this service is performed: ORIGIN, MAIN, or DESTINATION"
+    )
+    service_category = models.CharField(
+        max_length=50,
+        choices=SERVICE_CATEGORY_CHOICES,
+        db_index=True,
+        help_text="Category of service for grouping and reporting"
+    )
+    
+    # Pricing Logic
+    pricing_method = models.CharField(
+        max_length=20,
+        choices=PRICING_METHOD_CHOICES,
+        help_text="How this service should be priced by the engine"
+    )
+    
+    # Tax & Accounting
+    is_taxable = models.BooleanField(
+        default=True,
+        help_text="Whether GST/VAT applies to this service"
+    )
+    gl_code = models.CharField(
+        max_length=20, 
+        null=True, 
+        blank=True,
+        help_text="General Ledger code for accounting integration"
+    )
+    revenue_account = models.CharField(
+        max_length=50, 
+        null=True, 
+        blank=True,
+        help_text="Revenue account code"
+    )
+    cost_account = models.CharField(
+        max_length=50, 
+        null=True, 
+        blank=True,
+        help_text="Cost account code"
+    )
+    
+    # Validation Rules
+    requires_weight = models.BooleanField(
+        default=False,
+        help_text="Whether this service requires weight information"
+    )
+    requires_dimensions = models.BooleanField(
+        default=False,
+        help_text="Whether this service requires dimension information"
+    )
+    is_mandatory = models.BooleanField(
+        default=False,
+        help_text="Whether this service must be included in quotes"
+    )
+    
+    # Metadata
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this service code is currently in use"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    notes = models.TextField(
+        null=True, 
+        blank=True,
+        help_text="Internal notes about this service code"
+    )
+    
+    class Meta:
+        db_table = 'service_codes'
+        ordering = ['code']
+        verbose_name = 'Service Code'
+        verbose_name_plural = 'Service Codes'
+    
+    def __str__(self):
+        return f"{self.code} - {self.description}"
+    
+    def clean(self):
+        """Validate service code format"""
+        from django.core.exceptions import ValidationError
+        if not self.code:
+            return
+        
+        # Validate code format: XXX-XXXX-XXX
+        parts = self.code.split('-')
+        if len(parts) < 2:
+            raise ValidationError(f"Service code must be in format [LOCATION]-[TYPE]-[SUBTYPE]: {self.code}")
+        
+        # Validate location prefix matches location_type
+        location_prefix_map = {
+            'ORIGIN': 'ORG',
+            'MAIN': 'FRT',
+            'DESTINATION': 'DST'
+        }
+        expected_prefix = location_prefix_map.get(self.location_type)
+        if expected_prefix and not self.code.startswith(expected_prefix):
+            raise ValidationError(
+                f"Service code for {self.location_type} should start with '{expected_prefix}': {self.code}"
+            )
+
+
+
 class ServiceComponent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=20, unique=True, db_index=True, help_text="Short, unique, stable code (e.g., 'PKUP_ORG', 'CLEAR_IMP', 'FRT_AIR').")
@@ -82,6 +227,18 @@ class ServiceComponent(models.Model):
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, db_index=True)
     leg = models.CharField(max_length=20, choices=LEG_CHOICES, db_index=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, null=True, blank=True, db_index=True, help_text="Category for grouping charges on quotes/invoices.")
+
+    # --- Phase 2: Service Code Integration ---
+    service_code = models.ForeignKey(
+        ServiceCode,
+        on_delete=models.PROTECT,
+        related_name='components',
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Service code for deterministic classification (Phase 2). Nullable for backward compatibility."
+    )
+    # ---
 
     # --- ADD cost_type field ---
     cost_type = models.CharField(
@@ -117,6 +274,25 @@ class ServiceComponent(models.Model):
     audience = models.CharField(max_length=10, choices=AUDIENCE_CHOICES, default='BOTH')
     tax_code = models.CharField(max_length=20, null=True, blank=True)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal("0.0"))
+    
+    # --- Percentage Surcharge Support ---
+    percent_of_component = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='surcharges',
+        help_text="If this is a percentage surcharge, reference the base component (e.g., Fuel Surcharge = 10%% of Cartage)"
+    )
+    percent_value = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Percentage value (e.g., 10.00 for 10%%). Only used if percent_of_component is set."
+    )
+    # ---
+    
     is_active = models.BooleanField(default=True)
 
     def __str__(self):

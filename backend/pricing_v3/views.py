@@ -209,94 +209,176 @@ class QuoteComputeView(APIView):
 
 class QuoteComputeV3View(APIView):
     """
-    Complete quote computation endpoint using ChargeEngine.
+    Complete quote computation endpoint using PricingServiceV3.
     
-    Returns full buy/sell breakdown with CAF, margins, and FX conversions.
+    Returns full buy/sell breakdown with proper CAF, margins, and FX conversions.
     
     GET /api/v3/quotes/<quote_id>/compute_v3/
     
     Response:
     {
       "quote_id": "...",
+      "quote_number": "...",
       "buy_lines": [...],
       "sell_lines": [...],
       "totals": {
         "cost_pgk": "1250.00",
+        "cost_aud": "451.26",
         "sell_pgk": "1625.00",
-        "sell_aud": "706.52",
-        "caf_pgk": "62.50",
-        "caf_aud": "27.17"
+        "caf_pgk": "62.50"
       },
       "exchange_rates": {...},
       "computation_date": "2025-11-25"
     }
     """
     def get(self, request, quote_id):
-        from .charge_engine import ChargeEngine
+        from quotes.models import Quote
+        from pricing_v2.pricing_service_v3 import PricingServiceV3
+        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
+        from decimal import Decimal
         
         try:
-            # 1. Build context
-            context = QuoteContextBuilder.build(quote_id)
+            # 1. Load the quote
+            quote = Quote.objects.select_related(
+                'origin_location__country__currency',
+                'destination_location__country__currency',
+                'policy',
+                'fx_snapshot'
+            ).get(id=quote_id)
         except Quote.DoesNotExist:
             return Response(
                 {"error": "Quote not found"}, 
                 status=status.HTTP_404_NOT_FOUND
             )
-        except Exception as e:
-            return Response(
-                {"error": f"Context error: {str(e)}"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
         
         try:
-            # 2. Determine components from ServiceRule
-            components = []
-            service_scope = getattr(context.quote, "service_scope", None)
+            # 2. Reconstruct QuoteInput from the saved quote
+            # Get the latest version's payload or reconstruct from quote fields
+            latest_version = quote.versions.order_by('-version_number').first()
             
-            if service_scope:
-                incoterm = context.quote.incoterm or None
-                rule = ServiceRule.objects.filter(
-                    mode=context.quote.mode,
-                    direction=context.quote.shipment_type,
-                    incoterm=incoterm,
-                    payment_term=context.quote.payment_term,
-                    service_scope=service_scope,
-                    is_active=True
-                ).order_by("-effective_from").first()
+            if latest_version and latest_version.payload_json:
+                # Use stored payload
+                payload = latest_version.payload_json
+                # Convert string values to proper types for Piece dataclass
+                pieces = []
+                for p in payload.get('dimensions', []):
+                    pieces.append(Piece(
+                        pieces=int(p.get('pieces', 1)),
+                        length_cm=Decimal(str(p.get('length_cm', 50))),
+                        width_cm=Decimal(str(p.get('width_cm', 50))),
+                        height_cm=Decimal(str(p.get('height_cm', 50))),
+                        gross_weight_kg=Decimal(str(p.get('gross_weight_kg', 100)))
+                    ))
+            else:
+                # Fallback: create a default piece
+                pieces = [Piece(pieces=1, length_cm=Decimal('50'), width_cm=Decimal('50'), height_cm=Decimal('50'), gross_weight_kg=Decimal('100'))]
+            
+            # Build location refs
+            origin_ref = self._location_to_ref(quote.origin_location)
+            dest_ref = self._location_to_ref(quote.destination_location)
+            
+            # Build shipment details
+            shipment = ShipmentDetails(
+                mode=quote.mode,
+                shipment_type=quote.shipment_type,
+                incoterm=quote.incoterm or 'EXW',
+                payment_term=quote.payment_term,
+                is_dangerous_goods=quote.is_dangerous_goods,
+                pieces=pieces,
+                service_scope=quote.service_scope,
+                direction=quote.shipment_type,
+                origin_location=origin_ref,
+                destination_location=dest_ref,
+            )
+            
+            # Build quote input
+            quote_input = QuoteInput(
+                customer_id=quote.customer.id,
+                contact_id=quote.contact.id if quote.contact else quote.customer.id,
+                output_currency=quote.output_currency or 'PGK',
+                shipment=shipment
+            )
+            
+            # 3. Run PricingServiceV3
+            service = PricingServiceV3(quote_input)
+            charges = service.calculate_charges()
+            
+            # 4. Build response
+            # Group lines by origin/destination for buy_lines
+            buy_lines = []
+            sell_lines = []
+            
+            # Track totals
+            total_cost_pgk = Decimal('0.00')
+            total_cost_fcy = Decimal('0.00')
+            cost_fcy_currency = None
+            
+            for line in charges.lines:
+                # Build buy line
+                buy_line = {
+                    "component": line.service_component_code,
+                    "source": line.cost_source,
+                    "currency": line.cost_fcy_currency or 'PGK',
+                    "method": "PARTNER_RATECARD",
+                    "description": line.service_component_desc,
+                }
+                buy_lines.append(buy_line)
                 
-                if rule:
-                    components = list(rule.service_components.filter(is_active=True))
+                #Build sell line (matches ChargeEngine format)
+                sell_line = {
+                    "line_type": "COMPONENT",
+                    "component": line.service_component_code,
+                    "description": line.service_component_desc,
+                    "leg": line.leg,  # Add leg for categorization
+                    "cost_pgk": str(line.cost_pgk),
+                    "sell_pgk": str(line.sell_pgk),
+                    "sell_pgk_incl_gst": str(line.sell_pgk_incl_gst),
+                    "gst_amount": str(line.sell_pgk_incl_gst - line.sell_pgk),
+                    "sell_fcy": str(line.sell_fcy),
+                    "sell_currency": line.sell_fcy_currency,
+                    "margin_percent": str(((line.sell_pgk - line.cost_pgk) / line.cost_pgk * 100) if line.cost_pgk > 0 else 0),
+                    "exchange_rate": str(line.exchange_rate or 1.0),
+                    "source": line.cost_source
+                }
+                sell_lines.append(sell_line)
+                
+                # Accumulate costs
+                total_cost_pgk += line.cost_pgk
+                if line.cost_fcy and line.cost_fcy_currency:
+                    # For origin charges (AUD), accumulate the FCY
+                    if line.cost_fcy_currency != 'PGK':
+                        total_cost_fcy += Decimal(str(line.cost_fcy))
+                        cost_fcy_currency = line.cost_fcy_currency
             
-            # 3. Resolve buy charges
-            resolver = BuyChargeResolver(context)
-            buy_charges = resolver.resolve_all(components)
-            
-            # 4. Run ChargeEngine to get sell charges
-            engine = ChargeEngine(context)
-            result = engine.calculate_sell_charges(buy_charges)
-            
-            # 5. Serialize result
-            sell_currency = result.sell_currency.lower()
+            # Get exchange rates used
+            fx_snapshot = service.get_fx_snapshot()
+            rates_dict = {}
+            if fx_snapshot and fx_snapshot.rates:
+                import json
+                rates = fx_snapshot.rates if isinstance(fx_snapshot.rates, dict) else json.loads(fx_snapshot.rates)
+                rates_dict = {k: v.get('tt_buy', 1.0) for k, v in rates.items() if isinstance(v, dict)}
             
             response_data = {
-                "quote_id": quote_id,
-                "quote_number": context.quote.quote_number,
-                "buy_lines": [self._serialize_buy_charge(bc) for bc in result.buy_lines],
-                "sell_lines": [self._serialize_sell_line(sl) for sl in result.sell_lines],
+                "quote_id": str(quote_id),
+                "quote_number": quote.quote_number,
+                "buy_lines": buy_lines,
+                "sell_lines": sell_lines,
                 "totals": {
-                    "cost_pgk": str(result.total_cost_pgk),
-                    "sell_pgk": str(result.total_sell_pgk),
-                    f"sell_{sell_currency}": str(result.total_sell_fcy),
-                    "caf_pgk": str(result.caf_pgk),
-                    f"caf_{sell_currency}": str(result.caf_fcy),
-                    "currency": result.sell_currency
+                    "cost_pgk": str(total_cost_pgk),
+                    "sell_pgk": str(charges.totals.total_sell_pgk),
+                    "sell_pgk_incl_gst": str(charges.totals.total_sell_pgk_incl_gst),
+                    "gst_amount": str(charges.totals.total_sell_pgk_incl_gst - charges.totals.total_sell_pgk),
+                    "sell_fcy": str(charges.totals.total_sell_fcy),
+                    "currency": charges.totals.total_sell_fcy_currency,
                 },
-                "exchange_rates": {
-                    k: str(v) for k, v in result.exchange_rates.items()
-                },
-                "computation_date": result.computation_date,
-                "notes": result.notes
+                "exchange_rates": rates_dict,
+                "computation_date": quote.created_at.strftime('%Y-%m-%d'),
+                "notes": []
             }
+            
+            # Add cost_fcy total if available
+            if cost_fcy_currency:
+                response_data["totals"][f"cost_{cost_fcy_currency.lower()}"] = str(total_cost_fcy)
             
             return Response(response_data)
             
@@ -310,34 +392,22 @@ class QuoteComputeV3View(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _serialize_buy_charge(self, bc):
-        """Serialize BuyCharge dataclass to dict."""
-        return {
-            "component": bc.component_code,
-            "source": bc.source,
-            "supplier_id": bc.supplier_id,
-            "currency": bc.currency,
-            "method": bc.method,
-            "unit": bc.unit,
-            "min_charge": str(bc.min_charge),
-            "flat_amount": str(bc.flat_amount) if bc.flat_amount else None,
-            "rate_per_unit": str(bc.rate_per_unit) if bc.rate_per_unit else None,
-            "percent_value": str(bc.percent_value) if bc.percent_value else None,
-            "percent_of_component": bc.percent_of_component,
-            "description": bc.description
-        }
-    
-    def _serialize_sell_line(self, sl):
-        """Serialize SellLine dataclass to dict."""
-        return {
-            "line_type": sl.line_type,
-            "component": sl.component_code,
-            "description": sl.description,
-            "cost_pgk": str(sl.cost_pgk),
-            "sell_pgk": str(sl.sell_pgk),
-            "sell_fcy": str(sl.sell_fcy),
-            "sell_currency": sl.sell_currency,
-            "margin_percent": str(sl.margin_percent * 100),  # Convert to %
-            "exchange_rate": str(sl.exchange_rate),
-            "source": sl.source
-        }
+    def _location_to_ref(self, location):
+        """Helper to convert Location to LocationRef."""
+        if not location:
+            return None
+            
+        country_code = location.country.code if location.country else None
+        currency_code = None
+        if location.country and location.country.currency:
+            currency_code = location.country.currency.code
+        
+        from pricing_v2.dataclasses_v3 import LocationRef
+        return LocationRef(
+            id=location.id,
+            code=location.code,
+            name=location.name,
+            country_code=country_code,
+            currency_code=currency_code,
+        )
+

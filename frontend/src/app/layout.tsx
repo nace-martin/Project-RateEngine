@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AppHeader from "@/components/app-header";
-import { AppSidebar } from "@/components/app-sidebar";
 import { Providers } from "./providers";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
@@ -21,14 +20,11 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} antialiased bg-background text-foreground`}>
         <Providers>
-          <div className="flex h-screen overflow-hidden">
-            <AppSidebar />
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <AppHeader />
-              <main className="flex-1 overflow-y-auto p-6">
-                {children}
-              </main>
-            </div>
+          <div className="flex flex-col h-screen overflow-hidden">
+            <AppHeader />
+            <main className="flex-1 overflow-y-auto p-6">
+              {children}
+            </main>
           </div>
         </Providers>
       </body>

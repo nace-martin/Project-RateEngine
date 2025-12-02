@@ -434,74 +434,141 @@ function CustomerSummaryCard({ quote }: { quote: V3QuoteComputeResponse }) {
       : "Contact";
   const contactEmail = contactDetails?.email || null;
 
+  // Helper to clean location names (remove airport codes and airport names)
+  const cleanLocationName = (location: string) => {
+    // Remove airport codes like "BNE - " or "POM - "
+    let cleaned = location.replace(/^[A-Z]{3}\s*-\s*/i, '');
+    // Remove common airport name suffixes and patterns
+    cleaned = cleaned.replace(/\s+(Intl|International|Airport)(\s|$)/gi, '');
+    // Remove specific airport names (Jacksons, etc.)
+    cleaned = cleaned.replace(/\s+(Jacksons|Jackson)(\s|$)/gi, '');
+    return cleaned.trim();
+  };
+
+  // Expand service scope abbreviation
+  const expandServiceScope = (scope: string) => {
+    const expansions: Record<string, string> = {
+      'D2D': 'Door to Door',
+      'CY': 'Container Yard',
+      'CFS': 'Container Freight Station',
+    };
+    return expansions[scope] || scope;
+  };
+
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="bg-muted/30 pb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-2xl font-bold text-primary">Quote {quote.quote_number}</CardTitle>
-            <CardDescription>Created on {new Date(quote.created_at).toLocaleDateString()}</CardDescription>
-          </div>
-          <Badge variant={quote.status === 'DRAFT' ? 'secondary' : 'default'} className="text-sm px-3 py-1">
-            {quote.status}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="p-6">
-        <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-4">
-          <div className="flex flex-col space-y-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Customer</span>
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-blue-100 p-2 text-blue-600">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" /><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" /></svg>
-              </div>
-              <div>
-                <p className="font-medium text-foreground">{customerName}</p>
-                {customerEmail && <p className="text-sm text-muted-foreground">{customerEmail}</p>}
-              </div>
+    <div className="space-y-6">
+      {/* Professional Header */}
+      <div className="bg-slate-900 text-white rounded-lg p-8 shadow-sm">
+        <div className="flex items-start justify-between gap-8">
+          <div className="flex-1">
+            <div className="flex items-center gap-4 mb-3">
+              <h1 className="text-3xl font-semibold tracking-tight">
+                {quote.quote_number}
+              </h1>
+              <Badge
+                variant={quote.status === 'DRAFT' ? 'secondary' : quote.status === 'ACCEPTED' ? 'default' : 'outline'}
+                className="bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+              >
+                {quote.status}
+              </Badge>
             </div>
-          </div>
-
-          <div className="flex flex-col space-y-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Contact</span>
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-purple-100 p-2 text-purple-600">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-              </div>
-              <div>
-                <p className="font-medium text-foreground">{contactName}</p>
-                {contactEmail && <p className="text-sm text-muted-foreground">{contactEmail}</p>}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col space-y-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Route</span>
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-orange-100 p-2 text-orange-600">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12h20" /><path d="m13 5 7 7-7 7" /></svg>
-              </div>
-              <div>
-                <p className="font-medium text-foreground">{quote.origin_location} → {quote.destination_location}</p>
-                <p className="text-sm text-muted-foreground">{quote.mode}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col space-y-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Details</span>
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-green-100 p-2 text-green-600">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" /></svg>
-              </div>
-              <div>
-                <p className="font-medium text-foreground">{quote.service_scope}</p>
-                <p className="text-sm text-muted-foreground">Incoterm: {quote.incoterm}</p>
-              </div>
+            <div className="flex items-center gap-6 text-sm text-slate-400">
+              <span>
+                Created {new Date(quote.created_at).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric'
+                })}
+              </span>
+              <span className="text-slate-600">•</span>
+              <span className="uppercase text-xs font-medium tracking-wider">
+                {quote.shipment_type}
+              </span>
             </div>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+
+      {/* Clean Info Grid */}
+      <Card className="overflow-hidden border-slate-200">
+        <CardContent className="p-0">
+          <div className="divide-y divide-slate-100">
+            {/* Customer & Contact Row */}
+            <div className="grid grid-cols-2 divide-x divide-slate-100">
+              <div className="p-6">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+                  Customer
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900 mb-1">
+                    {customerName}
+                  </div>
+                  {customerEmail && (
+                    <div className="text-sm text-slate-600">
+                      {customerEmail}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="p-6">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+                  Contact
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900 mb-1">
+                    {contactName}
+                  </div>
+                  {contactEmail && (
+                    <div className="text-sm text-slate-600">
+                      {contactEmail}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Route & Service Scope Row */}
+            <div className="grid grid-cols-2 divide-x divide-slate-100">
+              <div className="p-6">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+                  Route
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900 mb-1 flex items-center gap-2">
+                    <span>{cleanLocationName(quote.origin_location)}</span>
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
+                    <span>{cleanLocationName(quote.destination_location)}</span>
+                  </div>
+                  <div className="text-sm text-slate-600">
+                    {expandServiceScope(quote.service_scope)}
+                  </div>
+                </div>
+              </div>
+              <div className="p-6">
+                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
+                  Service Details
+                </div>
+                <div className="flex items-center gap-6 text-sm">
+                  <div>
+                    <span className="text-slate-500">Mode: </span>
+                    <span className="text-slate-900 font-medium">{quote.mode}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Incoterm: </span>
+                    <span className="text-slate-700 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">{quote.incoterm}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Payment: </span>
+                    <span className="text-slate-700 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">{quote.payment_term}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

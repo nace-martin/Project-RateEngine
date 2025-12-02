@@ -65,6 +65,10 @@ class TaxChargeAdapter:
     def __init__(self, component):
         self.code = component.code
         self.stage = component.leg
+        
+        # Phase 2: Use service_code.location_type if available
+        if component.service_code:
+            self.stage = component.service_code.location_type
 
         # CRITICAL: Map Freight to 'AIR' stage to ensure International Linehaul is 0%
         if component.mode == 'AIR' and component.category == 'TRANSPORT':
@@ -280,41 +284,18 @@ class PricingServiceV3:
         return location.currency_code
 
     def get_output_currency(self) -> str:
+
         return self.output_currency_code
-
-    def _resolve_iata_code(self, location_ref: Optional[LocationRef]) -> Optional[str]:
-        """
-        Resolves the correct IATA Airport Code for a given location.
-        If the location is a City or Address, it looks up the linked Airport from the DB.
-        """
-        if not location_ref:
-            return None
-
-        # Fast Path: If it's already an airport, use the code directly.
-        if location_ref.kind == "AIRPORT" and location_ref.code:
-            return location_ref.code
-
-        # Slow Path: It's a City/Address. We must find the 'gateway' airport.
-        try:
-            loc_obj = Location.objects.get(id=location_ref.id)
-            if getattr(loc_obj, 'airport', None):
-                return loc_obj.airport.iata_code
-        except Exception as e:
-            logger.warning(f"Could not resolve airport for location {location_ref.name}: {e}")
-
-        # Fallback: Try using the location's own code (might be same as airport)
-        return location_ref.code
 
     # --- REFACTORED: This method now returns a PartnerRate object ---
     def _get_buy_rate(self, component: ServiceComponent) -> Optional[PartnerRate]:
         """
         Finds the buy-side (cost) rate for a given service component.
         """
-        # --- UPDATED LOGIC ---
-        # Resolve the actual AIRPORT codes, even if the location is a City
-        origin_code = self._resolve_iata_code(self.shipment.origin_location)
-        destination_code = self._resolve_iata_code(self.shipment.destination_location)
-        # ---------------------
+        # Use the location code directly (it's already the airport IATA code)
+        origin_code = self.shipment.origin_location.code if self.shipment.origin_location else None
+        destination_code = self.shipment.destination_location.code if self.shipment.destination_location else None
+        
         if not origin_code or not destination_code:
             return None
 
@@ -341,11 +322,33 @@ class PricingServiceV3:
     def _calculate_sell_rate(self, component: ServiceComponent, cost_pgk: Decimal) -> Decimal:
         """
         Applies the policy margin to convert cost to sell rate.
+        Phase 2: Uses service_code.pricing_method if available, falls back to cost_type.
         """
-        margin = self.context['policy'].margin_pct
         base_cost = cost_pgk if cost_pgk and cost_pgk > 0 else component.base_pgk_cost
         if base_cost is None:
             base_cost = Decimal("0.00")
+
+        # Phase 2: Check service_code.pricing_method first
+        if component.service_code:
+            pricing_method = component.service_code.pricing_method
+            
+            # PASSTHROUGH: No margin applied (destination charges)
+            if pricing_method == 'PASSTHROUGH':
+                return base_cost
+            
+            # FX_CAF_MARGIN: Apply margin (origin charges)
+            # STANDARD_RATE: Apply margin (freight charges)
+            # RATE_OF_BASE: Will be handled by percentage component logic
+            if pricing_method in ('FX_CAF_MARGIN', 'STANDARD_RATE'):
+                margin = self.context['policy'].margin_pct
+                sell_pgk = base_cost * (Decimal("1.0") + margin)
+                return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        
+        # Fallback to legacy cost_type logic for backward compatibility
+        if component.cost_type == 'RATE_OFFER':
+            return base_cost
+
+        margin = self.context['policy'].margin_pct
         sell_pgk = base_cost * (Decimal("1.0") + margin)
         return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
@@ -387,10 +390,16 @@ class PricingServiceV3:
         sell_fcy = self._convert_pgk_to_currency(sell_rate_pgk, sell_fcy_currency)
         sell_fcy_incl_gst = self._convert_pgk_to_currency(sell_pgk_incl_gst, sell_fcy_currency)
         
+        # Phase 2: Use service_code.location_type if available for UI grouping
+        leg = component.leg
+        if component.service_code:
+            leg = component.service_code.location_type
+
         return CalculatedChargeLine(
             service_component_id=component.id,
             service_component_code=component.code,
             service_component_desc=component.description,
+            leg=leg,  # Pass the resolved leg for UI grouping
             cost_pgk=cost_pgk,
             cost_fcy=cost_fcy,
             cost_fcy_currency=cost_fcy_currency,
@@ -471,9 +480,12 @@ class PricingServiceV3:
             return weight_break_cost
 
         # 2. Check for percentage-based pricing
-        percent_cost = self._percentage_based_cost(component)
-        if percent_cost:
-            return percent_cost
+        if self._is_percentage_based_component(component):
+            return self._percentage_based_cost(component)
+            
+        # 3. Check for Sell-Rate Pass-Through (Destination Charges)
+        if component.cost_type == 'RATE_OFFER':
+            return self._pass_through_sell_rate(component, buy_rate)
         
         # --- SIMPLE PRICING LAST ---
         zero = Decimal("0.00")
@@ -596,32 +608,84 @@ class PricingServiceV3:
         return rates or {}
 
     def _is_percentage_based_component(self, component: ServiceComponent) -> bool:
-        data = component.tiering_json
-        return isinstance(data, dict) and data.get("percent_of") and data.get("percent") is not None
+        return component.percent_of_component is not None
 
     def _percentage_based_cost(self, component: ServiceComponent) -> Optional[dict]:
-        data = component.tiering_json
-        if not isinstance(data, dict):
+        if not component.percent_of_component:
             return None
-        ref_code = data.get("percent_of")
-        percent_value = data.get("percent")
+            
+        ref_code = component.percent_of_component.code
+        percent_value = component.percent_value
+        
         if not ref_code or percent_value is None:
             return None
 
         ref_cost_info = self.calculated_component_costs.get(ref_code)
         if not ref_cost_info:
-            return None
+             # If base component is missing, we can't calculate surcharge
+            return {
+                "cost_pgk": Decimal("0.00"),
+                "cost_fcy": None,
+                "cost_fcy_currency": None,
+                "exchange_rate": Decimal("1.0"),
+                "cost_source": f"PERCENT_OF:{ref_code}",
+                "cost_source_description": f"Waiting for {ref_code}",
+                "is_rate_missing": True,
+            }
 
-        percent = Decimal(str(percent_value))
+        percent = percent_value / Decimal("100.0")
         cost_pgk = (ref_cost_info['cost_pgk'] * percent).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        
         return {
             "cost_pgk": cost_pgk,
             "cost_fcy": None,
             "cost_fcy_currency": None,
             "exchange_rate": Decimal("1.0"),
             "cost_source": f"PERCENT_OF:{ref_code}",
-            "cost_source_description": f"{percent:.2%} of {ref_code}",
+            "cost_source_description": f"{percent_value}% of {ref_code}",
             "is_rate_missing": False,
+        }
+
+    def _pass_through_sell_rate(self, component: ServiceComponent, buy_rate: Optional[PartnerRate]) -> dict:
+        """
+        For destination sell-rates that are already in PGK and should
+        pass through without FX conversion or margin application.
+        """
+        zero = Decimal("0.00")
+        
+        if not buy_rate:
+            return {
+                'cost_pgk': zero,
+                'cost_fcy': None,
+                'cost_fcy_currency': None,
+                'exchange_rate': Decimal('1.0'),
+                'cost_source': 'MISSING_SELL_RATE',
+                'cost_source_description': 'Missing Sell Rate',
+                'is_rate_missing': True
+            }
+        
+        # Get the PGK sell-rate directly
+        # Note: We use the FCY fields because that's where the rate is stored, 
+        # but for these components, FCY IS PGK.
+        unit = (buy_rate.unit or "").upper()
+        rate_pgk = zero
+        
+        if unit == 'SHIPMENT':
+            rate_pgk = buy_rate.rate_per_shipment_fcy or zero
+        elif unit in ('KG', 'PER_KG'):
+            chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
+            rate_pgk = (buy_rate.rate_per_kg_fcy or zero) * chargeable_weight
+            if buy_rate.min_charge_fcy:
+                rate_pgk = max(rate_pgk, buy_rate.min_charge_fcy)
+        
+        return {
+            'cost_pgk': rate_pgk,  # This is actually the sell rate
+            'cost_fcy': rate_pgk,  # Same value
+            'cost_fcy_currency': 'PGK',
+            'exchange_rate': Decimal('1.00'),
+            'cost_source': 'DIRECT_SELL_RATE',
+            'cost_source_description': 'Direct Sell Rate (PGK)',
+            'is_rate_missing': False
         }
 
     # --- REFACTORED: This method now builds the new CalculatedTotals ---

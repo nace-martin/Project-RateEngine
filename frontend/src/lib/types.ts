@@ -57,7 +57,6 @@ export interface LocationSearchResult {
   id: string;            // Backend identifier (IATA, UUID, etc.)
   code: string;          // Display-friendly code (IATA, port code, etc.)
   display_name: string;  // "Brisbane (BNE), AU"
-  type: string;          // e.g., "airport", "city", "port", "address"
 }
 
 
@@ -133,6 +132,7 @@ export interface V3ServiceComponent {
   description: string;
   category: string;
   unit: string;
+  leg: string;
 }
 
 export interface V3QuoteLine {
@@ -218,8 +218,11 @@ export interface SellLine {
   line_type: 'COMPONENT' | 'CAF' | 'SURCHARGE';
   component?: string | null; // component_code
   description: string;
+  leg?: 'ORIGIN' | 'MAIN' | 'DESTINATION' | string; // Add leg for categorization
   cost_pgk: string;
   sell_pgk: string;
+  sell_pgk_incl_gst?: string;
+  gst_amount?: string;
   sell_fcy: string;
   sell_currency: string;
   margin_percent: string;
@@ -230,6 +233,8 @@ export interface SellLine {
 export interface QuoteComputeTotals {
   cost_pgk: string;
   sell_pgk: string;
+  sell_pgk_incl_gst?: string;
+  gst_amount?: string;
   caf_pgk: string;
   currency: string;
   [key: string]: string | undefined; // For dynamic keys like sell_aud, caf_aud

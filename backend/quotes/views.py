@@ -208,7 +208,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
         return LocationRef(
             id=location.id,
-            kind=location.kind,
             code=location.code,
             name=location.name,
             country_code=country_code,

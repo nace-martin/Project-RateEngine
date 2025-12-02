@@ -198,7 +198,7 @@ export default function CreateRateCardPage() {
                                         className="justify-between"
                                     >
                                         {originLocationId
-                                            ? originLocations.find((l) => l.id === originLocationId)?.name
+                                            ? originLocations.find((l) => l.id === originLocationId)?.display_name
                                             : "Select Origin..."}
                                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                                     </Button>
@@ -214,7 +214,7 @@ export default function CreateRateCardPage() {
                                             {originLocations.map((loc) => (
                                                 <CommandItem
                                                     key={loc.id}
-                                                    value={loc.name}
+                                                    value={loc.display_name}
                                                     onSelect={() => {
                                                         setOriginLocationId(loc.id)
                                                         setOriginSearchOpen(false)
@@ -226,7 +226,7 @@ export default function CreateRateCardPage() {
                                                             originLocationId === loc.id ? "opacity-100" : "opacity-0"
                                                         )}
                                                     />
-                                                    {loc.name} ({loc.code})
+                                                    {loc.display_name} ({loc.code})
                                                 </CommandItem>
                                             ))}
                                         </CommandGroup>
@@ -245,7 +245,7 @@ export default function CreateRateCardPage() {
                                         className="justify-between"
                                     >
                                         {destinationLocationId
-                                            ? destinationLocations.find((l) => l.id === destinationLocationId)?.name
+                                            ? destinationLocations.find((l) => l.id === destinationLocationId)?.display_name
                                             : "Select Destination..."}
                                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                                     </Button>
@@ -261,7 +261,7 @@ export default function CreateRateCardPage() {
                                             {destinationLocations.map((loc) => (
                                                 <CommandItem
                                                     key={loc.id}
-                                                    value={loc.name}
+                                                    value={loc.display_name}
                                                     onSelect={() => {
                                                         setDestinationLocationId(loc.id)
                                                         setDestinationSearchOpen(false)
@@ -273,7 +273,7 @@ export default function CreateRateCardPage() {
                                                             destinationLocationId === loc.id ? "opacity-100" : "opacity-0"
                                                         )}
                                                     />
-                                                    {loc.name} ({loc.code})
+                                                    {loc.display_name} ({loc.code})
                                                 </CommandItem>
                                             ))}
                                         </CommandGroup>

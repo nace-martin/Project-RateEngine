@@ -1,0 +1,8 @@
+Component       Leg             Method          Cost       Sell       GST    Total     
+------------------------------------------------------------------------------------------
+CARTAGE         DESTINATION     PASSTHROUGH     150.000000 150.000000 15.000000 165.00    
+FRT_AIR         MAIN            STANDARD_RATE   1963.24    2355.89    0.00   2355.89   
+HANDLING        DESTINATION     PASSTHROUGH     165.00     165.00     16.50  181.50    
+PICKUP          ORIGIN          FX_CAF_MARGIN   247.22     296.66     0.00   296.66    
+XRAY            ORIGIN          FX_CAF_MARGIN   203.60     244.32     0.00   244.32    
+PICKUP_FUEL     ORIGIN          RATE_OF_BASE    49.44      59.33      0.00   59.33     

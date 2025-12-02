@@ -49,7 +49,6 @@ def _serialize_location(location: Location) -> Dict[str, str]:
         "id": str(location.id),
         "code": code or location.name[:3].upper(),
         "display_name": display_name,
-        "type": location.kind.lower(),
     }
 
 
