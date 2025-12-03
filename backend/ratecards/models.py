@@ -55,6 +55,29 @@ class PartnerRateCard(models.Model):
         null=True, blank=True,
         help_text="The date this rate card expires."
     )
+    
+    service_level = models.CharField(
+        max_length=20,
+        choices=[
+            ('DIRECT', 'Direct'),
+            ('VIA_BNE', 'Via Brisbane'),
+            ('VIA_SYD', 'Via Sydney'),
+            ('STANDARD', 'Standard'),
+        ],
+        default='STANDARD',
+        db_index=True,
+        help_text="Service level for routing (e.g., DIRECT for narrow-body, VIA_BNE for wide-body)"
+    )
+    
+    route_lane_constraint = models.ForeignKey(
+        'core.RouteLaneConstraint',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rate_cards',
+        help_text="Aircraft/routing constraint for this rate card"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

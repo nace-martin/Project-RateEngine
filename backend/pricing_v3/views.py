@@ -373,6 +373,21 @@ class QuoteComputeV3View(APIView):
                 },
                 "exchange_rates": rates_dict,
                 "computation_date": quote.created_at.strftime('%Y-%m-%d'),
+                "routing": {
+                    "service_level": service.required_service_level,
+                    "routing_reason": service.routing_reason,
+                    "requires_via_routing": service.required_service_level.startswith('VIA_'),
+                    "violations": [
+                        {
+                            "piece_number": v.piece_number,
+                            "dimension": v.dimension,
+                            "actual": str(v.actual_value),
+                            "limit": str(v.limit_value),
+                            "message": v.message
+                        }
+                        for v in service.routing_violations
+                    ]
+                },
                 "notes": []
             }
             
@@ -410,4 +425,102 @@ class QuoteComputeV3View(APIView):
             country_code=country_code,
             currency_code=currency_code,
         )
+
+
+class RoutingValidationView(APIView):
+    """
+    Real-time routing validation endpoint.
+    Validates cargo dimensions against aircraft constraints.
+    
+    POST /api/v3/routing/validate
+    
+    Request:
+    {
+        "origin": "SYD",
+        "destination": "POM",
+        "pieces": [
+            {
+                "length_cm": 250,
+                "width_cm": 100,
+                "height_cm": 90,
+                "weight_kg": 300
+            }
+        ]
+    }
+    
+    Response:
+    {
+        "service_level": "VIA_BNE",
+        "routing_reason": "Cargo exceeds B737 constraints...",
+        "requires_via_routing": true,
+        "violations": [
+            {
+                "piece_number": 1,
+                "dimension": "length",
+                "actual": "250",
+                "limit": "200",
+                "message": "Piece 1: Length 250cm exceeds B737 limit of 200cm"
+            }
+        ]
+    }
+    """
+    
+    def post(self, request):
+        from core.routing import RoutingValidator
+        
+        # Extract request data
+        origin = request.data.get('origin')
+        destination = request.data.get('destination')
+        pieces = request.data.get('pieces', [])
+        
+        # Validate required fields
+        if not origin or not destination:
+            return Response({
+                'error': 'Both origin and destination are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not pieces or len(pieces) == 0:
+            return Response({
+                'error': 'At least one piece is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate piece structure
+        for i, piece in enumerate(pieces):
+            required_fields = ['length_cm', 'width_cm', 'height_cm', 'weight_kg']
+            missing = [f for f in required_fields if f not in piece]
+            if missing:
+                return Response({
+                    'error': f'Piece {i+1} missing required fields: {", ".join(missing)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Run routing validation
+        try:
+            validator = RoutingValidator()
+            service_level, reason, violations = validator.determine_required_service_level(
+                origin_code=origin,
+                destination_code=destination,
+                pieces=pieces
+            )
+            
+            # Format response
+            return Response({
+                'service_level': service_level,
+                'routing_reason': reason,
+                'requires_via_routing': service_level.startswith('VIA_'),
+                'violations': [
+                    {
+                        'piece_number': v.piece_number,
+                        'dimension': v.dimension,
+                        'actual': str(v.actual_value),
+                        'limit': str(v.limit_value),
+                        'message': v.message
+                    }
+                    for v in violations
+                ]
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Routing validation failed: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

@@ -29,7 +29,8 @@ from .dataclasses_v3 import (
 # --- END UPDATED IMPORTS ---
 from quotes.tax_policy import apply_gst_policy
 
-from core.models import FxSnapshot, Policy, Surcharge, LocalTariff, Location
+from core.models import FxSnapshot, Policy, Location
+from core.routing import RoutingValidator, CargoConstraintViolation
 from ratecards.models import PartnerRateLane, PartnerRate
 from services.models import ServiceComponent, ServiceRule
 
@@ -100,6 +101,12 @@ class PricingServiceV3:
         self.output_currency_code: str = quote_input.output_currency or HOME_CURRENCY
         self.context['service_rule'] = None
         self.override_map = {override.service_component_id: override for override in quote_input.overrides}
+
+        # Intelligent routing: determine required service level based on cargo dimensions
+        self.required_service_level: str = 'STANDARD'
+        self.routing_reason: Optional[str] = None
+        self.routing_violations: List[CargoConstraintViolation] = []
+        self._determine_routing()
 
     def calculate_charges(self) -> QuoteCharges:
         """
@@ -287,10 +294,54 @@ class PricingServiceV3:
 
         return self.output_currency_code
 
-    # --- REFACTORED: This method now returns a PartnerRate object ---
+    def _determine_routing(self):
+        """
+        Determines the required routing/service level based on cargo dimensions.
+        Uses RoutingValidator to check cargo against aircraft constraints.
+        """
+        # Only run validation if we have origin/destination and cargo dimensions
+        if not self.shipment.origin_location or not self.shipment.destination_location:
+            return
+        
+        if not self.shipment.pieces:
+            return
+        
+        # Convert Piece dataclasses to dict format for RoutingValidator
+        # Note: Converting Decimal to float for RoutingValidator input. This may lead to minor precision loss.
+        # If RoutingValidator can support Decimal directly, it would be preferable.
+        pieces_dict = []
+        for piece_line in self.shipment.pieces:
+            # Each piece_line could represent multiple identical pieces
+            for _ in range(piece_line.pieces):
+                pieces_dict.append({
+                    'length_cm': float(piece_line.length_cm),
+                    'width_cm': float(piece_line.width_cm),
+                    'height_cm': float(piece_line.height_cm),
+                    'weight_kg': float(piece_line.gross_weight_kg)
+                })
+        
+        # Use RoutingValidator to determine required service level
+        validator = RoutingValidator()
+        service_level, reason, violations = validator.determine_required_service_level(
+            origin_code=self.shipment.origin_location.code,
+            destination_code=self.shipment.destination_location.code,
+            pieces=pieces_dict
+        )
+        
+        self.required_service_level = service_level
+        self.routing_reason = reason
+        self.routing_violations = violations
+        
+        if reason:
+            logger.info(
+                f"Routing determination: {self.shipment.origin_location.code}->{self.shipment.destination_location.code} "
+                f"requires {service_level}. Reason: {reason}"
+            )
+
     def _get_buy_rate(self, component: ServiceComponent) -> Optional[PartnerRate]:
         """
         Finds the buy-side (cost) rate for a given service component.
+        Now filters by service_level for intelligent routing.
         """
         # Use the location code directly (it's already the airport IATA code)
         origin_code = self.shipment.origin_location.code if self.shipment.origin_location else None
@@ -298,21 +349,39 @@ class PricingServiceV3:
         
         if not origin_code or not destination_code:
             return None
-
+        # Build query filters
+        filters = {
+            'lane__mode': self.shipment.mode,
+            'lane__shipment_type': self.shipment.shipment_type,
+            'lane__origin_airport__iata_code': origin_code,
+            'lane__destination_airport__iata_code': destination_code,
+            'service_component': component
+        }
+        
+        # ADD THIS: service_level filter for intelligent routing
+        # Only filter if we have a specific routing requirement (not STANDARD)
+        if self.required_service_level != 'STANDARD':
+            filters['lane__rate_card__service_level'] = self.required_service_level
+            logger.debug(
+                f"Filtering rate card by service_level={self.required_service_level} for {component.code}"
+            )
         # Find a matching PartnerRate based on the shipment context
         try:
-            rate = PartnerRate.objects.get(
-                lane__mode=self.shipment.mode,
-                lane__shipment_type=self.shipment.shipment_type,
-                # TODO: Add supplier/audience logic
-                lane__origin_airport__iata_code=origin_code,
-                lane__destination_airport__iata_code=destination_code,
-                service_component=component
-            )
+            rate = PartnerRate.objects.get(**filters)
             return rate
         except PartnerRate.DoesNotExist:
-            # Debug log only
-            # print(f"No PartnerRate found for {component.code} on {origin_code}->{destination_code}")
+            # ADD THIS: If no rate found with specific service level, try fallback to STANDARD
+            if self.required_service_level != 'STANDARD':
+                logger.warning(
+                    f"No PartnerRate found for {component.code} with service_level={self.required_service_level}. "
+                    f"Trying STANDARD fallback."
+                )
+                filters['lane__rate_card__service_level'] = 'STANDARD'
+                try:
+                    rate = PartnerRate.objects.get(**filters)
+                    return rate
+                except PartnerRate.DoesNotExist:
+                    pass
             return None
         except Exception as e:
             logger.error(f"Error finding PartnerRate: {e}")

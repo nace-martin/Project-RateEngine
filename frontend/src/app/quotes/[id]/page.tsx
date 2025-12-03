@@ -14,6 +14,7 @@ import {
 import ManualRateForm from "@/components/ManualRateForm";
 import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
+import RoutingWarning from "@/components/RoutingWarning";
 import {
   Table,
   TableBody,
@@ -190,6 +191,12 @@ export default function QuoteDetailPage() {
   return (
     <div className="container mx-auto max-w-4xl space-y-6 p-4">
       <CustomerSummaryCard quote={quote} />
+
+      {/* Display routing warning if VIA routing is required */}
+      {computeResult?.routing && (
+        <RoutingWarning routingInfo={computeResult.routing} />
+      )}
+
       {isIncomplete ? (
         <ManualSourcingView
           quote={quote}

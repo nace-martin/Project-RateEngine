@@ -255,3 +255,137 @@ class LocalTariff(models.Model):
 
     def __str__(self):
         return f"{self.charge_code} - {self.country.code}"
+
+
+class AircraftType(models.Model):
+    """
+    Aircraft type with cargo capacity constraints.
+    Defines physical limitations for cargo door dimensions and piece weights.
+    """
+    code = models.CharField(
+        max_length=10,
+        unique=True,
+        help_text="Aircraft type code (e.g., B737, B767, A320)"
+    )
+    name = models.CharField(max_length=100, help_text="Full aircraft name")
+    
+    class AircraftClass(models.TextChoices):
+        NARROW_BODY = 'NARROW_BODY', _('Narrow Body')
+        WIDE_BODY = 'WIDE_BODY', _('Wide Body')
+   
+    aircraft_class = models.CharField(
+        max_length=20,
+        choices=AircraftClass.choices,
+        help_text="Aircraft classification"
+    )
+    
+    # Cargo door constraints (in cm)
+    max_length_cm = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum cargo piece length in cm"
+    )
+    max_width_cm = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum cargo piece width in cm"
+    )
+    max_height_cm = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum cargo piece height in cm"
+    )
+    max_piece_weight_kg = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum individual piece weight in kg"
+    )
+    
+    # ULD support
+    supports_uld = models.BooleanField(
+        default=False,
+        help_text="Whether aircraft supports Unit Load Device (ULD) pallets"
+    )
+    
+    notes = models.TextField(blank=True, help_text="Additional notes about aircraft capabilities")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = "Aircraft Type"
+        verbose_name_plural = "Aircraft Types"
+
+
+class RouteLaneConstraint(models.Model):
+    """
+    Defines which aircraft operates on which route lane.
+    Links origin-destination pairs to aircraft types and service levels.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    origin = models.ForeignKey(
+        Location,
+        on_delete=models.CASCADE,
+        related_name='lane_constraints_origin',
+        help_text="Origin location for this lane"
+    )
+    destination = models.ForeignKey(
+        Location,
+        on_delete=models.CASCADE,
+        related_name='lane_constraints_destination',
+        help_text="Destination location for this lane"
+    )
+    
+    service_level = models.CharField(
+        max_length=20,
+        help_text="Service level code (e.g., DIRECT, VIA_BNE)"
+    )
+    
+    aircraft_type = models.ForeignKey(
+        AircraftType,
+        on_delete=models.PROTECT,
+        related_name='route_lanes',
+        help_text="Aircraft type operating this lane"
+    )
+    
+    # Optional intermediate routing point
+    via_location = models.ForeignKey(
+        Location,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='lane_constraints_via',
+        help_text="Intermediate routing point (e.g., BNE for SYD→BNE→POM)"
+    )
+    
+    is_active = models.BooleanField(default=True, help_text="Whether this lane is currently operational")
+    priority = models.IntegerField(
+        default=1,
+        help_text="Lower number = higher priority when selecting lanes (1 = highest)"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        via_text = f" via {self.via_location.code}" if self.via_location else ""
+        return f"{self.origin.code}->{self.destination.code}{via_text} ({self.service_level}, {self.aircraft_type.code})"
+
+    class Meta:
+        unique_together = [['origin', 'destination', 'service_level']]
+        ordering = ['origin__code', 'destination__code', 'priority']
+        verbose_name = "Route Lane Constraint"
+        verbose_name_plural = "Route Lane Constraints"
+

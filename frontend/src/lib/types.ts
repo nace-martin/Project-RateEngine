@@ -240,6 +240,21 @@ export interface QuoteComputeTotals {
   [key: string]: string | undefined; // For dynamic keys like sell_aud, caf_aud
 }
 
+export interface RoutingViolation {
+  piece_number: number;
+  dimension: string;
+  actual: string;
+  limit: string;
+  message: string;
+}
+
+export interface RoutingInfo {
+  service_level: string;
+  routing_reason?: string;
+  requires_via_routing: boolean;
+  violations: RoutingViolation[];
+}
+
 export interface QuoteComputeResult {
   quote_id: string;
   quote_number: string;
@@ -248,5 +263,6 @@ export interface QuoteComputeResult {
   totals: QuoteComputeTotals;
   exchange_rates: Record<string, string>;
   computation_date: string;
+  routing?: RoutingInfo;
   notes: string[];
 }
