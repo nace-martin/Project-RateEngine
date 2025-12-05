@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+
 from rest_framework import generics, viewsets, status, serializers
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
@@ -18,6 +19,9 @@ from rest_framework.views import APIView
 
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
+from .schemas import QuoteComputeRequest, QuoteResponse
+from pydantic import ValidationError
+from pydantic_core import ValidationError as PydanticCoreValidationError
 from pricing_v2.pricing_service_v3 import PricingServiceV3
 from pricing_v2.dataclasses_v3 import (
     QuoteInput,
@@ -103,101 +107,118 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
     
     # Note: We override 'create' behavior by implementing 'post'
     def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            validated_data = serializer.validated_data
-            
-            # --- MVP CHECK: Block DG ---
-            if validated_data.get('is_dangerous_goods'):
+        try:
+            payload = QuoteComputeRequest(**request.data)
+        except (ValidationError, PydanticCoreValidationError) as e:
+            return Response(e.errors(), status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            # Fallback for any other validation-like errors
+            if hasattr(e, 'errors'):
+                return Response(e.errors(), status=status.HTTP_400_BAD_REQUEST)
+            raise e
+
+        existing_quote = None
+        if payload.quote_id:
+            existing_quote = get_object_or_404(Quote, id=payload.quote_id)
+            if existing_quote.created_by_id and existing_quote.created_by_id != request.user.id:
                 return Response(
-                    {"detail": "Dangerous Goods (DG) shipments are not yet supported."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            origin_location: Location = validated_data.get('origin_location')
-            destination_location: Location = validated_data.get('destination_location')
-
-            try:
-                shipment_type = _classify_shipment_type(
-                    validated_data.get('mode'),
-                    origin_location,
-                    destination_location,
-                )
-            except ValueError as exc:
-                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-            try:
-                # 1. Prepare input for PricingServiceV3
-                quote_input = self._build_quote_input(
-                    validated_data,
-                    shipment_type,
-                    origin_location,
-                    destination_location,
-                )
-                
-                # 2. Call the pricing service
-                service = PricingServiceV3(quote_input)
-                calculated_charges = service.calculate_charges()
-                derived_output_currency = service.get_output_currency()
-                has_missing_rates = calculated_charges.totals.has_missing_rates
-                quote_status = (
-                    Quote.Status.INCOMPLETE if has_missing_rates else Quote.Status.DRAFT
-                )
-
-                # 3. Save to DB
-                quote = self._save_quote_v3(
-                    request, 
-                    validated_data, 
-                    shipment_type, # <-- Pass calculated type
-                    calculated_charges, 
-                    service.get_fx_snapshot(),
-                    service.get_policy(),
-                    derived_output_currency,
-                    quote_status,
-                )
-                
-                # 4. Serialize and return the created quote
-                response_serializer = QuoteModelSerializerV3(quote)
-                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-
-            except Exception as e:
-                # Log the full exception
-                print(f"Error during quote computation: {e}")
-                return Response(
-                    {"detail": f"An unexpected error occurred: {str(e)}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    {"detail": "You do not have permission to update this quote."},
+                    status=status.HTTP_403_FORBIDDEN,
                 )
         
-        logger.warning("V3 quote compute validation failed", extra={"errors": serializer.errors})
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # --- MVP CHECK: Block DG ---
+        if payload.is_dangerous_goods:
+            return Response(
+                {"detail": "Dangerous Goods (DG) shipments are not yet supported."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        origin_location = get_object_or_404(Location, pk=payload.origin_location_id, is_active=True)
+        destination_location = get_object_or_404(Location, pk=payload.destination_location_id, is_active=True)
 
-    def _build_quote_input(self, data, shipment_type, origin_location: Location, destination_location: Location):
-        """Helper to convert serializer data to PricingService dataclasses."""
+        try:
+            shipment_type = _classify_shipment_type(
+                payload.mode,
+                origin_location,
+                destination_location,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # 1. Prepare input for PricingServiceV3
+            quote_input = self._build_quote_input(
+                payload,
+                shipment_type,
+                origin_location,
+                destination_location,
+            )
+            
+            # 2. Call the pricing service
+            service = PricingServiceV3(quote_input)
+            calculated_charges = service.calculate_charges()
+            derived_output_currency = service.get_output_currency()
+            has_missing_rates = calculated_charges.totals.has_missing_rates
+            quote_status = (
+                Quote.Status.INCOMPLETE if has_missing_rates else Quote.Status.DRAFT
+            )
+
+            # 3. Save to DB
+            quote = self._save_quote_v3(
+                request, 
+                payload, 
+                shipment_type, # <-- Pass calculated type
+                calculated_charges, 
+                service.get_fx_snapshot(),
+                service.get_policy(),
+                derived_output_currency,
+                quote_status,
+                existing_quote,
+            )
+            
+            # 4. Serialize and return the created quote
+            # Ensure contact has company_name for Pydantic schema
+            if quote.contact:
+                quote.contact.company_name = quote.contact.company.name
+
+            return Response(QuoteResponse.model_validate(quote).model_dump(mode='json'), status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # Log the full exception
+            logger.exception(f"Error during quote computation: {e}")
+            return Response(
+                {"detail": f"An unexpected error occurred: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location):
+        """Helper to convert Pydantic model to PricingService dataclasses."""
 
         origin_ref = self._location_to_ref(origin_location)
         destination_ref = self._location_to_ref(destination_location)
         
         shipment_details = ShipmentDetails(
-            mode=data['mode'],
+            mode=data.mode,
             shipment_type=shipment_type,
-            incoterm=data['incoterm'],
-            payment_term=data['payment_term'],
-            is_dangerous_goods=data['is_dangerous_goods'],
-            pieces=[Piece(**p) for p in data['dimensions']],
-            service_scope=data.get('service_scope'),
+            incoterm=data.incoterm,
+            payment_term=data.payment_term,
+            is_dangerous_goods=data.is_dangerous_goods,
+            pieces=[Piece(**p.model_dump()) for p in data.dimensions],
+            service_scope=data.service_scope,
             direction=shipment_type,
             origin_location=origin_ref,
             destination_location=destination_ref,
         )
         
-        overrides = [ManualOverride(**o) for o in data.get('overrides', [])]
+        overrides = [ManualOverride(**o.model_dump()) for o in (data.overrides or [])]
         
         return QuoteInput(
-            customer_id=data['customer_id'],
-            contact_id=data['contact_id'],
+            customer_id=data.customer_id,
+            contact_id=data.contact_id,
             output_currency='PGK',
             shipment=shipment_details,
-            overrides=overrides
+            overrides=overrides,
+            spot_rates=data.spot_rates or {}
         )
 
     def _location_to_ref(self, location: Location):
@@ -215,46 +236,86 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         )
 
     @transaction.atomic
-    def _save_quote_v3(self, request, validated_data, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str):
+    def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None):
         """
         Helper to save the quote, version, lines, and totals to the database.
+        When an existing quote is provided, we append a new version instead of creating a duplicate quote.
         """
-        customer = get_object_or_404(Company, id=validated_data['customer_id'])
-        contact = get_object_or_404(Contact, id=validated_data['contact_id'])
-        
-        # --- UPDATED: Create the Quote object ---
-        quote = Quote.objects.create(
-            customer=customer,
-            contact=contact,
-            mode=validated_data['mode'],
-            shipment_type=shipment_type, # <-- Save calculated type
-            incoterm=validated_data['incoterm'],
-            payment_term=validated_data['payment_term'],
-            service_scope=validated_data.get('service_scope'),
-            output_currency=output_currency or 'PGK',
-            origin_location=validated_data.get('origin_location'),
-            destination_location=validated_data.get('destination_location'),
-            policy=policy,
-            fx_snapshot=snapshot,
-            is_dangerous_goods=validated_data['is_dangerous_goods'],
-            status=initial_status,
-            request_details_json=request.data,
-            created_by=request.user
-        )
-        # --- END UPDATE ---
+        customer = get_object_or_404(Company, id=validated_data.customer_id)
+        contact = get_object_or_404(Contact, id=validated_data.contact_id)
 
-        # Create the first QuoteVersion
+        is_new_quote = quote is None
+        if is_new_quote:
+            # --- Create the Quote object ---
+            quote = Quote.objects.create(
+                customer=customer,
+                contact=contact,
+                mode=validated_data.mode,
+                shipment_type=shipment_type, # <-- Save calculated type
+                incoterm=validated_data.incoterm,
+                payment_term=validated_data.payment_term,
+                service_scope=validated_data.service_scope,
+                output_currency=output_currency or 'PGK',
+                origin_location_id=validated_data.origin_location_id,
+                destination_location_id=validated_data.destination_location_id,
+                policy=policy,
+                fx_snapshot=snapshot,
+                is_dangerous_goods=validated_data.is_dangerous_goods,
+                status=initial_status,
+                request_details_json=validated_data.model_dump(mode='json'),
+                created_by=request.user
+            )
+            version_number = 1
+        else:
+            # Update the existing quote details and append a new version
+            quote.customer = customer
+            quote.contact = contact
+            quote.mode = validated_data.mode
+            quote.shipment_type = shipment_type
+            quote.incoterm = validated_data.incoterm
+            quote.payment_term = validated_data.payment_term
+            quote.service_scope = validated_data.service_scope
+            quote.output_currency = output_currency or 'PGK'
+            quote.origin_location_id = validated_data.origin_location_id
+            quote.destination_location_id = validated_data.destination_location_id
+            quote.policy = policy
+            quote.fx_snapshot = snapshot
+            quote.is_dangerous_goods = validated_data.is_dangerous_goods
+            quote.status = initial_status
+            quote.request_details_json = validated_data.model_dump(mode='json')
+            quote.save(update_fields=[
+                'customer',
+                'contact',
+                'mode',
+                'shipment_type',
+                'incoterm',
+                'payment_term',
+                'service_scope',
+                'output_currency',
+                'origin_location',
+                'destination_location',
+                'policy',
+                'fx_snapshot',
+                'is_dangerous_goods',
+                'status',
+                'request_details_json',
+            ])
+
+            latest_version = quote.versions.order_by('-version_number').first()
+            version_number = 1 if latest_version is None else latest_version.version_number + 1
+
+        # Create the QuoteVersion
         version = QuoteVersion.objects.create(
             quote=quote,
-            version_number=1,
-            payload_json=request.data,
+            version_number=version_number,
+            payload_json=validated_data.model_dump(mode='json'),
             policy=policy,
             fx_snapshot=snapshot,
             status=initial_status,
-            reason="Initial Draft",
+            reason="Initial Draft" if is_new_quote else "Recalculated with spot rates",
             created_by=request.user
         )
-        
+
         # Create QuoteLines
         for line_charge in charges.lines:
             QuoteLine.objects.create(
@@ -405,13 +466,16 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges: Quo
 
 
 def _build_quote_input_from_payload(payload: dict):
-    serializer = QuoteComputeRequestSerializer(data=payload)
-    serializer.is_valid(raise_exception=True)
-    validated = serializer.validated_data
-    origin_location: Location = validated.get('origin_location')
-    destination_location: Location = validated.get('destination_location')
+    try:
+        validated = QuoteComputeRequest(**payload)
+    except ValidationError as e:
+        raise ValueError(f"Invalid payload: {e}")
+
+    origin_location = get_object_or_404(Location, pk=validated.origin_location_id, is_active=True)
+    destination_location = get_object_or_404(Location, pk=validated.destination_location_id, is_active=True)
+    
     shipment_type = _classify_shipment_type(
-        validated.get('mode'),
+        validated.mode,
         origin_location,
         destination_location,
     )

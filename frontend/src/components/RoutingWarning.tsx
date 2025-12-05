@@ -67,7 +67,7 @@ export default function RoutingWarning({ routingInfo, className = '' }: RoutingW
 
                     <div className="mt-3 pt-3 border-t border-amber-200">
                         <p className="text-xs text-amber-700">
-                            This shipment will be routed <strong>SYD → BNE → POM</strong> via Air Niugini's wide-body B767 service.
+                            This shipment will be routed <strong>SYD → BNE → POM</strong> via Air Niugini&apos;s wide-body B767 service.
                         </p>
                     </div>
                 </div>

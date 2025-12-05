@@ -41,6 +41,15 @@ export const V3_LOCATION_TYPES = {
   CITY: 'CITY',
 } as const
 
+export const V3_CARGO_TYPES = {
+  GENERAL: 'General Cargo',
+  DANGEROUS_GOODS: 'Dangerous Goods',
+  PERISHABLE: 'Perishable / Cold Chain',
+  LIVE_ANIMALS: 'Live Animals',
+  VALUABLE: 'Valuable / High-Value',
+  OVERSIZED: 'Oversized / OOG',
+} as const
+
 const airportCodeSchema = z
   .string()
   .trim()
@@ -80,6 +89,7 @@ const dimensionLineSchema = z.object({
     .refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
       message: 'Kg must be > 0',
     }),
+  package_type: z.string().min(1, 'Type is required').default('Box'),
 })
 
 // Optional schema for manual overrides (Spot Rates)
@@ -129,10 +139,17 @@ export const quoteFormSchemaV3 = z
     is_dangerous_goods: z.boolean().default(false),
     output_currency: z.string().length(3).optional(),
 
+    // --- Address Details for Door Service ---
+    pickup_suburb: z.string().optional(),
+    delivery_suburb: z.string().optional(),
+
     // --- Step 4: Dimensions (The Array) ---
     dimensions: z
       .array(dimensionLineSchema)
       .min(1, 'You must add at least one dimension line.'),
+
+    // --- Cargo Category ---
+    cargo_type: z.nativeEnum(V3_CARGO_TYPES).default(V3_CARGO_TYPES.GENERAL),
 
     // --- Spot Rate Overrides ---
     overrides: z.array(manualCostOverrideSchema).optional(),
@@ -162,6 +179,24 @@ export const quoteFormSchemaV3 = z
       'destination_airport',
       data.destination_airport,
     );
+
+    // Validate Pickup Suburb for D2D/D2A
+    if (['D2D', 'D2A'].includes(data.service_scope) && !data.pickup_suburb?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pickup_suburb'],
+        message: 'Pickup suburb is required for Door pickup.',
+      });
+    }
+
+    // Validate Delivery Suburb for D2D/A2D
+    if (['D2D', 'A2D'].includes(data.service_scope) && !data.delivery_suburb?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['delivery_suburb'],
+        message: 'Delivery suburb is required for Door delivery.',
+      });
+    }
   })
 
 // This creates a TypeScript type from our schema

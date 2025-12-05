@@ -116,13 +116,36 @@ class PricingServiceV3:
         # 1. Get all applicable service components
         service_components = self._get_service_components()
         self._apply_output_currency_policy()
+        # 1.1 Inject DST_CHARGES if in spot_rates but not in components
+        spot_rates = getattr(self.quote_input, 'spot_rates', {})
+        if 'DST_CHARGES' in spot_rates:
+            has_dst = any(c.code == 'DST_CHARGES' for c in service_components)
+            if not has_dst:
+                # Need to fetch the component definition
+                try:
+                    dst_comp = ServiceComponent.objects.get(code='DST_CHARGES')
+                    service_components.append(dst_comp)
+                except ServiceComponent.DoesNotExist:
+                    logger.warning("DST_CHARGES component not found, cannot inject spot rate.")
+
         service_components = sorted(
             service_components,
             key=lambda comp: 1 if self._is_percentage_based_component(comp) else 0
         )
 
+        # Check for All-In Spot Rate on Freight
+        frt_spot = spot_rates.get('FRT_AIR_EXP')
+        suppress_surcharges = False
+        if frt_spot and isinstance(frt_spot, dict) and frt_spot.get('is_all_in'):
+            suppress_surcharges = True
+            logger.info("Spot Rate is All-In. Suppressing Carrier Surcharges.")
+
         # 2. Calculate each line
         for component in service_components:
+            # If All-In, skip specific carrier surcharges
+            if suppress_surcharges and component.code in ['FRT_AIR_FUEL', 'SECURITY_SELL', 'AWB_FEE_SELL']:
+                continue
+
             override = self.override_map.get(component.id)
             buy_rate = None
             if override:
@@ -350,9 +373,11 @@ class PricingServiceV3:
         if not origin_code or not destination_code:
             return None
         # Build query filters
+        # NOTE: Removed lane__shipment_type filter. The model uses SHIPMENT_TYPE_CHOICES 
+        # like 'GENERAL', but quote.shipment_type is 'EXPORT'/'IMPORT'. These are different
+        # concepts (cargo type vs direction). Lane is uniquely identified by origin/dest.
         filters = {
             'lane__mode': self.shipment.mode,
-            'lane__shipment_type': self.shipment.shipment_type,
             'lane__origin_airport__iata_code': origin_code,
             'lane__destination_airport__iata_code': destination_code,
             'service_component': component
@@ -366,26 +391,34 @@ class PricingServiceV3:
                 f"Filtering rate card by service_level={self.required_service_level} for {component.code}"
             )
         # Find a matching PartnerRate based on the shipment context
-        try:
-            rate = PartnerRate.objects.get(**filters)
+        # We use filter() + order_by() to handle cases where multiple rates might match
+        # (e.g. Direct vs Via BNE) and prioritize them based on the routing constraint priority.
+        rates = PartnerRate.objects.filter(**filters).order_by(
+            'lane__rate_card__route_lane_constraint__priority',
+            'id'
+        )
+        
+        rate = rates.first()
+        
+        if rate:
             return rate
-        except PartnerRate.DoesNotExist:
-            # ADD THIS: If no rate found with specific service level, try fallback to STANDARD
-            if self.required_service_level != 'STANDARD':
-                logger.warning(
-                    f"No PartnerRate found for {component.code} with service_level={self.required_service_level}. "
-                    f"Trying STANDARD fallback."
-                )
-                filters['lane__rate_card__service_level'] = 'STANDARD'
-                try:
-                    rate = PartnerRate.objects.get(**filters)
-                    return rate
-                except PartnerRate.DoesNotExist:
-                    pass
-            return None
-        except Exception as e:
-            logger.error(f"Error finding PartnerRate: {e}")
-            return None
+            
+        # ADD THIS: If no rate found with specific service level, try fallback to STANDARD
+        if self.required_service_level != 'STANDARD':
+            logger.warning(
+                f"No PartnerRate found for {component.code} with service_level={self.required_service_level}. "
+                f"Trying STANDARD fallback."
+            )
+            filters['lane__rate_card__service_level'] = 'STANDARD'
+            rates = PartnerRate.objects.filter(**filters).order_by(
+                'lane__rate_card__route_lane_constraint__priority',
+                'id'
+            )
+            rate = rates.first()
+            if rate:
+                return rate
+                
+        return None
 
     # --- REFACTORED: This method now returns a simple Decimal ---
     def _calculate_sell_rate(self, component: ServiceComponent, cost_pgk: Decimal) -> Decimal:
@@ -403,6 +436,11 @@ class PricingServiceV3:
             
             # PASSTHROUGH: No margin applied (destination charges)
             if pricing_method == 'PASSTHROUGH':
+                # SPECIAL CASE: D2D Export Destination Charges require a 20% margin
+                if component.code == 'DST_CHARGES':
+                     margin = Decimal("0.20")
+                     sell_pgk = base_cost * (Decimal("1.0") + margin)
+                     return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 return base_cost
             
             # FX_CAF_MARGIN: Apply margin (origin charges)
@@ -415,6 +453,11 @@ class PricingServiceV3:
         
         # Fallback to legacy cost_type logic for backward compatibility
         if component.cost_type == 'RATE_OFFER':
+            # SPECIAL CASE: D2D Export Destination Charges require a 20% margin
+            if component.code == 'DST_CHARGES':
+                 margin = Decimal("0.20")
+                 sell_pgk = base_cost * (Decimal("1.0") + margin)
+                 return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             return base_cost
 
         margin = self.context['policy'].margin_pct
@@ -542,11 +585,63 @@ class PricingServiceV3:
         Normalises buy-side costs into PGK while keeping FCY audit info.
         This is the primary cost calculation router.
         """
+        # 0. Check for Spot Rate
+        spot_rates = getattr(self.quote_input, 'spot_rates', {})
+        if component.code in spot_rates:
+            return self._calculate_spot_cost(component, spot_rates[component.code])
+
         # --- TIERED & COMPLEX PRICING FIRST ---
         # 1. Check for weight-break pricing
+        # A. Check on the component itself (legacy/service-code driven)
         weight_break_cost = self._calculate_weight_break_cost(component)
         if weight_break_cost:
             return weight_break_cost
+            
+        # B. Check on the buy_rate (PartnerRate specific tiering)
+        if buy_rate and buy_rate.tiering_json:
+            # Create a temporary component-like object or modify the call to support passing data directly
+            # For now, let's just reuse the logic by temporarily mocking the component's tiering_json
+            # Or better, refactor _calculate_weight_break_cost to accept data input.
+            
+            # Let's refactor inline for now to be safe and explicit
+            data = buy_rate.tiering_json
+            if isinstance(data, dict) and data.get("type") == "weight_break":
+                chargeable_weight = self.context["chargeable_weight_kg"]
+                currency = data.get("currency", buy_rate.lane.rate_card.currency_code or "PGK")
+                min_charge = Decimal(str(data.get("minimum_charge", "0.00")))
+                breaks = data.get("breaks", [])
+                
+                if breaks:
+                    selected_rate = None
+                    sorted_breaks = sorted(
+                        breaks,
+                        key=lambda x: Decimal(str(x.get("min_kg", "0"))),
+                        reverse=True,
+                    )
+                    
+                    for tier in sorted_breaks:
+                        if chargeable_weight >= Decimal(str(tier.get("min_kg", "0"))):
+                            selected_rate = Decimal(str(tier.get("rate_per_kg")))
+                            break
+                    
+                    if selected_rate is None:
+                        cost_fcy = min_charge
+                    else:
+                        calculated_cost = chargeable_weight * selected_rate
+                        cost_fcy = max(calculated_cost, min_charge)
+                        
+                    fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=True)
+                    cost_pgk = (cost_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    
+                    return {
+                        "cost_pgk": cost_pgk,
+                        "cost_fcy": cost_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+                        "cost_fcy_currency": currency,
+                        "exchange_rate": fx_rate.quantize(Decimal("0.0001")),
+                        "cost_source": "PARTNER_TIERED",
+                        "cost_source_description": f"{buy_rate.lane.rate_card.name} (Tiered)",
+                        "is_rate_missing": False,
+                    }
 
         # 2. Check for percentage-based pricing
         if self._is_percentage_based_component(component):
@@ -565,16 +660,23 @@ class PricingServiceV3:
             # Note: This logic now correctly handles 'PER_KG' vs 'KG' from older data
             unit = (buy_rate.unit or "").upper()
             
-            if unit in ("KG", "PER_KG") and buy_rate.rate_per_kg_fcy:
-                cost_fcy = buy_rate.rate_per_kg_fcy * chargeable_weight
-            elif unit == "SHIPMENT" and buy_rate.rate_per_shipment_fcy:
-                cost_fcy = buy_rate.rate_per_shipment_fcy
-            else:
-                cost_fcy = zero
+            cost_fcy = Decimal("0.00")
+            
+            # Support composite rates (e.g. Per KG + Flat Fee)
+            # If both are present, we sum them.
+            if buy_rate.rate_per_kg_fcy:
+                cost_fcy += buy_rate.rate_per_kg_fcy * chargeable_weight
+            
+            if buy_rate.rate_per_shipment_fcy:
+                cost_fcy += buy_rate.rate_per_shipment_fcy
 
             # Apply minimum charge if applicable
             if buy_rate.min_charge_fcy and cost_fcy < buy_rate.min_charge_fcy:
                 cost_fcy = buy_rate.min_charge_fcy
+
+            # Apply maximum charge if applicable
+            if buy_rate.max_charge_fcy and cost_fcy > buy_rate.max_charge_fcy:
+                cost_fcy = buy_rate.max_charge_fcy
 
             fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=True)
             cost_pgk = (cost_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -599,6 +701,45 @@ class PricingServiceV3:
             "cost_source": component.cost_source or "BASE_COST",
             "cost_source_description": "Component base cost",
             "is_rate_missing": cost_pgk == zero,
+        }
+
+    def _calculate_spot_cost(self, component: ServiceComponent, spot_data: dict) -> dict:
+        """
+        Calculates cost based on manual spot rate input.
+        """
+        amount = Decimal(str(spot_data.get('amount', '0.00')))
+        currency = spot_data.get('currency', 'PGK')
+        
+        # If currency is FCY, convert to PGK using Buy Rate + Buffer (Import Logic)
+        # Why Import Logic? Because we are "buying" the spot service.
+        # However, for Export D2D, the user said: "Dest Charges FCY -> PGK (Buy Rate + 5% Buffer)"
+        # This matches our standard _get_exchange_rate(..., apply_caf=True) logic IF shipment_type=IMPORT.
+        # BUT here shipment_type=EXPORT.
+        # So we need to force "IMPORT" context for this specific conversion if it's a destination charge?
+        # Or just rely on the fact that _get_exchange_rate uses caf_export_pct (10%) for Exports?
+        
+        # User Requirement: "Apply 5% buffer / CAF to the FX BUY rate" for D2D Dest Charges.
+        # Export CAF is 10%. Import CAF is 5%.
+        # So for D2D Dest Charges, we should use Import CAF (5%).
+        
+        # Let's check if this is a Destination Charge
+        is_dest_charge = component.code == 'DST_CHARGES' or (component.service_code and component.service_code.location_type == 'DESTINATION')
+        
+        force_import_caf = False
+        if is_dest_charge and self.shipment.shipment_type == 'EXPORT':
+            force_import_caf = True
+            
+        rate = self._get_exchange_rate(currency, "PGK", apply_caf=True, force_import_caf=force_import_caf)
+        cost_pgk = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        
+        return {
+            "cost_pgk": cost_pgk,
+            "cost_fcy": amount,
+            "cost_fcy_currency": currency,
+            "exchange_rate": rate,
+            "cost_source": "SPOT_RATE",
+            "cost_source_description": "Manual Spot Rate",
+            "is_rate_missing": False,
         }
 
     def _calculate_override_cost(self, component: ServiceComponent, override: ManualOverride) -> dict:
@@ -636,33 +777,68 @@ class PricingServiceV3:
     def _convert_pgk_to_currency(self, amount_pgk: Decimal, currency: Optional[str]) -> Decimal:
         if not currency or currency == "PGK":
             return amount_pgk
-        rate = self._get_exchange_rate("PGK", currency)
+        rate = self._get_exchange_rate("PGK", currency, apply_caf=True)
         converted = amount_pgk * rate
         return converted.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    def _get_exchange_rate(self, from_currency: str, to_currency: str, apply_caf: bool = False) -> Decimal:
+    def _get_exchange_rate(self, from_currency: str, to_currency: str, apply_caf: bool = False, force_import_caf: bool = False) -> Decimal:
+        """
+        Get exchange rate for currency conversion.
+        
+        FCY -> PGK (Buy-side/Cost conversion):
+            - Use TT BUY rate (how many PGK to pay for 1 FCY)
+            - Apply CAF by MULTIPLYING: TT_BUY * (1 + CAF)
+            - Example: 2.80 PGK/AUD * 1.05 = 2.94 PGK/AUD
+            - Then: FCY_amount * 2.94 = PGK_cost
+        
+        PGK -> FCY (Sell-side/Quote conversion):
+            - Use TT SELL rate (how many FCY per 1 PGK)
+            - Apply CAF by DIVIDING: TT_SELL / (1 + CAF)
+            - Example: 0.35 AUD/PGK / 1.10 = 0.318 AUD/PGK
+            - Then: PGK_amount * 0.318 = FCY_sell
+        """
         if from_currency == to_currency:
             return Decimal("1.0")
 
         rates = self._get_rates_dict()
+        
         if from_currency != "PGK" and to_currency == "PGK":
             info = rates.get(from_currency)
+            # FCY -> PGK (Cost): We BUY FCY to pay supplier costs.
+            # Use TT BUY rate (PGK per FCY).
             if info and info.get("tt_buy"):
                 rate = Decimal(str(info["tt_buy"]))
                 if apply_caf:
-                    rate *= (Decimal("1.0") + self._get_caf_percent())
-                return rate
+                    # CAF increases the effective rate (more PGK per FCY = higher cost)
+                    # Formula: rate * (1 + CAF)
+                    caf_pct = self._get_caf_percent(force_import=force_import_caf)
+                    rate *= (Decimal("1.0") + caf_pct)
+                return rate  # FCY * rate = PGK
 
         if from_currency == "PGK" and to_currency != "PGK":
             info = rates.get(to_currency)
+            # PGK -> FCY (Sell-side): Customer pays in FCY, we receive revenue.
+            # tt_sell is stored as PGK per FCY (e.g. 2.85 PGK per AUD)
+            # We need FCY per PGK, so we invert: 1/2.85 = 0.35 AUD per PGK
             if info and info.get("tt_sell"):
-                rate = Decimal(str(info["tt_sell"]))
-                return Decimal("1.0") / rate
+                tt_sell_pgk_per_fcy = Decimal(str(info["tt_sell"]))
+                # Invert to get FCY per PGK
+                rate = Decimal("1.0") / tt_sell_pgk_per_fcy  # e.g. 1/2.85 = 0.35
+                if apply_caf:
+                    # CAF decreases the effective rate (less FCY per PGK = customer pays more FCY)
+                    # Formula: rate / (1 + CAF)
+                    # Example: 0.35 / 1.10 = 0.318
+                    caf_pct = self._get_caf_percent(force_import=force_import_caf)
+                    rate /= (Decimal("1.0") + caf_pct)
+                return rate  # PGK * rate = FCY
 
         return Decimal("1.0")
 
-    def _get_caf_percent(self) -> Decimal:
+    def _get_caf_percent(self, force_import: bool = False) -> Decimal:
         shipment_type = (self.shipment.shipment_type or "").upper()
+        if force_import:
+            shipment_type = "IMPORT"
+            
         policy = self.context['policy']
         if shipment_type == "IMPORT":
             return policy.caf_import_pct or Decimal("0.0")
@@ -705,11 +881,21 @@ class PricingServiceV3:
         percent = percent_value / Decimal("100.0")
         cost_pgk = (ref_cost_info['cost_pgk'] * percent).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
+        # Calculate FCY if available in reference
+        cost_fcy = None
+        cost_fcy_currency = None
+        exchange_rate = Decimal("1.0")
+        
+        if ref_cost_info.get('cost_fcy') is not None and ref_cost_info.get('cost_fcy_currency'):
+             cost_fcy = (ref_cost_info['cost_fcy'] * percent).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+             cost_fcy_currency = ref_cost_info['cost_fcy_currency']
+             exchange_rate = ref_cost_info.get('exchange_rate', Decimal("1.0"))
+
         return {
             "cost_pgk": cost_pgk,
-            "cost_fcy": None,
-            "cost_fcy_currency": None,
-            "exchange_rate": Decimal("1.0"),
+            "cost_fcy": cost_fcy,
+            "cost_fcy_currency": cost_fcy_currency,
+            "exchange_rate": exchange_rate,
             "cost_source": f"PERCENT_OF:{ref_code}",
             "cost_source_description": f"{percent_value}% of {ref_code}",
             "is_rate_missing": False,
@@ -733,27 +919,34 @@ class PricingServiceV3:
                 'is_rate_missing': True
             }
         
-        # Get the PGK sell-rate directly
-        # Note: We use the FCY fields because that's where the rate is stored, 
-        # but for these components, FCY IS PGK.
+        # Get the sell-rate in its original currency
         unit = (buy_rate.unit or "").upper()
-        rate_pgk = zero
+        rate_fcy = zero
         
         if unit == 'SHIPMENT':
-            rate_pgk = buy_rate.rate_per_shipment_fcy or zero
+            rate_fcy = buy_rate.rate_per_shipment_fcy or zero
         elif unit in ('KG', 'PER_KG'):
             chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
-            rate_pgk = (buy_rate.rate_per_kg_fcy or zero) * chargeable_weight
+            rate_fcy = (buy_rate.rate_per_kg_fcy or zero) * chargeable_weight
             if buy_rate.min_charge_fcy:
-                rate_pgk = max(rate_pgk, buy_rate.min_charge_fcy)
+                rate_fcy = max(rate_fcy, buy_rate.min_charge_fcy)
         
+        currency = buy_rate.lane.rate_card.currency_code or HOME_CURRENCY
+        fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=False) # No CAF on sell rates usually? Or maybe yes?
+        # User said "Apply our FX BUY rate... Convert... Apply margin".
+        # But for "Sell Rates" provided by user, they are already the final price?
+        # If it's RATE_OFFER, we assume it's the final price in that currency.
+        # So we just convert to PGK for reporting.
+        
+        cost_pgk = (rate_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
         return {
-            'cost_pgk': rate_pgk,  # This is actually the sell rate
-            'cost_fcy': rate_pgk,  # Same value
-            'cost_fcy_currency': 'PGK',
-            'exchange_rate': Decimal('1.00'),
+            'cost_pgk': cost_pgk,
+            'cost_fcy': rate_fcy,
+            'cost_fcy_currency': currency,
+            'exchange_rate': fx_rate,
             'cost_source': 'DIRECT_SELL_RATE',
-            'cost_source_description': 'Direct Sell Rate (PGK)',
+            'cost_source_description': f'Direct Sell Rate ({currency})',
             'is_rate_missing': False
         }
 

@@ -45,10 +45,17 @@ def _serialize_location(location: Location) -> Dict[str, str]:
 
     display_name = _format_location_display(location, code or '')
 
+    country_code = None
+    if location.country and location.country.code:
+        country_code = location.country.code
+    elif location.city and location.city.country:
+        country_code = location.city.country.code
+
     return {
         "id": str(location.id),
         "code": code or location.name[:3].upper(),
         "display_name": display_name,
+        "country_code": country_code,
     }
 
 

@@ -9,6 +9,7 @@ class LocationSearchSerializer(serializers.Serializer):
     id = serializers.CharField()
     code = serializers.CharField()
     display_name = serializers.CharField()
+    country_code = serializers.CharField(required=False, allow_null=True)
 
 
 class AirportSearchSerializer(serializers.ModelSerializer):

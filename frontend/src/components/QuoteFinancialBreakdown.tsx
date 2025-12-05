@@ -62,17 +62,17 @@ const CHARGE_SUBGROUPS: Record<string, ChargeSubgroup> = {
     },
 
     // Destination subgroups
-    'dest_customs': {
+    'destination_customs': {
         title: 'Customs & Regulatory',
         order: 1,
-        codes: ['CLEARANCE', 'AGENCY_IMP', 'DOC_IMP']
+        codes: ['CLEARANCE', 'AGENCY_IMP']
     },
-    'dest_handling': {
+    'destination_handling': {
         title: 'Terminal & Handling',
         order: 2,
-        codes: ['HANDLING', 'TERM_INT', 'CTO']
+        codes: ['DOC_IMP', 'HANDLING', 'TERM_INT', 'CTO']
     },
-    'dest_delivery': {
+    'destination_delivery': {
         title: 'Delivery Services',
         order: 3,
         codes: ['CARTAGE', 'CARTAGE_FUEL']
@@ -152,7 +152,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                 {/* Other Charges (catch-all) */}
                 {sell_lines.filter((l: SellLine) => !['ORIGIN', 'MAIN', 'DESTINATION'].includes(l.leg || '')).length > 0 && (
                     <ChargeSection
-                        title="Other Charges"
+                        title="Additional Services"
                         lines={sell_lines.filter((l: SellLine) => !['ORIGIN', 'MAIN', 'DESTINATION'].includes(l.leg || ''))}
                         sellCurrency={sellCurrency}
                     />
@@ -184,7 +184,12 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                                 <span className="text-base font-semibold text-foreground">Total Quote Amount</span>
                                 <div className="text-right">
                                     <span className="block text-3xl font-bold text-primary tracking-tight">
-                                        {formatCurrency(totals.sell_pgk_incl_gst || totals.sell_pgk, sellCurrency)}
+                                        {formatCurrency(
+                                            sellCurrency === 'PGK'
+                                                ? (totals.sell_pgk_incl_gst || totals.sell_pgk)
+                                                : (totals.total_sell_fcy_incl_gst || totals.total_sell_fcy),
+                                            sellCurrency
+                                        )}
                                     </span>
                                     <span className="text-xs text-muted-foreground uppercase font-medium">{sellCurrency} (Inc GST)</span>
                                 </div>
@@ -233,7 +238,7 @@ function ChargeSection({ title, lines, sellCurrency }: { title: string, lines: S
                         <div className="flex items-center gap-2">
                             <div className="w-1 h-4 bg-primary/60 rounded-full"></div>
                             <span className="text-xs font-semibold text-foreground/70 uppercase tracking-wide">
-                                {CHARGE_SUBGROUPS[subgroupKey]?.title || 'Other Charges'}
+                                {CHARGE_SUBGROUPS[subgroupKey]?.title || 'Additional Services'}
                             </span>
                             <Badge variant="secondary" className="text-[10px] h-4 px-1.5 bg-background">
                                 {subgroupLines.length}
@@ -313,7 +318,12 @@ function ChargeSection({ title, lines, sellCurrency }: { title: string, lines: S
 
                                     {/* Total Inc GST */}
                                     <TableCell className="text-right font-mono text-sm font-bold text-foreground bg-muted/5">
-                                        {formatCurrency(line.sell_pgk_incl_gst || line.sell_fcy, line.sell_currency)}
+                                        {formatCurrency(
+                                            line.sell_currency === 'PGK'
+                                                ? (line.sell_pgk_incl_gst || line.sell_pgk)
+                                                : (line.sell_fcy_incl_gst || line.sell_fcy),
+                                            line.sell_currency
+                                        )}
                                     </TableCell>
                                 </TableRow>
                             ))}

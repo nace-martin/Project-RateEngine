@@ -84,7 +84,6 @@ def _ensure_location_for_airport(airport):
     location, _ = Location.objects.get_or_create(
         airport=airport,
         defaults={
-            "kind": Location.Kind.AIRPORT,
             "name": airport.name or airport.iata_code,
             "code": airport.iata_code,
             "country": airport.city.country if airport.city else None,
@@ -183,7 +182,9 @@ def test_v3_quote_rejects_legacy_airport_fields():
 
     response = client.post("/api/v3/quotes/compute/", data=payload, format="json")
     assert response.status_code == 400
-    assert "origin_location_id" in response.json()
+    # Pydantic returns errors as a list of dicts with 'loc', 'msg', 'type' keys
+    errors = response.json()
+    assert any('origin_location_id' in str(e.get('loc', [])) for e in errors)
 
 # --- V3 Weight Break Tier Rating Tests ---
 

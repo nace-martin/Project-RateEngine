@@ -215,6 +215,12 @@ class PartnerRate(models.Model):
         null=True, blank=True, # <-- Made nullable
         help_text="Minimum charge in the card's foreign currency (FCY)."
     )
+    max_charge_fcy = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True, blank=True,
+        help_text="Maximum charge (cap) in the card's foreign currency (FCY)."
+    )
 
     # --- REFACTORED RATE FIELDS ---
     rate_per_kg_fcy = models.DecimalField(
@@ -229,7 +235,11 @@ class PartnerRate(models.Model):
     )
     # --- END REFACTOR ---
     
-    # --- REMOVED: flat_fee_fcy (renamed), tiering_json (too complex) ---
+    # --- REMOVED: flat_fee_fcy (renamed) ---
+    tiering_json = models.JSONField(
+        null=True, blank=True,
+        help_text="JSON defining tiered pricing rules (e.g., weight breaks)."
+    )
 
     # --- ADDED VALIDATION METHOD ---
     def clean(self):

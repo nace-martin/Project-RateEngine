@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, useFieldArray, type Resolver } from "react-hook-form";
+import { useForm, useFieldArray, type Resolver, type FieldErrors } from "react-hook-form";
 import { Trash2, Loader2 } from "lucide-react";
 import type {
   Contact,
@@ -20,6 +20,7 @@ import {
   V3_PAYMENT_TERMS,
   V3_SERVICE_SCOPES,
   V3_LOCATION_TYPES,
+  V3_CARGO_TYPES,
 } from "@/lib/schemas/quoteSchema";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,42 +47,72 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import LocationSearchCombobox from "@/components/LocationSearchCombobox";
 import CompanySearchCombobox from "@/components/CompanySearchCombobox";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
-
-
+import { ExportSpotManager } from "@/components/pricing/ExportSpotManager";
 
 const buildQuoteComputePayload = (
   data: QuoteFormSchemaV3,
-): V3QuoteComputeRequest => ({
-  customer_id: data.customer_id,
-  contact_id: data.contact_id,
-  mode: data.mode,
-  incoterm: data.incoterm,
-  payment_term: data.payment_term,
-  service_scope: data.service_scope,
-  origin_location_id: data.origin_location_id,
-  destination_location_id: data.destination_location_id,
-  dimensions: data.dimensions.map((dimension) => ({
-    pieces: dimension.pieces,
-    length_cm: dimension.length_cm,
-    width_cm: dimension.width_cm,
-    height_cm: dimension.height_cm,
-    gross_weight_kg: dimension.gross_weight_kg,
-  })),
-  overrides: data.overrides?.map((override) => ({
-    service_component_id: override.service_component_id,
-    cost_fcy: override.cost_fcy,
-    currency: override.currency,
-    unit: override.unit,
-    min_charge_fcy: override.min_charge_fcy,
-  })),
-  is_dangerous_goods: data.is_dangerous_goods ?? false,
-  output_currency: data.output_currency || undefined,
-});
+  spotRates?: {
+    carrierSpotRatePgk: string;
+    agentDestChargesFcy: string;
+    agentCurrency: string;
+    isAllIn?: boolean;
+  },
+  existingQuoteId?: string | null
+): V3QuoteComputeRequest => {
+  const payload: V3QuoteComputeRequest = {
+    quote_id: existingQuoteId || undefined,
+    customer_id: data.customer_id,
+    contact_id: data.contact_id,
+    mode: data.mode,
+    incoterm: data.incoterm,
+    payment_term: data.payment_term,
+    service_scope: data.service_scope,
+    origin_location_id: data.origin_location_id,
+    destination_location_id: data.destination_location_id,
+    dimensions: data.dimensions.map((dimension) => ({
+      pieces: dimension.pieces,
+      length_cm: dimension.length_cm,
+      width_cm: dimension.width_cm,
+      height_cm: dimension.height_cm,
+      gross_weight_kg: dimension.gross_weight_kg,
+    })),
+    overrides: data.overrides?.map((override) => ({
+      service_component_id: override.service_component_id,
+      cost_fcy: override.cost_fcy,
+      currency: override.currency,
+      unit: override.unit,
+      min_charge_fcy: override.min_charge_fcy,
+    })),
+    is_dangerous_goods: data.cargo_type === V3_CARGO_TYPES.DANGEROUS_GOODS,
+    output_currency: data.output_currency || undefined,
+  };
+
+  if (spotRates) {
+    const spots: Record<string, unknown> = {};
+    if (spotRates.carrierSpotRatePgk) {
+      spots['FRT_AIR_EXP'] = {
+        amount: spotRates.carrierSpotRatePgk,
+        currency: 'PGK',
+        is_all_in: spotRates.isAllIn
+      };
+    }
+    if (spotRates.agentDestChargesFcy) {
+      spots['DST_CHARGES'] = {
+        amount: spotRates.agentDestChargesFcy,
+        currency: spotRates.agentCurrency || 'USD'
+      };
+    }
+    if (Object.keys(spots).length > 0) {
+      payload.spot_rates = spots;
+    }
+  }
+
+  return payload;
+};
 
 export default function NewQuotePage() {
   const { user } = useAuth();
@@ -94,6 +125,19 @@ export default function NewQuotePage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [originLocation, setOriginLocation] = useState<LocationSearchResult | null>(null);
   const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(null);
+
+  // Spot Rate State
+  const [spotRates, setSpotRates] = useState({
+    carrierSpotRatePgk: "",
+    agentDestChargesFcy: "",
+    agentCurrency: "USD",
+    isAllIn: false
+  });
+  const [missingRates, setMissingRates] = useState({
+    carrier: false,
+    agent: false
+  });
+  const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -112,8 +156,10 @@ export default function NewQuotePage() {
       origin_location_id: "",
       destination_location_type: V3_LOCATION_TYPES.AIRPORT,
       destination_location_id: "",
-      is_dangerous_goods: false,
+      cargo_type: V3_CARGO_TYPES.GENERAL,
       dimensions: [],
+      pickup_suburb: "",
+      delivery_suburb: "",
     },
   });
   const { isValid, isDirty } = form.formState;
@@ -191,6 +237,11 @@ export default function NewQuotePage() {
     }
   }, [selectedCustomerId, user]);
 
+  // Reset any pending quote linkage when the customer changes
+  useEffect(() => {
+    setPendingQuoteId(null);
+  }, [selectedCustomerId]);
+
   function addPieceLine() {
     append({
       pieces: 1,
@@ -198,12 +249,18 @@ export default function NewQuotePage() {
       width_cm: "0",
       height_cm: "0",
       gross_weight_kg: "0",
+      package_type: "Box",
     });
   }
+
+  const handleSpotRateUpdate = (field: string, value: string | boolean) => {
+    setSpotRates(prev => ({ ...prev, [field]: value }));
+  };
 
   async function onSubmit(data: QuoteFormSchemaV3) {
     setIsSubmitting(true);
     setApiError(null);
+    setMissingRates({ carrier: false, agent: false });
 
     if (!user) {
       setApiError("Authentication token not available. Please log in.");
@@ -212,8 +269,41 @@ export default function NewQuotePage() {
     }
 
     try {
-      const payload = buildQuoteComputePayload(data);
+      // Always include spot rates if they are populated
+      const payload = buildQuoteComputePayload(data, spotRates, pendingQuoteId);
       const response = await computeQuoteV3(payload);
+
+      // Check for missing rates
+      if (response.latest_version.totals.has_missing_rates) {
+        const lines = response.latest_version.lines;
+        let missingCarrier = false;
+        let missingAgent = false;
+
+        // Check for missing carrier rates (FRT_AIR_EXP)
+        if (lines.some(l => l.service_component.code === 'FRT_AIR_EXP' && l.is_rate_missing)) {
+          missingCarrier = true;
+        }
+
+        // Check for missing agent rates (Destination Charges)
+        // We check for standard destination components or if DST_CHARGES itself is missing
+        const destComponents = ['DST-DELIV-STD', 'DST-CLEAR-CUS', 'DST-HANDL-STD', 'DST-DOC-IMP', 'DST_CHARGES'];
+        if (lines.some(l => destComponents.includes(l.service_component.code) && l.is_rate_missing)) {
+          missingAgent = true;
+        }
+
+        // Also check by leg/category if possible, but code list is safer for now.
+        // If we have missing rates, we show the spot manager and DO NOT redirect yet.
+        if (missingCarrier || missingAgent) {
+          setMissingRates({ carrier: missingCarrier, agent: missingAgent });
+          setPendingQuoteId(response.id);
+          // Downgraded to warning/info - no API error
+          // setApiError("Some rates are missing. Please provide spot rates below.");
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      setPendingQuoteId(null);
       router.push(`/quotes/${response.id}`);
     } catch (error: unknown) {
       console.error("API Error:", error);
@@ -227,254 +317,334 @@ export default function NewQuotePage() {
     }
   }
 
+  const onInvalid = (errors: FieldErrors<QuoteFormSchemaV3>) => {
+    console.error("Form validation errors:", JSON.stringify(errors, null, 2));
+    console.log("Current form values:", form.getValues());
+
+    const firstErrorKey = Object.keys(errors)[0];
+
+    // Helper to find the first message in a nested error object
+    const getErrorMessage = (error: unknown): string | null => {
+      if (!error) return null;
+      if (typeof error === 'string') return error;
+
+      if (typeof error === 'object' && error !== null) {
+        // Check for 'message' property safely
+        const hasMessage = 'message' in error && typeof (error as Record<string, unknown>).message === 'string';
+        if (hasMessage) {
+          return (error as Record<string, unknown>).message as string;
+        }
+
+        // Check for 'root' property safely
+        const hasRoot = 'root' in error;
+        if (hasRoot) {
+          return getErrorMessage((error as Record<string, unknown>).root);
+        }
+
+        // If it's an array or object, try to find the first child with a message
+        for (const key in error) {
+          const childMsg = getErrorMessage((error as Record<string, unknown>)[key]);
+          if (childMsg) return childMsg;
+        }
+      }
+      return null;
+    };
+
+    const errorMessage = getErrorMessage(errors) || "Please check all required fields.";
+
+    setApiError(`Validation Error: ${errorMessage}`);
+
+    // Attempt to scroll to the error
+    if (firstErrorKey) {
+      const errorElement = document.querySelector(`[name="${firstErrorKey}"]`);
+      if (errorElement) {
+        errorElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        (errorElement as HTMLElement).focus();
+      } else {
+        // Fallback for fields that might not map directly to a name attribute (e.g. dimensions root)
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   return (
-    <div className="container mx-auto max-w-5xl p-4">
+    <div className="container mx-auto max-w-5xl p-4 pb-32">
       <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-6">
           <div className="flex items-center justify-between">
             <h1 className="text-3xl font-bold">New Quote</h1>
           </div>
 
-          {apiError && (
+          {apiError && !missingRates.carrier && !missingRates.agent && (
             <Alert variant="destructive">
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>{apiError}</AlertDescription>
             </Alert>
           )}
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Customer</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="customer_id"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Customer</FormLabel>
-                      <CompanySearchCombobox
-                        value={selectedCustomer}
-                        onSelect={(company) => {
-                          setSelectedCustomer(company);
-                          const companyId = company?.id ?? null;
-                          field.onChange(companyId ?? "");
-                          setSelectedCustomerId(companyId);
-                          setContacts([]);
-                          form.resetField("contact_id");
-                        }}
-                      />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="contact_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contact</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value || ""}
-                        disabled={!selectedCustomerId || isLoadingContacts}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue
-                              placeholder={
-                                isLoadingContacts
-                                  ? "Loading contacts..."
-                                  : !selectedCustomerId
-                                    ? "Select customer first"
-                                    : "Select a contact"
-                              }
-                            />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {isLoadingContacts ? (
-                            <SelectItem value="loading" disabled>
-                              Loading...
+          {/* 1. Customer */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Customer</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <FormField
+                control={form.control}
+                name="customer_id"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Customer</FormLabel>
+                    <CompanySearchCombobox
+                      value={selectedCustomer}
+                      onSelect={(company) => {
+                        setSelectedCustomer(company);
+                        const companyId = company?.id ?? null;
+                        field.onChange(companyId ?? "");
+                        setSelectedCustomerId(companyId);
+                        setContacts([]);
+                        form.resetField("contact_id");
+                      }}
+                    />
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="contact_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contact</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      value={field.value || ""}
+                      disabled={!selectedCustomerId || isLoadingContacts}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue
+                            placeholder={
+                              isLoadingContacts
+                                ? "Loading contacts..."
+                                : !selectedCustomerId
+                                  ? "Select customer first"
+                                  : "Select a contact"
+                            }
+                          />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {isLoadingContacts ? (
+                          <SelectItem value="loading" disabled>
+                            Loading...
+                          </SelectItem>
+                        ) : contacts.length > 0 ? (
+                          contacts.map((contact) => (
+                            <SelectItem key={contact.id} value={contact.id}>
+                              {contact.first_name} {contact.last_name} ({contact.email})
                             </SelectItem>
-                          ) : contacts.length > 0 ? (
-                            contacts.map((contact) => (
-                              <SelectItem key={contact.id} value={contact.id}>
-                                {contact.first_name} {contact.last_name} ({contact.email})
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <SelectItem value="no-contacts" disabled>
-                              {selectedCustomerId
-                                ? "No contacts found"
-                                : "Select customer first"}
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
+                          ))
+                        ) : (
+                          <SelectItem value="no-contacts" disabled>
+                            {selectedCustomerId
+                              ? "No contacts found"
+                              : "Select customer first"}
+                          </SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+          </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Routing</CardTitle>
-                <CardDescription>
-                  Shipment type (import/export/domestic) is detected automatically.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="origin_location_id"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Origin Location</FormLabel>
-                      <LocationSearchCombobox
-                        value={field.value || null}
-                        selectedLabel={originLocation?.display_name ?? null}
-                        onSelect={(selection) => {
-                          setOriginLocation(selection);
-                          setLocationFields("origin", selection, field.onChange);
-                        }}
-                      />
-                      <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="destination_location_id"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Destination Location</FormLabel>
-                      <LocationSearchCombobox
-                        value={field.value || null}
-                        selectedLabel={destinationLocation?.display_name ?? null}
-                        onSelect={(selection) => {
-                          setDestinationLocation(selection);
-                          setLocationFields("destination", selection, field.onChange);
-                        }}
-                      />
-                      <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
+          {/* 2. Routing */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Routing</CardTitle>
+              <CardDescription>
+                Shipment type (import/export/domestic) is detected automatically.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="origin_location_id"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Origin Location</FormLabel>
+                    <LocationSearchCombobox
+                      value={field.value || null}
+                      selectedLabel={originLocation?.display_name ?? null}
+                      onSelect={(selection) => {
+                        setOriginLocation(selection);
+                        setLocationFields("origin", selection, field.onChange);
+                      }}
+                    />
+                    <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="destination_location_id"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Destination Location</FormLabel>
+                    <LocationSearchCombobox
+                      value={field.value || null}
+                      selectedLabel={destinationLocation?.display_name ?? null}
+                      onSelect={(selection) => {
+                        setDestinationLocation(selection);
+                        setLocationFields("destination", selection, field.onChange);
+                      }}
+                    />
+                    <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+          </Card>
 
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle>Shipment & Terms</CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                <FormField
-                  control={form.control}
-                  name="mode"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Mode</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select mode" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.values(V3_MODES).map((mode) => (
-                            <SelectItem key={mode} value={mode}>
-                              {mode}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="incoterm"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Incoterm</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select incoterm" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.values(V3_INCOTERMS).map((incoterm) => (
-                            <SelectItem key={incoterm} value={incoterm}>
-                              {incoterm}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="payment_term"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Payment Term</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select payment term" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.values(V3_PAYMENT_TERMS).map((term) => (
-                            <SelectItem key={term} value={term}>
-                              {term}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="service_scope"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Service Scope</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select scope" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.values(V3_SERVICE_SCOPES).map((scope) => (
-                            <SelectItem key={scope} value={scope}>
-                              {scope}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>Door/Airport selection for pricing logic.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
-          </div>
+          {/* 3. Shipment & Terms */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Shipment & Terms</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <FormField
+                control={form.control}
+                name="mode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Mode</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select mode" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.values(V3_MODES).map((mode) => (
+                          <SelectItem key={mode} value={mode}>
+                            {mode}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="incoterm"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Incoterm</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select incoterm" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.values(V3_INCOTERMS).map((incoterm) => (
+                          <SelectItem key={incoterm} value={incoterm}>
+                            {incoterm}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="payment_term"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Term</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select payment term" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.values(V3_PAYMENT_TERMS).map((term) => (
+                          <SelectItem key={term} value={term}>
+                            {term}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="service_scope"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Service Scope</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select scope" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.values(V3_SERVICE_SCOPES).map((scope) => (
+                          <SelectItem key={scope} value={scope}>
+                            {scope}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>Door/Airport selection for pricing logic.</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
+              {/* Cargo Category (Moved from Other Details) */}
+              <FormField
+                control={form.control}
+                name="cargo_type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Cargo Category</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.values(V3_CARGO_TYPES).map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </CardContent>
+          </Card>
+
+          {/* 4. Cargo Dimensions */}
           <Card>
             <CardHeader>
               <CardTitle>Cargo Dimensions</CardTitle>
@@ -505,7 +675,32 @@ export default function NewQuotePage() {
                     </Button>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+                      <FormField
+                        control={form.control}
+                        name={`dimensions.${index}.package_type`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Type</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Type" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="Box">Box</SelectItem>
+                                <SelectItem value="Pallet">Pallet</SelectItem>
+                                <SelectItem value="Crate">Crate</SelectItem>
+                                <SelectItem value="Skid">Skid</SelectItem>
+                                <SelectItem value="Drum">Drum</SelectItem>
+                                <SelectItem value="Loose">Loose</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                       <FormField
                         control={form.control}
                         name={`dimensions.${index}.pieces`}
@@ -591,58 +786,99 @@ export default function NewQuotePage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Other Details</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <FormField
-                control={form.control}
-                name="is_dangerous_goods"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-4 opacity-50">
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        disabled
-                      />
-                    </FormControl>
-                    <div className="space-y-1 leading-none">
-                      <FormLabel>Dangerous Goods</FormLabel>
-                      <FormDescription>
-                        DG, AVI, and other special cargo are not yet supported.
-                      </FormDescription>
-                    </div>
-                  </FormItem>
-                )}
-              />
-            </CardContent>
-          </Card>
+          {/* 5. Pickup & Delivery (Conditional) */}
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            {(form.watch('service_scope') === 'D2D' || form.watch('service_scope') === 'D2A') && (
+              <Card className="border-l-4 border-l-primary">
+                <CardHeader>
+                  <CardTitle>Pickup Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <FormField
+                    control={form.control}
+                    name="pickup_suburb"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Pickup Suburb / Postcode</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder={originLocation?.country_code === 'PG' ? "e.g. Boroko, NCD" : "e.g. Eagle Farm, 4009"}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </Card>
+            )}
 
-          <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center sm:justify-end">
-            {canCalculateQuote ? (
-              <Button
-                type="submit"
-                variant="secondary"
-                className="text-lg"
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Calculating...
-                  </>
-                ) : (
-                  "Calculate Quote"
-                )}
-              </Button>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Complete all required fields to calculate a quote.
-              </p>
+            {(form.watch('service_scope') === 'D2D' || form.watch('service_scope') === 'A2D') && (
+              <Card className="border-l-4 border-l-primary">
+                <CardHeader>
+                  <CardTitle>Delivery Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <FormField
+                    control={form.control}
+                    name="delivery_suburb"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Delivery Suburb / Postcode</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder={destinationLocation?.country_code === 'PG' ? "e.g. Boroko, NCD" : "e.g. Eagle Farm, 4009"}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </Card>
             )}
           </div>
+
+          <ExportSpotManager
+            showCarrierSpot={missingRates.carrier}
+            showAgentCharges={missingRates.agent}
+            spotRates={spotRates}
+            onUpdate={handleSpotRateUpdate}
+            currencies={['USD', 'AUD', 'EUR', 'GBP', 'NZD', 'SGD']}
+            shipmentDetails={{
+              origin: originLocation?.display_name || form.watch('origin_airport') || 'Origin',
+              destination: destinationLocation?.display_name || form.watch('destination_airport') || 'Destination',
+              mode: form.watch('mode'),
+              pieces: form.watch('dimensions')?.reduce((acc, curr) => acc + (Number(curr.pieces) || 0), 0) || 0,
+              weight: form.watch('dimensions')?.reduce((acc, curr) => acc + (Number(curr.gross_weight_kg) || 0), 0) || 0,
+              serviceScope: form.watch('service_scope'),
+              commodity: form.watch('cargo_type'),
+              dimensions: form.watch('dimensions'),
+              pickupSuburb: form.watch('pickup_suburb'),
+              deliverySuburb: form.watch('delivery_suburb')
+            }}
+          />
+
+          {/* Sticky Footer */}
+          <div className="fixed bottom-0 left-0 right-0 border-t bg-background p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:pl-64 z-50">
+            <div className="container mx-auto flex max-w-5xl items-center justify-between">
+              <div className="text-sm text-muted-foreground hidden md:block">
+                {canCalculateQuote ? "Ready to calculate." : "Complete all required fields to calculate."}
+              </div>
+              <Button
+                type="submit"
+                size="lg"
+                disabled={isSubmitting}
+                className="w-full md:w-auto shadow-lg"
+              >
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Calculate Quote
+              </Button>
+            </div>
+          </div>
+
         </form>
       </Form>
     </div>

@@ -57,6 +57,7 @@ export interface LocationSearchResult {
   id: string;            // Backend identifier (IATA, UUID, etc.)
   code: string;          // Display-friendly code (IATA, port code, etc.)
   display_name: string;  // "Brisbane (BNE), AU"
+  country_code?: string; // "AU", "PG", etc.
 }
 
 
@@ -110,6 +111,7 @@ export interface V3ManualOverride {
 }
 
 export interface V3QuoteComputeRequest {
+  quote_id?: string;
   customer_id: string;
   contact_id: string;
   mode: string;
@@ -122,6 +124,7 @@ export interface V3QuoteComputeRequest {
   is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];
   output_currency?: string;
+  spot_rates?: Record<string, unknown>;
 }
 
 
@@ -224,6 +227,7 @@ export interface SellLine {
   sell_pgk_incl_gst?: string;
   gst_amount?: string;
   sell_fcy: string;
+  sell_fcy_incl_gst?: string;
   sell_currency: string;
   margin_percent: string;
   exchange_rate: string;
@@ -237,7 +241,12 @@ export interface QuoteComputeTotals {
   gst_amount?: string;
   caf_pgk: string;
   currency: string;
-  [key: string]: string | undefined; // For dynamic keys like sell_aud, caf_aud
+  // FCY Totals
+  total_sell_fcy?: string;
+  total_sell_fcy_incl_gst?: string;
+  total_sell_fcy_currency?: string;
+  cost_aud?: string; // Legacy support
+  [key: string]: string | undefined; // For dynamic keys
 }
 
 export interface RoutingViolation {

@@ -17,6 +17,7 @@ UNIT_CHOICES = [
     ('FEU', 'Per FEU'), # Forty-foot Equivalent Unit (FCL Sea)
     ('PALLET', 'Per Pallet'),
     ('KM', 'Per KM'),
+    ('PAGE', 'Per Page'),
 ]
 AUDIENCE_CHOICES = [('BUY', 'Buy Side'), ('SELL', 'Sell Side'), ('BOTH', 'Both')]
 SHIPMENT_DIRECTION_CHOICES = [

@@ -9,9 +9,16 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         # Create a new snapshot with explicit rates
         rates = {
-            "AUD": {"tt_buy": 2.77, "tt_sell": 0.35}, # User example: 2.77 buy rate
-            "USD": {"tt_buy": 0.28, "tt_sell": 0.26},
-            "PGK": {"tt_buy": 1.0, "tt_sell": 1.0}
+            # TT Buy = PGK per 1 Unit of FCY (Bank Buys FCY)
+            # TT Sell = PGK per 1 Unit of FCY (Bank Sells FCY)
+            # Engine logic: Sell Rate (FCY/PGK) = 1 / tt_sell
+            
+            "AUD": {"tt_buy": 2.77, "tt_sell": 2.85}, # 1 AUD = 2.77 PGK (Buy), 2.85 PGK (Sell) -> 1 PGK = ~0.35 AUD
+            "USD": {"tt_buy": 3.80, "tt_sell": 3.95}, # Example: 1 USD = 3.80 PGK (Buy), 3.95 PGK (Sell) -> 1 PGK = ~0.25 USD
+            "PGK": {"tt_buy": 1.0, "tt_sell": 1.0},
+            "EUR": {"tt_buy": 4.10, "tt_sell": 4.25},
+            "GBP": {"tt_buy": 4.80, "tt_sell": 5.00},
+            "CNY": {"tt_buy": 0.53, "tt_sell": 0.56},
         }
         
         snapshot = FxSnapshot.objects.create(

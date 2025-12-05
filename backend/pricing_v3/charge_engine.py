@@ -125,8 +125,12 @@ class ChargeEngine:
             if line.component_code in self.freight_component_codes
         )
         
-        # Get CAF percentage from policy
-        caf_percent = getattr(self.context.policy, 'caf_percent', Decimal("0.05"))  # Default 5%
+        # Get CAF percentage from policy based on mode
+        mode = getattr(self.context, 'mode', 'EXPORT') # Default to EXPORT if missing
+        if mode == 'IMPORT':
+            caf_percent = getattr(self.context.policy, 'caf_import_pct', Decimal("0.05"))
+        else:
+            caf_percent = getattr(self.context.policy, 'caf_export_pct', Decimal("0.10"))
         
         if freight_total_pgk <= 0:
             return (None, Decimal("0.00"), Decimal("0.00"))

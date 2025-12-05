@@ -66,6 +66,7 @@ class QuoteInput:
     output_currency: str
     shipment: ShipmentDetails
     overrides: List[ManualOverride] = field(default_factory=list)
+    spot_rates: Dict[str, Any] = field(default_factory=dict)
 
 # --- Calculation & Output Dataclasses ---
 

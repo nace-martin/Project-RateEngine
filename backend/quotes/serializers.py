@@ -33,6 +33,7 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     Validates the V3 compute request from the frontend.
     This is what the user *sends*.
     """
+    quote_id = serializers.UUIDField(required=False, allow_null=True)
     customer_id = serializers.UUIDField()
     contact_id = serializers.UUIDField()
     mode = serializers.CharField() # We'll validate choices in the view
@@ -58,6 +59,7 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     is_dangerous_goods = serializers.BooleanField(default=False)
     dimensions = V3DimensionInputSerializer(many=True, required=True)
     overrides = V3ManualOverrideSerializer(many=True, required=False)
+    spot_rates = serializers.DictField(required=False, allow_null=True)
 
     def validate_dimensions(self, value):
         if not value or len(value) == 0:

@@ -335,6 +335,7 @@ class QuoteComputeV3View(APIView):
                     "sell_pgk_incl_gst": str(line.sell_pgk_incl_gst),
                     "gst_amount": str(line.sell_pgk_incl_gst - line.sell_pgk),
                     "sell_fcy": str(line.sell_fcy),
+                    "sell_fcy_incl_gst": str(line.sell_fcy_incl_gst),
                     "sell_currency": line.sell_fcy_currency,
                     "margin_percent": str(((line.sell_pgk - line.cost_pgk) / line.cost_pgk * 100) if line.cost_pgk > 0 else 0),
                     "exchange_rate": str(line.exchange_rate or 1.0),
@@ -349,6 +350,44 @@ class QuoteComputeV3View(APIView):
                     if line.cost_fcy_currency != 'PGK':
                         total_cost_fcy += Decimal(str(line.cost_fcy))
                         cost_fcy_currency = line.cost_fcy_currency
+                
+                # Ensure cost_fcy_currency is set if not already (default to None or handle appropriately)
+                # But wait, the error says "cannot access local variable 'cost_fcy' where it is not associated with a value"
+                # The error is likely in the loop or how cost_fcy is accessed.
+                # Actually, looking at the code:
+                # if line.cost_fcy and line.cost_fcy_currency:
+                #     if line.cost_fcy_currency != 'PGK':
+                #         total_cost_fcy += Decimal(str(line.cost_fcy))
+                #         cost_fcy_currency = line.cost_fcy_currency
+                
+                # The variable `cost_fcy` is NOT a local variable here, it's `line.cost_fcy`.
+                # The error message "cannot access local variable 'cost_fcy'" suggests there is a variable named `cost_fcy` being accessed.
+                # Let me check line 348 again.
+                # `if line.cost_fcy and line.cost_fcy_currency:`
+                # This looks fine.
+                
+                # Wait, the error might be in `total_cost_fcy += Decimal(str(line.cost_fcy))`?
+                # No.
+                
+                # Let's look at the traceback provided by the user.
+                # The user provided a frontend error.
+                # "Failed to create quote: An unexpected error occurred: cannot access local variable 'cost_fcy' where it is not associated with a value"
+                # This message comes from the backend response.
+                
+                # Let's look at where `cost_fcy` is defined in `views.py`.
+                # I don't see `cost_fcy` as a local variable in the snippet I viewed.
+                # I see `total_cost_fcy`.
+                
+                # Maybe I missed a line where `cost_fcy` is used?
+                # Let me check the file content again, specifically around line 348.
+                # Ah, I see `total_cost_fcy += Decimal(str(line.cost_fcy))`.
+                
+                # Is it possible that `line.cost_fcy` is raising the error? No, that would be an AttributeError.
+                # The error `UnboundLocalError: local variable 'cost_fcy' referenced before assignment` usually happens when you try to use a variable that is assigned later in the function, but hasn't been assigned yet.
+                
+                # I suspect the error is actually in `PricingServiceV3` or `QuoteCharges` dataclass, or maybe I am misreading `views.py`.
+                # Let me search for `cost_fcy` in `views.py`.
+
             
             # Get exchange rates used
             fx_snapshot = service.get_fx_snapshot()
@@ -369,6 +408,7 @@ class QuoteComputeV3View(APIView):
                     "sell_pgk_incl_gst": str(charges.totals.total_sell_pgk_incl_gst),
                     "gst_amount": str(charges.totals.total_sell_pgk_incl_gst - charges.totals.total_sell_pgk),
                     "sell_fcy": str(charges.totals.total_sell_fcy),
+                    "total_sell_fcy_incl_gst": str(charges.totals.total_sell_fcy_incl_gst),
                     "currency": charges.totals.total_sell_fcy_currency,
                 },
                 "exchange_rates": rates_dict,
