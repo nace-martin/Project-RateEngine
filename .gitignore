@@ -116,3 +116,6 @@ coverage/
 .vs/
 
 gha-creds-*.json
+
+# Temporary test output files
+test_output*.txt
