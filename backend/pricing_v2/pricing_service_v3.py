@@ -296,6 +296,12 @@ class PricingServiceV3:
         if ccy_type == "ORIGIN":
             code = self._get_origin_currency_code()
             return code or HOME_CURRENCY
+        if ccy_type == "ORIGIN_AU_USD":
+            # Import Prepaid A2D: AU origin → AUD, else → USD
+            origin = getattr(self.shipment, "origin_location", None)
+            if origin and origin.country_code == "AU":
+                return "AUD"
+            return "USD"
         if ccy_type == "DESTINATION":
             code = self._get_destination_currency_code()
             return code or HOME_CURRENCY
@@ -710,26 +716,10 @@ class PricingServiceV3:
         amount = Decimal(str(spot_data.get('amount', '0.00')))
         currency = spot_data.get('currency', 'PGK')
         
-        # If currency is FCY, convert to PGK using Buy Rate + Buffer (Import Logic)
-        # Why Import Logic? Because we are "buying" the spot service.
-        # However, for Export D2D, the user said: "Dest Charges FCY -> PGK (Buy Rate + 5% Buffer)"
-        # This matches our standard _get_exchange_rate(..., apply_caf=True) logic IF shipment_type=IMPORT.
-        # BUT here shipment_type=EXPORT.
-        # So we need to force "IMPORT" context for this specific conversion if it's a destination charge?
-        # Or just rely on the fact that _get_exchange_rate uses caf_export_pct (10%) for Exports?
-        
-        # User Requirement: "Apply 5% buffer / CAF to the FX BUY rate" for D2D Dest Charges.
-        # Export CAF is 10%. Import CAF is 5%.
-        # So for D2D Dest Charges, we should use Import CAF (5%).
-        
-        # Let's check if this is a Destination Charge
-        is_dest_charge = component.code == 'DST_CHARGES' or (component.service_code and component.service_code.location_type == 'DESTINATION')
-        
-        force_import_caf = False
-        if is_dest_charge and self.shipment.shipment_type == 'EXPORT':
-            force_import_caf = True
-            
-        rate = self._get_exchange_rate(currency, "PGK", apply_caf=True, force_import_caf=force_import_caf)
+        # Convert FCY to PGK using Buy Rate + CAF buffer
+        # CAF rates: Import=5%, Export=10% (confirmed)
+        # Export D2D destination charges use Export CAF (10%)
+        rate = self._get_exchange_rate(currency, "PGK", apply_caf=True)
         cost_pgk = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
         return {

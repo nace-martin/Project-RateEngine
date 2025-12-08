@@ -125,7 +125,8 @@ class Command(BaseCommand):
                 # If we quote in Agent's currency (Origin), then it's 'ORIGIN'.
                 # Wait, for Import, Origin is Overseas.
                 # So 'ORIGIN' = Match Origin Currency (Agent's Currency).
-                "output_currency_type": "ORIGIN", 
+                # UPDATE: User confirmed AU origin → AUD, else → USD
+                "output_currency_type": "ORIGIN_AU_USD", 
                 "is_active": True
             }
         )

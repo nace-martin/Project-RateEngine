@@ -720,3 +720,61 @@ export async function getServiceComponents(): Promise<ServiceComponent[]> {
   if (!response.ok) throw new Error('Failed to fetch service components');
   return response.json();
 }
+
+// --- Bucket-based Spot Charges (New) ---
+
+import type {
+  SpotChargeLine,
+  SpotChargesResponse,
+  SpotChargesCalculateResponse,
+} from './types';
+
+export async function getSpotChargesForQuote(quoteId: string): Promise<SpotChargesResponse> {
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/spot-charges/`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` }
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch spot charges: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function saveSpotChargesForQuote(
+  quoteId: string,
+  charges: SpotChargeLine[]
+): Promise<SpotChargesResponse> {
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/spot-charges/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify({ charges }),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to save spot charges: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function calculateSpotCharges(quoteId: string): Promise<SpotChargesCalculateResponse> {
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/spot-charges/calculate/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to calculate spot charges: ${detail}`);
+  }
+  return response.json();
+}
+

@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 from rest_framework import serializers
-from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal, SpotChargeLine
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
@@ -105,13 +105,56 @@ class V3QuoteVersionSerializer(serializers.ModelSerializer):
         model = QuoteVersion
         exclude = ('quote',) # Exclude the parent link
 
-# --- V3 RESPONSE SERIALIZERS ---
-# These define what the API *returns* to the frontend.
+# --- SPOT CHARGE LINE SERIALIZERS ---
 
-class V3ServiceComponentSerializer(serializers.ModelSerializer):
+class SpotChargeLineSerializer(serializers.ModelSerializer):
+    """Serializer for freeform spot charge lines."""
+    target_line_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    
     class Meta:
-        model = ServiceComponent
-        fields = ('id', 'code', 'description', 'category', 'unit')
+        model = SpotChargeLine
+        fields = (
+            'id', 'bucket', 'description', 'amount', 'currency', 'unit_basis',
+            'min_charge', 'percentage', 'percent_applies_to', 'target_line', 'target_line_id',
+            'notes', 'created_at'
+        )
+        read_only_fields = ('id', 'created_at', 'target_line')
+    
+    def validate(self, attrs):
+        unit_basis = attrs.get('unit_basis')
+        
+        if unit_basis == SpotChargeLine.UnitBasis.PERCENTAGE:
+            if attrs.get('percentage') is None:
+                raise serializers.ValidationError(
+                    {'percentage': 'Percentage is required for percentage-based charges.'}
+                )
+            if not attrs.get('percent_applies_to'):
+                raise serializers.ValidationError(
+                    {'percent_applies_to': 'Must specify what the percentage applies to.'}
+                )
+            if attrs.get('percent_applies_to') == SpotChargeLine.PercentAppliesTo.SPECIFIC_LINE:
+                if not attrs.get('target_line_id'):
+                    raise serializers.ValidationError(
+                        {'target_line_id': 'Target line is required for SPECIFIC_LINE percentage.'}
+                    )
+        else:
+            if attrs.get('amount') is None:
+                raise serializers.ValidationError(
+                    {'amount': 'Amount is required for non-percentage charges.'}
+                )
+        
+        return attrs
+    
+    def create(self, validated_data):
+        target_line_id = validated_data.pop('target_line_id', None)
+        if target_line_id:
+            validated_data['target_line_id'] = target_line_id
+        return super().create(validated_data)
+
+
+class SpotChargesInputSerializer(serializers.Serializer):
+    """Serializer for bulk spot charge submission."""
+    charges = SpotChargeLineSerializer(many=True)
 
 class V3QuoteLineSerializer(serializers.ModelSerializer):
     service_component = V3ServiceComponentSerializer()

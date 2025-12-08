@@ -23,6 +23,8 @@ interface ExportSpotManagerProps {
     shipmentDetails?: {
         origin: string;
         destination: string;
+        originCountryCode?: string;
+        destinationCountryCode?: string;
         mode: string;
         pieces: number;
         weight: number;
@@ -36,8 +38,6 @@ interface ExportSpotManagerProps {
             gross_weight_kg: number | string;
             package_type?: string;
         }[];
-        pickupSuburb?: string;
-        deliverySuburb?: string;
     };
 }
 
@@ -63,21 +63,39 @@ export const ExportSpotManager: React.FC<ExportSpotManagerProps> = ({
             `   ${i + 1}. ${d.pieces}x ${d.package_type || 'Box'} @ ${d.length_cm}x${d.width_cm}x${d.height_cm}cm (${d.gross_weight_kg}kg)`
         ).join('\n') || '   No dimensions provided';
 
-        const pickup = shipmentDetails.pickupSuburb ? `Pickup Location: ${shipmentDetails.pickupSuburb}` : '';
-        const delivery = shipmentDetails.deliverySuburb ? `Delivery Location: ${shipmentDetails.deliverySuburb}` : '';
-        const addressBlock = [pickup, delivery].filter(Boolean).join('\n');
+        // Determine shipment direction based on PNG location
+        const isExport = shipmentDetails.originCountryCode === 'PG';
+        const isImport = shipmentDetails.destinationCountryCode === 'PG';
+
+        // Determine what address details are needed based on service scope
+        let addressPlaceholders = '';
+        const scope = shipmentDetails.serviceScope;
+
+        if (isExport && (scope === 'D2D' || scope === 'A2D')) {
+            // Export: we need delivery address at destination (overseas)
+            addressPlaceholders = `
+Delivery Address Required:
+Delivery Suburb: ________________
+Postcode: ________________`;
+        } else if (isImport && (scope === 'D2D' || scope === 'D2A')) {
+            // Import: we need pickup address at origin (overseas)
+            addressPlaceholders = `
+Pickup Address Required:
+Pickup Suburb: ________________
+Postcode: ________________`;
+        }
 
         return `Subject: Quote Request - ${shipmentDetails.origin} to ${shipmentDetails.destination} - ${shipmentDetails.mode}
 
 Dear Partner,
 
-Please provide D2D destination charges for the following shipment:
+Please provide ${isExport ? 'destination' : 'origin'} charges for the following shipment:
 
 Origin: ${shipmentDetails.origin}
 Destination: ${shipmentDetails.destination}
 Service: ${shipmentDetails.serviceScope}
 Mode: ${shipmentDetails.mode}
-${addressBlock ? '\n' + addressBlock : ''}
+${addressPlaceholders}
 
 Cargo Details:
 Pieces: ${shipmentDetails.pieces}
@@ -163,7 +181,7 @@ Best regards,`;
                                         <div className="space-y-4 py-4">
                                             <Textarea
                                                 value={emailScript}
-                                                readOnly
+                                                onChange={(e) => setEmailScript(e.target.value)}
                                                 className="h-[300px] font-mono text-sm"
                                             />
                                             <Button onClick={handleCopy} className="w-full">

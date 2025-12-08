@@ -38,6 +38,7 @@ SERVICE_SCOPE_CHOICES = [
 OUTPUT_CURRENCY_TYPE_CHOICES = [
     ('DESTINATION', 'Match Destination Currency'),
     ('ORIGIN', 'Match Origin Currency'),
+    ('ORIGIN_AU_USD', 'AU Origin→AUD, Else→USD'),
     ('PGK', 'Force PGK'),
     ('USD', 'Force USD'),
 ]

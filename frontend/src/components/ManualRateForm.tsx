@@ -35,7 +35,7 @@ import type { V3ManualOverride } from "@/lib/types";
 
 type ManualOverride = V3ManualOverride;
 
-const UNIT_OPTIONS = ["Per Shipment", "Per KG"] as const;
+const UNIT_OPTIONS = ["Per Shipment", "Per KG", "Percentage"] as const;
 
 const manualRateFormSchema = z.object({
   cost_fcy: z.string().min(1, "Cost is required"),

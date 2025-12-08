@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, useFieldArray, type Resolver, type FieldErrors } from "react-hook-form";
+import { useForm, useFieldArray, useWatch, type Resolver, type FieldErrors } from "react-hook-form";
 import { Trash2, Loader2 } from "lucide-react";
 import type {
   Contact,
@@ -51,7 +51,7 @@ import LocationSearchCombobox from "@/components/LocationSearchCombobox";
 import CompanySearchCombobox from "@/components/CompanySearchCombobox";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
-import { ExportSpotManager } from "@/components/pricing/ExportSpotManager";
+import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 
 const buildQuoteComputePayload = (
   data: QuoteFormSchemaV3,
@@ -137,7 +137,9 @@ export default function NewQuotePage() {
     carrier: false,
     agent: false
   });
+  const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
   const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null);
+  const [pendingFormData, setPendingFormData] = useState<QuoteFormSchemaV3 | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -157,9 +159,14 @@ export default function NewQuotePage() {
       destination_location_type: V3_LOCATION_TYPES.AIRPORT,
       destination_location_id: "",
       cargo_type: V3_CARGO_TYPES.GENERAL,
-      dimensions: [],
-      pickup_suburb: "",
-      delivery_suburb: "",
+      dimensions: [{
+        pieces: 1,
+        length_cm: "",
+        width_cm: "",
+        height_cm: "",
+        gross_weight_kg: "",
+        package_type: "Box",
+      }],
     },
   });
   const { isValid, isDirty } = form.formState;
@@ -169,6 +176,45 @@ export default function NewQuotePage() {
     control: form.control,
     name: "dimensions",
   });
+
+  // Live Cargo Metrics Calculation - useWatch for proper reactivity
+  const watchedDimensions = useWatch({
+    control: form.control,
+    name: "dimensions",
+  });
+
+  const cargoMetrics = useMemo(() => {
+    if (!watchedDimensions || watchedDimensions.length === 0) {
+      return { pieces: 0, actualWeight: 0, volumetricWeight: 0, chargeableWeight: 0 };
+    }
+
+    let totalPieces = 0;
+    let totalActual = 0;
+    let totalVolumetric = 0;
+
+    for (const dim of watchedDimensions) {
+      const pcs = parseInt(String(dim.pieces), 10) || 0;
+      const l = parseFloat(String(dim.length_cm)) || 0;
+      const w = parseFloat(String(dim.width_cm)) || 0;
+      const h = parseFloat(String(dim.height_cm)) || 0;
+      const kg = parseFloat(String(dim.gross_weight_kg)) || 0;
+
+      totalPieces += pcs;
+      totalActual += kg;
+      totalVolumetric += (l * w * h / 6000) * pcs;
+    }
+
+    // Chargeable weight is max of actual vs volumetric, rounded UP to next kg
+    const chargeableRaw = Math.max(totalActual, totalVolumetric);
+    const chargeableRounded = chargeableRaw > 0 ? Math.ceil(chargeableRaw) : 0;
+
+    return {
+      pieces: totalPieces,
+      actualWeight: Math.round(totalActual * 10) / 10,
+      volumetricWeight: Math.round(totalVolumetric * 10) / 10,
+      chargeableWeight: chargeableRounded,
+    };
+  }, [watchedDimensions]);
 
   const originLocationId = form.watch("origin_location_id");
   const destinationLocationId = form.watch("destination_location_id");
@@ -253,8 +299,59 @@ export default function NewQuotePage() {
     });
   }
 
-  const handleSpotRateUpdate = (field: string, value: string | boolean) => {
-    setSpotRates(prev => ({ ...prev, [field]: value }));
+  // Handler for modal spot rate submission
+  const handleMissingRatesSubmit = async (newSpotRates: {
+    carrierSpotRatePgk: string;
+    agentDestChargesFcy: string;
+    agentCurrency: string;
+    isAllIn: boolean;
+  }) => {
+    if (!pendingFormData || !user) return;
+
+    setIsSubmitting(true);
+    setSpotRates(newSpotRates);
+    setShowMissingRatesModal(false);
+    setApiError(null);
+
+    try {
+      const payload = buildQuoteComputePayload(pendingFormData, newSpotRates, pendingQuoteId);
+      console.log('Recalculating with spot rates:', JSON.stringify(payload.spot_rates, null, 2));
+
+      const response = await computeQuoteV3(payload);
+      console.log('Recalculate response:', response.id, 'has_missing_rates:', response.latest_version.totals.has_missing_rates);
+
+      // Check if still missing rates
+      if (response.latest_version.totals.has_missing_rates) {
+        // Update pending quote ID in case it changed
+        setPendingQuoteId(response.id);
+
+        // Recheck which rates are still missing
+        const lines = response.latest_version.lines;
+        const stillMissingCarrier = lines.some(l => l.service_component.code === 'FRT_AIR_EXP' && l.is_rate_missing);
+        const destComponents = ['DST-DELIV-STD', 'DST-CLEAR-CUS', 'DST-HANDL-STD', 'DST-DOC-IMP', 'DST_CHARGES'];
+        const stillMissingAgent = lines.some(l => destComponents.includes(l.service_component.code) && l.is_rate_missing);
+
+        setMissingRates({ carrier: stillMissingCarrier, agent: stillMissingAgent });
+        setShowMissingRatesModal(true);
+        setApiError("Some rates are still missing. Please verify your entries.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Success! Clean up and redirect
+      setPendingQuoteId(null);
+      setPendingFormData(null);
+      setMissingRates({ carrier: false, agent: false });
+      router.push(`/quotes/${response.id}`);
+    } catch (error: unknown) {
+      console.error("API Error during recalculation:", error);
+      const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+      setApiError(message);
+      // Reopen modal so user can try again
+      setShowMissingRatesModal(true);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   async function onSubmit(data: QuoteFormSchemaV3) {
@@ -296,8 +393,8 @@ export default function NewQuotePage() {
         if (missingCarrier || missingAgent) {
           setMissingRates({ carrier: missingCarrier, agent: missingAgent });
           setPendingQuoteId(response.id);
-          // Downgraded to warning/info - no API error
-          // setApiError("Some rates are missing. Please provide spot rates below.");
+          setPendingFormData(data);
+          setShowMissingRatesModal(true);
           setIsSubmitting(false);
           return;
         }
@@ -653,11 +750,6 @@ export default function NewQuotePage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {fields.length === 0 ? (
-                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                  No cargo lines yet. Add your first piece line below.
-                </div>
-              ) : null}
               {fields.map((fieldItem, index) => (
                 <Card key={fieldItem.id}>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -786,80 +878,25 @@ export default function NewQuotePage() {
             </CardContent>
           </Card>
 
-          {/* 5. Pickup & Delivery (Conditional) */}
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            {(form.watch('service_scope') === 'D2D' || form.watch('service_scope') === 'D2A') && (
-              <Card className="border-l-4 border-l-primary">
-                <CardHeader>
-                  <CardTitle>Pickup Details</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <FormField
-                    control={form.control}
-                    name="pickup_suburb"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Pickup Suburb / Postcode</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={originLocation?.country_code === 'PG' ? "e.g. Boroko, NCD" : "e.g. Eagle Farm, 4009"}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            )}
-
-            {(form.watch('service_scope') === 'D2D' || form.watch('service_scope') === 'A2D') && (
-              <Card className="border-l-4 border-l-primary">
-                <CardHeader>
-                  <CardTitle>Delivery Details</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <FormField
-                    control={form.control}
-                    name="delivery_suburb"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Delivery Suburb / Postcode</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={destinationLocation?.country_code === 'PG' ? "e.g. Boroko, NCD" : "e.g. Eagle Farm, 4009"}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </CardContent>
-              </Card>
-            )}
+          {/* Cargo Summary Display */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gradient-to-r from-muted/30 to-muted/50 rounded-lg border">
+            <div className="text-center">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Pieces</div>
+              <div className="text-xl font-bold text-foreground tabular-nums">{cargoMetrics.pieces}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Actual</div>
+              <div className="text-xl font-bold text-foreground tabular-nums">{cargoMetrics.actualWeight} kg</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Volumetric</div>
+              <div className="text-xl font-bold text-foreground tabular-nums">{cargoMetrics.volumetricWeight} kg</div>
+            </div>
+            <div className="text-center">
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Chargeable</div>
+              <div className="text-2xl font-bold text-primary tabular-nums">{cargoMetrics.chargeableWeight} kg</div>
+            </div>
           </div>
-
-          <ExportSpotManager
-            showCarrierSpot={missingRates.carrier}
-            showAgentCharges={missingRates.agent}
-            spotRates={spotRates}
-            onUpdate={handleSpotRateUpdate}
-            currencies={['USD', 'AUD', 'EUR', 'GBP', 'NZD', 'SGD']}
-            shipmentDetails={{
-              origin: originLocation?.display_name || form.watch('origin_airport') || 'Origin',
-              destination: destinationLocation?.display_name || form.watch('destination_airport') || 'Destination',
-              mode: form.watch('mode'),
-              pieces: form.watch('dimensions')?.reduce((acc, curr) => acc + (Number(curr.pieces) || 0), 0) || 0,
-              weight: form.watch('dimensions')?.reduce((acc, curr) => acc + (Number(curr.gross_weight_kg) || 0), 0) || 0,
-              serviceScope: form.watch('service_scope'),
-              commodity: form.watch('cargo_type'),
-              dimensions: form.watch('dimensions'),
-              pickupSuburb: form.watch('pickup_suburb'),
-              deliverySuburb: form.watch('delivery_suburb')
-            }}
-          />
 
           {/* Sticky Footer */}
           <div className="fixed bottom-0 left-0 right-0 border-t bg-background p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] md:pl-64 z-50">
@@ -871,9 +908,9 @@ export default function NewQuotePage() {
                 type="submit"
                 size="lg"
                 disabled={isSubmitting}
-                className="w-full md:w-auto shadow-lg"
+                className="w-full md:w-auto min-w-[200px] h-12 text-base font-semibold shadow-lg bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all"
               >
-                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isSubmitting && <Loader2 className="mr-2 h-5 w-5 animate-spin" />}
                 Calculate Quote
               </Button>
             </div>
@@ -881,6 +918,29 @@ export default function NewQuotePage() {
 
         </form>
       </Form>
+
+      {/* Missing Rates Modal */}
+      <MissingRatesModal
+        isOpen={showMissingRatesModal}
+        onClose={() => setShowMissingRatesModal(false)}
+        onSubmit={handleMissingRatesSubmit}
+        missingRates={missingRates}
+        quoteId={pendingQuoteId}
+        shipmentDetails={{
+          origin: originLocation?.display_name || form.watch('origin_airport') || 'Origin',
+          destination: destinationLocation?.display_name || form.watch('destination_airport') || 'Destination',
+          originCountryCode: originLocation?.country_code,
+          destinationCountryCode: destinationLocation?.country_code,
+          mode: form.watch('mode'),
+          pieces: cargoMetrics.pieces,
+          weight: cargoMetrics.actualWeight,
+          chargeableWeight: cargoMetrics.chargeableWeight,
+          commodity: form.watch('cargo_type'),
+          serviceScope: form.watch('service_scope'),
+          dimensions: form.watch('dimensions'),
+        }}
+        isSubmitting={isSubmitting}
+      />
     </div>
   );
 }

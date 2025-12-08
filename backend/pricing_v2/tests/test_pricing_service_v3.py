@@ -48,7 +48,6 @@ def v3_test_data(db):
 
     origin_loc, _ = Location.objects.get_or_create(
         code="BNE",
-        kind=Location.Kind.AIRPORT,
         defaults={
             "name": "Brisbane Airport",
             "airport": origin_ap,
@@ -57,7 +56,6 @@ def v3_test_data(db):
     )
     dest_loc, _ = Location.objects.get_or_create(
         code="POM",
-        kind=Location.Kind.AIRPORT,
         defaults={
             "name": "Port Moresby Airport",
             "airport": dest_ap,
@@ -154,14 +152,12 @@ def _build_quote_input(test_data) -> QuoteInput:
             direction="IMPORT",
             origin_location=LocationRef(
                 id=origin.id,
-                kind="AIRPORT",
                 code="BNE",
                 name="Brisbane",
                 country_code="AU",
             ),
             destination_location=LocationRef(
                 id=dest.id,
-                kind="AIRPORT",
                 code="POM",
                 name="Port Moresby",
                 country_code="PG",

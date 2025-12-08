@@ -781,3 +781,106 @@ class QuoteVersionCreateAPIView(APIView):
             QuoteModelSerializerV3(original_quote, context={'request': request}).data, 
             status=status.HTTP_201_CREATED
         )
+
+# --- SPOT CHARGE API VIEWS ---
+
+class SpotChargeListCreateAPIView(APIView):
+    """
+    GET: List spot charges for a quote, grouped by bucket.
+    POST: Add/replace spot charges for a quote.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, quote_id):
+        from .models import SpotChargeLine
+        from .serializers import SpotChargeLineSerializer
+        
+        quote = get_object_or_404(Quote, id=quote_id)
+        charges = quote.spot_charges.all()
+        
+        # Group by bucket
+        grouped = {
+            'ORIGIN': [],
+            'FREIGHT': [],
+            'DESTINATION': [],
+        }
+        for charge in charges:
+            serialized = SpotChargeLineSerializer(charge).data
+            grouped[charge.bucket].append(serialized)
+        
+        return Response({
+            'quote_id': str(quote.id),
+            'charges': grouped,
+        })
+
+    def post(self, request, quote_id):
+        from .models import SpotChargeLine
+        from .serializers import SpotChargeLineSerializer, SpotChargesInputSerializer
+        
+        quote = get_object_or_404(Quote, id=quote_id)
+        
+        serializer = SpotChargesInputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Clear existing spot charges and replace with new ones
+        with transaction.atomic():
+            quote.spot_charges.all().delete()
+            
+            created_lines = []
+            for charge_data in serializer.validated_data['charges']:
+                charge_data['quote'] = quote
+                line = SpotChargeLine.objects.create(**charge_data)
+                created_lines.append(line)
+        
+        # Return created charges grouped by bucket
+        grouped = {
+            'ORIGIN': [],
+            'FREIGHT': [],
+            'DESTINATION': [],
+        }
+        for line in created_lines:
+            serialized = SpotChargeLineSerializer(line).data
+            grouped[line.bucket].append(serialized)
+        
+        return Response({
+            'quote_id': str(quote.id),
+            'charges': grouped,
+        }, status=status.HTTP_201_CREATED)
+
+
+class SpotChargeCalculateAPIView(APIView):
+    """
+    POST: Calculate bucket totals with FX/CAF/margin applied.
+    This triggers the 5-pass pricing engine for spot charges.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, quote_id):
+        from .models import SpotChargeLine
+        from pricing_v2.spot_bucket_calculator import SpotBucketCalculator
+        
+        quote = get_object_or_404(Quote, id=quote_id)
+        
+        if not quote.spot_charges.exists():
+            return Response(
+                {'detail': 'No spot charges found. Add charges first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            calculator = SpotBucketCalculator(quote)
+            result = calculator.calculate()
+            
+            # Update quote status to DRAFT if previously INCOMPLETE
+            if quote.status == Quote.Status.INCOMPLETE:
+                quote.status = Quote.Status.DRAFT
+                quote.save(update_fields=['status'])
+            
+            return Response(result)
+        except Exception as e:
+            logger.exception(f"Error calculating spot charges: {e}")
+            return Response(
+                {'detail': f'Calculation error: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

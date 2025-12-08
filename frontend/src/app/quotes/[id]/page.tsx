@@ -15,6 +15,9 @@ import ManualRateForm from "@/components/ManualRateForm";
 import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
 import RoutingWarning from "@/components/RoutingWarning";
+import { BucketSourcingView } from "@/components/pricing/BucketSourcingView";
+import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDisplay";
+import { getSpotChargesForQuote } from "@/lib/api";
 import {
   Table,
   TableBody,
@@ -48,6 +51,7 @@ export default function QuoteDetailPage() {
   const [recalculateError, setRecalculateError] = useState<string | null>(null);
   const [recalculateLoading, setRecalculateLoading] = useState(false);
   const [recalculateSuccess, setRecalculateSuccess] = useState(false);
+  const [hasSpotCharges, setHasSpotCharges] = useState(false);
 
   useEffect(() => {
     if (id && user) {
@@ -65,6 +69,17 @@ export default function QuoteDetailPage() {
             setComputeResult(computeData);
           } catch (computeErr) {
             console.error("Failed to fetch compute result:", computeErr);
+          }
+
+          // Check if quote has spot charges
+          try {
+            const spotCharges = await getSpotChargesForQuote(id);
+            const totalLines = spotCharges.charges.ORIGIN.length +
+              spotCharges.charges.FREIGHT.length +
+              spotCharges.charges.DESTINATION.length;
+            setHasSpotCharges(totalLines > 0);
+          } catch {
+            setHasSpotCharges(false);
           }
         } catch (err: unknown) {
           const message =
@@ -107,8 +122,11 @@ export default function QuoteDetailPage() {
       setRecalculateError("Quote data is unavailable.");
       return;
     }
-    if (manualOverrides.length === 0) {
-      setRecalculateError("Add at least one manual rate before recalculating.");
+
+    // Only require manual overrides if there are actually missing rates
+    const hasMissing = quote.latest_version.lines.some(l => l.is_rate_missing);
+    if (hasMissing && manualOverrides.length === 0) {
+      setRecalculateError("Add manual rates for missing charges before recalculating.");
       return;
     }
     const payload: QuoteVersionCreatePayload = {
@@ -198,17 +216,21 @@ export default function QuoteDetailPage() {
       )}
 
       {isIncomplete ? (
-        <ManualSourcingView
+        <BucketSourcingView
           quote={quote}
-          manualOverrides={manualOverrides}
-          recalculateError={recalculateError}
-          recalculateLoading={recalculateLoading}
-          recalculateSuccess={recalculateSuccess}
-          onManualOverrideSubmit={handleManualOverrideSubmit}
-          onRecalculate={handleRecalculate}
+          onFinalizeSuccess={() => {
+            // Refresh the quote data and spot charges state after finalization
+            getQuoteV3(id).then((data) => {
+              setQuote(data);
+              setHasSpotCharges(true); // Mark as having spot charges
+            });
+          }}
         />
       ) : (
-        computeResult ? (
+        // For finalized quotes: show spot charge results if available, otherwise old breakdown
+        hasSpotCharges ? (
+          <SpotChargeResultDisplay quote={quote} />
+        ) : computeResult ? (
           <QuoteFinancialBreakdown result={computeResult} />
         ) : (
           <QuoteResultDisplay quote={quote} />
@@ -269,6 +291,11 @@ function ManualSourcingView({
       };
     });
   }, [lines, manualOverrides]);
+
+  // Check if any lines still have missing rates (not covered by manual overrides)
+  const hasMissingRates = useMemo(() => {
+    return mergedLines.some((line) => !line.manual_override && line.is_rate_missing);
+  }, [mergedLines]);
 
   return (
     <Card className="overflow-hidden border-destructive/20 shadow-md">
@@ -399,7 +426,7 @@ function ManualSourcingView({
             )}
             <Button
               size="lg"
-              disabled={recalculateLoading || manualOverrides.length === 0}
+              disabled={recalculateLoading || (hasMissingRates && manualOverrides.length === 0)}
               onClick={onRecalculate}
               className="shadow-md"
             >

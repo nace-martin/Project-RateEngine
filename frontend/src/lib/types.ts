@@ -275,3 +275,73 @@ export interface QuoteComputeResult {
   routing?: RoutingInfo;
   notes: string[];
 }
+
+// --- SPOT CHARGE LINE TYPES ---
+export type SpotChargeBucket = 'ORIGIN' | 'FREIGHT' | 'DESTINATION';
+
+export type SpotChargeUnitBasis =
+  | 'PER_KG'
+  | 'PER_SHIPMENT'
+  | 'PER_AWB'
+  | 'MINIMUM'
+  | 'PER_HOUR'
+  | 'PERCENTAGE'
+  | 'OTHER';
+
+export type SpotChargePercentAppliesTo =
+  | 'SPECIFIC_LINE'
+  | 'BUCKET_ORIGIN'
+  | 'BUCKET_FREIGHT'
+  | 'BUCKET_DESTINATION'
+  | 'BUCKET_TOTAL';
+
+export interface SpotChargeLine {
+  id?: string;
+  bucket: SpotChargeBucket;
+  description: string;
+  amount?: string | null;
+  currency: string;
+  unit_basis: SpotChargeUnitBasis;
+  min_charge?: string | null; // Optional minimum charge for PER_KG rates
+  percentage?: string | null;
+  percent_applies_to?: SpotChargePercentAppliesTo | null;
+  target_line_id?: string | null;
+  notes?: string;
+  created_at?: string;
+}
+
+
+export interface SpotChargesGrouped {
+  ORIGIN: SpotChargeLine[];
+  FREIGHT: SpotChargeLine[];
+  DESTINATION: SpotChargeLine[];
+}
+
+export interface SpotChargesResponse {
+  quote_id: string;
+  charges: SpotChargesGrouped;
+}
+
+export interface SpotChargesBucketTotals {
+  cost_pgk: string;
+  sell_pgk: string;
+  caf_rate: string;
+  margin_rate: string;
+}
+
+export interface SpotChargesCalculateResponse {
+  chargeable_weight: string;
+  quoting_currency: string;
+  buckets: {
+    origin: SpotChargesBucketTotals;
+    freight: SpotChargesBucketTotals;
+    destination: SpotChargesBucketTotals;
+  };
+  totals: {
+    origin_sell_pgk: string;
+    freight_sell_pgk: string;
+    destination_sell_pgk: string;
+    grand_total_pgk: string;
+    grand_total_fcy: string | null;
+  };
+}

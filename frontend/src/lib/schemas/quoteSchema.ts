@@ -139,10 +139,6 @@ export const quoteFormSchemaV3 = z
     is_dangerous_goods: z.boolean().default(false),
     output_currency: z.string().length(3).optional(),
 
-    // --- Address Details for Door Service ---
-    pickup_suburb: z.string().optional(),
-    delivery_suburb: z.string().optional(),
-
     // --- Step 4: Dimensions (The Array) ---
     dimensions: z
       .array(dimensionLineSchema)
@@ -179,24 +175,6 @@ export const quoteFormSchemaV3 = z
       'destination_airport',
       data.destination_airport,
     );
-
-    // Validate Pickup Suburb for D2D/D2A
-    if (['D2D', 'D2A'].includes(data.service_scope) && !data.pickup_suburb?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['pickup_suburb'],
-        message: 'Pickup suburb is required for Door pickup.',
-      });
-    }
-
-    // Validate Delivery Suburb for D2D/A2D
-    if (['D2D', 'A2D'].includes(data.service_scope) && !data.delivery_suburb?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['delivery_suburb'],
-        message: 'Delivery suburb is required for Door delivery.',
-      });
-    }
   })
 
 // This creates a TypeScript type from our schema

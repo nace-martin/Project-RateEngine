@@ -185,7 +185,7 @@ class Policy(models.Model):
     name = models.CharField(max_length=100, default="Default Policy")
     caf_import_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.05)
     caf_export_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.10)
-    margin_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.15)
+    margin_pct = models.DecimalField(max_digits=5, decimal_places=4, default=0.20)
     is_pgk_per_fcy = models.BooleanField(default=True)
     
     class RoundingMode(models.TextChoices):
