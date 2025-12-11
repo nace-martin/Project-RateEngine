@@ -89,6 +89,48 @@ function getEditableBuckets(quote: V3QuoteComputeResponse): Set<SpotChargeBucket
 }
 
 /**
+ * Check if quote is Import Prepaid A2D DAP (passthrough pricing)
+ */
+function isA2DDAPQuote(quote: V3QuoteComputeResponse): boolean {
+    return (
+        quote.shipment_type === "IMPORT" &&
+        quote.payment_term === "PREPAID" &&
+        quote.service_scope === "A2D" &&
+        quote.incoterm === "DAP"
+    );
+}
+
+/**
+ * Determine which buckets should be VISIBLE (not just editable).
+ * For A2D DAP quotes, Origin and Freight are completely hidden.
+ * 
+ * | Direction | Scope | Payment | Incoterm | Visible Buckets |
+ * |-----------|-------|---------|----------|-----------------|
+ * | Import | A2D | Prepaid | DAP | Dest only |
+ * | Export | D2D | Prepaid | DAP | Dest only |
+ * | Other | Any | Any | Any | All |
+ */
+function getVisibleBuckets(quote: V3QuoteComputeResponse): Set<SpotChargeBucket> {
+    // Import Prepaid A2D DAP - only show destination
+    if (isA2DDAPQuote(quote)) {
+        return new Set(["DESTINATION"]);
+    }
+
+    // Export D2D DAP Prepaid - only show destination
+    if (
+        quote.shipment_type === "EXPORT" &&
+        quote.payment_term === "PREPAID" &&
+        quote.service_scope === "D2D" &&
+        quote.incoterm === "DAP"
+    ) {
+        return new Set(["DESTINATION"]);
+    }
+
+    // Default: all buckets visible (editability is separate)
+    return new Set(["ORIGIN", "FREIGHT", "DESTINATION"]);
+}
+
+/**
  * Get subtotals for non-editable buckets from quote lines.
  */
 function getBucketSubtotals(quote: V3QuoteComputeResponse): Record<SpotChargeBucket, { amount: string; currency: string }> {
@@ -204,14 +246,16 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
     const [editingBucket, setEditingBucket] = useState<SpotChargeBucket>("DESTINATION");
     const [editingLine, setEditingLine] = useState<SpotChargeLine | null>(null);
 
-    // Determine which buckets are editable and auto-rated subtotals
+    // Determine which buckets are editable, visible, and auto-rated subtotals
     const editableBuckets = useMemo(() => getEditableBuckets(quote), [quote]);
+    const visibleBuckets = useMemo(() => getVisibleBuckets(quote), [quote]);
     const bucketSubtotals = useMemo(() => getBucketSubtotals(quote), [quote]);
     const destinationCountryCode = useMemo(() => getDestinationCountryCode(quote), [quote]);
+    const isPassthroughQuote = useMemo(() => isA2DDAPQuote(quote), [quote]);
 
     // Build bucket config with visibility rules
     const bucketConfigs: BucketConfig[] = useMemo(() => {
-        return [
+        const allBuckets: BucketConfig[] = [
             {
                 bucket: "ORIGIN" as SpotChargeBucket,
                 title: "Origin Charges",
@@ -237,7 +281,10 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
                 subtotalNote: editableBuckets.has("DESTINATION") ? undefined : "auto-rated",
             },
         ];
-    }, [editableBuckets, bucketSubtotals]);
+
+        // Filter to only visible buckets (hides Origin/Freight for A2D DAP)
+        return allBuckets.filter(b => visibleBuckets.has(b.bucket));
+    }, [editableBuckets, bucketSubtotals, visibleBuckets]);
 
     // Flatten all lines for the editor's target line selection
     const allLines = useMemo(() => {

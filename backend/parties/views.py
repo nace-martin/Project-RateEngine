@@ -48,7 +48,7 @@ class CompanyV3SearchView(generics.ListAPIView):
         query = self.request.query_params.get("q", "").strip()
         if len(query) < 2:
             return Company.objects.none()
-        return Company.objects.filter(name__icontains=query).order_by("name")[:20]
+        return Company.objects.filter(name__icontains=query, company_type="CUSTOMER").order_by("name")[:20]
 
 
 class CompanyContactListV3View(generics.ListAPIView):

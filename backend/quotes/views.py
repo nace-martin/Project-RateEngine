@@ -19,7 +19,7 @@ from rest_framework.views import APIView
 
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
-from .schemas import QuoteComputeRequest, QuoteResponse
+from .schemas import QuoteComputeRequest
 from pydantic import ValidationError
 from pydantic_core import ValidationError as PydanticCoreValidationError
 from pricing_v2.pricing_service_v3 import PricingServiceV3
@@ -146,7 +146,16 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # 1. Prepare input for PricingServiceV3
+            # 1. Enforce Business Rules for EXPORT Incoterms
+            if shipment_type == Quote.ShipmentType.EXPORT:
+                # D2A (Prepaid/Collect) -> Always FCA
+                if payload.service_scope == 'D2A':
+                    payload.incoterm = 'FCA'
+                # D2D (Prepaid) -> Always DAP
+                elif payload.service_scope == 'D2D' and payload.payment_term == 'PREPAID':
+                    payload.incoterm = 'DAP'
+
+            # 2. Prepare input for PricingServiceV3
             quote_input = self._build_quote_input(
                 payload,
                 shipment_type,
@@ -154,7 +163,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 destination_location,
             )
             
-            # 2. Call the pricing service
+            # 3. Call the pricing service
             service = PricingServiceV3(quote_input)
             calculated_charges = service.calculate_charges()
             derived_output_currency = service.get_output_currency()
@@ -181,7 +190,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             if quote.contact:
                 quote.contact.company_name = quote.contact.company.name
 
-            return Response(QuoteResponse.model_validate(quote).model_dump(mode='json'), status=status.HTTP_201_CREATED)
+            return Response(QuoteModelSerializerV3(quote).data, status=status.HTTP_201_CREATED)
 
         except Exception as e:
             # Log the full exception

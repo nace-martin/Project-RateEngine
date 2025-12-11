@@ -34,6 +34,47 @@ export const V3_SERVICE_SCOPES = {
   A2A: 'A2A',
 } as const
 
+/**
+ * Get valid incoterms based on shipment direction and service scope.
+ * 
+ * Rules:
+ * - Import + A2D: Only DAP (Delivered at Place)
+ * - Export + D2A or D2D: EXW, FOB, CPT
+ * - Other combinations: All incoterms
+ * 
+ * @param isImport - True if shipment is import (destination is PG)
+ * @param serviceScope - The service scope (D2D, D2A, A2D, A2A)
+ * @returns Array of valid incoterm values
+ */
+export function getValidIncoterms(isImport: boolean, serviceScope: string): string[] {
+  // Import A2D: Only DAP allowed
+  if (isImport && serviceScope === 'A2D') {
+    return ['DAP'];
+  }
+
+  // Export D2A or D2D: EXW, FOB, CPT typical export incoterms
+  if (!isImport && (serviceScope === 'D2A' || serviceScope === 'D2D')) {
+    return ['EXW', 'FOB', 'CPT', 'DAP', 'DDP'];
+  }
+
+  // Default: All incoterms
+  return Object.values(V3_INCOTERMS);
+}
+
+/**
+ * Get the default incoterm for a given shipment configuration.
+ * Used for auto-selection when user changes direction or scope.
+ */
+export function getDefaultIncoterm(isImport: boolean, serviceScope: string): string {
+  if (isImport && serviceScope === 'A2D') {
+    return 'DAP';
+  }
+  if (!isImport && (serviceScope === 'D2D' || serviceScope === 'D2A')) {
+    return 'EXW';
+  }
+  return 'EXW';
+}
+
 export const V3_LOCATION_TYPES = {
   AIRPORT: 'AIRPORT',
   PORT: 'PORT',

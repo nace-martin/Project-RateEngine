@@ -10,7 +10,7 @@ process.
 import json
 import logging
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from django.utils import timezone
 import uuid
 
@@ -39,45 +39,13 @@ HOME_CURRENCY = "PGK"
 DEFAULT_POLICY_NAME = "Default Policy"
 logger = logging.getLogger(__name__)
 
-# --- TAX ADAPTERS ---
-class TaxVersionAdapter:
-    """
-    Translates the V3 Shipment/Context into the 'version' object
-    expected by quotes.tax_policy.apply_gst_policy.
-    """
-    def __init__(self, service):
-        self.origin = service.shipment.origin_location
-        self.destination = service.shipment.destination_location
+# Import A2D DAP passthrough pricing
+from .a2d_dap_pricing import (
+    is_a2d_dap_quote,
+    calculate_a2d_dap_charges,
+    get_a2d_dap_currency,
+)
 
-        # Create a fake quotation object with just the service_type attribute
-        self.quotation = type('Quotation', (), {
-            'service_type': service.shipment.shipment_type
-        })()
-
-        # TODO: If you add an 'export_evidence' checkbox to the UI, map it here.
-        self.policy_snapshot = {"export_evidence": False}
-
-
-class TaxChargeAdapter:
-    """
-    Translates a V3 ServiceComponent into the 'charge' object
-    expected by quotes.tax_policy.apply_gst_policy.
-    """
-    def __init__(self, component):
-        self.code = component.code
-        self.stage = component.leg
-        
-        # Phase 2: Use service_code.location_type if available
-        if component.service_code:
-            self.stage = component.service_code.location_type
-
-        # CRITICAL: Map Freight to 'AIR' stage to ensure International Linehaul is 0%
-        if component.mode == 'AIR' and component.category == 'TRANSPORT':
-            self.stage = 'AIR'
-
-        # Fields the policy will mutate
-        self.is_taxable = False
-        self.gst_percentage = 0
 # --------------------
 
 class PricingServiceV3:
@@ -112,10 +80,17 @@ class PricingServiceV3:
         """
         Main entry point for the calculation.
         """
+        # --- A2D DAP PASSTHROUGH CHECK ---
+        # For Import + Prepaid + A2D + DAP quotes, use passthrough pricing
+        # No FX, CAF, or margin applied - rates are already in FCY
+        if self._is_a2d_dap_quote():
+            return self._calculate_a2d_dap_passthrough()
+        
         self._resolve_service_rule()
         # 1. Get all applicable service components
         service_components = self._get_service_components()
         self._apply_output_currency_policy()
+        
         # 1.1 Inject DST_CHARGES if in spot_rates but not in components
         spot_rates = getattr(self.quote_input, 'spot_rates', {})
         if 'DST_CHARGES' in spot_rates:
@@ -170,6 +145,175 @@ class PricingServiceV3:
     def get_policy(self) -> Policy:
         return self.context['policy']
 
+    # --- EXPORT SCENARIO HELPERS ---
+    def _is_export_prepaid_d2a(self) -> bool:
+        return (
+            self.shipment.shipment_type == 'EXPORT' and
+            self.shipment.payment_term == 'PREPAID' and
+            self.shipment.service_scope == 'D2A'
+        )
+
+    def _is_export_prepaid_d2d(self) -> bool:
+        return (
+            self.shipment.shipment_type == 'EXPORT' and
+            self.shipment.payment_term == 'PREPAID' and
+            self.shipment.service_scope == 'D2D'
+        )
+
+    def _is_export_collect_d2a(self) -> bool:
+        return (
+            self.shipment.shipment_type == 'EXPORT' and
+            self.shipment.payment_term == 'COLLECT' and
+            self.shipment.service_scope == 'D2A'
+        )
+    # -------------------------------
+
+    def _is_a2d_dap_quote(self) -> bool:
+        """
+        Check if this quote qualifies for A2D DAP passthrough pricing.
+        Criteria: IMPORT + PREPAID + A2D + DAP
+        """
+        return is_a2d_dap_quote(
+            shipment_type=self.shipment.shipment_type,
+            service_scope=self.shipment.service_scope,
+            incoterm=self.shipment.incoterm,
+            payment_term=self.shipment.payment_term,
+        )
+
+    def _calculate_a2d_dap_passthrough(self) -> QuoteCharges:
+        """
+        Calculate charges for A2D DAP quotes.
+        
+        For PREPAID (partner agent):
+        - No FX conversion (rates already in FCY)
+        - No margin applied
+        - Output in AUD/USD
+        
+        For COLLECT (local customer):
+        - Convert FCY rates to PGK with FX
+        - Apply margin
+        - Output in PGK
+        """
+        # Get origin country code
+        origin_country = 'AU'  # Default
+        if self.shipment.origin_location:
+            origin_country = self.shipment.origin_location.country_code or 'AU'
+        
+        # Get payment term
+        payment_term = self.shipment.payment_term or 'PREPAID'
+        
+        # Get margin for COLLECT
+        margin_pct = self.context['policy'].margin_pct if payment_term == 'COLLECT' else Decimal('0')
+        
+        # Calculate using A2D DAP module (returns Pydantic model)
+        result = calculate_a2d_dap_charges(
+            origin_country_code=origin_country,
+            payment_term=payment_term,
+            chargeable_weight_kg=self.context['chargeable_weight_kg'],
+            fx_snapshot=self.context.get('fx_snapshot'),
+            margin_pct=margin_pct,
+        )
+        
+        # Is this passthrough (PREPAID) or converted (COLLECT)?
+        is_passthrough = result.is_passthrough
+        is_collect = (payment_term == 'COLLECT')
+        
+        # Convert to standard charge lines
+        lines = []
+        for line in result.lines:
+            if line.component == 'AGENCY_EXP':
+                print(f"DEBUG: Processing AGENCY_EXP in A2D DAP. CostType={line.cost_type if hasattr(line, 'cost_type') else 'N/A'}")
+            # Get service component ID from database
+            from services.models import ServiceComponent
+            try:
+                svc_comp = ServiceComponent.objects.get(code=line.component)
+                svc_id = svc_comp.id
+                svc_desc = svc_comp.description
+            except ServiceComponent.DoesNotExist:
+                import uuid as uuid_mod
+                svc_id = uuid_mod.uuid4()  # Fallback
+                svc_desc = line.description
+            
+            # Currency handling:
+            # - PREPAID: Amount is in FCY (AUD/USD) - goes to sell_fcy, sell_pgk = 0 (no PGK conversion)
+            # - COLLECT: Amount is in PGK with 10% GST - goes to sell_pgk, sell_fcy = 0 (already in local currency)
+            if is_collect:
+                # COLLECT: PGK with 10% GST
+                gst_rate = Decimal('0.10')  # 10% GST for PNG local
+                sell_pgk = line.sell_amount
+                gst_amount = (sell_pgk * gst_rate).quantize(Decimal('0.01'))
+                sell_pgk_incl_gst = sell_pgk + gst_amount
+                sell_fcy = Decimal('0')
+                sell_fcy_incl_gst = Decimal('0')
+                sell_fcy_currency = None
+                cost_pgk = line.cost_amount
+            else:
+                # PREPAID: FCY passthrough (AUD/USD) - no GST for overseas partner agent
+                sell_pgk = Decimal('0')  # No PGK value - this is FCY passthrough
+                sell_pgk_incl_gst = Decimal('0')
+                sell_fcy = line.sell_amount  # The FCY amount
+                sell_fcy_incl_gst = line.sell_amount  # No GST for FCY
+                sell_fcy_currency = line.sell_currency  # AUD or USD
+                cost_pgk = Decimal('0')  # No PGK cost - FCY passthrough
+            
+            # Create CalculatedChargeLine from Pydantic model
+            charge_line = CalculatedChargeLine(
+                service_component_id=svc_id,
+                service_component_code=line.component,
+                service_component_desc=svc_desc,
+                leg='DESTINATION',
+                # Cost values
+                cost_pgk=cost_pgk,
+                cost_fcy=line.cost_amount,
+                cost_fcy_currency=line.cost_currency,
+                exchange_rate=line.exchange_rate,
+                # Sell values
+                sell_pgk=sell_pgk,
+                sell_pgk_incl_gst=sell_pgk_incl_gst,
+                sell_fcy=sell_fcy,
+                sell_fcy_incl_gst=sell_fcy_incl_gst,
+                sell_fcy_currency=sell_fcy_currency,
+                cost_source='A2D_DAP_RATECARD',
+                cost_source_description=f"A2D DAP {result.currency} Rate Card ({payment_term})",
+                is_rate_missing=False,
+            )
+            lines.append(charge_line)
+        
+        # Create totals
+        if is_collect:
+            # COLLECT: Total is in PGK with 10% GST
+            gst_rate = Decimal('0.10')
+            total_sell_pgk = result.totals.total_sell
+            total_gst = (total_sell_pgk * gst_rate).quantize(Decimal('0.01'))
+            total_sell_pgk_incl_gst = total_sell_pgk + total_gst
+            total_sell_fcy = Decimal('0')
+            total_sell_fcy_incl_gst = Decimal('0')
+        else:
+            # PREPAID: Total is in FCY (AUD/USD) - no GST
+            total_sell_pgk = Decimal('0')  # No PGK total - FCY passthrough
+            total_sell_pgk_incl_gst = Decimal('0')
+            total_sell_fcy = result.totals.total_sell
+            total_sell_fcy_incl_gst = result.totals.total_sell
+        
+        totals = CalculatedTotals(
+            total_cost_pgk=result.totals.total_pgk_internal,
+            total_sell_pgk=total_sell_pgk,
+            total_sell_pgk_incl_gst=total_sell_pgk_incl_gst,
+            total_sell_fcy=total_sell_fcy,
+            total_sell_fcy_incl_gst=total_sell_fcy_incl_gst,
+            total_sell_fcy_currency=result.totals.total_sell_currency,
+            has_missing_rates=False,
+            notes=f"A2D DAP {payment_term} Quote - {result.currency}",
+        )
+        
+        # Store metadata for UI
+        self.is_a2d_dap = True
+        self.a2d_dap_currency = result.currency
+        self.a2d_dap_payment_term = payment_term
+        self.show_pgk_to_client = result.show_pgk_to_client
+        
+        return QuoteCharges(lines=lines, totals=totals)
+
     def _build_calculation_context(self) -> dict:
         """
         Pre-fetches all common data needed for the calculation.
@@ -214,19 +358,47 @@ class PricingServiceV3:
     def _get_service_components(self) -> List[ServiceComponent]:
         """
         Gets the list of services to be quoted based on the incoterm.
+        Updated for Export Logic:
+        - Exclude DST_CHARGES for Export D2A
+        - Inject DST_CHARGES for Export D2D if missing
         """
         service_rule_components = self._get_service_rule_components()
-        if service_rule_components:
-            return service_rule_components
+        
+        # If no rule found, just return empty list (or detailed log)
+        if not service_rule_components:
+            logger.warning(
+                "No ServiceRule resolved for %s %s %s %s",
+                self.shipment.mode,
+                self.shipment.shipment_type,
+                self.shipment.incoterm,
+                getattr(self.shipment, "service_scope", None),
+            )
+            return []
 
-        logger.warning(
-            "No ServiceRule resolved for %s %s %s %s",
-            self.shipment.mode,
-            self.shipment.shipment_type,
-            self.shipment.incoterm,
-            getattr(self.shipment, "service_scope", None),
-        )
-        return []
+        # --- EXPORT LOGIC: Filter Components ---
+        final_components = []
+        has_dst_charges = False
+        
+        for comp in service_rule_components:
+            # Scenario: Export D2A -> EXCLUDE destination charges
+            if (self._is_export_prepaid_d2a() or self._is_export_collect_d2a()) and comp.code == 'DST_CHARGES':
+                continue
+            
+            if comp.code == 'DST_CHARGES':
+                has_dst_charges = True
+                
+            final_components.append(comp)
+            
+        # Scenario: Export Prepaid D2D -> REQUIRE destination charges
+        if self._is_export_prepaid_d2d() and not has_dst_charges:
+            try:
+                dst_comp = ServiceComponent.objects.get(code='DST_CHARGES')
+                final_components.append(dst_comp)
+                logger.info("Injected DST_CHARGES for Export Prepaid D2D")
+            except ServiceComponent.DoesNotExist:
+                logger.error("DST_CHARGES component missing in DB")
+
+        return final_components
 
     def _get_service_rule_components(self) -> Optional[List[ServiceComponent]]:
         """
@@ -257,12 +429,14 @@ class PricingServiceV3:
             return
 
         incoterm = self.shipment.incoterm or None
-        try:
-            rule = (
+        
+        # Helper to find best rule
+        def find_rule(_incoterm):
+            return (
                 ServiceRule.objects.filter(
                     mode=self.shipment.mode,
                     direction=self.shipment.shipment_type,
-                    incoterm=incoterm,
+                    incoterm=_incoterm,
                     payment_term=self.shipment.payment_term,
                     service_scope=service_scope,
                     is_active=True,
@@ -270,8 +444,8 @@ class PricingServiceV3:
                 .order_by("-effective_from")
                 .first()
             )
-        except Exception:
-            rule = None
+
+        rule = find_rule(incoterm)
 
         self.service_rule = rule
         self.context["service_rule"] = rule
@@ -280,14 +454,30 @@ class PricingServiceV3:
         """
         Applies ServiceRule-driven currency logic when available.
         """
-        derived_currency = None
-        if self.service_rule:
-            derived_currency = self._derive_currency_from_rule(self.service_rule)
+        derived_currency = self._derive_currency_from_rule(self.service_rule)
 
         if derived_currency:
             self.output_currency_code = derived_currency
 
-    def _derive_currency_from_rule(self, rule: ServiceRule) -> Optional[str]:
+    def _derive_currency_from_rule(self, rule: Optional[ServiceRule]) -> Optional[str]:
+        """
+        Determines the output currency based on the business logic.
+        """
+        # 1. Export Prepaid D2A/D2D -> PGK
+        if self._is_export_prepaid_d2a() or self._is_export_prepaid_d2d():
+            return "PGK"
+            
+        # 2. Export Collect D2A -> AUD/USD
+        if self._is_export_collect_d2a():
+            dest = self.shipment.destination_location
+            if dest and dest.country_code == 'AU':
+                return "AUD"
+            return "USD"
+
+        # 3. Fallback to ServiceRule configuration
+        if not rule:
+            return None
+            
         ccy_type = rule.output_currency_type or "DESTINATION"
         if ccy_type == "PGK":
             return HOME_CURRENCY
@@ -320,7 +510,6 @@ class PricingServiceV3:
         return location.currency_code
 
     def get_output_currency(self) -> str:
-
         return self.output_currency_code
 
     def _determine_routing(self):
@@ -386,7 +575,8 @@ class PricingServiceV3:
             'lane__mode': self.shipment.mode,
             'lane__origin_airport__iata_code': origin_code,
             'lane__destination_airport__iata_code': destination_code,
-            'service_component': component
+            'service_component': component,
+            'lane__rate_card__rate_type': 'BUY_RATE',  # Only get Buy/Cost rates
         }
         
         # ADD THIS: service_level filter for intelligent routing
@@ -436,6 +626,22 @@ class PricingServiceV3:
         if base_cost is None:
             base_cost = Decimal("0.00")
 
+        # Priority 1: Check cost_type='RATE_OFFER' (Fixed Sell Rate)
+        # For RATE_OFFER components, get the sell rate from the SELL_RATE card
+        if component.cost_type == 'RATE_OFFER':
+            # SPECIAL CASE: D2D Export Destination Charges require a 20% margin
+            if component.code == 'DST_CHARGES':
+                 margin = Decimal("0.20")
+                 sell_pgk = base_cost * (Decimal("1.0") + margin)
+                 return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            
+            # Look up the sell rate from the Sell Rate Card
+            sell_rate = self._get_sell_rate_from_card(component)
+            if sell_rate is not None:
+                return sell_rate
+            # Fallback to cost if no sell rate found
+            return base_cost
+
         # Phase 2: Check service_code.pricing_method first
         if component.service_code:
             pricing_method = component.service_code.pricing_method
@@ -459,16 +665,62 @@ class PricingServiceV3:
         
         # Fallback to legacy cost_type logic for backward compatibility
         if component.cost_type == 'RATE_OFFER':
-            # SPECIAL CASE: D2D Export Destination Charges require a 20% margin
-            if component.code == 'DST_CHARGES':
-                 margin = Decimal("0.20")
-                 sell_pgk = base_cost * (Decimal("1.0") + margin)
-                 return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            # Already handled above, should not reach here
             return base_cost
 
         margin = self.context['policy'].margin_pct
         sell_pgk = base_cost * (Decimal("1.0") + margin)
         return sell_pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    
+    def _get_sell_rate_from_card(self, component: ServiceComponent) -> Optional[Decimal]:
+        """
+        Looks up the sell rate for a RATE_OFFER component from the SELL_RATE card.
+        Returns the calculated sell rate in PGK, or None if not found.
+        """
+        origin_code = self.shipment.origin_location.code if self.shipment.origin_location else None
+        destination_code = self.shipment.destination_location.code if self.shipment.destination_location else None
+        
+        if not origin_code or not destination_code:
+            return None
+        
+        filters = {
+            'lane__mode': self.shipment.mode,
+            'lane__origin_airport__iata_code': origin_code,
+            'lane__destination_airport__iata_code': destination_code,
+            'service_component': component,
+            'lane__rate_card__rate_type': 'SELL_RATE',  # Only get Sell rates
+        }
+        
+        sell_rate = PartnerRate.objects.filter(**filters).first()
+        
+        if not sell_rate:
+            return None
+        
+        # Calculate the sell rate value using the same logic as _pass_through_sell_rate
+        chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
+        rate_fcy = Decimal("0.00")
+        
+        if sell_rate.rate_per_kg_fcy:
+            rate_fcy += sell_rate.rate_per_kg_fcy * chargeable_weight
+        
+        if sell_rate.rate_per_shipment_fcy:
+            rate_fcy += sell_rate.rate_per_shipment_fcy
+        
+        # Apply minimum charge if applicable
+        if sell_rate.min_charge_fcy and rate_fcy < sell_rate.min_charge_fcy:
+            rate_fcy = sell_rate.min_charge_fcy
+        
+        # Apply maximum charge if applicable
+        if sell_rate.max_charge_fcy and rate_fcy > sell_rate.max_charge_fcy:
+            rate_fcy = sell_rate.max_charge_fcy
+        
+        # Convert to PGK if needed
+        currency = sell_rate.lane.rate_card.currency_code or HOME_CURRENCY
+        if currency == 'PGK':
+            return rate_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        
+        fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=False)
+        return (rate_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def _create_charge_line(
         self,
@@ -489,18 +741,45 @@ class PricingServiceV3:
         is_rate_missing = cost_info['is_rate_missing']
 
         # --- START TAX INTEGRATION ---
-        # 1. Build the adapters
-        version_adapter = TaxVersionAdapter(self)
-        charge_adapter = TaxChargeAdapter(component)
+        
+        # Create a VersionAdapter mockup that satisfies apply_gst_policy expectations
+        # It expects: origin.country_code, destination.country_code, quotation.service_type, policy_snapshot
+        class MockVersion:
+            def __init__(self, service):
+                self.origin = service.shipment.origin_location # Pydantic LocationRef
+                self.destination = service.shipment.destination_location # Pydantic LocationRef
+                self.quotation = type('Quotation', (), {
+                    'service_type': service.shipment.shipment_type
+                })()
+                # Use policy dict
+                self.policy_snapshot = {"export_evidence": False} 
 
-        # 2. Apply the policy (this updates charge_adapter in place)
+        version_adapter = MockVersion(self)
+        
+        # Create ChargeAdapter mockup
+        # It expects: code, stage (or derived logic)
+        class MockCharge:
+            def __init__(self, comp):
+                self.code = comp.code
+                self.stage = comp.leg
+                if comp.service_code:
+                     self.stage = comp.service_code.location_type
+                if comp.mode == 'AIR' and comp.category == 'TRANSPORT':
+                     self.stage = 'AIR'
+                # Mutated by policy
+                self.is_taxable = False
+                self.gst_percentage = 0
+
+        charge_adapter = MockCharge(component)
+
+        # Apply GST Policy
         apply_gst_policy(version_adapter, charge_adapter)
 
-        # 3. Calculate Tax
+        # Calculate Tax
         tax_pct = Decimal(str(charge_adapter.gst_percentage)) / Decimal("100.0")
         tax_multiplier = Decimal("1.0") + tax_pct
 
-        # 4. Apply Tax to Sell Rate
+        # Apply Tax to Sell Rate
         sell_pgk_incl_gst = (sell_rate_pgk * tax_multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         # --- END TAX INTEGRATION ---
 
@@ -605,11 +884,6 @@ class PricingServiceV3:
             
         # B. Check on the buy_rate (PartnerRate specific tiering)
         if buy_rate and buy_rate.tiering_json:
-            # Create a temporary component-like object or modify the call to support passing data directly
-            # For now, let's just reuse the logic by temporarily mocking the component's tiering_json
-            # Or better, refactor _calculate_weight_break_cost to accept data input.
-            
-            # Let's refactor inline for now to be safe and explicit
             data = buy_rate.tiering_json
             if isinstance(data, dict) and data.get("type") == "weight_break":
                 chargeable_weight = self.context["chargeable_weight_kg"]
@@ -653,9 +927,9 @@ class PricingServiceV3:
         if self._is_percentage_based_component(component):
             return self._percentage_based_cost(component)
             
-        # 3. Check for Sell-Rate Pass-Through (Destination Charges)
-        if component.cost_type == 'RATE_OFFER':
-            return self._pass_through_sell_rate(component, buy_rate)
+        # NOTE: RATE_OFFER components now calculate buy cost from Buy Rate Card
+        # The sell rate is calculated separately in _calculate_sell_rate
+        # This allows showing actual cost while keeping sell rate fixed
         
         # --- SIMPLE PRICING LAST ---
         zero = Decimal("0.00")
@@ -774,18 +1048,6 @@ class PricingServiceV3:
     def _get_exchange_rate(self, from_currency: str, to_currency: str, apply_caf: bool = False, force_import_caf: bool = False) -> Decimal:
         """
         Get exchange rate for currency conversion.
-        
-        FCY -> PGK (Buy-side/Cost conversion):
-            - Use TT BUY rate (how many PGK to pay for 1 FCY)
-            - Apply CAF by MULTIPLYING: TT_BUY * (1 + CAF)
-            - Example: 2.80 PGK/AUD * 1.05 = 2.94 PGK/AUD
-            - Then: FCY_amount * 2.94 = PGK_cost
-        
-        PGK -> FCY (Sell-side/Quote conversion):
-            - Use TT SELL rate (how many FCY per 1 PGK)
-            - Apply CAF by DIVIDING: TT_SELL / (1 + CAF)
-            - Example: 0.35 AUD/PGK / 1.10 = 0.318 AUD/PGK
-            - Then: PGK_amount * 0.318 = FCY_sell
         """
         if from_currency == to_currency:
             return Decimal("1.0")
@@ -895,6 +1157,9 @@ class PricingServiceV3:
         """
         For destination sell-rates that are already in PGK and should
         pass through without FX conversion or margin application.
+        
+        For Import Collect D2D to PNG, destination charges are local PGK sell rates
+        and should NOT have FX applied (FX rate = 1.0).
         """
         zero = Decimal("0.00")
         
@@ -913,20 +1178,48 @@ class PricingServiceV3:
         unit = (buy_rate.unit or "").upper()
         rate_fcy = zero
         
-        if unit == 'SHIPMENT':
-            rate_fcy = buy_rate.rate_per_shipment_fcy or zero
-        elif unit in ('KG', 'PER_KG'):
-            chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
-            rate_fcy = (buy_rate.rate_per_kg_fcy or zero) * chargeable_weight
-            if buy_rate.min_charge_fcy:
-                rate_fcy = max(rate_fcy, buy_rate.min_charge_fcy)
+        # Support composite rates (e.g., Per KG + Flat Fee for MXC)
+        # If both rate_per_kg_fcy and rate_per_shipment_fcy are present, sum them.
+        chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
         
+        if buy_rate.rate_per_kg_fcy:
+            rate_fcy += buy_rate.rate_per_kg_fcy * chargeable_weight
+        
+        if buy_rate.rate_per_shipment_fcy:
+            rate_fcy += buy_rate.rate_per_shipment_fcy
+        
+        # Apply minimum charge if applicable (to total)
+        if buy_rate.min_charge_fcy and rate_fcy < buy_rate.min_charge_fcy:
+            rate_fcy = buy_rate.min_charge_fcy
+        
+        # Apply maximum charge if applicable
+        if buy_rate.max_charge_fcy and rate_fcy > buy_rate.max_charge_fcy:
+            rate_fcy = buy_rate.max_charge_fcy
+        
+        # CRITICAL: For Import Collect D2D to PNG, destination charges are local PGK
+        # sell rates. They should NOT have FX conversion applied.
+        shipment = self.quote_input.shipment
+        dest_country = shipment.destination_location.country_code if shipment.destination_location else None
+        is_import = shipment.shipment_type == 'IMPORT'
+        is_destination_leg = component.leg == 'DESTINATION' or component.code.startswith('DST')
+        
+        # If destination is PNG (home) and this is a destination charge, use PGK directly
+        if is_import and dest_country == 'PG' and is_destination_leg:
+            # These are PNG local sell rates - already in PGK, no FX needed
+            cost_pgk = rate_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            return {
+                'cost_pgk': cost_pgk,
+                'cost_fcy': cost_pgk,  # Same as PGK (no conversion)
+                'cost_fcy_currency': 'PGK',
+                'exchange_rate': Decimal('1.0'),
+                'cost_source': 'DIRECT_SELL_RATE',
+                'cost_source_description': 'PNG Local Sell Rate (PGK)',
+                'is_rate_missing': False
+            }
+        
+        # For other cases (Export destination charges or foreign destinations), apply FX
         currency = buy_rate.lane.rate_card.currency_code or HOME_CURRENCY
-        fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=False) # No CAF on sell rates usually? Or maybe yes?
-        # User said "Apply our FX BUY rate... Convert... Apply margin".
-        # But for "Sell Rates" provided by user, they are already the final price?
-        # If it's RATE_OFFER, we assume it's the final price in that currency.
-        # So we just convert to PGK for reporting.
+        fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=False)
         
         cost_pgk = (rate_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -940,7 +1233,6 @@ class PricingServiceV3:
             'is_rate_missing': False
         }
 
-    # --- REFACTORED: This method now builds the new CalculatedTotals ---
     def _calculate_totals(self) -> CalculatedTotals:
         """
         Sums all sell lines into a final totals object.
@@ -957,9 +1249,7 @@ class PricingServiceV3:
         notes = "Rates are missing." if has_missing_rates else None
 
         return CalculatedTotals(
-            # --- THIS IS THE FIX ---
             total_cost_pgk=total_cost_pgk, 
-            # --- END FIX ---
             total_sell_pgk=total_sell_pgk,
             total_sell_pgk_incl_gst=total_sell_pgk_incl_gst,
             total_sell_fcy=total_sell_fcy,

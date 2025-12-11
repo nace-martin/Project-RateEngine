@@ -102,6 +102,35 @@ class Command(BaseCommand):
         )
         self._link_components(exw_d2a_prepaid, exw_components)
 
+        # 2c. Prepaid D2A Export (FCA) - Standard Commercial Export
+        fca_d2a_prepaid, _ = ServiceRule.objects.update_or_create(
+            mode='AIR',
+            direction='EXPORT',
+            incoterm='FCA',
+            payment_term='PREPAID',
+            service_scope='D2A',
+            defaults={
+                "description": "Prepaid D2A Export (FCA Standard)",
+                "output_currency_type": "PGK",
+                "is_active": True
+            }
+        )
+        # FCA Components: Freight + Surcharges + Export Fees (Clearance/Agency/Doc)
+        # Note: Using Component Codes directly
+        fca_components = [
+            'FRT_AIR_EXP',      # Freight
+            'SEC_EXP_MXC',      # Security (Composite)
+            'DOC_EXP_AWB',      # AWB Fee
+            'DOC_EXP_BIC',      # Doc Fee
+            'HND_EXP_BSC',      # Terminal Fee
+            'HND_EXP_BPC',      # Build Up Fee
+            'CLEAR_EXP',        # Export Clearance
+            'AGENCY_EXP',       # Export Agency
+            'PICKUP_EXP',       # Pickup (Optional but included in calculation if payload has it?)
+            'FUEL_SURCHARGE_EXP' # Fuel
+        ]
+        self._link_components(fca_d2a_prepaid, fca_components)
+
         # 3. Prepaid Import A2D (DAP - Agent)
         # Scope: Destination Only
         # Currency: FCY

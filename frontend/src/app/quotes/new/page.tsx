@@ -21,6 +21,8 @@ import {
   V3_SERVICE_SCOPES,
   V3_LOCATION_TYPES,
   V3_CARGO_TYPES,
+  getValidIncoterms,
+  getDefaultIncoterm,
 } from "@/lib/schemas/quoteSchema";
 import { Button } from "@/components/ui/button";
 import {
@@ -262,6 +264,28 @@ export default function NewQuotePage() {
     }
   };
 
+  // Determine if this is an Import (destination is PNG)
+  const isImport = destinationLocation?.country_code === 'PG';
+
+  // Watch service scope for incoterm filtering
+  const serviceScope = form.watch('service_scope');
+  const currentIncoterm = form.watch('incoterm');
+
+  // Get valid incoterms based on direction and scope
+  const validIncoterms = useMemo(() => {
+    return getValidIncoterms(isImport, serviceScope);
+  }, [isImport, serviceScope]);
+
+  // Auto-select correct incoterm when scope or direction changes
+  useEffect(() => {
+    if (!validIncoterms.includes(currentIncoterm)) {
+      const defaultIncoterm = getDefaultIncoterm(isImport, serviceScope);
+      form.setValue('incoterm', defaultIncoterm as keyof typeof V3_INCOTERMS, {
+        shouldValidate: true,
+      });
+    }
+  }, [validIncoterms, currentIncoterm, isImport, serviceScope, form]);
+
   useEffect(() => {
     const fetchContacts = async (customerId: string) => {
       if (!user || !customerId) return;
@@ -369,10 +393,12 @@ export default function NewQuotePage() {
       // Always include spot rates if they are populated
       const payload = buildQuoteComputePayload(data, spotRates, pendingQuoteId);
       const response = await computeQuoteV3(payload);
+      console.log('Quote compute response:', response);
 
-      // Check for missing rates
-      if (response.latest_version.totals.has_missing_rates) {
-        const lines = response.latest_version.lines;
+      // Check for missing rates (with null-safe access)
+      const hasMissingRates = response.latest_version?.totals?.has_missing_rates ?? false;
+      if (hasMissingRates) {
+        const lines = response.latest_version?.lines ?? [];
         let missingCarrier = false;
         let missingAgent = false;
 
@@ -400,6 +426,7 @@ export default function NewQuotePage() {
         }
       }
 
+      console.log('Redirecting to quote:', response.id);
       setPendingQuoteId(null);
       router.push(`/quotes/${response.id}`);
     } catch (error: unknown) {
@@ -652,13 +679,18 @@ export default function NewQuotePage() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {Object.values(V3_INCOTERMS).map((incoterm) => (
+                        {validIncoterms.map((incoterm) => (
                           <SelectItem key={incoterm} value={incoterm}>
                             {incoterm}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {validIncoterms.length === 1 && isImport && serviceScope === 'A2D' && (
+                      <FormDescription className="text-amber-600">
+                        Import A2D quotes require DAP (Delivered at Place)
+                      </FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -919,11 +951,24 @@ export default function NewQuotePage() {
         </form>
       </Form>
 
-      {/* Missing Rates Modal */}
+      {/* Missing Rates Modal - Email template only */}
       <MissingRatesModal
         isOpen={showMissingRatesModal}
-        onClose={() => setShowMissingRatesModal(false)}
-        onSubmit={handleMissingRatesSubmit}
+        onClose={() => {
+          setShowMissingRatesModal(false);
+          // Route to quote detail page if quote was already saved
+          if (pendingQuoteId) {
+            router.push(`/quotes/${pendingQuoteId}`);
+          }
+        }}
+        onSubmit={() => {
+          // Track that email was copied, then navigate to quote
+          console.log('Email template copied for partner quote');
+          setShowMissingRatesModal(false);
+          if (pendingQuoteId) {
+            router.push(`/quotes/${pendingQuoteId}`);
+          }
+        }}
         missingRates={missingRates}
         quoteId={pendingQuoteId}
         shipmentDetails={{
@@ -935,11 +980,12 @@ export default function NewQuotePage() {
           pieces: cargoMetrics.pieces,
           weight: cargoMetrics.actualWeight,
           chargeableWeight: cargoMetrics.chargeableWeight,
+          volumetricWeight: cargoMetrics.volumetricWeight,
           commodity: form.watch('cargo_type'),
           serviceScope: form.watch('service_scope'),
+          incoterm: form.watch('incoterm'),
           dimensions: form.watch('dimensions'),
         }}
-        isSubmitting={isSubmitting}
       />
     </div>
   );

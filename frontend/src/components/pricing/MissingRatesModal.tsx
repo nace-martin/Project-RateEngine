@@ -1,18 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { AlertTriangle, Mail, Copy, Check, X, ArrowRight, Plane } from 'lucide-react';
+import { AlertTriangle, Mail, Copy, Check, X, Plane } from 'lucide-react';
+import Link from 'next/link';
 
 interface MissingRatesModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSubmit: (spotRates: SpotRates) => void;
+    onSubmit?: () => void; // Optional callback after copying
     missingRates: {
         carrier: boolean;
         agent: boolean;
@@ -27,8 +24,10 @@ interface MissingRatesModalProps {
         pieces: number;
         weight: number;
         chargeableWeight: number;
+        volumetricWeight?: number;
         commodity?: string;
         serviceScope: string;
+        incoterm?: string;
         dimensions?: {
             pieces: number | string;
             length_cm: number | string;
@@ -38,15 +37,6 @@ interface MissingRatesModalProps {
             package_type?: string;
         }[];
     };
-    currencies?: string[];
-    isSubmitting?: boolean;
-}
-
-interface SpotRates {
-    carrierSpotRatePgk: string;
-    agentDestChargesFcy: string;
-    agentCurrency: string;
-    isAllIn: boolean;
 }
 
 export function MissingRatesModal({
@@ -56,53 +46,94 @@ export function MissingRatesModal({
     missingRates,
     quoteId,
     shipmentDetails,
-    currencies = ['USD', 'AUD', 'EUR', 'GBP', 'NZD', 'SGD'],
-    isSubmitting = false,
 }: MissingRatesModalProps) {
-    const [spotRates, setSpotRates] = useState<SpotRates>({
-        carrierSpotRatePgk: '',
-        agentDestChargesFcy: '',
-        agentCurrency: 'AUD',
-        isAllIn: false,
-    });
     const [emailContent, setEmailContent] = useState('');
     const [isCopied, setIsCopied] = useState(false);
-    const [showEmailPanel, setShowEmailPanel] = useState(false);
+
+    // Determine what's being requested based on missing rates and service context
+    const requestedCharges = useMemo(() => {
+        const isExport = shipmentDetails.originCountryCode === 'PG';
+        const scope = shipmentDetails.serviceScope;
+        const charges: string[] = [];
+
+        if (missingRates.carrier) {
+            charges.push('Freight Rate');
+        }
+
+        if (missingRates.agent) {
+            if (isExport) {
+                // Export: Destination charges
+                if (scope === 'D2D' || scope === 'A2D') {
+                    charges.push('Destination Clearance & Delivery Charges');
+                } else {
+                    charges.push('Destination Clearance Charges');
+                }
+            } else {
+                // Import: Origin charges
+                if (scope === 'D2D' || scope === 'D2A') {
+                    charges.push('Origin Collection & Clearance Charges');
+                } else {
+                    charges.push('Origin Clearance Charges');
+                }
+            }
+        }
+
+        return charges;
+    }, [missingRates, shipmentDetails]);
+
+    // Determine service description
+    const serviceDescription = useMemo(() => {
+        const scope = shipmentDetails.serviceScope;
+        const descriptions: Record<string, string> = {
+            'D2D': 'Door to Door',
+            'D2A': 'Door to Airport',
+            'A2D': 'Airport to Door',
+            'A2A': 'Airport to Airport',
+        };
+        return descriptions[scope] || scope;
+    }, [shipmentDetails.serviceScope]);
 
     useEffect(() => {
         if (!shipmentDetails) return;
 
         const dims = shipmentDetails.dimensions?.map((d, i) =>
-            `  ${i + 1}. ${d.pieces}x ${d.package_type || 'Box'} @ ${d.length_cm}x${d.width_cm}x${d.height_cm}cm (${d.gross_weight_kg}kg)`
+            `  ${i + 1}. ${d.pieces}x ${d.package_type || 'Box'} @ ${d.length_cm}×${d.width_cm}×${d.height_cm}cm (${d.gross_weight_kg}kg)`
         ).join('\n') || '  No dimensions provided';
 
-        const isExport = shipmentDetails.originCountryCode === 'PG';
-        const scope = shipmentDetails.serviceScope;
-
-        let addressPlaceholders = '';
-        if (isExport && (scope === 'D2D' || scope === 'A2D')) {
-            addressPlaceholders = `\nDelivery Address:\nSuburb: ________________\nPostcode: ________________`;
-        } else if (!isExport && (scope === 'D2D' || scope === 'D2A')) {
-            addressPlaceholders = `\nPickup Address:\nSuburb: ________________\nPostcode: ________________`;
+        // Calculate volumetric weight if not provided
+        let volWeight = shipmentDetails.volumetricWeight;
+        if (!volWeight && shipmentDetails.dimensions?.length) {
+            volWeight = shipmentDetails.dimensions.reduce((sum, d) => {
+                const pieces = Number(d.pieces) || 1;
+                const vol = (Number(d.length_cm) * Number(d.width_cm) * Number(d.height_cm)) / 6000;
+                return sum + (pieces * vol);
+            }, 0);
         }
 
-        const template = `Subject: Rate Request - ${shipmentDetails.origin} → ${shipmentDetails.destination}
+        // Build the charges request line
+        const chargesRequested = requestedCharges.length > 0
+            ? `\nCHARGES REQUIRED\n${requestedCharges.map(c => `• ${c}`).join('\n')}`
+            : '';
+
+        const template = `Subject: Rate Request - ${shipmentDetails.origin} → ${shipmentDetails.destination} [${shipmentDetails.serviceScope}]
 
 Hi,
 
 Please provide your charges for the following shipment:
+${chargesRequested}
 
 ROUTE
 Origin: ${shipmentDetails.origin}
 Destination: ${shipmentDetails.destination}
-Service: ${shipmentDetails.serviceScope}
+Service: ${serviceDescription} (${shipmentDetails.serviceScope})
 Mode: ${shipmentDetails.mode}
-${addressPlaceholders}
+${shipmentDetails.incoterm ? `Incoterm: ${shipmentDetails.incoterm}` : ''}
 
-CARGO
+CARGO DETAILS
 Pieces: ${shipmentDetails.pieces}
-Weight: ${shipmentDetails.weight} kg
-Chargeable: ${shipmentDetails.chargeableWeight} kg
+Gross Weight: ${shipmentDetails.weight} kg
+Volumetric Weight: ${volWeight ? volWeight.toFixed(1) : 'N/A'} kg
+Chargeable Weight: ${shipmentDetails.chargeableWeight} kg
 Commodity: ${shipmentDetails.commodity || 'General Cargo'}
 
 DIMENSIONS
@@ -113,21 +144,14 @@ Please quote in your local currency.
 Thanks,`;
 
         setEmailContent(template);
-    }, [shipmentDetails]);
+    }, [shipmentDetails, requestedCharges, serviceDescription]);
 
     const handleCopy = () => {
         navigator.clipboard.writeText(emailContent);
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
+        onSubmit?.();
     };
-
-    const handleSubmit = () => {
-        onSubmit(spotRates);
-    };
-
-    const canSubmit =
-        (!missingRates.carrier || spotRates.carrierSpotRatePgk) &&
-        (!missingRates.agent || spotRates.agentDestChargesFcy);
 
     if (!isOpen) return null;
 
@@ -143,9 +167,9 @@ Thanks,`;
                             <AlertTriangle className="w-5 h-5 text-amber-600" />
                         </div>
                         <div>
-                            <h2 className="text-lg font-semibold text-amber-900">Missing Rate Required</h2>
+                            <h2 className="text-lg font-semibold text-amber-900">Request Partner Quote</h2>
                             <p className="text-sm text-amber-700 mt-0.5">
-                                We need additional information to complete your quote.
+                                Email your partner for the rates below.
                                 {quoteId && (
                                     <span className="ml-2 text-xs font-mono bg-amber-200 px-1.5 py-0.5 rounded">
                                         Ref: {quoteId.slice(0, 8)}
@@ -174,8 +198,13 @@ Thanks,`;
                         <div className="text-xs text-slate-500 uppercase tracking-wide">Destination</div>
                         <div className="font-semibold text-slate-900">{shipmentDetails.destination}</div>
                     </div>
-                    <div className="ml-6 px-3 py-1 bg-slate-200 rounded text-sm font-medium text-slate-700">
-                        {shipmentDetails.chargeableWeight} kg
+                    <div className="ml-4 flex gap-2">
+                        <span className="px-2 py-1 bg-blue-100 rounded text-xs font-medium text-blue-700">
+                            {shipmentDetails.serviceScope}
+                        </span>
+                        <span className="px-2 py-1 bg-slate-200 rounded text-xs font-medium text-slate-700">
+                            {shipmentDetails.chargeableWeight} kg
+                        </span>
                     </div>
                 </div>
 
@@ -183,130 +212,46 @@ Thanks,`;
                 <div className="px-6 py-6 space-y-6">
                     {/* What's Missing */}
                     <div className="space-y-3">
-                        <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">What&apos;s Missing</h3>
+                        <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Charges Required</h3>
                         <div className="flex flex-wrap gap-2">
-                            {missingRates.carrier && (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 rounded-full text-sm font-medium">
+                            {requestedCharges.map((charge) => (
+                                <span
+                                    key={charge}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 rounded-full text-sm font-medium"
+                                >
                                     <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
-                                    Carrier Freight Rate
+                                    {charge}
                                 </span>
-                            )}
-                            {missingRates.agent && (
-                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 rounded-full text-sm font-medium">
-                                    <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
-                                    Destination Agent Charges
-                                </span>
-                            )}
+                            ))}
                         </div>
                     </div>
 
-                    {/* Email Partner Section */}
+                    {/* Email Template */}
                     <div className="border rounded-lg overflow-hidden">
-                        <button
-                            onClick={() => setShowEmailPanel(!showEmailPanel)}
-                            className="w-full px-4 py-3 bg-blue-50 hover:bg-blue-100 flex items-center justify-between transition-colors"
-                        >
-                            <div className="flex items-center gap-3">
-                                <Mail className="w-5 h-5 text-blue-600" />
-                                <span className="font-medium text-blue-900">Email Partner for Quote</span>
-                            </div>
-                            <ArrowRight className={`w-4 h-4 text-blue-600 transition-transform ${showEmailPanel ? 'rotate-90' : ''}`} />
-                        </button>
-
-                        {showEmailPanel && (
-                            <div className="p-4 border-t border-blue-100 space-y-3">
-                                <Textarea
-                                    value={emailContent}
-                                    onChange={(e) => setEmailContent(e.target.value)}
-                                    className="h-64 font-mono text-sm"
-                                />
-                                <Button onClick={handleCopy} variant="outline" className="w-full">
-                                    {isCopied ? (
-                                        <>
-                                            <Check className="w-4 h-4 mr-2 text-green-600" />
-                                            Copied!
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Copy className="w-4 h-4 mr-2" />
-                                            Copy to Clipboard
-                                        </>
-                                    )}
-                                </Button>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Divider */}
-                    <div className="relative">
-                        <div className="absolute inset-0 flex items-center">
-                            <div className="w-full border-t border-slate-200" />
+                        <div className="px-4 py-3 bg-blue-50 flex items-center gap-3 border-b border-blue-100">
+                            <Mail className="w-5 h-5 text-blue-600" />
+                            <span className="font-medium text-blue-900">Email Template</span>
                         </div>
-                        <div className="relative flex justify-center text-sm">
-                            <span className="bg-white px-4 text-slate-500">Enter rate when received</span>
+                        <div className="p-4 space-y-3">
+                            <Textarea
+                                value={emailContent}
+                                onChange={(e) => setEmailContent(e.target.value)}
+                                className="h-72 font-mono text-sm"
+                            />
+                            <Button onClick={handleCopy} className="w-full">
+                                {isCopied ? (
+                                    <>
+                                        <Check className="w-4 h-4 mr-2 text-green-400" />
+                                        Copied to Clipboard!
+                                    </>
+                                ) : (
+                                    <>
+                                        <Copy className="w-4 h-4 mr-2" />
+                                        Copy Email Template
+                                    </>
+                                )}
+                            </Button>
                         </div>
-                    </div>
-
-                    {/* Rate Entry */}
-                    <div className="space-y-4">
-                        {missingRates.carrier && (
-                            <div className="p-4 border rounded-lg bg-slate-50 space-y-3">
-                                <Label className="text-sm font-medium text-slate-700">Carrier Freight Rate</Label>
-                                <div className="flex gap-3">
-                                    <div className="relative flex-1">
-                                        <span className="absolute left-3 top-2.5 text-slate-500 text-sm font-medium">PGK</span>
-                                        <Input
-                                            type="number"
-                                            placeholder="0.00"
-                                            className="pl-12"
-                                            value={spotRates.carrierSpotRatePgk}
-                                            onChange={(e) => setSpotRates(prev => ({ ...prev, carrierSpotRatePgk: e.target.value }))}
-                                        />
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <Switch
-                                        id="all-in"
-                                        checked={spotRates.isAllIn}
-                                        onCheckedChange={(checked) => setSpotRates(prev => ({ ...prev, isAllIn: checked }))}
-                                    />
-                                    <Label htmlFor="all-in" className="text-sm text-slate-600">
-                                        All-in rate (includes fuel &amp; security surcharges)
-                                    </Label>
-                                </div>
-                            </div>
-                        )}
-
-                        {missingRates.agent && (
-                            <div className="p-4 border rounded-lg bg-slate-50 space-y-3">
-                                <Label className="text-sm font-medium text-slate-700">Destination Agent Charges</Label>
-                                <div className="flex gap-3">
-                                    <Input
-                                        type="number"
-                                        placeholder="0.00"
-                                        className="flex-1"
-                                        value={spotRates.agentDestChargesFcy}
-                                        onChange={(e) => setSpotRates(prev => ({ ...prev, agentDestChargesFcy: e.target.value }))}
-                                    />
-                                    <Select
-                                        value={spotRates.agentCurrency}
-                                        onValueChange={(val) => setSpotRates(prev => ({ ...prev, agentCurrency: val }))}
-                                    >
-                                        <SelectTrigger className="w-24">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {currencies.map((curr) => (
-                                                <SelectItem key={curr} value={curr}>{curr}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <p className="text-xs text-slate-500">
-                                    Total charges including clearance, handling, and delivery to door
-                                </p>
-                            </div>
-                        )}
                     </div>
                 </div>
 
@@ -314,20 +259,13 @@ Thanks,`;
                 <div className="sticky bottom-0 bg-white border-t px-6 py-4 space-y-3">
                     {quoteId && (
                         <div className="text-xs text-slate-500 bg-slate-50 px-3 py-2 rounded">
-                            💾 Quote saved automatically. You can complete it later from the{' '}
-                            <a href="/quotes" className="text-blue-600 hover:underline">Quotes list</a>.
+                            💾 Quote saved automatically. You can add rates later from the{' '}
+                            <Link href="/quotes" className="text-blue-600 hover:underline">Quotes list</Link>.
                         </div>
                     )}
-                    <div className="flex items-center justify-between">
-                        <Button variant="ghost" onClick={onClose}>
-                            {quoteId ? 'Save for Later' : 'Cancel'}
-                        </Button>
-                        <Button
-                            onClick={handleSubmit}
-                            disabled={!canSubmit || isSubmitting}
-                            className="min-w-[160px]"
-                        >
-                            {isSubmitting ? 'Calculating...' : 'Recalculate Quote'}
+                    <div className="flex items-center justify-end">
+                        <Button variant="outline" onClick={onClose}>
+                            {quoteId ? 'Close' : 'Cancel'}
                         </Button>
                     </div>
                 </div>
