@@ -17,10 +17,11 @@ export const V3_MODES = {
 
 export const V3_INCOTERMS = {
   EXW: 'EXW',
+  FCA: 'FCA',
   FOB: 'FOB',
+  CPT: 'CPT',
   DAP: 'DAP',
   DDP: 'DDP',
-  CPT: 'CPT',
   CFR: 'CFR',
 } as const
 export const V3_PAYMENT_TERMS = {
@@ -52,9 +53,9 @@ export function getValidIncoterms(isImport: boolean, serviceScope: string): stri
     return ['DAP'];
   }
 
-  // Export D2A or D2D: EXW, FOB, CPT typical export incoterms
+  // Export D2A or D2D: Common export incoterms
   if (!isImport && (serviceScope === 'D2A' || serviceScope === 'D2D')) {
-    return ['EXW', 'FOB', 'CPT', 'DAP', 'DDP'];
+    return ['EXW', 'FCA', 'FOB', 'CPT', 'DAP', 'DDP'];
   }
 
   // Default: All incoterms

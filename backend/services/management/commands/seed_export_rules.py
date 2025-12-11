@@ -165,6 +165,91 @@ class Command(BaseCommand):
         ]
         self._link_components(dap_import_agent, import_components)
 
+        # =====================================================================
+        # CPT - CARRIAGE PAID TO (Seller pays freight to destination terminal)
+        # =====================================================================
+        # Per Incoterms 2020: Seller covers Origin + Export + Freight + Dest Terminal
+        # Buyer covers: Import customs + Inland delivery
+        
+        # CPT Export D2A PREPAID
+        cpt_d2a_export, _ = ServiceRule.objects.update_or_create(
+            mode='AIR',
+            direction='EXPORT',
+            incoterm='CPT',
+            payment_term='PREPAID',
+            service_scope='D2A',
+            defaults={
+                "description": "CPT Export D2A - Carriage Paid To (Airport)",
+                "output_currency_type": "PGK",
+                "is_active": True
+            }
+        )
+        # CPT includes: Origin + Freight + Destination Terminal Handling
+        cpt_d2a_components = [
+            # Origin
+            'PICKUP_EXP', 'FUEL_SURCHARGE_EXP',
+            # Export Terminal
+            'DOC_EXP_AWB', 'DOC_EXP_BIC', 'SEC_EXP_MXC', 'HND_EXP_BSC', 'HND_EXP_BPC',
+            'CLEAR_EXP', 'AGENCY_EXP',
+            # Freight
+            'FRT_AIR_EXP',
+            # Destination Terminal (seller pays terminal handling)
+            'DST-HANDL-STD', 'DST-TERM-INTL'
+        ]
+        self._link_components(cpt_d2a_export, cpt_d2a_components)
+
+        # CPT Export D2D PREPAID (includes inland delivery at destination)
+        cpt_d2d_export, _ = ServiceRule.objects.update_or_create(
+            mode='AIR',
+            direction='EXPORT',
+            incoterm='CPT',
+            payment_term='PREPAID',
+            service_scope='D2D',
+            defaults={
+                "description": "CPT Export D2D - Carriage Paid To (Door)",
+                "output_currency_type": "PGK",
+                "is_active": True
+            }
+        )
+        # CPT D2D: Same as D2A + Destination Delivery (but NOT import customs)
+        cpt_d2d_components = cpt_d2a_components + ['DST-DELIV-STD', 'DST-DELIV-FUEL']
+        self._link_components(cpt_d2d_export, cpt_d2d_components)
+
+        # =====================================================================
+        # DDP - DELIVERED DUTY PAID (Seller pays EVERYTHING including duties)
+        # =====================================================================
+        # Per Incoterms 2020: Seller covers ALL charges including import duties/taxes
+        # Note: Import Duty/Tax are SPOT components (user inputs from customs broker)
+        
+        ddp_d2d_export, _ = ServiceRule.objects.update_or_create(
+            mode='AIR',
+            direction='EXPORT',
+            incoterm='DDP',
+            payment_term='PREPAID',
+            service_scope='D2D',
+            defaults={
+                "description": "DDP Export D2D - Delivered Duty Paid",
+                "output_currency_type": "PGK",
+                "is_active": True
+            }
+        )
+        # DDP includes: ALL charges
+        ddp_components = [
+            # Origin
+            'PICKUP_EXP', 'FUEL_SURCHARGE_EXP',
+            # Export Terminal
+            'DOC_EXP_AWB', 'DOC_EXP_BIC', 'SEC_EXP_MXC', 'HND_EXP_BSC', 'HND_EXP_BPC',
+            'CLEAR_EXP', 'AGENCY_EXP',
+            # Freight
+            'FRT_AIR_EXP',
+            # Destination (ALL)
+            'DST-HANDL-STD', 'DST-TERM-INTL',
+            'DST-CLEAR-CUS', 'DST-DOC-IMP', 'DST-AGENCY-IMP',
+            'DST-DELIV-STD', 'DST-DELIV-FUEL',
+            # Note: IMPORT_DUTY and IMPORT_TAX are added via SPOT charges by user
+        ]
+        self._link_components(ddp_d2d_export, ddp_components)
+
     def _link_components(self, rule, component_codes):
         # Clear existing
         rule.rule_components.all().delete()
