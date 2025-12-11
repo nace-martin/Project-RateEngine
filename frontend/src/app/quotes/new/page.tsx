@@ -267,24 +267,25 @@ export default function NewQuotePage() {
   // Determine if this is an Import (destination is PNG)
   const isImport = destinationLocation?.country_code === 'PG';
 
-  // Watch service scope for incoterm filtering
+  // Watch form fields for incoterm filtering
   const serviceScope = form.watch('service_scope');
+  const paymentTerm = form.watch('payment_term');
   const currentIncoterm = form.watch('incoterm');
 
-  // Get valid incoterms based on direction and scope
+  // Get valid incoterms based on direction, scope, and payment term
   const validIncoterms = useMemo(() => {
-    return getValidIncoterms(isImport, serviceScope);
-  }, [isImport, serviceScope]);
+    return getValidIncoterms(isImport, serviceScope, paymentTerm);
+  }, [isImport, serviceScope, paymentTerm]);
 
-  // Auto-select correct incoterm when scope or direction changes
+  // Auto-select correct incoterm when scope, direction, or payment term changes
   useEffect(() => {
     if (!validIncoterms.includes(currentIncoterm)) {
-      const defaultIncoterm = getDefaultIncoterm(isImport, serviceScope);
+      const defaultIncoterm = getDefaultIncoterm(isImport, serviceScope, paymentTerm);
       form.setValue('incoterm', defaultIncoterm as keyof typeof V3_INCOTERMS, {
         shouldValidate: true,
       });
     }
-  }, [validIncoterms, currentIncoterm, isImport, serviceScope, form]);
+  }, [validIncoterms, currentIncoterm, isImport, serviceScope, paymentTerm, form]);
 
   useEffect(() => {
     const fetchContacts = async (customerId: string) => {

@@ -36,44 +36,143 @@ export const V3_SERVICE_SCOPES = {
 } as const
 
 /**
- * Get valid incoterms based on shipment direction and service scope.
+ * Get valid incoterms based on shipment direction, service scope, and payment term.
  * 
- * Rules:
- * - Import + A2D: Only DAP (Delivered at Place)
- * - Export + D2A or D2D: EXW, FOB, CPT
- * - Other combinations: All incoterms
+ * Logic based on ICC Incoterms® 2020:
+ * 
+ * EXPORT (Origin = PNG):
+ * - D2A + PREPAID: EXW, FCA, CPT (seller delivers to airport, may include freight)
+ * - D2A + COLLECT: EXW, FCA (agent pays freight)
+ * - D2D + PREPAID: CPT, DAP, DDP (full service to door)
+ * - D2D + COLLECT: DAP (agent covers origin country charges)
+ * - A2A: EXW (airport to airport, minimal seller responsibility)
+ * - A2D: CPT, DAP (destination delivery included)
+ * 
+ * IMPORT (Destination = PNG):
+ * - A2D: DAP only (we receive at airport and deliver)
+ * - D2D: DAP, DDP (full door-to-door, seller covers all)
+ * - D2A: FCA, CPT (rare - origin to our airport)
+ * - A2A: EXW, FCA (airport to airport)
  * 
  * @param isImport - True if shipment is import (destination is PG)
  * @param serviceScope - The service scope (D2D, D2A, A2D, A2A)
+ * @param paymentTerm - Optional payment term (PREPAID or COLLECT)
  * @returns Array of valid incoterm values
  */
-export function getValidIncoterms(isImport: boolean, serviceScope: string): string[] {
-  // Import A2D: Only DAP allowed
-  if (isImport && serviceScope === 'A2D') {
-    return ['DAP'];
+export function getValidIncoterms(
+  isImport: boolean,
+  serviceScope: string,
+  paymentTerm?: string
+): string[] {
+
+  // ===== IMPORT QUOTES (Destination = PNG) =====
+  if (isImport) {
+    switch (serviceScope) {
+      case 'A2D':
+        // Agent delivers to airport, we deliver to door
+        return ['DAP'];
+      case 'D2D':
+        // Full door-to-door import
+        return ['DAP', 'DDP'];
+      case 'D2A':
+        // Origin door to our airport (rare)
+        return ['FCA', 'CPT'];
+      case 'A2A':
+        // Airport to airport
+        return ['EXW', 'FCA'];
+      default:
+        return ['DAP'];
+    }
   }
 
-  // Export D2A or D2D: Common export incoterms
-  if (!isImport && (serviceScope === 'D2A' || serviceScope === 'D2D')) {
-    return ['EXW', 'FCA', 'FOB', 'CPT', 'DAP', 'DDP'];
-  }
+  // ===== EXPORT QUOTES (Origin = PNG) =====
+  switch (serviceScope) {
+    case 'D2A':
+      // Door to airport export
+      if (paymentTerm === 'COLLECT') {
+        // Agent pays freight, so EXW or FCA only
+        return ['EXW', 'FCA'];
+      }
+      // Prepaid: We may cover freight (CPT)
+      return ['EXW', 'FCA', 'CPT'];
 
-  // Default: All incoterms
-  return Object.values(V3_INCOTERMS);
+    case 'D2D':
+      // Door to door export
+      if (paymentTerm === 'COLLECT') {
+        // Agent handles destination charges
+        return ['DAP'];
+      }
+      // Prepaid: Full control
+      return ['CPT', 'DAP', 'DDP'];
+
+    case 'A2D':
+      // Airport to door (we deliver at destination)
+      return ['CPT', 'DAP'];
+
+    case 'A2A':
+      // Airport to airport only
+      return ['EXW'];
+
+    default:
+      // Default for export
+      return ['EXW', 'FCA', 'CPT', 'DAP', 'DDP'];
+  }
 }
 
 /**
  * Get the default incoterm for a given shipment configuration.
- * Used for auto-selection when user changes direction or scope.
+ * Used for auto-selection when user changes direction, scope, or payment term.
+ * 
+ * @param isImport - True if shipment is import
+ * @param serviceScope - The service scope
+ * @param paymentTerm - Optional payment term
+ * @returns The recommended default incoterm
  */
-export function getDefaultIncoterm(isImport: boolean, serviceScope: string): string {
-  if (isImport && serviceScope === 'A2D') {
-    return 'DAP';
+export function getDefaultIncoterm(
+  isImport: boolean,
+  serviceScope: string,
+  paymentTerm?: string
+): string {
+
+  // ===== IMPORT QUOTES =====
+  if (isImport) {
+    switch (serviceScope) {
+      case 'A2D':
+      case 'D2D':
+        return 'DAP';
+      case 'D2A':
+        return 'FCA';
+      case 'A2A':
+        return 'EXW';
+      default:
+        return 'DAP';
+    }
   }
-  if (!isImport && (serviceScope === 'D2D' || serviceScope === 'D2A')) {
-    return 'EXW';
+
+  // ===== EXPORT QUOTES =====
+  switch (serviceScope) {
+    case 'D2A':
+      // For D2A exports, FCA is most common (Free Carrier to airport)
+      return 'FCA';
+
+    case 'D2D':
+      // For D2D exports, DAP is most common (Delivered at Place)
+      if (paymentTerm === 'COLLECT') {
+        return 'DAP';
+      }
+      return 'DAP';
+
+    case 'A2D':
+      // Airport to door, DAP makes sense
+      return 'DAP';
+
+    case 'A2A':
+      // Airport to airport, EXW
+      return 'EXW';
+
+    default:
+      return 'EXW';
   }
-  return 'EXW';
 }
 
 export const V3_LOCATION_TYPES = {
