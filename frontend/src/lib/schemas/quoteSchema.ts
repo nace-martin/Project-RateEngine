@@ -49,10 +49,14 @@ export const V3_SERVICE_SCOPES = {
  * - A2D: CPT, DAP (destination delivery included)
  * 
  * IMPORT (Destination = PNG):
- * - A2D: DAP only (we receive at airport and deliver)
- * - D2D: DAP, DDP (full door-to-door, seller covers all)
- * - D2A: FCA, CPT (rare - origin to our airport)
- * - A2A: EXW, FCA (airport to airport)
+ * - A2D + PREPAID: DAP (agent delivers to airport, we deliver to door, freight prepaid)
+ * - A2D + COLLECT: EXW, FCA (we collect at origin airport, pay freight)
+ * - D2D + PREPAID: DAP, DDP (full door-to-door, seller covers freight)
+ * - D2D + COLLECT: DAP (we pay freight collect)
+ * - D2A + PREPAID: FCA, CPT (origin door to our airport, freight prepaid)
+ * - D2A + COLLECT: EXW, FCA (we pay freight collect)
+ * - A2A + PREPAID: FCA (airport to airport, freight prepaid)
+ * - A2A + COLLECT: EXW (we collect at origin airport)
  * 
  * @param isImport - True if shipment is import (destination is PG)
  * @param serviceScope - The service scope (D2D, D2A, A2D, A2A)
@@ -66,20 +70,45 @@ export function getValidIncoterms(
 ): string[] {
 
   // ===== IMPORT QUOTES (Destination = PNG) =====
+  // For imports, overseas agent is "seller", we (PNG) are "buyer"
   if (isImport) {
     switch (serviceScope) {
       case 'A2D':
-        // Agent delivers to airport, we deliver to door
+        // Agent delivers to their airport, we receive at POM and deliver to customer
+        if (paymentTerm === 'COLLECT') {
+          // We pay freight collect - seller only delivers to origin airport
+          return ['EXW', 'FCA'];
+        }
+        // Prepaid: Agent pays freight, DAP (delivered at place)
         return ['DAP'];
+
       case 'D2D':
         // Full door-to-door import
+        if (paymentTerm === 'COLLECT') {
+          // We pay freight collect - still need DAP for destination delivery
+          return ['DAP'];
+        }
+        // Prepaid: Full service, DAP or DDP
         return ['DAP', 'DDP'];
+
       case 'D2A':
-        // Origin door to our airport (rare)
+        // Origin door to our airport
+        if (paymentTerm === 'COLLECT') {
+          // We pay freight collect
+          return ['EXW', 'FCA'];
+        }
+        // Prepaid: Agent pays freight
         return ['FCA', 'CPT'];
+
       case 'A2A':
         // Airport to airport
-        return ['EXW', 'FCA'];
+        if (paymentTerm === 'COLLECT') {
+          // We pay freight collect from origin airport
+          return ['EXW'];
+        }
+        // Prepaid: Agent pays freight
+        return ['FCA'];
+
       default:
         return ['DAP'];
     }
@@ -138,12 +167,22 @@ export function getDefaultIncoterm(
   if (isImport) {
     switch (serviceScope) {
       case 'A2D':
+        // COLLECT: We pay freight, EXW is common
+        if (paymentTerm === 'COLLECT') return 'EXW';
+        return 'DAP';
+
       case 'D2D':
         return 'DAP';
+
       case 'D2A':
+        // COLLECT: We pay freight
+        if (paymentTerm === 'COLLECT') return 'EXW';
         return 'FCA';
+
       case 'A2A':
-        return 'EXW';
+        if (paymentTerm === 'COLLECT') return 'EXW';
+        return 'FCA';
+
       default:
         return 'DAP';
     }
@@ -157,9 +196,6 @@ export function getDefaultIncoterm(
 
     case 'D2D':
       // For D2D exports, DAP is most common (Delivered at Place)
-      if (paymentTerm === 'COLLECT') {
-        return 'DAP';
-      }
       return 'DAP';
 
     case 'A2D':
