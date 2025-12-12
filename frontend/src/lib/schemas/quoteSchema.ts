@@ -38,25 +38,28 @@ export const V3_SERVICE_SCOPES = {
 /**
  * Get valid incoterms based on shipment direction, service scope, and payment term.
  * 
- * Logic based on ICC Incoterms® 2020:
+ * IMPORTANT CONCEPTS:
+ * - Service Scope (D2D, D2A, A2D, A2A) = Physical route we're quoting (what's included)
+ * - Incoterm = Who bears risk/responsibility at each point (not what's quoted)
  * 
- * EXPORT (Origin = PNG):
- * - D2A + PREPAID: EXW, FCA, CPT (seller delivers to airport, may include freight)
- * - D2A + COLLECT: EXW, FCA (agent pays freight)
- * - D2D + PREPAID: CPT, DAP, DDP (full service to door)
- * - D2D + COLLECT: DAP (agent covers origin country charges)
- * - A2A: EXW (airport to airport, minimal seller responsibility)
- * - A2D: CPT, DAP (destination delivery included)
+ * Therefore, most incoterms are valid for most scopes. The scope tells us WHAT to quote,
+ * the incoterm tells us WHO bears risk.
  * 
- * IMPORT (Destination = PNG):
- * - A2D + PREPAID: DAP (agent delivers to airport, we deliver to door, freight prepaid)
- * - A2D + COLLECT: EXW, FCA (we collect at origin airport, pay freight)
- * - D2D + PREPAID: DAP, DDP (full door-to-door, seller covers freight)
- * - D2D + COLLECT: DAP (we pay freight collect)
- * - D2A + PREPAID: FCA, CPT (origin door to our airport, freight prepaid)
- * - D2A + COLLECT: EXW, FCA (we pay freight collect)
- * - A2A + PREPAID: FCA (airport to airport, freight prepaid)
- * - A2A + COLLECT: EXW (we collect at origin airport)
+ * For example, EXW D2D means:
+ * - Quote the full door-to-door route
+ * - But buyer bears all risk from seller's premises onwards
+ * 
+ * EXPORT (Origin = PNG, we're quoting for the seller):
+ * - D2D: All incoterms valid - EXW, FCA, CPT, DAP, DDP
+ * - D2A: EXW, FCA, CPT (freight may or may not be included)
+ * - A2D: CPT, DAP (seller covers destination)
+ * - A2A: EXW, FCA (minimal seller responsibility)
+ * 
+ * IMPORT (Destination = PNG, overseas agent is seller):
+ * - A2D: DAP, DDP (seller delivers to our door) or EXW, FCA for COLLECT
+ * - D2D: EXW to DDP - all valid depending on arrangement
+ * - D2A: FCA, CPT (seller delivers to our airport)
+ * - A2A: EXW, FCA
  * 
  * @param isImport - True if shipment is import (destination is PG)
  * @param serviceScope - The service scope (D2D, D2A, A2D, A2A)
@@ -70,44 +73,40 @@ export function getValidIncoterms(
 ): string[] {
 
   // ===== IMPORT QUOTES (Destination = PNG) =====
-  // For imports, overseas agent is "seller", we (PNG) are "buyer"
+  // Overseas agent is "seller", our customer (PNG) is "buyer"
   if (isImport) {
     switch (serviceScope) {
       case 'A2D':
-        // Agent delivers to their airport, we receive at POM and deliver to customer
+        // Origin Airport to Consignee's Door in PNG
         if (paymentTerm === 'COLLECT') {
-          // We pay freight collect - seller only delivers to origin airport
+          // We (PNG) pay freight - seller has less responsibility
           return ['EXW', 'FCA'];
         }
-        // Prepaid: Agent pays freight, DAP (delivered at place)
-        return ['DAP'];
-
-      case 'D2D':
-        // Full door-to-door import
-        if (paymentTerm === 'COLLECT') {
-          // We pay freight collect - still need DAP for destination delivery
-          return ['DAP'];
-        }
-        // Prepaid: Full service, DAP or DDP
+        // Prepaid: Agent covers carriage to our door
         return ['DAP', 'DDP'];
 
-      case 'D2A':
-        // Origin door to our airport
+      case 'D2D':
+        // Full door-to-door import - all incoterms possible
         if (paymentTerm === 'COLLECT') {
-          // We pay freight collect
+          // We pay freight - EXW/FCA typical
+          return ['EXW', 'FCA', 'DAP'];
+        }
+        // Prepaid: Full range
+        return ['EXW', 'FCA', 'CPT', 'DAP', 'DDP'];
+
+      case 'D2A':
+        // Origin Door to our Airport (rare for import - agent picks up and flies to us)
+        if (paymentTerm === 'COLLECT') {
           return ['EXW', 'FCA'];
         }
-        // Prepaid: Agent pays freight
         return ['FCA', 'CPT'];
 
       case 'A2A':
-        // Airport to airport
+        // Airport to Airport
         if (paymentTerm === 'COLLECT') {
-          // We pay freight collect from origin airport
           return ['EXW'];
         }
-        // Prepaid: Agent pays freight
-        return ['FCA'];
+        return ['EXW', 'FCA'];
 
       default:
         return ['DAP'];
@@ -115,42 +114,50 @@ export function getValidIncoterms(
   }
 
   // ===== EXPORT QUOTES (Origin = PNG) =====
+  // Our customer (PNG) is "seller", overseas consignee is "buyer"
   switch (serviceScope) {
-    case 'D2A':
-      // Door to airport export
+    case 'D2D':
+      // Full door-to-door export
+      // EXW is valid: seller makes available at door, buyer/agent arranges everything
+      // All incoterms are technically valid for D2D
       if (paymentTerm === 'COLLECT') {
-        // Agent pays freight, so EXW or FCA only
+        // Agent pays freight - EXW most common
+        return ['EXW', 'FCA', 'DAP'];
+      }
+      // Prepaid: Full range, EXW to DDP
+      return ['EXW', 'FCA', 'CPT', 'DAP', 'DDP'];
+
+    case 'D2A':
+      // Origin Door to Destination Airport
+      if (paymentTerm === 'COLLECT') {
+        // Agent pays freight
         return ['EXW', 'FCA'];
       }
-      // Prepaid: We may cover freight (CPT)
+      // Prepaid: May include freight (CPT)
       return ['EXW', 'FCA', 'CPT'];
 
-    case 'D2D':
-      // Door to door export
-      if (paymentTerm === 'COLLECT') {
-        // Agent handles destination charges
-        return ['DAP'];
-      }
-      // Prepaid: Full control
+    case 'A2D':
+      // Origin Airport to Destination Door
+      // Seller covers destination delivery
       return ['CPT', 'DAP', 'DDP'];
 
-    case 'A2D':
-      // Airport to door (we deliver at destination)
-      return ['CPT', 'DAP'];
-
     case 'A2A':
-      // Airport to airport only
-      return ['EXW'];
+      // Airport to Airport only
+      return ['EXW', 'FCA'];
 
     default:
-      // Default for export
       return ['EXW', 'FCA', 'CPT', 'DAP', 'DDP'];
   }
 }
 
 /**
  * Get the default incoterm for a given shipment configuration.
- * Used for auto-selection when user changes direction, scope, or payment term.
+ * 
+ * Defaults are based on most common usage:
+ * - D2D: EXW (buyer arranges full logistics, common for commercial exports)
+ * - D2A: FCA (seller delivers to carrier at airport)
+ * - A2D: DAP (seller delivers to destination)
+ * - A2A: EXW (minimal seller responsibility)
  * 
  * @param isImport - True if shipment is import
  * @param serviceScope - The service scope
@@ -167,21 +174,19 @@ export function getDefaultIncoterm(
   if (isImport) {
     switch (serviceScope) {
       case 'A2D':
-        // COLLECT: We pay freight, EXW is common
         if (paymentTerm === 'COLLECT') return 'EXW';
         return 'DAP';
 
       case 'D2D':
+        if (paymentTerm === 'COLLECT') return 'EXW';
         return 'DAP';
 
       case 'D2A':
-        // COLLECT: We pay freight
         if (paymentTerm === 'COLLECT') return 'EXW';
         return 'FCA';
 
       case 'A2A':
-        if (paymentTerm === 'COLLECT') return 'EXW';
-        return 'FCA';
+        return 'EXW';
 
       default:
         return 'DAP';
@@ -190,20 +195,20 @@ export function getDefaultIncoterm(
 
   // ===== EXPORT QUOTES =====
   switch (serviceScope) {
+    case 'D2D':
+      // EXW is most common for D2D exports - buyer arranges logistics
+      if (paymentTerm === 'COLLECT') return 'EXW';
+      return 'EXW';  // Changed from DAP to EXW per user guidance
+
     case 'D2A':
-      // For D2A exports, FCA is most common (Free Carrier to airport)
+      // FCA common for D2A (seller delivers to carrier)
       return 'FCA';
 
-    case 'D2D':
-      // For D2D exports, DAP is most common (Delivered at Place)
-      return 'DAP';
-
     case 'A2D':
-      // Airport to door, DAP makes sense
+      // DAP for A2D (seller covers destination)
       return 'DAP';
 
     case 'A2A':
-      // Airport to airport, EXW
       return 'EXW';
 
     default:
