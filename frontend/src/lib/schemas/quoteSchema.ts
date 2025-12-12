@@ -45,21 +45,22 @@ export const V3_SERVICE_SCOPES = {
  * Therefore, most incoterms are valid for most scopes. The scope tells us WHAT to quote,
  * the incoterm tells us WHO bears risk.
  * 
- * For example, EXW D2D means:
- * - Quote the full door-to-door route
- * - But buyer bears all risk from seller's premises onwards
+ * SCOPE DEFINITIONS (vary by direction):
  * 
- * EXPORT (Origin = PNG, we're quoting for the seller):
- * - D2D: All incoterms valid - EXW, FCA, CPT, DAP, DDP
- * - D2A: EXW, FCA, CPT (freight may or may not be included)
- * - A2D: CPT, DAP (seller covers destination)
- * - A2A: EXW, FCA (minimal seller responsibility)
+ * EXPORT (Origin = PNG):
+ * - D2D: Origin Door (PNG) → Destination Door (overseas)
+ * - D2A: Origin Door (PNG) → Destination Airport (overseas)
+ * - A2D: Origin Airport (PNG) → Destination Door (overseas) - includes freight + dest delivery
+ * - A2A: Origin Airport (PNG) → Destination Airport (overseas)
  * 
- * IMPORT (Destination = PNG, overseas agent is seller):
- * - A2D: DAP, DDP (seller delivers to our door) or EXW, FCA for COLLECT
- * - D2D: EXW to DDP - all valid depending on arrangement
- * - D2A: FCA, CPT (seller delivers to our airport)
- * - A2A: EXW, FCA
+ * IMPORT (Destination = PNG):
+ * - D2D: Origin Door (overseas) → Destination Door (PNG)
+ * - D2A: Origin Door (overseas) → Destination Airport (PNG)
+ * - A2D: Destination Airport (PNG) → Destination Door (PNG) - DEST CHARGES ONLY (clearance + delivery)
+ * - A2A: Origin Airport (overseas) → Destination Airport (PNG)
+ * 
+ * Note: For Import A2D, the "Airport" refers to OUR airport (POM), not the origin.
+ * This is for quoting destination clearance and delivery charges only - freight already shipped.
  * 
  * @param isImport - True if shipment is import (destination is PG)
  * @param serviceScope - The service scope (D2D, D2A, A2D, A2A)
@@ -77,12 +78,14 @@ export function getValidIncoterms(
   if (isImport) {
     switch (serviceScope) {
       case 'A2D':
-        // Origin Airport to Consignee's Door in PNG
+        // IMPORT A2D = Destination Airport (POM) → Consignee's Door in PNG
+        // This is for DESTINATION CHARGES ONLY - clearance and delivery
+        // Freight has already been shipped by overseas agent
         if (paymentTerm === 'COLLECT') {
-          // We (PNG) pay freight - seller has less responsibility
+          // We receive at our airport, clear and deliver - buyer pays
           return ['EXW', 'FCA'];
         }
-        // Prepaid: Agent covers carriage to our door
+        // Prepaid: Agent has prepaid, we clear and deliver
         return ['DAP', 'DDP'];
 
       case 'D2D':
@@ -95,14 +98,15 @@ export function getValidIncoterms(
         return ['EXW', 'FCA', 'CPT', 'DAP', 'DDP'];
 
       case 'D2A':
-        // Origin Door to our Airport (rare for import - agent picks up and flies to us)
+        // Origin Door (overseas) → Our Airport (POM)
+        // Agent picks up from shipper and flies to us - we receive at airport
         if (paymentTerm === 'COLLECT') {
           return ['EXW', 'FCA'];
         }
         return ['FCA', 'CPT'];
 
       case 'A2A':
-        // Airport to Airport
+        // Origin Airport (overseas) → Destination Airport (POM)
         if (paymentTerm === 'COLLECT') {
           return ['EXW'];
         }
