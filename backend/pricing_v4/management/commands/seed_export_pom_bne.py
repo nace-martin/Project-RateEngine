@@ -55,13 +55,17 @@ class Command(BaseCommand):
             self.stdout.write(f"  {status}: {obj}")
     
     def _seed_agents(self):
-        """Seed agents (forwarders for origin/destination services)."""
+        """Seed agents (forwarders for origin/destination services).
+        
+        Note: For Exports, PX handles all services (freight + ground).
+        Agents are used for destination services or when third parties are involved.
+        """
         self.stdout.write("\n--- Seeding Agents ---")
         
         agents = [
             {'code': 'EFM-PG', 'name': 'EFM PNG (Internal)', 'country_code': 'PG', 'agent_type': 'ORIGIN'},
             {'code': 'EFM-AU', 'name': 'EFM Australia', 'country_code': 'AU', 'agent_type': 'DESTINATION'},
-            {'code': 'PX-CARGO', 'name': 'PX Cargo Services', 'country_code': 'PG', 'agent_type': 'ORIGIN'},
+            # Note: PX is a carrier, not an agent. For Exports, all PX services use carrier=PX.
         ]
         
         for data in agents:
@@ -254,22 +258,26 @@ class Command(BaseCommand):
         """
         Seed ExportCOGS for POM→BNE corridor.
         
-        Source: PX International rate card (what EFM pays)
-        Uses carrier FK for freight, agent FK for services.
+        Source: PX rate card (what EFM pays)
+        
+        For Exports, PX (the carrier) handles ALL services:
+        - Freight linehaul
+        - Ground handling (documentation, terminal, build-up, screening)
+        
+        All COGS use carrier=PX.
         """
         self.stdout.write("\n--- Seeding ExportCOGS (POM→BNE) ---")
         
-        # Get counterparties
+        # Get carrier - PX handles all Export services
         carrier_px = Carrier.objects.get(code='PX')
-        agent_px_cargo = Agent.objects.get(code='PX-CARGO')
         
         # Common validity dates
         valid_from = date(2025, 1, 1)
         valid_until = date(2025, 12, 31)
         
-        # COGS rates from PX rate card
+        # COGS rates from PX rate card - all services via carrier PX
         cogs_rates = [
-            # Freight - weight breaks (carrier = PX)
+            # Freight - weight breaks
             {
                 'product_code_id': 1001,  # EXP-FRT-AIR
                 'origin_airport': 'POM',
@@ -286,46 +294,46 @@ class Command(BaseCommand):
                 'min_charge': Decimal('160.00'),
                 'is_additive': False,
             },
-            # Documentation - flat fee (agent = PX Cargo)
+            # Documentation - flat fee (PX handles this for Exports)
             {
                 'product_code_id': 1010,  # EXP-DOC
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
-                'carrier': None,
-                'agent': agent_px_cargo,
+                'carrier': carrier_px,
+                'agent': None,
                 'currency': 'PGK',
                 'rate_per_shipment': Decimal('35.00'),
                 'is_additive': False,
             },
-            # AWB Fee - flat fee (agent = PX Cargo)
+            # AWB Fee - flat fee
             {
                 'product_code_id': 1011,  # EXP-AWB
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
-                'carrier': None,
-                'agent': agent_px_cargo,
+                'carrier': carrier_px,
+                'agent': None,
                 'currency': 'PGK',
                 'rate_per_shipment': Decimal('35.00'),
                 'is_additive': False,
             },
-            # Terminal Fee - flat fee (agent = PX Cargo)
+            # Terminal Fee - flat fee
             {
                 'product_code_id': 1030,  # EXP-TERM
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
-                'carrier': None,
-                'agent': agent_px_cargo,
+                'carrier': carrier_px,
+                'agent': None,
                 'currency': 'PGK',
                 'rate_per_shipment': Decimal('35.00'),
                 'is_additive': False,
             },
-            # Build-Up - per kg (agent = PX Cargo)
+            # Build-Up - per kg
             {
                 'product_code_id': 1031,  # EXP-BUILDUP
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
-                'carrier': None,
-                'agent': agent_px_cargo,
+                'carrier': carrier_px,
+                'agent': None,
                 'currency': 'PGK',
                 'rate_per_kg': Decimal('0.15'),
                 'min_charge': Decimal('30.00'),
@@ -337,8 +345,8 @@ class Command(BaseCommand):
                 'product_code_id': 1040,  # EXP-SCREEN
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
-                'carrier': None,
-                'agent': agent_px_cargo,
+                'carrier': carrier_px,
+                'agent': None,
                 'currency': 'PGK',
                 'rate_per_kg': Decimal('0.17'),
                 'rate_per_shipment': Decimal('35.00'),
