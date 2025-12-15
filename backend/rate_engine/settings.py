@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'ratecards',
     'services',
     'pricing_v3',
+    'pricing_v4',  # Greenfield pricing engine
 ]
 
 MIDDLEWARE = [
