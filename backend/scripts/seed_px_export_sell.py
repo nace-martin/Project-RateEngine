@@ -312,21 +312,20 @@ def run():
         comp.save()
         print(f"Updated {code} to RATE_OFFER (Fixed Sell Rate)")
          
-    # 5. Fuel Surcharge (10%)
-    # Engine handles Percentage via ServiceComponent.percent_value if configured in ServiceComponent
-    # V3 Logic: _is_percentage_based_component checks component.percent_value.
+    # 5. Fuel Surcharge (10% of Pickup)
+    # Engine handles Percentage via ServiceComponent.percent_value + percent_of_component
+    # V3 Logic: _is_percentage_based_component checks component.percent_of_component.
     
     fuel_comp = comp_map['FUEL_SURCHARGE_EXP']
     fuel_comp.unit = 'PERCENTAGE'
-    # Default to 10%
+    # 10% of Pickup
     fuel_comp.percent_value = Decimal("10.00")
     
-    # Link to PICKUP_EXP (Total Cartage?) - Just a guess for now, usually Freight.
-    # If None, it might default to Freight.
-    # fuel_comp.percent_of_component = ...
+    # CRITICAL: Link to PICKUP_EXP - the engine needs this to know what to calculate 10% of
+    fuel_comp.percent_of_component = comp_map['PICKUP_EXP']
     
     fuel_comp.save()
-    print("Updated FUEL_SURCHARGE_EXP to 10% (ServiceComponent Config)")
+    print("Updated FUEL_SURCHARGE_EXP to 10% of PICKUP_EXP")
     
     # Note: No PartnerRate needed for Global % Components in this engine version, 
     # unless we want per-lane overrides.

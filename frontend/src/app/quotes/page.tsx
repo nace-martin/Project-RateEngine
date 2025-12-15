@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, PlusCircle } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 
 // Helper to format currency
 const formatCurrency = (amountStr: string, currency: string) => {
@@ -118,15 +118,7 @@ export default function QuotesPage() {
               <TableCell>{quote.origin_location}</TableCell>
               <TableCell>{quote.destination_location}</TableCell>
               <TableCell>
-                <Badge
-                  variant={
-                    quote.latest_version.totals.has_missing_rates
-                      ? "destructive"
-                      : "secondary"
-                  }
-                >
-                  {quote.status}
-                </Badge>
+                <QuoteStatusBadge status={quote.status} />
               </TableCell>
               <TableCell className="text-right font-medium">
                 {formatCurrency(

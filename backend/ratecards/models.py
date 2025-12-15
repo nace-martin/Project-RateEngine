@@ -105,8 +105,22 @@ class PartnerRateCard(models.Model):
 class PartnerRateLane(models.Model):
     """
     Defines a specific lane (route) within a PartnerRateCard.
-    e.g., BNE -> POM (AIR, GENERAL)
+    e.g., BNE -> POM (AIR, IMPORT, PREPAID)
     """
+    
+    # Direction choices - distinguishes IMPORT from EXPORT lanes
+    DIRECTION_CHOICES = [
+        ('IMPORT', _('Import')),
+        ('EXPORT', _('Export')),
+    ]
+    
+    # Payment term choices - constrains which payment terms this lane applies to
+    PAYMENT_TERM_CHOICES = [
+        ('ANY', _('Any')),        # Applies to both PREPAID and COLLECT
+        ('PREPAID', _('Prepaid')),
+        ('COLLECT', _('Collect')),
+    ]
+    
     rate_card = models.ForeignKey(
         PartnerRateCard,
         on_delete=models.CASCADE,
@@ -123,7 +137,25 @@ class PartnerRateLane(models.Model):
         max_length=20,
         choices=SHIPMENT_TYPE_CHOICES,
         default='GENERAL',
-        help_text="The shipment type this lane applies to (General Cargo only, for now)."
+        help_text="The cargo type this lane applies to (General Cargo only, for now)."
+    )
+    
+    # NEW: Direction discriminator (required, indexed)
+    direction = models.CharField(
+        max_length=10,
+        choices=DIRECTION_CHOICES,
+        default='IMPORT',  # Default for migration, should be inferred in backfill
+        db_index=True,
+        help_text="Shipment direction: IMPORT (into PNG) or EXPORT (out of PNG)."
+    )
+    
+    # NEW: Payment term discriminator (indexed, defaults to ANY)
+    payment_term = models.CharField(
+        max_length=10,
+        choices=PAYMENT_TERM_CHOICES,
+        default='ANY',
+        db_index=True,
+        help_text="Payment term constraint: ANY (both), PREPAID, or COLLECT."
     )
 
     # --- Location Fields (Air) ---
@@ -184,17 +216,19 @@ class PartnerRateLane(models.Model):
 
     def __str__(self):
         if self.mode == 'AIR':
-            return f"{self.origin_airport} -> {self.destination_airport} (AIR)"
+            payment_str = f", {self.payment_term}" if self.payment_term != 'ANY' else ""
+            return f"{self.origin_airport} -> {self.destination_airport} ({self.direction}{payment_str})"
         return f"Unsupported Lane ({self.rate_card.name})"
 
     class Meta:
         verbose_name = "Partner Rate Lane"
         verbose_name_plural = "Partner Rate Lanes"
+        # Updated: Include direction and payment_term in unique constraint
         unique_together = [
-            ['rate_card', 'origin_airport', 'destination_airport', 'shipment_type'],
-            ['rate_card', 'origin_port', 'destination_port', 'shipment_type'],
+            ['rate_card', 'origin_airport', 'destination_airport', 'direction', 'payment_term'],
+            ['rate_card', 'origin_port', 'destination_port', 'direction', 'payment_term'],
         ]
-        ordering = ['mode', 'origin_airport', 'origin_port']
+        ordering = ['mode', 'direction', 'origin_airport', 'origin_port']
 
 
 class PartnerRate(models.Model):

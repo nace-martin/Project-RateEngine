@@ -12,10 +12,18 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from rest_framework import generics, viewsets, status, serializers
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+# RBAC permissions
+from accounts.permissions import (
+    QuoteAccessPermission,
+    CanFinalizeQuotes,
+    CanUseAIIntake,
+    CanEditQuotes,
+)
 
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
@@ -102,7 +110,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
     The main V3 compute endpoint.
     Receives a quote request, calculates charges, and saves the quote.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [QuoteAccessPermission]  # Sales/Manager/Admin can create; Finance read-only
     serializer_class = QuoteComputeRequestSerializer
     
     # Note: We override 'create' behavior by implementing 'post'
@@ -362,13 +370,17 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         return quote
 
 
-class QuoteV3ViewSet(viewsets.ReadOnlyModelViewSet):
+class QuoteV3ViewSet(viewsets.ModelViewSet):
     """
-    Provides read-only (list and retrieve) endpoints for V3 Quotes.
+    Provides CRUD endpoints for V3 Quotes.
+    Note: Most updates are done via specialized endpoints (compute, transition).
+    PATCH supports status updates for auto-rated quote finalization.
     """
     queryset = Quote.objects.all().order_by('-created_at')
     serializer_class = QuoteModelSerializerV3
     permission_classes = [IsAuthenticated]
+    # Limit write operations to update only
+    http_method_names = ['get', 'patch', 'head', 'options']
 
     def get_queryset(self):
         # Prefetch related data to optimize query
@@ -402,6 +414,43 @@ class QuoteV3ViewSet(viewsets.ReadOnlyModelViewSet):
 
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        """
+        PATCH endpoint - only allows updating specific fields.
+        Used for auto-rated quote finalization (INCOMPLETE → DRAFT).
+        """
+        instance = self.get_object()
+        
+        # Only allow status updates
+        allowed_fields = {'status'}
+        update_fields = set(request.data.keys())
+        
+        if not update_fields.issubset(allowed_fields):
+            disallowed = update_fields - allowed_fields
+            return Response(
+                {'detail': f'Cannot update fields: {", ".join(disallowed)}. Only status can be updated via PATCH.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate status transition
+        new_status = request.data.get('status')
+        if new_status:
+            # For INCOMPLETE quotes, allow transition to DRAFT
+            if instance.status == Quote.Status.INCOMPLETE and new_status == 'DRAFT':
+                instance.status = Quote.Status.DRAFT
+                instance.save(update_fields=['status'])
+                
+                # Re-fetch with latest version
+                latest_version = instance.versions.order_by('-version_number').first()
+                instance.latest_version = latest_version
+                serializer = self.get_serializer(instance)
+                return Response(serializer.data)
+            else:
+                return Response(
+                    {'detail': f'Invalid status transition from {instance.status} to {new_status}. Use /transition/ endpoint for other transitions.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
 
 def _serialize_overrides_for_payload(overrides):
@@ -825,8 +874,16 @@ class SpotChargeListCreateAPIView(APIView):
     def post(self, request, quote_id):
         from .models import SpotChargeLine
         from .serializers import SpotChargeLineSerializer, SpotChargesInputSerializer
+        from .state_machine import is_quote_editable
         
         quote = get_object_or_404(Quote, id=quote_id)
+        
+        # Block edits for FINALIZED/SENT quotes
+        if not is_quote_editable(quote):
+            return Response(
+                {'detail': f'Cannot modify spot charges. Quote is {quote.status}.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         serializer = SpotChargesInputSerializer(data=request.data)
         if not serializer.is_valid():
@@ -893,3 +950,255 @@ class SpotChargeCalculateAPIView(APIView):
                 {'detail': f'Calculation error: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# --- AI RATE INTAKE API VIEW ---
+
+class AIRateIntakeAPIView(APIView):
+    """
+    POST: Parse unstructured rate quote text/PDF into structured charge lines.
+    
+    Accepts:
+    - JSON body with 'text' field for plain text input
+    - Multipart form with 'file' for PDF upload
+    
+    Returns:
+    - Validated SpotChargeLine[] with warnings
+    - Human review required before accepting
+    """
+    permission_classes = [CanUseAIIntake]  # Sales/Manager/Admin only; Finance excluded
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    
+    def post(self, request, quote_id):
+        from .ai_intake_service import parse_rate_quote_text, parse_pdf_rate_quote
+        
+        quote = get_object_or_404(Quote, id=quote_id)
+        
+        # Check for PDF upload
+        pdf_file = request.FILES.get('file')
+        if pdf_file:
+            # Read PDF content
+            pdf_content = pdf_file.read()
+            result = parse_pdf_rate_quote(pdf_content)
+            return self._format_response(result)
+        
+        # Check for text input
+        text = request.data.get('text', '')
+        if not text:
+            return Response(
+                {'detail': 'Either "text" or "file" is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = parse_rate_quote_text(text, source_type="TEXT")
+        return self._format_response(result)
+    
+    def _format_response(self, result):
+        """Format AIRateIntakeResponse for API response."""
+        if not result.success:
+            return Response(
+                {
+                    'success': False,
+                    'error': result.error,
+                    'warnings': result.warnings,
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        
+        # Serialize SpotChargeLine objects
+        lines_data = []
+        for line in result.lines:
+            line_dict = {
+                'id': line.id,
+                'bucket': line.bucket,
+                'description': line.description,
+                'amount': str(line.amount) if line.amount else None,
+                'currency': line.currency,
+                'unit_basis': line.unit_basis,
+                'percentage': str(line.percentage) if line.percentage else None,
+                'minimum': str(line.minimum) if line.minimum else None,
+                'maximum': str(line.maximum) if line.maximum else None,
+                'percent_applies_to': line.percent_applies_to,
+                'notes': line.notes,
+                'confidence': line.confidence,
+            }
+            lines_data.append(line_dict)
+        
+        return Response({
+            'success': True,
+            'lines': lines_data,
+            'warnings': result.warnings,
+            'raw_text_length': result.raw_text_length,
+            'source_type': result.source_type,
+            'model_used': result.model_used,
+        })
+
+
+# --- QUOTE STATUS TRANSITION API VIEW ---
+
+class QuoteTransitionAPIView(APIView):
+    """
+    POST: Transition quote status (finalize, send).
+    
+    Actions:
+    - "finalize": DRAFT → FINALIZED (locks quote)
+    - "send": FINALIZED → SENT (marks as delivered)
+    
+    Body: { "action": "finalize" | "send" }
+    """
+    permission_classes = [CanFinalizeQuotes]  # Sales/Manager/Admin can finalize; Finance excluded
+    
+    def get(self, request, quote_id):
+        """Get current status and available transitions."""
+        from .state_machine import QuoteStateMachine, get_status_display_info
+        
+        quote = get_object_or_404(Quote, id=quote_id)
+        machine = QuoteStateMachine(quote)
+        
+        return Response({
+            'quote_id': str(quote.id),
+            'current_status': quote.status,
+            'status_info': get_status_display_info(quote.status),
+            'available_transitions': machine.available_transitions,
+            'is_editable': machine.is_editable,
+            'finalized_at': quote.finalized_at.isoformat() if quote.finalized_at else None,
+            'finalized_by': quote.finalized_by.username if quote.finalized_by else None,
+            'sent_at': quote.sent_at.isoformat() if quote.sent_at else None,
+            'sent_by': quote.sent_by.username if quote.sent_by else None,
+        })
+    
+    def post(self, request, quote_id):
+        """Perform status transition."""
+        from .state_machine import QuoteStateMachine
+        
+        quote = get_object_or_404(Quote, id=quote_id)
+        machine = QuoteStateMachine(quote)
+        
+        action = request.data.get('action', '').lower()
+        
+        if action == 'finalize':
+            # Check for missing rates before finalizing
+            latest_version = quote.versions.order_by('-version_number').first()
+            if latest_version:
+                totals = getattr(latest_version, 'totals', None)
+                if totals and totals.has_missing_rates:
+                    return Response(
+                        {'detail': 'Cannot finalize quote with missing rates. Complete all required rates first.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            success, error = machine.finalize(user=request.user)
+            
+        elif action == 'send':
+            success, error = machine.mark_sent(user=request.user)
+            
+        else:
+            return Response(
+                {'detail': f'Invalid action "{action}". Use "finalize" or "send".'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not success:
+            return Response(
+                {'detail': error},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Return updated quote
+        quote.refresh_from_db()
+        return Response({
+            'quote_id': str(quote.id),
+            'status': quote.status,
+            'action': action,
+            'transitioned_at': timezone.now().isoformat(),
+            'transitioned_by': request.user.username,
+        })
+
+
+# --- QUOTE CLONE API VIEW ---
+
+class QuoteCloneAPIView(APIView):
+    """
+    POST: Clone a FINALIZED or SENT quote to create a new DRAFT quote.
+    
+    Creates a new Quote with:
+    - Copies core fields (customer, contact, mode, service_scope, etc.)
+    - Copies spot charges
+    - Sets status to DRAFT
+    - Preserves linkage via source_quote reference
+    """
+    permission_classes = [CanEditQuotes]  # Sales/Manager/Admin can clone
+    
+    def post(self, request, quote_id):
+        from .models import SpotChargeLine
+        
+        # Get source quote
+        source_quote = get_object_or_404(Quote, id=quote_id)
+        
+        # Validate source quote status - only allow cloning FINALIZED or SENT quotes
+        allowed_statuses = [Quote.Status.FINALIZED, Quote.Status.SENT]
+        if source_quote.status not in allowed_statuses:
+            return Response(
+                {'detail': f'Cannot clone quote with status "{source_quote.status}". Only FINALIZED or SENT quotes can be cloned.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with transaction.atomic():
+            # Create new quote with copied fields
+            new_quote = Quote.objects.create(
+                customer=source_quote.customer,
+                contact=source_quote.contact,
+                mode=source_quote.mode,
+                service_scope=source_quote.service_scope,
+                incoterm=source_quote.incoterm,
+                payment_term=source_quote.payment_term,
+                origin_location=source_quote.origin_location,
+                destination_location=source_quote.destination_location,
+                pickup_suburb=source_quote.pickup_suburb,
+                delivery_suburb=source_quote.delivery_suburb,
+                gross_weight_kg=source_quote.gross_weight_kg,
+                chargeable_weight_kg=source_quote.chargeable_weight_kg,
+                pieces=source_quote.pieces,
+                dimensions_json=source_quote.dimensions_json,
+                is_dangerous_goods=source_quote.is_dangerous_goods,
+                shipment_type=source_quote.shipment_type,
+                output_currency=source_quote.output_currency,
+                request_details_json=source_quote.request_details_json,
+                status=Quote.Status.DRAFT,  # New quote starts as DRAFT
+                created_by=request.user,
+                # Note: quote_number is auto-generated on save
+            )
+            
+            # Copy spot charges
+            source_spot_charges = source_quote.spot_charges.all()
+            for charge in source_spot_charges:
+                SpotChargeLine.objects.create(
+                    quote=new_quote,
+                    bucket=charge.bucket,
+                    description=charge.description,
+                    amount=charge.amount,
+                    currency=charge.currency,
+                    unit_basis=charge.unit_basis,
+                    min_charge=charge.min_charge,
+                    percentage=charge.percentage,
+                    percent_applies_to=charge.percent_applies_to,
+                    target_line=None,  # Don't copy target_line references
+                    notes=f"Cloned from {source_quote.quote_number}",
+                )
+            
+            # Attach a placeholder latest_version for serialization
+            new_quote.latest_version = None
+            
+            logger.info(f"Quote {source_quote.quote_number} cloned to {new_quote.quote_number} by {request.user}")
+        
+        return Response({
+            'id': str(new_quote.id),
+            'quote_number': new_quote.quote_number,
+            'status': new_quote.status,
+            'cloned_from': {
+                'id': str(source_quote.id),
+                'quote_number': source_quote.quote_number,
+            },
+            'spot_charges_copied': source_spot_charges.count(),
+            'created_at': new_quote.created_at.isoformat(),
+        }, status=status.HTTP_201_CREATED)

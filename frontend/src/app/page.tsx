@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 
 const formatCurrency = (value: number, currency = "PGK") =>
   new Intl.NumberFormat("en-US", {
@@ -138,15 +139,7 @@ export default function HomePage() {
                 {quote.destination_location}
               </TableCell>
               <TableCell>
-                <Badge
-                  variant={
-                    quote.latest_version.totals.has_missing_rates
-                      ? "destructive"
-                      : "secondary"
-                  }
-                >
-                  {quote.status}
-                </Badge>
+                <QuoteStatusBadge status={quote.status} />
               </TableCell>
               <TableCell className="text-right font-medium">
                 {formatCurrency(
@@ -202,22 +195,22 @@ export default function HomePage() {
         <section className="grid gap-6 md:grid-cols-3">
           <Card className="relative overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Quotes in Progress</CardTitle>
+              <CardTitle className="text-sm font-medium">Draft Quotes</CardTitle>
               <FileText className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{metrics.totalQuotes}</div>
-              <p className="text-xs text-muted-foreground mt-1">Drafts and active quotes</p>
+              <p className="text-xs text-muted-foreground mt-1">Quotes in progress</p>
             </CardContent>
           </Card>
           <Card className="relative overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Ready to Send</CardTitle>
+              <CardTitle className="text-sm font-medium">Finalized Quotes</CardTitle>
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{metrics.readyCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">Fully rated and approved</p>
+              <p className="text-xs text-muted-foreground mt-1">Fully rated by engine</p>
             </CardContent>
           </Card>
           <Card className="relative overflow-hidden">

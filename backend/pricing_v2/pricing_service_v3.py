@@ -559,62 +559,135 @@ class PricingServiceV3:
     def _get_buy_rate(self, component: ServiceComponent) -> Optional[PartnerRate]:
         """
         Finds the buy-side (cost) rate for a given service component.
-        Now filters by service_level for intelligent routing.
+        
+        Filters by:
+        - mode (AIR)
+        - origin/destination airports
+        - direction (IMPORT/EXPORT) - from shipment_type
+        - payment_term (exact match OR 'ANY')
+        - rate_type (BUY_RATE only)
+        - service_level (for intelligent routing)
+        
+        Orders by:
+        1. Exact payment_term match before ANY
+        2. Routing constraint priority
+        3. Rate card valid_from (newest first)
         """
+        from django.db.models import Q, Case, When, Value, IntegerField
+        
         # Use the location code directly (it's already the airport IATA code)
         origin_code = self.shipment.origin_location.code if self.shipment.origin_location else None
         destination_code = self.shipment.destination_location.code if self.shipment.destination_location else None
         
         if not origin_code or not destination_code:
+            logger.warning(f"Cannot resolve buy rate for {component.code}: missing origin or destination")
             return None
-        # Build query filters
-        # NOTE: Removed lane__shipment_type filter. The model uses SHIPMENT_TYPE_CHOICES 
-        # like 'GENERAL', but quote.shipment_type is 'EXPORT'/'IMPORT'. These are different
-        # concepts (cargo type vs direction). Lane is uniquely identified by origin/dest.
+        
+        # Get direction from shipment_type (IMPORT/EXPORT)
+        direction = self.shipment.shipment_type  # 'IMPORT' or 'EXPORT'
+        payment_term = self.shipment.payment_term  # 'PREPAID' or 'COLLECT'
+        
+        # Build base query filters
         filters = {
             'lane__mode': self.shipment.mode,
             'lane__origin_airport__iata_code': origin_code,
             'lane__destination_airport__iata_code': destination_code,
+            'lane__direction': direction,  # NEW: Filter by direction
             'service_component': component,
-            'lane__rate_card__rate_type': 'BUY_RATE',  # Only get Buy/Cost rates
+            'lane__rate_card__rate_type': 'BUY_RATE',
         }
         
-        # ADD THIS: service_level filter for intelligent routing
-        # Only filter if we have a specific routing requirement (not STANDARD)
+        # Payment term filter: match exact term OR 'ANY'
+        payment_term_filter = Q(lane__payment_term=payment_term) | Q(lane__payment_term='ANY')
+        
+        # Service level filter for intelligent routing
+        service_level_filter = Q()
         if self.required_service_level != 'STANDARD':
-            filters['lane__rate_card__service_level'] = self.required_service_level
+            service_level_filter = Q(lane__rate_card__service_level=self.required_service_level)
             logger.debug(
                 f"Filtering rate card by service_level={self.required_service_level} for {component.code}"
             )
-        # Find a matching PartnerRate based on the shipment context
-        # We use filter() + order_by() to handle cases where multiple rates might match
-        # (e.g. Direct vs Via BNE) and prioritize them based on the routing constraint priority.
-        rates = PartnerRate.objects.filter(**filters).order_by(
-            'lane__rate_card__route_lane_constraint__priority',
-            'id'
+        
+        # Build queryset with deterministic ordering:
+        # 1. Exact payment_term match (priority 0) before ANY (priority 1)
+        # 2. Routing constraint priority
+        # 3. Rate card valid_from descending (newest first)
+        rates = (
+            PartnerRate.objects
+            .filter(**filters)
+            .filter(payment_term_filter)
+            .filter(service_level_filter) if self.required_service_level != 'STANDARD' else
+            PartnerRate.objects
+            .filter(**filters)
+            .filter(payment_term_filter)
+        )
+        
+        # Add ordering annotation for payment term priority
+        rates = rates.annotate(
+            payment_term_priority=Case(
+                When(lane__payment_term=payment_term, then=Value(0)),  # Exact match = highest priority
+                default=Value(1),  # ANY = lower priority
+                output_field=IntegerField(),
+            )
+        ).order_by(
+            'payment_term_priority',  # Exact match first
+            'lane__rate_card__route_lane_constraint__priority',  # Then routing priority
+            '-lane__rate_card__valid_from',  # Newest rate card first
+            'id',  # Tie-breaker for determinism
         )
         
         rate = rates.first()
         
         if rate:
+            logger.debug(
+                f"Found rate for {component.code}: {rate.lane.rate_card.name} "
+                f"(direction={rate.lane.direction}, payment_term={rate.lane.payment_term})"
+            )
             return rate
-            
-        # ADD THIS: If no rate found with specific service level, try fallback to STANDARD
+        
+        # Try fallback to STANDARD service level if specific level not found
         if self.required_service_level != 'STANDARD':
             logger.warning(
                 f"No PartnerRate found for {component.code} with service_level={self.required_service_level}. "
                 f"Trying STANDARD fallback."
             )
-            filters['lane__rate_card__service_level'] = 'STANDARD'
-            rates = PartnerRate.objects.filter(**filters).order_by(
-                'lane__rate_card__route_lane_constraint__priority',
-                'id'
+            rates = (
+                PartnerRate.objects
+                .filter(**filters)
+                .filter(payment_term_filter)
+                .filter(lane__rate_card__service_level='STANDARD')
+                .annotate(
+                    payment_term_priority=Case(
+                        When(lane__payment_term=payment_term, then=Value(0)),
+                        default=Value(1),
+                        output_field=IntegerField(),
+                    )
+                ).order_by(
+                    'payment_term_priority',
+                    'lane__rate_card__route_lane_constraint__priority',
+                    '-lane__rate_card__valid_from',
+                    'id',
+                )
             )
             rate = rates.first()
             if rate:
+                logger.debug(
+                    f"Found STANDARD fallback rate for {component.code}: {rate.lane.rate_card.name}"
+                )
                 return rate
-                
+        
+        # NO RATE FOUND - Log detailed failure info for debugging
+        logger.error(
+            f"NO RATE FOUND for {component.code} | "
+            f"Route: {origin_code}->{destination_code} | "
+            f"Direction: {direction} | "
+            f"PaymentTerm: {payment_term} | "
+            f"Mode: {self.shipment.mode} | "
+            f"ServiceLevel: {self.required_service_level}"
+        )
+        
         return None
+
 
     # --- REFACTORED: This method now returns a simple Decimal ---
     def _calculate_sell_rate(self, component: ServiceComponent, cost_pgk: Decimal) -> Decimal:
@@ -676,6 +749,8 @@ class PricingServiceV3:
         """
         Looks up the sell rate for a RATE_OFFER component from the SELL_RATE card.
         Returns the calculated sell rate in PGK, or None if not found.
+        
+        Supports weight break tiering via tiering_json field.
         """
         origin_code = self.shipment.origin_location.code if self.shipment.origin_location else None
         destination_code = self.shipment.destination_location.code if self.shipment.destination_location else None
@@ -696,8 +771,44 @@ class PricingServiceV3:
         if not sell_rate:
             return None
         
-        # Calculate the sell rate value using the same logic as _pass_through_sell_rate
         chargeable_weight = Decimal(self.context['chargeable_weight_kg'])
+        currency = sell_rate.lane.rate_card.currency_code or HOME_CURRENCY
+        
+        # Check for tiering_json weight break pricing
+        if sell_rate.tiering_json:
+            data = sell_rate.tiering_json
+            if isinstance(data, dict) and data.get("type") == "weight_break":
+                min_charge = Decimal(str(data.get("minimum_charge", "0.00")))
+                breaks = data.get("breaks", [])
+                
+                if breaks:
+                    selected_rate = None
+                    # Sort breaks by min_kg descending to find the applicable tier
+                    sorted_breaks = sorted(
+                        breaks,
+                        key=lambda x: Decimal(str(x.get("min_kg", "0"))),
+                        reverse=True,
+                    )
+                    
+                    for tier in sorted_breaks:
+                        if chargeable_weight >= Decimal(str(tier.get("min_kg", "0"))):
+                            selected_rate = Decimal(str(tier.get("rate_per_kg")))
+                            break
+                    
+                    if selected_rate is None:
+                        rate_fcy = min_charge
+                    else:
+                        calculated_cost = chargeable_weight * selected_rate
+                        rate_fcy = max(calculated_cost, min_charge)
+                    
+                    # Convert to PGK if needed
+                    if currency == 'PGK':
+                        return rate_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    
+                    fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=False)
+                    return (rate_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        
+        # Fallback to simple rate calculation if no tiering
         rate_fcy = Decimal("0.00")
         
         if sell_rate.rate_per_kg_fcy:
@@ -715,12 +826,12 @@ class PricingServiceV3:
             rate_fcy = sell_rate.max_charge_fcy
         
         # Convert to PGK if needed
-        currency = sell_rate.lane.rate_card.currency_code or HOME_CURRENCY
         if currency == 'PGK':
             return rate_fcy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
         fx_rate = self._get_exchange_rate(currency, "PGK", apply_caf=False)
         return (rate_fcy * fx_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
 
     def _create_charge_line(
         self,
@@ -1108,28 +1219,65 @@ class PricingServiceV3:
         return component.percent_of_component is not None
 
     def _percentage_based_cost(self, component: ServiceComponent) -> Optional[dict]:
+        """
+        Calculates cost for RATE_OF_BASE components (percentage surcharges).
+        
+        The percentage is sourced from agent rate cards (PartnerRate), NOT from
+        the static component.percent_value. This allows different agents (EFM PNG,
+        EFM AU, etc.) to have different fuel surcharge percentages.
+        
+        Requirements:
+        1. Base component must be calculated first (execution order)
+        2. Percentage must come from agent rate card for this component
+        3. If base or percentage is missing → is_rate_missing=True with clear error
+        """
         if not component.percent_of_component:
             return None
             
         ref_code = component.percent_of_component.code
-        percent_value = component.percent_value
         
-        if not ref_code or percent_value is None:
+        if not ref_code:
+            logger.error(f"RATE_OF_BASE component {component.code} has no base component code")
             return None
 
+        # Step 1: Check if base component cost has been calculated
         ref_cost_info = self.calculated_component_costs.get(ref_code)
         if not ref_cost_info:
-             # If base component is missing, we can't calculate surcharge
+            # Base component not yet calculated - need to wait for execution order
+            error_msg = f"{component.description} missing base component cost ({ref_code})"
+            logger.warning(f"RATE_OF_BASE: {error_msg}")
             return {
                 "cost_pgk": Decimal("0.00"),
                 "cost_fcy": None,
                 "cost_fcy_currency": None,
                 "exchange_rate": Decimal("1.0"),
                 "cost_source": f"PERCENT_OF:{ref_code}",
-                "cost_source_description": f"Waiting for {ref_code}",
+                "cost_source_description": error_msg,
+                "is_rate_missing": True,
+            }
+        
+        # Step 2: Get percentage from AGENT RATE CARD first (not static component.percent_value)
+        percent_value = self._get_percentage_from_agent_rate(component)
+        
+        if percent_value is None:
+            # Fall back to static percent_value if no agent rate exists (backward compat)
+            percent_value = component.percent_value
+            
+        if percent_value is None:
+            # No percentage found - fail loudly
+            error_msg = f"{component.description} missing agent rate percentage"
+            logger.error(f"RATE_OF_BASE: {error_msg}")
+            return {
+                "cost_pgk": Decimal("0.00"),
+                "cost_fcy": None,
+                "cost_fcy_currency": None,
+                "exchange_rate": Decimal("1.0"),
+                "cost_source": f"PERCENT_OF:{ref_code}",
+                "cost_source_description": error_msg,
                 "is_rate_missing": True,
             }
 
+        # Step 3: Calculate the percentage-based cost
         percent = percent_value / Decimal("100.0")
         cost_pgk = (ref_cost_info['cost_pgk'] * percent).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
@@ -1152,6 +1300,69 @@ class PricingServiceV3:
             "cost_source_description": f"{percent_value}% of {ref_code}",
             "is_rate_missing": False,
         }
+
+    def _get_percentage_from_agent_rate(self, component: ServiceComponent) -> Optional[Decimal]:
+        """
+        Looks up the fuel surcharge percentage from the agent's rate card.
+        
+        The percentage is stored in PartnerRate.rate_per_shipment_fcy or
+        a dedicated percentage field for RATE_OF_BASE components.
+        
+        Returns:
+            Decimal percentage value (e.g., 10.00 for 10%) or None if not found
+        """
+        origin_code = self.shipment.origin_location.code if self.shipment.origin_location else None
+        destination_code = self.shipment.destination_location.code if self.shipment.destination_location else None
+        direction = self.shipment.shipment_type  # IMPORT/EXPORT
+        payment_term = self.shipment.payment_term  # PREPAID/COLLECT
+        
+        if not origin_code or not destination_code:
+            return None
+        
+        from django.db.models import Q
+        
+        # Query for the percentage rate from agent rate card
+        filters = {
+            'lane__mode': self.shipment.mode,
+            'lane__origin_airport__iata_code': origin_code,
+            'lane__destination_airport__iata_code': destination_code,
+            'lane__direction': direction,
+            'service_component': component,
+            'lane__rate_card__rate_type': 'BUY_RATE',
+        }
+        
+        # Payment term filter: match exact term OR 'ANY'
+        payment_term_filter = Q(lane__payment_term=payment_term) | Q(lane__payment_term='ANY')
+        
+        rate = (
+            PartnerRate.objects
+            .filter(**filters)
+            .filter(payment_term_filter)
+            .first()
+        )
+        
+        if not rate:
+            logger.debug(
+                f"No agent rate found for {component.code} (RATE_OF_BASE) | "
+                f"Route: {origin_code}->{destination_code} | Direction: {direction}"
+            )
+            return None
+        
+        # For RATE_OF_BASE components, the percentage can be stored as:
+        # 1. rate_per_shipment_fcy (interpreted as percentage when unit is 'PERCENT' or component is RATE_OF_BASE)
+        # 2. A dedicated percentage field (future enhancement)
+        
+        # Check if this is a percentage-type rate
+        if rate.rate_per_shipment_fcy is not None:
+            logger.debug(
+                f"Found agent rate for {component.code}: {rate.rate_per_shipment_fcy}% "
+                f"from {rate.lane.rate_card.name}"
+            )
+            return rate.rate_per_shipment_fcy
+        
+        return None
+
+
 
     def _pass_through_sell_rate(self, component: ServiceComponent, buy_rate: Optional[PartnerRate]) -> dict:
         """

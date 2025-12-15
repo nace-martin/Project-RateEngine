@@ -155,10 +155,30 @@ export interface V3QuoteLine {
   is_rate_missing: boolean;
 }
 
+/**
+ * V3 Quote Total Response
+ * 
+ * MUST MATCH: backend/quotes/response_schemas.py::QuoteTotalsResponse
+ * 
+ * The `currency` field is the OUTPUT CURRENCY for display.
+ */
 export interface V3QuoteTotal {
+  // OUTPUT CURRENCY (e.g., AUD, USD, PGK) - CRITICAL FIELD
+  currency: string;
+
+  // Cost totals (Manager/Finance only)
+  total_cost_pgk?: string;
+
+  // Sell totals in PGK
+  total_sell_pgk?: string;
+  total_sell_pgk_incl_gst?: string;
+
+  // Sell totals in FCY
   total_sell_fcy: string;
   total_sell_fcy_incl_gst: string;
   total_sell_fcy_currency: string;
+
+  // Status
   has_missing_rates: boolean;
   notes?: string | null;
 }

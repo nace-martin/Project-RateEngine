@@ -19,7 +19,14 @@ import {
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { ChevronDown, ChevronRight, Package, Plane, MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ChevronDown, ChevronRight, Package, Plane, MapPin, Eye, EyeOff } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions";
+
+// ============================================================
+// VIEW MODE TYPES
+// ============================================================
+type ViewMode = 'CLIENT' | 'INTERNAL';
 
 interface QuoteFinancialBreakdownProps {
     result: QuoteComputeResult;
@@ -59,10 +66,10 @@ const BUCKET_CONFIG: Record<BucketType, {
     },
     FREIGHT: {
         title: 'Freight Charges',
-        icon: Plane,
-        colorClass: 'border-purple-500 text-purple-700',
-        bgClass: 'bg-purple-50',
-        badgeClass: 'bg-purple-100 text-purple-700 border-purple-200',
+        icon: Plane, // ✈️ icon instead of colour dominance
+        colorClass: 'border-blue-500 text-blue-700', // Aligned with Origin (no purple)
+        bgClass: 'bg-blue-50/70', // Slightly different shade for distinction
+        badgeClass: 'bg-blue-100 text-blue-700 border-blue-200',
     },
     DESTINATION: {
         title: 'Destination Charges',
@@ -104,27 +111,34 @@ interface ChargeSubgroup {
 }
 
 const ORIGIN_SUBGROUPS: Record<string, ChargeSubgroup> = {
-    'documentation': {
-        title: 'Documentation & Compliance',
+    'collection': {
+        title: 'Collection Services',
         order: 1,
-        codes: ['DOC_EXP', 'AGENCY_EXP', 'AWB_FEE', 'DOC_EXP_AWB', 'DOC_EXP_BIC', 'DOC_EXP_LCC', 'CLEAR_EXP', 'CUS_ENTRY_EXP']
+        codes: ['PICKUP', 'PICKUP_FUEL', 'PICKUP_EXP', 'PICKUP_FUEL_ORG', 'FUEL_SURCHARGE_EXP', 'STORAGE_EXP']
+    },
+    'documentation': {
+        title: 'Documentation',
+        order: 2,
+        codes: ['DOC_EXP', 'AWB_FEE', 'DOC_EXP_AWB', 'DOC_EXP_BIC', 'DOC_EXP_LCC', 'AWB_FEE_SELL', 'DOC_EXP_SELL']
+    },
+    'customs': {
+        title: 'Customs & Brokerage',
+        order: 3,
+        codes: ['CLEAR_EXP', 'CUS_ENTRY_EXP', 'CLEARANCE_SELL', 'AGENCY_EXP', 'AGENCY_EXP_SELL']
     },
     'terminal': {
         title: 'Terminal & Handling',
-        order: 2,
+        order: 4,
         codes: ['HND_EXP_BSC', 'HND_EXP_VA', 'SEC_EXP_MXC', 'HND_EXP_BPC', 'HND_EXP_RAC']
     },
     'inspection': {
         title: 'Inspection & Security',
-        order: 3,
+        order: 5,
         codes: ['XRAY', 'CTO', 'FUMIGATION']
     },
-    'collection': {
-        title: 'Collection Services',
-        order: 4,
-        codes: ['PICKUP', 'PICKUP_FUEL', 'STORAGE_EXP', 'PICKUP_EXP', 'FUEL_SURCHARGE_EXP']
-    },
 };
+
+
 
 const FREIGHT_SUBGROUPS: Record<string, ChargeSubgroup> = {
     'transport': {
@@ -219,8 +233,13 @@ function getLineCurrency(lines: SellLine[]): string {
 // MAIN COMPONENT
 // ============================================================
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
+    const { canViewCOGS, canViewMargins } = usePermissions();
     const { sell_lines, totals, exchange_rates } = result;
     const sellCurrency = totals.currency;
+
+    // RBAC: Only users who can view COGS can see Internal view
+    const canViewInternal = canViewCOGS;
+    const [viewMode, setViewMode] = useState<ViewMode>(canViewInternal ? 'INTERNAL' : 'CLIENT');
 
     // Detect if this is an overall FCY passthrough quote (e.g., A2D DAP PREPAID)
     const isOverallPassthrough = isFCYPassthrough(sell_lines);
@@ -245,11 +264,27 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                     <div>
                         <CardTitle className="text-2xl font-bold text-primary">Financial Breakdown</CardTitle>
                         <CardDescription>
-                            Detailed sell-side calculation (Computed: {result.computation_date})
+                            {viewMode === 'CLIENT' ? 'Client View' : 'Internal View'} (Computed: {result.computation_date})
                         </CardDescription>
                     </div>
-                    <div className="flex gap-2">
-                        {Object.entries(exchange_rates).map(([pair, rate]) => (
+                    <div className="flex items-center gap-3">
+                        {/* View Mode Toggle - Only show if user can access Internal */}
+                        {canViewInternal && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setViewMode(viewMode === 'CLIENT' ? 'INTERNAL' : 'CLIENT')}
+                                className="gap-2"
+                            >
+                                {viewMode === 'CLIENT' ? (
+                                    <><Eye className="h-4 w-4" /> Internal View</>
+                                ) : (
+                                    <><EyeOff className="h-4 w-4" /> Client View</>
+                                )}
+                            </Button>
+                        )}
+                        {/* FX Rates - Only show in Internal view */}
+                        {viewMode === 'INTERNAL' && Object.entries(exchange_rates).map(([pair, rate]) => (
                             <Badge key={pair} variant="outline" className="text-xs font-mono">
                                 {pair}: {rate}
                             </Badge>
@@ -257,13 +292,14 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                     </div>
                 </div>
             </CardHeader>
-            <CardContent className="p-6 space-y-6">
+            <CardContent className="p-8 space-y-8">
                 {/* ORIGIN BUCKET */}
                 {buckets.ORIGIN.length > 0 && (
                     <BucketSection
                         bucket="ORIGIN"
                         lines={buckets.ORIGIN}
                         sellCurrency={sellCurrency}
+                        viewMode={viewMode}
                     />
                 )}
 
@@ -273,6 +309,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         bucket="FREIGHT"
                         lines={buckets.FREIGHT}
                         sellCurrency={sellCurrency}
+                        viewMode={viewMode}
                     />
                 )}
 
@@ -282,27 +319,30 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         bucket="DESTINATION"
                         lines={buckets.DESTINATION}
                         sellCurrency={sellCurrency}
+                        viewMode={viewMode}
                     />
                 )}
 
-                {/* QUOTE SUMMARY */}
+                {/* QUOTE SUMMARY - Client-friendly, no cost/margin */}
                 <div className="flex justify-end mt-6">
                     <div className="bg-muted/30 p-6 rounded-lg w-full max-w-md">
                         <div className="flex flex-col space-y-3">
-                            {/* Total Cost - use FCY for passthrough */}
-                            <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Total Cost ({overallDisplayCurrency})</span>
-                                <span className="font-mono">
-                                    {formatCurrency(
-                                        isOverallPassthrough
-                                            ? (totals.total_sell_fcy || '0')
-                                            : totals.cost_pgk,
-                                        overallDisplayCurrency
-                                    )}
-                                </span>
-                            </div>
-                            {/* Show AUD cost only if not passthrough */}
-                            {!isOverallPassthrough && totals.cost_aud && (
+                            {/* Total Cost - Only show in Internal view */}
+                            {viewMode === 'INTERNAL' && (
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">Total Cost ({overallDisplayCurrency})</span>
+                                    <span className="font-mono">
+                                        {formatCurrency(
+                                            isOverallPassthrough
+                                                ? (totals.total_sell_fcy || '0')
+                                                : totals.cost_pgk,
+                                            overallDisplayCurrency
+                                        )}
+                                    </span>
+                                </div>
+                            )}
+                            {/* Show AUD cost only in Internal view and if not passthrough */}
+                            {viewMode === 'INTERNAL' && !isOverallPassthrough && totals.cost_aud && (
                                 <div className="flex justify-between text-sm">
                                     <span className="text-muted-foreground">Total Cost (AUD)</span>
                                     <span className="font-mono">{formatCurrency(totals.cost_aud, 'AUD')}</span>
@@ -361,25 +401,28 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
 function BucketSection({
     bucket,
     lines,
-    sellCurrency
+    sellCurrency,
+    viewMode
 }: {
     bucket: BucketType;
     lines: SellLine[];
     sellCurrency: string;
+    viewMode: ViewMode;
 }) {
     const [isExpanded, setIsExpanded] = useState(true);
     const config = BUCKET_CONFIG[bucket];
     const Icon = config.icon;
 
-    // Check if this is a FCY passthrough bucket (e.g., A2D DAP PREPAID)
-    const isPassthrough = isFCYPassthrough(lines);
-    const displayCurrency = isPassthrough ? getLineCurrency(lines) : 'PGK';
+    // Use the quote's output currency to determine display
+    // If output currency is NOT PGK, show amounts in FCY
+    const displayInFCY = sellCurrency !== 'PGK';
+    const displayCurrency = displayInFCY ? sellCurrency : 'PGK';
 
-    // Calculate bucket subtotal - use FCY or PGK based on passthrough status
-    const bucketTotal = isPassthrough
+    // Calculate bucket subtotal - use FCY or PGK based on output currency
+    const bucketTotal = displayInFCY
         ? calculateBucketTotal(lines, 'sell_fcy_incl_gst')
         : calculateBucketTotal(lines, 'sell_pgk_incl_gst');
-    const bucketSellExGst = isPassthrough
+    const bucketSellExGst = displayInFCY
         ? calculateBucketTotal(lines, 'sell_fcy')
         : calculateBucketTotal(lines, 'sell_pgk');
 
@@ -406,11 +449,11 @@ function BucketSection({
     });
 
     return (
-        <div className={`rounded-lg border-2 ${config.colorClass.split(' ')[0]} shadow-sm overflow-hidden`}>
+        <div className={`rounded-lg border ${config.colorClass.split(' ')[0]} shadow-sm overflow-hidden`}>
             {/* Bucket Header - Collapsible */}
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
-                className={`w-full ${config.bgClass} px-4 py-3 flex items-center justify-between hover:opacity-90 transition-opacity`}
+                className={`w-full ${config.bgClass} px-5 py-4 flex items-center justify-between hover:opacity-90 transition-opacity`}
             >
                 <div className="flex items-center gap-3">
                     <Icon className={`w-5 h-5 ${config.colorClass.split(' ')[1]}`} />
@@ -435,33 +478,36 @@ function BucketSection({
                 </div>
             </button>
 
-            {/* Bucket Content */}
+            {/* Bucket Content - No border-t to reduce stacking */}
             {isExpanded && (
-                <div className="border-t">
-                    {sortedSubgroups.map(([subgroupKey, subgroupLines], groupIndex) => (
-                        <SubgroupSection
-                            key={subgroupKey}
-                            title={subgroupConfig[subgroupKey]?.title || 'Other Services'}
-                            lines={subgroupLines}
-                            sellCurrency={sellCurrency}
-                            isFirst={groupIndex === 0}
-                            bucketColor={config.colorClass.split(' ')[1]}
-                        />
-                    ))}
+                <div className="bg-white">
+                    {/* Subgroups with spacing between them */}
+                    <div className="divide-y divide-muted/20">
+                        {sortedSubgroups.map(([subgroupKey, subgroupLines]) => (
+                            <SubgroupSection
+                                key={subgroupKey}
+                                title={subgroupConfig[subgroupKey]?.title || 'Other Services'}
+                                lines={subgroupLines}
+                                sellCurrency={sellCurrency}
+                                bucketColor={config.colorClass.split(' ')[1]}
+                                viewMode={viewMode}
+                            />
+                        ))}
+                    </div>
 
-                    {/* Bucket Subtotal Row */}
-                    <div className={`${config.bgClass} px-4 py-3 border-t flex justify-between items-center`}>
+                    {/* Bucket Subtotal Row - Clean separation */}
+                    <div className={`${config.bgClass} px-5 py-4 mt-2 flex justify-between items-center`}>
                         <span className={`font-semibold text-sm ${config.colorClass.split(' ')[1]}`}>
                             Bucket Subtotal
                         </span>
-                        <div className="flex gap-6 text-sm">
+                        <div className="flex gap-8 text-sm">
                             <div className="text-right">
-                                <span className="text-muted-foreground text-xs">Sell (Ex GST)</span>
-                                <span className="block font-mono font-medium">{formatCurrency(bucketSellExGst, displayCurrency)}</span>
+                                <span className="text-muted-foreground text-xs block mb-0.5">Sell (Ex GST)</span>
+                                <span className="font-mono font-medium">{formatCurrency(bucketSellExGst, displayCurrency)}</span>
                             </div>
                             <div className="text-right">
-                                <span className="text-muted-foreground text-xs">Total (Inc GST)</span>
-                                <span className={`block font-mono font-bold ${config.colorClass.split(' ')[1]}`}>
+                                <span className="text-muted-foreground text-xs block mb-0.5">Total (Inc GST)</span>
+                                <span className={`font-mono font-bold ${config.colorClass.split(' ')[1]}`}>
                                     {formatCurrency(bucketTotal, displayCurrency)}
                                 </span>
                             </div>
@@ -480,72 +526,80 @@ function SubgroupSection({
     title,
     lines,
     sellCurrency,
-    isFirst,
-    bucketColor
+    bucketColor,
+    viewMode
 }: {
     title: string;
     lines: SellLine[];
     sellCurrency: string;
-    isFirst: boolean;
     bucketColor: string;
+    viewMode: ViewMode;
 }) {
     const [isExpanded, setIsExpanded] = useState(false); // Collapsed by default
 
-    // Detect FCY passthrough for this subgroup
-    const isPassthrough = isFCYPassthrough(lines);
-    const displayCurrency = isPassthrough ? getLineCurrency(lines) : 'PGK';
+    // Use the quote's output currency to determine display
+    const displayInFCY = sellCurrency !== 'PGK';
+    const displayCurrency = displayInFCY ? sellCurrency : 'PGK';
 
     // Calculate subgroup total using correct currency
-    const subgroupTotal = isPassthrough
+    const subgroupTotal = displayInFCY
         ? lines.reduce((sum, l) => sum + parseFloat(l.sell_fcy_incl_gst || l.sell_fcy || '0'), 0)
         : lines.reduce((sum, l) => sum + parseFloat(l.sell_pgk_incl_gst || l.sell_pgk || '0'), 0);
 
     return (
-        <div className={!isFirst ? 'border-t' : ''}>
-            {/* Subgroup Header */}
+        <div>
+            {/* Subgroup Header - No bottom border, uses spacing */}
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
-                className="w-full bg-muted/20 px-4 py-2 border-b border-muted/40 flex items-center justify-between hover:bg-muted/30 transition-colors"
+                className="w-full bg-muted/10 px-5 py-3 flex items-center justify-between hover:bg-muted/20 transition-colors"
             >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                     {isExpanded ? (
                         <ChevronDown className="w-4 h-4 text-muted-foreground" />
                     ) : (
                         <ChevronRight className="w-4 h-4 text-muted-foreground" />
                     )}
                     <div className={`w-1 h-4 rounded-full ${bucketColor.replace('text-', 'bg-')}`}></div>
-                    <span className="text-xs font-semibold text-foreground/70 uppercase tracking-wide">
+                    <span className="text-sm font-medium text-foreground/80">
                         {title}
                     </span>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5 bg-background">
-                        {lines.length}
-                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                        ({lines.length})
+                    </span>
                 </div>
-                <span className="text-xs font-mono text-muted-foreground">
+                <span className="text-sm font-mono font-medium text-foreground">
                     {formatCurrency(subgroupTotal, displayCurrency)}
                 </span>
             </button>
 
-            {/* Subgroup Table */}
+            {/* Subgroup Table - With padding, no outer border */}
             {isExpanded && (
-                <Table>
-                    <TableHeader className="bg-muted/5">
-                        <TableRow className="hover:bg-transparent border-b-muted/30">
-                            <TableHead className="w-[35%] text-xs">Charge Details</TableHead>
-                            <TableHead className="text-right w-[10%] text-muted-foreground font-normal text-xs">FX Rate</TableHead>
-                            <TableHead className="text-right w-[12%] text-muted-foreground font-normal text-xs">Cost</TableHead>
-                            <TableHead className="text-right w-[10%] text-muted-foreground font-normal text-xs">Margin</TableHead>
-                            <TableHead className="text-right w-[12%] text-xs">Sell (Ex)</TableHead>
-                            <TableHead className="text-right w-[10%] text-xs">GST</TableHead>
-                            <TableHead className="text-right w-[11%] font-semibold text-foreground text-xs">Total</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {lines.map((line: SellLine, index: number) => (
-                            <ChargeRow key={index} line={line} sellCurrency={sellCurrency} />
-                        ))}
-                    </TableBody>
-                </Table>
+                <div className="px-5 pb-4 pt-2">
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="hover:bg-transparent border-b border-muted/30">
+                                <TableHead className={viewMode === 'CLIENT' ? 'w-[45%] text-xs font-medium' : 'w-[35%] text-xs font-medium'}>Description</TableHead>
+                                {viewMode === 'INTERNAL' && (
+                                    <TableHead className="text-right w-[10%] text-muted-foreground font-normal text-xs">FX Rate</TableHead>
+                                )}
+                                {viewMode === 'INTERNAL' && (
+                                    <TableHead className="text-right w-[12%] text-muted-foreground font-normal text-xs">Cost</TableHead>
+                                )}
+                                {viewMode === 'INTERNAL' && (
+                                    <TableHead className="text-right w-[10%] text-muted-foreground font-normal text-xs">Margin</TableHead>
+                                )}
+                                <TableHead className="text-right w-[15%] text-xs font-medium">Sell (Ex GST)</TableHead>
+                                <TableHead className="text-right w-[12%] text-xs font-medium">GST</TableHead>
+                                <TableHead className="text-right w-[15%] font-semibold text-foreground text-xs">Total</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {lines.map((line: SellLine, index: number) => (
+                                <ChargeRow key={index} line={line} sellCurrency={sellCurrency} viewMode={viewMode} isLast={index === lines.length - 1} />
+                            ))}
+                        </TableBody>
+                    </Table>
+                </div>
             )}
         </div>
     );
@@ -554,75 +608,74 @@ function SubgroupSection({
 // ============================================================
 // CHARGE ROW - Individual charge line
 // ============================================================
-function ChargeRow({ line, sellCurrency }: { line: SellLine; sellCurrency: string }) {
-    // Detect if this line is FCY passthrough (sell_currency is not PGK and has FCY values)
-    const isPassthrough = line.sell_currency && line.sell_currency !== 'PGK' && parseFloat(line.sell_fcy || '0') > 0;
-    const displayCurrency = isPassthrough ? line.sell_currency : 'PGK';
+function ChargeRow({ line, sellCurrency, viewMode, isLast }: { line: SellLine; sellCurrency: string; viewMode: ViewMode; isLast?: boolean }) {
+    // Use the quote's output currency to determine display
+    const displayInFCY = sellCurrency !== 'PGK';
+    const displayCurrency = displayInFCY ? sellCurrency : 'PGK';
 
-    // Choose correct values based on passthrough status
-    const costValue = isPassthrough ? line.sell_fcy : line.cost_pgk;  // For passthrough, cost = sell (no margin)
-    const sellExGstValue = isPassthrough ? line.sell_fcy : line.sell_pgk;
+    // Choose correct values based on output currency
+    const costValue = displayInFCY ? line.sell_fcy : line.cost_pgk;  // For FCY quotes, cost in FCY
+    const sellExGstValue = displayInFCY ? line.sell_fcy : line.sell_pgk;
 
     return (
-        <TableRow className="hover:bg-muted/10 transition-colors border-b-muted/20">
+        <TableRow className={`hover:bg-muted/5 transition-colors ${!isLast ? 'border-b border-muted/15' : ''}`}>
             {/* Charge Details Column */}
-            <TableCell className="py-3">
-                <div className="flex flex-col gap-1">
+            <TableCell className="py-4">
+                <div className="flex flex-col gap-0.5">
                     <span className="font-medium text-foreground text-sm">
                         {line.description}
                     </span>
-                    <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="text-[10px] px-1.5 h-5 font-normal text-muted-foreground bg-muted/60">
-                            {line.component || 'MISC'}
-                        </Badge>
-                        {line.line_type !== 'COMPONENT' && (
-                            <Badge variant="outline" className="text-[10px] px-1.5 h-5">
-                                {line.line_type}
-                            </Badge>
-                        )}
-                    </div>
+                    <span className="text-xs text-muted-foreground">
+                        {line.component || 'MISC'}
+                    </span>
                 </div>
             </TableCell>
 
-            {/* FX Rate */}
-            <TableCell className="text-right font-mono text-xs text-muted-foreground/60">
-                {parseFloat(line.exchange_rate) !== 1 ? line.exchange_rate : '-'}
-            </TableCell>
+            {/* FX Rate - Internal only */}
+            {viewMode === 'INTERNAL' && (
+                <TableCell className="text-right font-mono text-xs text-muted-foreground py-4">
+                    {parseFloat(line.exchange_rate) !== 1 ? line.exchange_rate : '-'}
+                </TableCell>
+            )}
 
-            {/* Cost */}
-            <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                {formatCurrency(costValue, displayCurrency)}
-            </TableCell>
+            {/* Cost - Internal only */}
+            {viewMode === 'INTERNAL' && (
+                <TableCell className="text-right font-mono text-sm text-muted-foreground py-4">
+                    {formatCurrency(costValue, displayCurrency)}
+                </TableCell>
+            )}
 
-            {/* Margin */}
-            <TableCell className="text-right font-mono text-xs">
-                {parseFloat(line.margin_percent) > 0 ? (
-                    <span className="text-emerald-600 font-medium bg-emerald-50 px-1.5 py-0.5 rounded">
-                        {formatPercent(line.margin_percent)}
-                    </span>
-                ) : (
-                    <span className="text-muted-foreground/30">-</span>
-                )}
-            </TableCell>
+            {/* Margin - Internal only */}
+            {viewMode === 'INTERNAL' && (
+                <TableCell className="text-right font-mono text-xs py-4">
+                    {parseFloat(line.margin_percent) > 0 ? (
+                        <span className="text-emerald-600 font-medium">
+                            {formatPercent(line.margin_percent)}
+                        </span>
+                    ) : (
+                        <span className="text-muted-foreground/40">-</span>
+                    )}
+                </TableCell>
+            )}
 
-            {/* Sell Ex GST */}
-            <TableCell className="text-right font-mono text-sm font-medium text-foreground/90">
+            {/* Sell Ex GST - Always visible */}
+            <TableCell className="text-right font-mono text-sm font-medium text-foreground/90 py-4">
                 {formatCurrency(sellExGstValue, displayCurrency)}
             </TableCell>
 
-            {/* GST */}
-            <TableCell className="text-right font-mono text-sm text-muted-foreground">
+            {/* GST - Always visible */}
+            <TableCell className="text-right font-mono text-sm text-muted-foreground py-4">
                 {parseFloat(line.gst_amount || '0') > 0 ? (
                     formatCurrency(line.gst_amount, displayCurrency)
                 ) : (
-                    <span className="text-muted-foreground/30">-</span>
+                    <span className="text-muted-foreground/40">-</span>
                 )}
             </TableCell>
 
-            {/* Total Inc GST */}
-            <TableCell className="text-right font-mono text-sm font-bold text-foreground bg-muted/5">
+            {/* Total Inc GST - Always visible */}
+            <TableCell className="text-right font-mono text-sm font-bold text-foreground py-4">
                 {formatCurrency(
-                    isPassthrough
+                    displayInFCY
                         ? (line.sell_fcy_incl_gst || line.sell_fcy)
                         : (line.sell_pgk_incl_gst || line.sell_pgk),
                     displayCurrency

@@ -37,6 +37,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
+import { QuoteStatusBadge, QuoteStatusActions, isQuoteEditable } from "@/components/QuoteStatusBadge";
 
 export default function QuoteDetailPage() {
   const { user, token } = useAuth();
@@ -208,7 +209,13 @@ export default function QuoteDetailPage() {
 
   return (
     <div className="container mx-auto max-w-4xl space-y-6 p-4">
-      <CustomerSummaryCard quote={quote} />
+      <CustomerSummaryCard
+        quote={quote}
+        onStatusChange={() => {
+          // Refresh quote data after status change
+          getQuoteV3(id).then((data) => setQuote(data));
+        }}
+      />
 
       {/* Display routing warning if VIA routing is required */}
       {computeResult?.routing && (
@@ -442,7 +449,7 @@ function ManualSourcingView({
   );
 }
 
-function CustomerSummaryCard({ quote }: { quote: V3QuoteComputeResponse }) {
+function CustomerSummaryCard({ quote, onStatusChange }: { quote: V3QuoteComputeResponse; onStatusChange?: () => void }) {
   const customerDetails =
     quote.customer && typeof quote.customer === "object"
       ? quote.customer
@@ -499,12 +506,7 @@ function CustomerSummaryCard({ quote }: { quote: V3QuoteComputeResponse }) {
               <h1 className="text-3xl font-semibold tracking-tight">
                 {quote.quote_number}
               </h1>
-              <Badge
-                variant={quote.status === 'DRAFT' ? 'secondary' : quote.status === 'ACCEPTED' ? 'default' : 'outline'}
-                className="bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
-              >
-                {quote.status}
-              </Badge>
+              <QuoteStatusBadge status={quote.status} size="lg" />
             </div>
             <div className="flex items-center gap-6 text-sm text-slate-400">
               <span>
@@ -519,6 +521,14 @@ function CustomerSummaryCard({ quote }: { quote: V3QuoteComputeResponse }) {
                 {quote.shipment_type}
               </span>
             </div>
+          </div>
+          <div className="flex-shrink-0">
+            <QuoteStatusActions
+              quoteId={quote.id}
+              status={quote.status}
+              hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+              onStatusChange={onStatusChange}
+            />
           </div>
         </div>
       </div>

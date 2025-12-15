@@ -5,6 +5,7 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 import csv
 import io
 from decimal import Decimal
@@ -20,13 +21,20 @@ from .serializers import (
     QuoteSpotRateSerializer, QuoteSpotChargeSerializer
 )
 
+# RBAC permissions
+from accounts.permissions import CanEditRateCards
+
 class ZoneViewSet(viewsets.ModelViewSet):
+    """Zone management - requires Manager or Admin role."""
     queryset = Zone.objects.all()
     serializer_class = ZoneSerializer
+    permission_classes = [CanEditRateCards]  # Manager/Admin only
 
 class QuoteSpotRateViewSet(viewsets.ModelViewSet):
+    """Quote spot rates - authenticated users can view, write requires auth."""
     queryset = QuoteSpotRate.objects.all()
     serializer_class = QuoteSpotRateSerializer
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -36,8 +44,10 @@ class QuoteSpotRateViewSet(viewsets.ModelViewSet):
         return queryset
 
 class QuoteSpotChargeViewSet(viewsets.ModelViewSet):
+    """Quote spot charges - authenticated users can view, write requires auth."""
     queryset = QuoteSpotCharge.objects.all()
     serializer_class = QuoteSpotChargeSerializer
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -47,8 +57,10 @@ class QuoteSpotChargeViewSet(viewsets.ModelViewSet):
         return queryset
 
 class RateCardViewSet(viewsets.ModelViewSet):
+    """Rate card management - requires Manager or Admin role."""
     queryset = RateCard.objects.all()
     serializer_class = RateCardSerializer
+    permission_classes = [CanEditRateCards]  # Manager/Admin only
 
     @action(detail=True, methods=['post'], parser_classes=[MultiPartParser])
     def import_csv(self, request, pk=None):
@@ -152,8 +164,10 @@ class RateCardViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class RateLineViewSet(viewsets.ModelViewSet):
+    """Rate line management - requires Manager or Admin role."""
     queryset = RateLine.objects.all()
-    serializer_class =  RateLineSerializer
+    serializer_class = RateLineSerializer
+    permission_classes = [CanEditRateCards]  # Manager/Admin only
 
 class QuoteComputeView(APIView):
     """

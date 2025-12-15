@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 
 interface User {
   username: string;
@@ -20,12 +21,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     const storedToken = localStorage.getItem('authToken');
     const role = localStorage.getItem('userRole');
     const username = localStorage.getItem('username');
-    
+
     if (storedToken && role && username) {
       setUser({ username, role });
       setToken(storedToken);
@@ -46,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('username');
     setUser(null);
     setToken(null);
+    router.push('/login');
   };
 
   const isAuthenticated = !!user;

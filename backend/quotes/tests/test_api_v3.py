@@ -55,7 +55,7 @@ class QuoteRetrieveV3APITest(APITestCase):
             output_currency="USD",
             origin_location=origin_location,
             destination_location=destination_location,
-            status=Quote.Status.FINAL,
+            status=Quote.Status.FINALIZED,
             created_by=self.user,
         )
 
@@ -69,7 +69,7 @@ class QuoteRetrieveV3APITest(APITestCase):
         latest_version = QuoteVersion.objects.create(
             quote=quote,
             version_number=2,
-            status=Quote.Status.FINAL,
+            status=Quote.Status.FINALIZED,
             created_by=self.user,
         )
 

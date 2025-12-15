@@ -94,9 +94,18 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
         exclude = ('quote_version',) # Exclude the parent link
 
 class V3QuoteTotalSerializer(serializers.ModelSerializer):
+    # Alias for frontend compatibility - maps total_sell_fcy_currency to 'currency'
+    currency = serializers.CharField(source='total_sell_fcy_currency', read_only=True)
+    
     class Meta:
         model = QuoteTotal
-        exclude = ('quote_version',) # Exclude the parent link
+        fields = (
+            'currency',  # Alias for total_sell_fcy_currency
+            'total_cost_pgk',
+            'total_sell_pgk', 'total_sell_pgk_incl_gst',
+            'total_sell_fcy', 'total_sell_fcy_incl_gst', 'total_sell_fcy_currency',
+            'has_missing_rates', 'notes',
+        )
 
 class V3QuoteVersionSerializer(serializers.ModelSerializer):
     lines = V3QuoteLineSerializer(many=True)
@@ -163,9 +172,18 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
         exclude = ('quote_version',) # Exclude the parent link
 
 class V3QuoteTotalSerializer(serializers.ModelSerializer):
+    # Alias for frontend compatibility - maps total_sell_fcy_currency to 'currency'
+    currency = serializers.CharField(source='total_sell_fcy_currency', read_only=True)
+    
     class Meta:
         model = QuoteTotal
-        exclude = ('quote_version',) # Exclude the parent link
+        fields = (
+            'currency',  # Alias for total_sell_fcy_currency
+            'total_cost_pgk',
+            'total_sell_pgk', 'total_sell_pgk_incl_gst',
+            'total_sell_fcy', 'total_sell_fcy_incl_gst', 'total_sell_fcy_currency',
+            'has_missing_rates', 'notes',
+        )
 
 class V3QuoteVersionSerializer(serializers.ModelSerializer):
     lines = V3QuoteLineSerializer(many=True)

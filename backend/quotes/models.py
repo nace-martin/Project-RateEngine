@@ -24,11 +24,11 @@ class Quote(models.Model):
 
     class Status(models.TextChoices):
         DRAFT = 'DRAFT', _('Draft')
-        FINAL = 'FINAL', _('Finalized')
+        FINALIZED = 'FINALIZED', _('Finalized')  # Renamed from FINAL for consistency
         SENT = 'SENT', _('Sent to Customer')
-        ACCEPTED = 'ACCEPTED', _('Accepted')
-        LOST = 'LOST', _('Lost')
-        EXPIRED = 'EXPIRED', _('Expired')
+        ACCEPTED = 'ACCEPTED', _('Accepted')  # Post-MVP
+        LOST = 'LOST', _('Lost')  # Post-MVP
+        EXPIRED = 'EXPIRED', _('Expired')  # Post-MVP
         INCOMPLETE = 'INCOMPLETE', _('Incomplete (Missing Data)')
 
     class ShipmentType(models.TextChoices):
@@ -128,6 +128,28 @@ class Quote(models.Model):
         null=True, blank=True, related_name='created_quotes'
     )
     updated_at = models.DateTimeField(auto_now=True)
+    
+    # --- Lifecycle Timestamps ---
+    finalized_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when quote was finalized."
+    )
+    finalized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='finalized_quotes',
+        help_text="User who finalized the quote."
+    )
+    sent_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when quote was sent to customer."
+    )
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='sent_quotes',
+        help_text="User who sent the quote."
+    )
 
     def __str__(self):
         return self.quote_number or str(self.id)

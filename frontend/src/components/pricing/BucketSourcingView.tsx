@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { BucketChargeSection } from "@/components/pricing/BucketChargeSection";
 import { FreeformLineEditor, getDefaultCurrencyForCountry } from "@/components/pricing/FreeformLineEditor";
+import { AIRateIntakeModal } from "@/components/AIRateIntakeModal";
 import {
     getSpotChargesForQuote,
     saveSpotChargesForQuote,
@@ -124,6 +125,16 @@ function getVisibleBuckets(quote: V3QuoteComputeResponse): Set<SpotChargeBucket>
         quote.incoterm === "DAP"
     ) {
         return new Set(["DESTINATION"]);
+    }
+
+    // Export D2A Prepaid (any incoterm) - hide destination entirely
+    // D2A = Door to Airport, service ends at destination airport, no destination charges
+    if (
+        quote.shipment_type === "EXPORT" &&
+        quote.payment_term === "PREPAID" &&
+        quote.service_scope === "D2A"
+    ) {
+        return new Set(["ORIGIN", "FREIGHT"]);
     }
 
     // Default: all buckets visible (editability is separate)
@@ -245,6 +256,7 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingBucket, setEditingBucket] = useState<SpotChargeBucket>("DESTINATION");
     const [editingLine, setEditingLine] = useState<SpotChargeLine | null>(null);
+    const [aiIntakeOpen, setAiIntakeOpen] = useState(false);
 
     // Determine which buckets are editable, visible, and auto-rated subtotals
     const editableBuckets = useMemo(() => getEditableBuckets(quote), [quote]);
@@ -317,6 +329,16 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
         loadCharges();
     }, [quote.id]);
 
+    // Reload charges after AI intake success
+    const handleAiIntakeSuccess = async () => {
+        try {
+            const response = await getSpotChargesForQuote(quote.id);
+            setCharges(response.charges);
+        } catch (err) {
+            console.error("Failed to reload spot charges:", err);
+        }
+    };
+
     const handleAddLine = (bucket: SpotChargeBucket) => {
         setEditingBucket(bucket);
         setEditingLine(null);
@@ -364,7 +386,37 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
         setSaving(true);
 
         try {
-            // Flatten and save all charges
+            // For fully auto-rated quotes (no editable buckets), 
+            // just move from INCOMPLETE to DRAFT since all rates are on rate cards
+            if (editableBuckets.size === 0) {
+                const token = localStorage.getItem("token");
+
+                // Update status from INCOMPLETE to DRAFT
+                // (the quote is complete, just needs to be marked as such)
+                const updateResponse = await fetch(
+                    `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/quotes/v3/quotes/${quote.id}/`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Token ${token}`,
+                        },
+                        body: JSON.stringify({ status: "DRAFT" }),
+                    }
+                );
+
+                if (!updateResponse.ok) {
+                    const errorData = await updateResponse.json().catch(() => ({}));
+                    const errorMsg = errorData.detail || errorData.error || JSON.stringify(errorData) || `HTTP ${updateResponse.status}`;
+                    throw new Error(`Failed to update quote status: ${errorMsg}`);
+                }
+
+                // Notify parent of success
+                onFinalizeSuccess();
+                return;
+            }
+
+            // For quotes with editable buckets, use the spot charge flow
             const allCharges = [...charges.ORIGIN, ...charges.FREIGHT, ...charges.DESTINATION];
             await saveSpotChargesForQuote(quote.id, allCharges);
 
@@ -415,6 +467,16 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
                                     : "Add charges from the agent quote into the appropriate cost buckets."}
                             </CardDescription>
                         </div>
+                        {/* AI Rate Intake Button - only show when there are editable buckets */}
+                        {!noEditableBuckets && (
+                            <Button
+                                variant="outline"
+                                onClick={() => setAiIntakeOpen(true)}
+                                className="border-amber-300 text-amber-800 hover:bg-amber-100"
+                            >
+                                AI Rate Intake
+                            </Button>
+                        )}
                     </div>
                 </CardHeader>
             </Card>
@@ -538,7 +600,7 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
                             {(saving || calculating) && (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                             )}
-                            {saving ? "Saving..." : calculating ? "Calculating..." : "Calculate & Finalize"}
+                            {saving ? "Saving..." : calculating ? "Calculating..." : noEditableBuckets ? "Confirm & View Quote" : "Calculate & Finalize"}
                         </Button>
                     </div>
                 </CardContent>
@@ -553,6 +615,14 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
                 existingLine={editingLine}
                 existingLines={allLines}
                 destinationCountryCode={destinationCountryCode}
+            />
+
+            {/* AI Rate Intake Modal */}
+            <AIRateIntakeModal
+                open={aiIntakeOpen}
+                onOpenChange={setAiIntakeOpen}
+                quoteId={quote.id}
+                onSuccess={handleAiIntakeSuccess}
             />
         </div>
     );

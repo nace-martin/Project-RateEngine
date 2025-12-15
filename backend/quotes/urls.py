@@ -13,6 +13,9 @@ from .views import (
     QuoteVersionCreateAPIView,
     SpotChargeListCreateAPIView,
     SpotChargeCalculateAPIView,
+    AIRateIntakeAPIView,
+    QuoteTransitionAPIView,
+    QuoteCloneAPIView,
 )
 
 app_name = 'quotes'
@@ -27,10 +30,12 @@ urlpatterns = [
     path('v3/quotes/<uuid:quote_id>/versions/', QuoteVersionCreateAPIView.as_view(), name='quote-version-create'),
     path('v3/quotes/<uuid:quote_id>/spot-charges/', SpotChargeListCreateAPIView.as_view(), name='spot-charge-list-create'),
     path('v3/quotes/<uuid:quote_id>/spot-charges/calculate/', SpotChargeCalculateAPIView.as_view(), name='spot-charge-calculate'),
+    path('v3/quotes/<uuid:quote_id>/ai-intake/', AIRateIntakeAPIView.as_view(), name='ai-rate-intake'),
+    path('v3/quotes/<uuid:quote_id>/transition/', QuoteTransitionAPIView.as_view(), name='quote-transition'),
+    path('v3/quotes/<uuid:quote_id>/clone/', QuoteCloneAPIView.as_view(), name='quote-clone'),
     path('v3/customers/<uuid:customer_id>/', CustomerDetailAPIView.as_view(), name='customer-detail'),
     path('v3/ratecards/', RatecardListAPIView.as_view(), name='ratecard-list'),
     path('v3/ratecards/upload/', RatecardUploadAPIView.as_view(), name='ratecard-upload'),
     path('v3/stations/', StationListAPIView.as_view(), name='station-list'),
     path('v3/', include(router_v3.urls)),
 ]
-

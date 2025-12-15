@@ -778,3 +778,105 @@ export async function calculateSpotCharges(quoteId: string): Promise<SpotCharges
   return response.json();
 }
 
+// --- AI Rate Intake ---
+
+export interface AIRateIntakeLine {
+  id: string;
+  bucket: string;
+  description: string;
+  amount: string | null;
+  currency: string;
+  unit_basis: string;
+  percentage: string | null;
+  minimum: string | null;
+  maximum: string | null;
+  percent_applies_to: string | null;
+  notes: string | null;
+  confidence: number;
+}
+
+export interface AIRateIntakeResponse {
+  success: boolean;
+  lines?: AIRateIntakeLine[];
+  warnings?: string[];
+  error?: string;
+  raw_text_length?: number;
+  source_type?: string;
+  model_used?: string;
+}
+
+export async function parseRatesWithAI(
+  quoteId: string,
+  text?: string,
+  file?: File | null
+): Promise<AIRateIntakeResponse> {
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/ai-intake/`;
+
+  let response: Response;
+
+  if (file) {
+    // Multipart form for PDF upload
+    const formData = new FormData();
+    formData.append('file', file);
+
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${resolveAuthToken()}`
+      },
+      body: formData,
+    });
+  } else {
+    // JSON body for text input
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Token ${resolveAuthToken()}`
+      },
+      body: JSON.stringify({ text: text || '' }),
+    });
+  }
+
+  // Handle both success and 422 responses as valid API responses
+  const data = await response.json();
+
+  if (!response.ok && response.status !== 422) {
+    throw new Error(data.detail || 'Failed to parse rates with AI');
+  }
+
+  return data as AIRateIntakeResponse;
+}
+
+// --- Quote Clone ---
+
+export interface CloneQuoteResponse {
+  id: string;
+  quote_number: string;
+  status: string;
+  cloned_from: {
+    id: string;
+    quote_number: string;
+  };
+  spot_charges_copied: number;
+  created_at: string;
+}
+
+export async function cloneQuote(quoteId: string): Promise<CloneQuoteResponse> {
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/clone/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || 'Failed to clone quote');
+  }
+
+  return response.json();
+}
