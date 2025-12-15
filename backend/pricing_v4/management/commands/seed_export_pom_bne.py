@@ -4,6 +4,11 @@ Seed ProductCodes and rates for the first corridor: Export Air D2A Prepaid POM�
 
 Rule 8: ProductCode must exist before any rate row
 Rule 9: One corridor must work end-to-end before expanding
+
+AMENDMENTS:
+- Security Screening: per-kg + flat fee (additive, no minimum)
+- FSC on Pickup: 10% of Pickup/Collection charge
+- Carrier vs Agent distinction enforced
 """
 
 from datetime import date
@@ -11,7 +16,7 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from pricing_v4.models import ProductCode, ExportCOGS, ExportSellRate
+from pricing_v4.models import Carrier, Agent, ProductCode, ExportCOGS, ExportSellRate
 
 
 class Command(BaseCommand):
@@ -23,11 +28,53 @@ class Command(BaseCommand):
         self.stdout.write("=" * 60)
         
         with transaction.atomic():
+            self._seed_carriers()
+            self._seed_agents()
             self._seed_product_codes()
             self._seed_export_cogs()
             self._seed_export_sell_rates()
         
         self.stdout.write(self.style.SUCCESS("\n✓ Corridor seeding complete!"))
+    
+    def _seed_carriers(self):
+        """Seed carriers (airlines/shipping lines for freight COGS)."""
+        self.stdout.write("\n--- Seeding Carriers ---")
+        
+        carriers = [
+            {'code': 'PX', 'name': 'Air Niugini', 'carrier_type': 'AIRLINE'},
+            {'code': 'QF', 'name': 'Qantas', 'carrier_type': 'AIRLINE'},
+            {'code': 'CZ', 'name': 'China Southern', 'carrier_type': 'AIRLINE'},
+        ]
+        
+        for data in carriers:
+            obj, created = Carrier.objects.update_or_create(
+                code=data['code'],
+                defaults={'name': data['name'], 'carrier_type': data['carrier_type']}
+            )
+            status = "Created" if created else "Updated"
+            self.stdout.write(f"  {status}: {obj}")
+    
+    def _seed_agents(self):
+        """Seed agents (forwarders for origin/destination services)."""
+        self.stdout.write("\n--- Seeding Agents ---")
+        
+        agents = [
+            {'code': 'EFM-PG', 'name': 'EFM PNG (Internal)', 'country_code': 'PG', 'agent_type': 'ORIGIN'},
+            {'code': 'EFM-AU', 'name': 'EFM Australia', 'country_code': 'AU', 'agent_type': 'DESTINATION'},
+            {'code': 'PX-CARGO', 'name': 'PX Cargo Services', 'country_code': 'PG', 'agent_type': 'ORIGIN'},
+        ]
+        
+        for data in agents:
+            obj, created = Agent.objects.update_or_create(
+                code=data['code'],
+                defaults={
+                    'name': data['name'],
+                    'country_code': data['country_code'],
+                    'agent_type': data['agent_type'],
+                }
+            )
+            status = "Created" if created else "Updated"
+            self.stdout.write(f"  {status}: {obj}")
     
     def _seed_product_codes(self):
         """
@@ -37,6 +84,20 @@ class Command(BaseCommand):
         Rule 8: ProductCodes must exist FIRST.
         """
         self.stdout.write("\n--- Seeding ProductCodes (1xxx Export) ---")
+        
+        # First, seed the base pickup code
+        pickup_code = {
+            'id': 1050,
+            'code': 'EXP-PICKUP',
+            'description': 'Export Pickup/Collection',
+            'category': ProductCode.CATEGORY_CARTAGE,
+            'is_gst_applicable': False,
+            'gst_rate': Decimal('0.00'),
+            'gl_revenue_code': '4500',
+            'gl_cost_code': '5500',
+            'default_unit': ProductCode.UNIT_KG,
+            'percent_of_product_code': None,
+        }
         
         # Export ProductCode definitions
         export_codes = [
@@ -131,22 +192,13 @@ class Command(BaseCommand):
                 'gst_rate': Decimal('0.00'),
                 'gl_revenue_code': '4400',
                 'gl_cost_code': '5400',
-                'default_unit': ProductCode.UNIT_KG,
+                'default_unit': ProductCode.UNIT_KG,  # per-kg + flat fee
             },
-            # 1050-1059: Cartage (Pickup)
-            {
-                'id': 1050,
-                'code': 'EXP-PICKUP',
-                'description': 'Export Pickup/Collection',
-                'category': ProductCode.CATEGORY_CARTAGE,
-                'is_gst_applicable': False,
-                'gst_rate': Decimal('0.00'),
-                'gl_revenue_code': '4500',
-                'gl_cost_code': '5500',
-                'default_unit': ProductCode.UNIT_KG,
-            },
+            # 1050-1059: Cartage (Pickup) - defined first, insert here
+            pickup_code,
         ]
         
+        # Create pickup first (needed for FSC reference)
         for code_data in export_codes:
             obj, created = ProductCode.objects.update_or_create(
                 id=code_data['id'],
@@ -164,27 +216,66 @@ class Command(BaseCommand):
             )
             status = "Created" if created else "Updated"
             self.stdout.write(f"  {status}: {obj.id} - {obj.code}")
+        
+        # Now create FSC with reference to Pickup
+        pickup_pc = ProductCode.objects.get(id=1050)
+        fsc_code = {
+            'id': 1060,
+            'code': 'EXP-FSC-PICKUP',
+            'description': 'Export Fuel Surcharge on Pickup',
+            'category': ProductCode.CATEGORY_SURCHARGE,
+            'is_gst_applicable': False,
+            'gst_rate': Decimal('0.00'),
+            'gl_revenue_code': '4500',
+            'gl_cost_code': '5500',
+            'default_unit': ProductCode.UNIT_PERCENT,
+            'percent_of_product_code': pickup_pc,
+        }
+        
+        obj, created = ProductCode.objects.update_or_create(
+            id=fsc_code['id'],
+            defaults={
+                'code': fsc_code['code'],
+                'description': fsc_code['description'],
+                'domain': ProductCode.DOMAIN_EXPORT,
+                'category': fsc_code['category'],
+                'is_gst_applicable': fsc_code['is_gst_applicable'],
+                'gst_rate': fsc_code['gst_rate'],
+                'gl_revenue_code': fsc_code['gl_revenue_code'],
+                'gl_cost_code': fsc_code['gl_cost_code'],
+                'default_unit': fsc_code['default_unit'],
+                'percent_of_product_code': fsc_code['percent_of_product_code'],
+            }
+        )
+        status = "Created" if created else "Updated"
+        self.stdout.write(f"  {status}: {obj.id} - {obj.code} (% of {pickup_pc.code})")
     
     def _seed_export_cogs(self):
         """
         Seed ExportCOGS for POM→BNE corridor.
         
         Source: PX International rate card (what EFM pays)
+        Uses carrier FK for freight, agent FK for services.
         """
         self.stdout.write("\n--- Seeding ExportCOGS (POM→BNE) ---")
+        
+        # Get counterparties
+        carrier_px = Carrier.objects.get(code='PX')
+        agent_px_cargo = Agent.objects.get(code='PX-CARGO')
         
         # Common validity dates
         valid_from = date(2025, 1, 1)
         valid_until = date(2025, 12, 31)
-        supplier = 'PX International'
         
         # COGS rates from PX rate card
         cogs_rates = [
-            # Freight - weight breaks
+            # Freight - weight breaks (carrier = PX)
             {
                 'product_code_id': 1001,  # EXP-FRT-AIR
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
+                'carrier': carrier_px,
+                'agent': None,
                 'currency': 'PGK',
                 'weight_breaks': [
                     {"min_kg": 0, "rate": "6.30"},
@@ -193,48 +284,66 @@ class Command(BaseCommand):
                     {"min_kg": 500, "rate": "5.40"},
                 ],
                 'min_charge': Decimal('160.00'),
+                'is_additive': False,
             },
-            # Documentation - flat fee
+            # Documentation - flat fee (agent = PX Cargo)
             {
                 'product_code_id': 1010,  # EXP-DOC
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
+                'carrier': None,
+                'agent': agent_px_cargo,
                 'currency': 'PGK',
                 'rate_per_shipment': Decimal('35.00'),
+                'is_additive': False,
             },
-            # AWB Fee - flat fee
+            # AWB Fee - flat fee (agent = PX Cargo)
             {
                 'product_code_id': 1011,  # EXP-AWB
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
+                'carrier': None,
+                'agent': agent_px_cargo,
                 'currency': 'PGK',
                 'rate_per_shipment': Decimal('35.00'),
+                'is_additive': False,
             },
-            # Terminal Fee - flat fee
+            # Terminal Fee - flat fee (agent = PX Cargo)
             {
                 'product_code_id': 1030,  # EXP-TERM
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
+                'carrier': None,
+                'agent': agent_px_cargo,
                 'currency': 'PGK',
                 'rate_per_shipment': Decimal('35.00'),
+                'is_additive': False,
             },
-            # Build-Up - per kg
+            # Build-Up - per kg (agent = PX Cargo)
             {
                 'product_code_id': 1031,  # EXP-BUILDUP
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
+                'carrier': None,
+                'agent': agent_px_cargo,
                 'currency': 'PGK',
                 'rate_per_kg': Decimal('0.15'),
                 'min_charge': Decimal('30.00'),
+                'is_additive': False,
             },
-            # Security Screening - per kg + flat
+            # Security Screening - per kg + flat fee (ADDITIVE, no min)
+            # K0.17/kg + K35 flat
             {
                 'product_code_id': 1040,  # EXP-SCREEN
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
+                'carrier': None,
+                'agent': agent_px_cargo,
                 'currency': 'PGK',
                 'rate_per_kg': Decimal('0.17'),
-                'min_charge': Decimal('35.00'),
+                'rate_per_shipment': Decimal('35.00'),
+                'is_additive': True,  # KEY: per-kg + flat fee combined
+                'min_charge': None,   # No minimum - additive calculation
             },
         ]
         
@@ -243,6 +352,8 @@ class Command(BaseCommand):
                 product_code_id=rate_data['product_code_id'],
                 origin_airport=rate_data['origin_airport'],
                 destination_airport=rate_data['destination_airport'],
+                carrier=rate_data.get('carrier'),
+                agent=rate_data.get('agent'),
                 valid_from=valid_from,
                 defaults={
                     'currency': rate_data.get('currency', 'PGK'),
@@ -251,13 +362,14 @@ class Command(BaseCommand):
                     'min_charge': rate_data.get('min_charge'),
                     'max_charge': rate_data.get('max_charge'),
                     'weight_breaks': rate_data.get('weight_breaks'),
-                    'supplier_name': supplier,
+                    'is_additive': rate_data.get('is_additive', False),
                     'valid_until': valid_until,
                 }
             )
             pc = ProductCode.objects.get(id=rate_data['product_code_id'])
+            counterparty = rate_data.get('carrier') or rate_data.get('agent')
             status = "Created" if created else "Updated"
-            self.stdout.write(f"  {status}: COGS {pc.code} POM→BNE")
+            self.stdout.write(f"  {status}: COGS {pc.code} POM→BNE ({counterparty})")
     
     def _seed_export_sell_rates(self):
         """
@@ -320,14 +432,16 @@ class Command(BaseCommand):
                 'rate_per_kg': Decimal('0.20'),
                 'min_charge': Decimal('50.00'),
             },
-            # Security Screening - per kg
+            # Security Screening - per kg + flat fee (ADDITIVE)
+            # K0.20/kg + K40 flat (sell margin added)
             {
                 'product_code_id': 1040,  # EXP-SCREEN
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
                 'currency': 'PGK',
                 'rate_per_kg': Decimal('0.20'),
-                'min_charge': Decimal('45.00'),
+                'rate_per_shipment': Decimal('40.00'),
+                'is_additive': True,  # per-kg + flat combined
             },
             # Clearance (SELL only - we do this in-house)
             {
@@ -355,6 +469,14 @@ class Command(BaseCommand):
                 'min_charge': Decimal('95.00'),
                 'max_charge': Decimal('500.00'),
             },
+            # FSC on Pickup - 10% of Pickup charge
+            {
+                'product_code_id': 1060,  # EXP-FSC-PICKUP
+                'origin_airport': 'POM',
+                'destination_airport': 'BNE',
+                'currency': 'PGK',
+                'percent_rate': Decimal('10.00'),  # 10%
+            },
         ]
         
         for rate_data in sell_rates:
@@ -370,6 +492,8 @@ class Command(BaseCommand):
                     'min_charge': rate_data.get('min_charge'),
                     'max_charge': rate_data.get('max_charge'),
                     'weight_breaks': rate_data.get('weight_breaks'),
+                    'percent_rate': rate_data.get('percent_rate'),
+                    'is_additive': rate_data.get('is_additive', False),
                     'valid_until': valid_until,
                 }
             )

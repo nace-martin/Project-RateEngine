@@ -6,12 +6,16 @@ Design Principles:
 - Rule 5: No pricing logic in ORM queries - simple lookups only
 - Pricing rules live in Python code, not database queries
 - All calculations are linear, readable, auditable
+
+AMENDMENTS:
+- Security Screening: is_additive=True means rate_per_kg + rate_per_shipment are ADDED
+- FSC: percent_rate field for percentage-based surcharges
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pricing_v4.models import ProductCode, ExportCOGS, ExportSellRate
 
@@ -88,8 +92,9 @@ class ExportPricingEngine:
         self.destination = destination
         self.chargeable_weight_kg = chargeable_weight_kg
         
-        # Cache for calculated values
-        self._cost_cache = {}
+        # Cache for calculated values (needed for percentage surcharges)
+        self._sell_cache: Dict[int, Decimal] = {}
+        self._cost_cache: Dict[int, Decimal] = {}
     
     # =========================================================================
     # PUBLIC API
@@ -107,8 +112,29 @@ class ExportPricingEngine:
         """
         lines = []
         
+        # First pass: calculate all non-percentage charges
+        regular_ids = []
+        percent_ids = []
+        
         for pc_id in product_code_ids:
+            pc = self._get_product_code(pc_id)
+            if pc and pc.default_unit == ProductCode.UNIT_PERCENT:
+                percent_ids.append(pc_id)
+            else:
+                regular_ids.append(pc_id)
+        
+        # Calculate regular charges first
+        for pc_id in regular_ids:
             line = self._calculate_charge_line(pc_id)
+            if line:
+                lines.append(line)
+                # Cache for percentage calculations
+                self._sell_cache[pc_id] = line.sell_amount
+                self._cost_cache[pc_id] = line.cost_amount
+        
+        # Calculate percentage-based surcharges
+        for pc_id in percent_ids:
+            line = self._calculate_percentage_charge(pc_id)
             if line:
                 lines.append(line)
         
@@ -211,9 +237,6 @@ class ExportPricingEngine:
             cost_amount = Decimal('0')
             cost_source = 'N/A (Sell Only)'
         
-        # Cache cost for percentage-based surcharges
-        self._cost_cache[product_code_id] = cost_amount
-        
         # 5. Calculate Sell amount
         sell_amount = self._calculate_amount(sell_rate)
         
@@ -249,22 +272,123 @@ class ExportPricingEngine:
             notes='',
         )
     
+    def _calculate_percentage_charge(self, product_code_id: int) -> Optional[ChargeLineResult]:
+        """
+        Calculate a percentage-based surcharge.
+        
+        Example: FSC = 10% of Pickup charge
+        """
+        # 1. Get ProductCode
+        pc = self._get_product_code(product_code_id)
+        if not pc:
+            return None
+        
+        # 2. Get base ProductCode (what this is a percentage of)
+        base_pc = pc.percent_of_product_code
+        if not base_pc:
+            return ChargeLineResult(
+                product_code_id=pc.id,
+                product_code=pc.code,
+                description=pc.description,
+                category=pc.category,
+                cost_amount=Decimal('0'),
+                cost_currency='PGK',
+                cost_source='N/A',
+                sell_amount=Decimal('0'),
+                sell_currency='PGK',
+                margin_amount=Decimal('0'),
+                margin_percent=Decimal('0'),
+                gst_amount=Decimal('0'),
+                sell_incl_gst=Decimal('0'),
+                is_rate_missing=True,
+                notes=f"No base product code for percentage calculation",
+            )
+        
+        # 3. Get sell rate for percentage
+        sell_rate = self._get_sell_rate(product_code_id)
+        if not sell_rate or not sell_rate.percent_rate:
+            return ChargeLineResult(
+                product_code_id=pc.id,
+                product_code=pc.code,
+                description=pc.description,
+                category=pc.category,
+                cost_amount=Decimal('0'),
+                cost_currency='PGK',
+                cost_source='N/A',
+                sell_amount=Decimal('0'),
+                sell_currency='PGK',
+                margin_amount=Decimal('0'),
+                margin_percent=Decimal('0'),
+                gst_amount=Decimal('0'),
+                sell_incl_gst=Decimal('0'),
+                is_rate_missing=True,
+                notes=f"No percent_rate found for {pc.code}",
+            )
+        
+        # 4. Get base amount from cache
+        base_sell = self._sell_cache.get(base_pc.id, Decimal('0'))
+        base_cost = self._cost_cache.get(base_pc.id, Decimal('0'))
+        
+        # 5. Calculate surcharge
+        percent = sell_rate.percent_rate / Decimal('100')
+        sell_amount = (base_sell * percent).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        cost_amount = (base_cost * percent).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        
+        # 6. Calculate Margin
+        margin_amount = sell_amount - cost_amount
+        margin_percent = (
+            (margin_amount / cost_amount * 100) if cost_amount > 0 else Decimal('0')
+        )
+        
+        # 7. Calculate GST
+        if pc.is_gst_applicable:
+            gst_amount = (sell_amount * pc.gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        else:
+            gst_amount = Decimal('0')
+        
+        sell_incl_gst = sell_amount + gst_amount
+        
+        return ChargeLineResult(
+            product_code_id=pc.id,
+            product_code=pc.code,
+            description=f"{pc.description} ({sell_rate.percent_rate}% of {base_pc.code})",
+            category=pc.category,
+            cost_amount=cost_amount,
+            cost_currency='PGK',
+            cost_source=f'{sell_rate.percent_rate}% of COGS',
+            sell_amount=sell_amount,
+            sell_currency=sell_rate.currency,
+            margin_amount=margin_amount,
+            margin_percent=margin_percent.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if cost_amount > 0 else Decimal('0'),
+            gst_amount=gst_amount,
+            sell_incl_gst=sell_incl_gst,
+            is_rate_missing=False,
+            notes=f'Based on {base_pc.code}: K{base_sell}',
+        )
+    
     def _calculate_amount(self, rate) -> Decimal:
         """
         Calculate amount from a rate record.
         
         Pricing rules:
         1. Weight breaks take precedence
-        2. Per-kg rate × weight
-        3. Flat per-shipment rate
-        4. Apply min/max constraints
+        2. If is_additive: per-kg + per-shipment combined
+        3. Otherwise: per-kg rate × weight OR flat per-shipment
+        4. Apply min/max constraints (unless additive)
         """
         weight = self.chargeable_weight_kg
         zero = Decimal('0')
         
-        # Weight break pricing
+        # Weight break pricing (takes precedence)
         if rate.weight_breaks:
             amount = self._calculate_weight_break(rate.weight_breaks, weight)
+        # ADDITIVE: per-kg + flat fee combined (e.g., Security Screening)
+        elif getattr(rate, 'is_additive', False) and rate.rate_per_kg and rate.rate_per_shipment:
+            kg_amount = weight * rate.rate_per_kg
+            flat_amount = rate.rate_per_shipment
+            amount = kg_amount + flat_amount
+            # For additive, skip min/max
+            return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         elif rate.rate_per_kg:
             amount = weight * rate.rate_per_kg
         elif rate.rate_per_shipment:
