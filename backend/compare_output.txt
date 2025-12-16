@@ -1,0 +1,173 @@
+﻿================================================================================
+DETAILED QUOTE BREAKDOWN: Export Air D2A Prepaid POM->BNE
+================================================================================
+
+Shipment Details:
+  Origin: POM
+  Destination: BNE
+  Chargeable Weight: 150.00 kg
+  Quote Date: 2025-12-16
+
+================================================================================
+LINE-BY-LINE CALCULATIONS
+================================================================================
+
+--- EXP-FRT-AIR: Export Air Freight ---
+
+  COGS Calculation:
+    Weight Breaks: [{'min_kg': 0, 'rate': '6.30'}, {'min_kg': 100, 'rate': '5.90'}, {'min_kg': 200, 'rate': '5.70'}, {'min_kg': 500, 'rate': '5.40'}]
+    >> Using tier min_kg=100: 150.00 kg x K5.90 = K885.00
+    COGS Result: K885.00
+
+  SELL Calculation:
+    Weight Breaks: [{'min_kg': 0, 'rate': '7.50'}, {'min_kg': 100, 'rate': '7.00'}, {'min_kg': 200, 'rate': '6.80'}, {'min_kg': 500, 'rate': '6.50'}]
+    >> Using tier min_kg=100: 150.00 kg x K7.00 = K1050.00
+    SELL Result: K1050.00
+
+  MARGIN: K1050.00 - K885.00 = K165.00
+
+--- EXP-DOC: Export Documentation Fee ---
+
+  COGS Calculation:
+    Flat fee: K35.00
+    COGS Result: K35.00
+
+  SELL Calculation:
+    Flat fee: K50.00
+    SELL Result: K50.00
+
+  MARGIN: K50.00 - K35.00 = K15.00
+
+--- EXP-AWB: Export AWB Fee ---
+
+  COGS Calculation:
+    Flat fee: K35.00
+    COGS Result: K35.00
+
+  SELL Calculation:
+    Flat fee: K50.00
+    SELL Result: K50.00
+
+  MARGIN: K50.00 - K35.00 = K15.00
+
+--- EXP-CLEAR: Export Customs Clearance ---
+
+  COGS Calculation:
+    (No COGS - sell-only charge)
+    COGS Result: K0.00
+
+  SELL Calculation:
+    Flat fee: K300.00
+    SELL Result: K300.00
+
+  MARGIN: K300.00 - K0.00 = K300.00
+
+--- EXP-AGENCY: Export Agency Fee ---
+
+  COGS Calculation:
+    (No COGS - sell-only charge)
+    COGS Result: K0.00
+
+  SELL Calculation:
+    Flat fee: K250.00
+    SELL Result: K250.00
+
+  MARGIN: K250.00 - K0.00 = K250.00
+
+--- EXP-TERM: Export Terminal Handling Fee ---
+
+  COGS Calculation:
+    Flat fee: K35.00
+    COGS Result: K35.00
+
+  SELL Calculation:
+    Flat fee: K50.00
+    SELL Result: K50.00
+
+  MARGIN: K50.00 - K35.00 = K15.00
+
+--- EXP-BUILDUP: Export Build-Up Fee ---
+
+  COGS Calculation:
+    Per-kg: 150.00 kg x K0.1500 = K22.50
+    >> Apply min charge: K30.00
+    COGS Result: K30.00
+
+  SELL Calculation:
+    Per-kg: 150.00 kg x K0.2000 = K30.00
+    >> Apply min charge: K50.00
+    SELL Result: K50.00
+
+  MARGIN: K50.00 - K30.00 = K20.00
+
+--- EXP-SCREEN: Export Security Screening ---
+
+  COGS Calculation:
+    ADDITIVE: 150.00 kg x K0.1700/kg + K35.00 flat
+    >> K25.50 + K35.00 = K60.50
+    COGS Result: K60.50
+
+  SELL Calculation:
+    ADDITIVE: 150.00 kg x K0.2000/kg + K40.00 flat
+    >> K30.00 + K40.00 = K70.00
+    SELL Result: K70.00
+
+  MARGIN: K70.00 - K60.50 = K9.50
+
+--- EXP-PICKUP: Export Pickup/Collection ---
+
+  COGS Calculation:
+    (No COGS - sell-only charge)
+    COGS Result: K0.00
+
+  SELL Calculation:
+    Per-kg: 150.00 kg x K1.5000 = K225.00
+    SELL Result: K225.00
+
+  MARGIN: K225.00 - K0.00 = K225.00
+
+--- EXP-DG: Export DG Acceptance ---
+
+  COGS Calculation:
+    Flat fee: K100.00
+    COGS Result: K100.00
+
+  SELL Calculation:
+    Flat fee: K250.00
+    SELL Result: K250.00
+
+  MARGIN: K250.00 - K100.00 = K150.00
+
+--- EXP-FSC-PICKUP: Export Fuel Surcharge on Pickup (10.00% of EXP-PICKUP) ---
+
+  COGS Calculation:
+    (No COGS - sell-only charge)
+    COGS Result: K0.00
+
+  SELL Calculation:
+    Percentage: 10.00% of EXP-PICKUP (K225.00)
+    >> K225.00 x 10.00% = K22.50
+    SELL Result: K22.50
+
+  MARGIN: K22.50 - K0.00 = K22.50
+
+================================================================================
+SUMMARY
+================================================================================
+
+Product Code                 COGS         SELL       MARGIN
+--------------------------------------------------------
+EXP-FRT-AIR          K    885.00 K   1050.00 K    165.00
+EXP-DOC              K     35.00 K     50.00 K     15.00
+EXP-AWB              K     35.00 K     50.00 K     15.00
+EXP-CLEAR            K      0.00 K    300.00 K    300.00
+EXP-AGENCY           K      0.00 K    250.00 K    250.00
+EXP-TERM             K     35.00 K     50.00 K     15.00
+EXP-BUILDUP          K     30.00 K     50.00 K     20.00
+EXP-SCREEN           K     60.50 K     70.00 K      9.50
+EXP-PICKUP           K      0.00 K    225.00 K    225.00
+EXP-DG               K    100.00 K    250.00 K    150.00
+EXP-FSC-PICKUP       K      0.00 K     22.50 K     22.50
+--------------------------------------------------------
+TOTALS               K   1180.50 K   2367.50 K   1187.00
+========================================================

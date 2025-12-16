@@ -414,19 +414,19 @@ class Command(BaseCommand):
         valid_from = date(2025, 1, 1)
         valid_until = date(2025, 12, 31)
         
-        # Sell rates (typically higher than COGS for margin)
+        # Sell rates from actual rate card
         sell_rates = [
-            # Freight - weight breaks with margin
+            # Freight - weight breaks from EXPORT SELL PREPAID D2A rate card
             {
                 'product_code_id': 1001,  # EXP-FRT-AIR
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
                 'currency': 'PGK',
                 'weight_breaks': [
-                    {"min_kg": 0, "rate": "7.50"},
-                    {"min_kg": 100, "rate": "7.00"},
-                    {"min_kg": 200, "rate": "6.80"},
-                    {"min_kg": 500, "rate": "6.50"},
+                    {"min_kg": 0, "rate": "7.90"},    # <=99kg
+                    {"min_kg": 100, "rate": "7.40"},  # +100kg
+                    {"min_kg": 200, "rate": "7.15"},  # +200kg
+                    {"min_kg": 500, "rate": "6.75"},  # +500kg
                 ],
                 'min_charge': Decimal('200.00'),
             },
@@ -464,14 +464,14 @@ class Command(BaseCommand):
                 'min_charge': Decimal('50.00'),
             },
             # Security Screening - per kg + flat fee (ADDITIVE)
-            # K0.20/kg + K40 flat (sell margin added)
+            # K0.20/kg + K45 flat (from rate card)
             {
                 'product_code_id': 1040,  # EXP-SCREEN
                 'origin_airport': 'POM',
                 'destination_airport': 'BNE',
                 'currency': 'PGK',
                 'rate_per_kg': Decimal('0.20'),
-                'rate_per_shipment': Decimal('40.00'),
+                'rate_per_shipment': Decimal('45.00'),
                 'is_additive': True,  # per-kg + flat combined
             },
             # Clearance (SELL only - we do this in-house)
