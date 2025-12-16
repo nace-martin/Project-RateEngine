@@ -100,6 +100,40 @@ class ExportPricingEngine:
     # PUBLIC API
     # =========================================================================
     
+    @staticmethod
+    def get_product_codes(is_dg: bool = False) -> List[int]:
+        """
+        Get the list of ProductCode IDs to include in an Export quote.
+        
+        This is where conditional logic lives (Option A approach).
+        ProductCodes are included/excluded based on shipment attributes.
+        
+        Args:
+            is_dg: True if shipment contains dangerous goods
+            
+        Returns:
+            List of ProductCode IDs to quote
+        """
+        # Standard Export charges (always included)
+        codes = [
+            1001,  # EXP-FRT-AIR - Air Freight
+            1010,  # EXP-DOC - Documentation
+            1011,  # EXP-AWB - AWB Fee
+            1020,  # EXP-CLEAR - Customs Clearance
+            1021,  # EXP-AGENCY - Agency Fee
+            1030,  # EXP-TERM - Terminal Handling
+            1031,  # EXP-BUILDUP - Build-Up
+            1040,  # EXP-SCREEN - Security Screening
+            1050,  # EXP-PICKUP - Pickup/Collection
+            1060,  # EXP-FSC-PICKUP - Fuel Surcharge on Pickup
+        ]
+        
+        # Conditional charges
+        if is_dg:
+            codes.append(1070)  # EXP-DG - DG Acceptance
+        
+        return codes
+    
     def calculate_quote(self, product_code_ids: List[int]) -> QuoteResult:
         """
         Calculate a complete quote for the given product codes.
