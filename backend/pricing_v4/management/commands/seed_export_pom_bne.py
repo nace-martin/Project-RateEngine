@@ -200,6 +200,18 @@ class Command(BaseCommand):
             },
             # 1050-1059: Cartage (Pickup) - defined first, insert here
             pickup_code,
+            # 1070-1079: Dangerous Goods
+            {
+                'id': 1070,
+                'code': 'EXP-DG',
+                'description': 'Export DG Acceptance',
+                'category': ProductCode.CATEGORY_HANDLING,
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.00'),
+                'gl_revenue_code': '4400',
+                'gl_cost_code': '5400',
+                'default_unit': ProductCode.UNIT_SHIPMENT,
+            },
         ]
         
         # Create pickup first (needed for FSC reference)
@@ -353,6 +365,17 @@ class Command(BaseCommand):
                 'is_additive': True,  # KEY: per-kg + flat fee combined
                 'min_charge': None,   # No minimum - additive calculation
             },
+            # DG Acceptance - flat fee (for dangerous goods shipments)
+            {
+                'product_code_id': 1070,  # EXP-DG
+                'origin_airport': 'POM',
+                'destination_airport': 'BNE',
+                'carrier': carrier_px,
+                'agent': None,
+                'currency': 'PGK',
+                'rate_per_shipment': Decimal('100.00'),
+                'is_additive': False,
+            },
         ]
         
         for rate_data in cogs_rates:
@@ -484,6 +507,14 @@ class Command(BaseCommand):
                 'destination_airport': 'BNE',
                 'currency': 'PGK',
                 'percent_rate': Decimal('10.00'),  # 10%
+            },
+            # DG Acceptance - flat fee (for dangerous goods shipments)
+            {
+                'product_code_id': 1070,  # EXP-DG
+                'origin_airport': 'POM',
+                'destination_airport': 'BNE',
+                'currency': 'PGK',
+                'rate_per_shipment': Decimal('250.00'),
             },
         ]
         
