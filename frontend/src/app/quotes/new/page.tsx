@@ -10,7 +10,10 @@ import type {
   LocationSearchResult,
   V3QuoteComputeRequest,
 } from "@/lib/types";
-import { getContactsForCompany, computeQuoteV3 } from "@/lib/api";
+import { getContactsForCompany, computeQuoteV3, validateSpotScope, evaluateSpotTrigger } from "@/lib/api";
+import { useSpotMode } from "@/hooks/use-spot-mode";
+import { SpotModeBanner, OutOfScopeBanner } from "@/components/spot";
+import type { SPECommodity, TriggerResult } from "@/lib/spot-types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   quoteFormSchemaV3,
@@ -142,6 +145,11 @@ export default function NewQuotePage() {
   const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
   const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null);
   const [pendingFormData, setPendingFormData] = useState<QuoteFormSchemaV3 | null>(null);
+
+  // SPOT Mode State
+  const { state: spotState, actions: spotActions } = useSpotMode();
+  const [showSpotBanner, setShowSpotBanner] = useState(false);
+  const [spotTriggerResult, setSpotTriggerResult] = useState<TriggerResult | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -379,10 +387,25 @@ export default function NewQuotePage() {
     }
   };
 
+  // Map frontend cargo type to SPE commodity code
+  const mapCargoToSPECommodity = (cargoType: string): SPECommodity => {
+    switch (cargoType) {
+      case 'Dangerous Goods': return 'DG';
+      case 'Perishable / Cold Chain': return 'PER';
+      case 'Live Animals': return 'AVI';
+      case 'Valuable / High-Value': return 'HVC';
+      case 'Oversized / OOG': return 'OOG';
+      case 'General Cargo':
+      default: return 'GCR';
+    }
+  };
+
   async function onSubmit(data: QuoteFormSchemaV3) {
     setIsSubmitting(true);
     setApiError(null);
     setMissingRates({ carrier: false, agent: false });
+    setShowSpotBanner(false);
+    setSpotTriggerResult(null);
 
     if (!user) {
       setApiError("Authentication token not available. Please log in.");
@@ -390,6 +413,54 @@ export default function NewQuotePage() {
       return;
     }
 
+    // Get country codes from locations
+    const originCountry = originLocation?.country_code || '';
+    const destCountry = destinationLocation?.country_code || '';
+
+    // SPOT Mode Step 1: Validate scope (PNG only)
+    try {
+      const scopeResult = await validateSpotScope({
+        origin_country: originCountry,
+        destination_country: destCountry,
+      });
+
+      if (!scopeResult.is_valid) {
+        // Out of scope - hard block
+        setApiError(scopeResult.error || "Shipment out of scope - only PNG routes supported");
+        setIsSubmitting(false);
+        return;
+      }
+    } catch (error) {
+      console.error("Scope validation error:", error);
+      // If scope validation fails, continue with normal flow
+      // (backend will catch any scope issues)
+    }
+
+    // SPOT Mode Step 2: Evaluate trigger
+    try {
+      const commodity = mapCargoToSPECommodity(data.cargo_type);
+      const triggerResult = await evaluateSpotTrigger({
+        origin_country: originCountry,
+        destination_country: destCountry,
+        commodity,
+        origin_airport: data.origin_airport,
+        destination_airport: data.destination_airport,
+        has_valid_buy_rate: true, // Will be determined by pricing attempt
+      });
+
+      if (triggerResult.is_spot_required && triggerResult.trigger) {
+        // SPOT mode required - show banner
+        setShowSpotBanner(true);
+        setSpotTriggerResult(triggerResult.trigger);
+        setIsSubmitting(false);
+        return;
+      }
+    } catch (error) {
+      console.error("Trigger evaluation error:", error);
+      // If trigger eval fails, continue with normal flow
+    }
+
+    // Normal pricing flow
     try {
       // Always include spot rates if they are populated
       const payload = buildQuoteComputePayload(data, spotRates, pendingQuoteId);
@@ -409,14 +480,11 @@ export default function NewQuotePage() {
         }
 
         // Check for missing agent rates (Destination Charges)
-        // We check for standard destination components or if DST_CHARGES itself is missing
         const destComponents = ['DST-DELIV-STD', 'DST-CLEAR-CUS', 'DST-HANDL-STD', 'DST-DOC-IMP', 'DST_CHARGES'];
         if (lines.some(l => destComponents.includes(l.service_component.code) && l.is_rate_missing)) {
           missingAgent = true;
         }
 
-        // Also check by leg/category if possible, but code list is safer for now.
-        // If we have missing rates, we show the spot manager and DO NOT redirect yet.
         if (missingCarrier || missingAgent) {
           setMissingRates({ carrier: missingCarrier, agent: missingAgent });
           setPendingQuoteId(response.id);
@@ -507,6 +575,19 @@ export default function NewQuotePage() {
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>{apiError}</AlertDescription>
             </Alert>
+          )}
+
+          {/* SPOT Mode Banner */}
+          {showSpotBanner && spotTriggerResult && (
+            <SpotModeBanner
+              triggerResult={spotTriggerResult}
+              onEnterSpotMode={() => {
+                // TODO: Navigate to SPOT rate entry flow
+                console.log('Entering SPOT mode');
+                setShowSpotBanner(false);
+              }}
+              isLoading={isSubmitting}
+            />
           )}
 
           {/* 1. Customer */}
