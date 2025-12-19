@@ -657,3 +657,213 @@ Thank you,
 {sender}"""
         
         return SpotEmailDraft(subject=subject.strip(), body=body.strip())
+
+
+# =============================================================================
+# REPLY ANALYSIS SERVICE
+# =============================================================================
+
+class ReplyAnalysisService:
+    """
+    Analyze agent rate replies and build SPE assertions.
+    
+    Phase 1: Manual classification (user adds assertions)
+    Phase 2: AI-assisted extraction (coming soon)
+    
+    Workflow:
+    1. User pastes agent reply text
+    2. System (or AI) extracts assertions
+    3. User reviews/adjusts classifications
+    4. System validates mandatory fields
+    5. System builds SPE from assertions
+    """
+    
+    # Import here to avoid circular imports at module level
+    from quotes.reply_schemas import (
+        AssertionStatus,
+        AssertionCategory,
+        ExtractedAssertion,
+        AnalysisSummary,
+        ReplyAnalysisResult,
+        MANDATORY_CATEGORIES,
+        OPTIONAL_CATEGORIES,
+    )
+    
+    @classmethod
+    def analyze_manual(
+        cls,
+        raw_text: str,
+        assertions: List[dict],
+    ) -> 'ReplyAnalysisResult':
+        """
+        Analyze with manually provided assertions.
+        
+        Args:
+            raw_text: Original pasted reply text
+            assertions: List of assertion dicts from user input
+            
+        Returns:
+            ReplyAnalysisResult with summary and warnings
+        """
+        from quotes.reply_schemas import (
+            AssertionStatus,
+            AssertionCategory,
+            ExtractedAssertion,
+            AnalysisSummary,
+            ReplyAnalysisResult,
+            MANDATORY_CATEGORIES,
+        )
+        
+        parsed_assertions = []
+        for a in assertions:
+            parsed_assertions.append(ExtractedAssertion(
+                text=a.get('text', ''),
+                category=AssertionCategory(a.get('category', 'rate')),
+                value=a.get('value'),
+                status=AssertionStatus(a.get('status', 'confirmed')),
+                confidence=a.get('confidence', 1.0),
+                source_line=a.get('source_line'),
+                rate_amount=a.get('rate_amount'),
+                rate_currency=a.get('rate_currency'),
+                rate_unit=a.get('rate_unit'),
+                validity_date=a.get('validity_date'),
+            ))
+        
+        # Build summary
+        summary = cls._build_summary(parsed_assertions)
+        
+        # Generate warnings
+        warnings = cls._generate_warnings(summary, parsed_assertions)
+        
+        return ReplyAnalysisResult(
+            raw_text=raw_text,
+            assertions=parsed_assertions,
+            summary=summary,
+            warnings=warnings,
+        )
+    
+    @classmethod
+    def _build_summary(cls, assertions: List['ExtractedAssertion']) -> 'AnalysisSummary':
+        """Build summary from assertions."""
+        from quotes.reply_schemas import (
+            AssertionStatus,
+            AssertionCategory,
+            AnalysisSummary,
+        )
+        
+        summary = AnalysisSummary()
+        
+        for a in assertions:
+            # Count by status
+            if a.status == AssertionStatus.CONFIRMED:
+                summary.confirmed_count += 1
+            elif a.status == AssertionStatus.CONDITIONAL:
+                summary.conditional_count += 1
+            elif a.status == AssertionStatus.IMPLICIT:
+                summary.implicit_count += 1
+            elif a.status == AssertionStatus.MISSING:
+                summary.missing_count += 1
+            
+            # Check field presence (any status except MISSING counts as "has")
+            if a.status != AssertionStatus.MISSING:
+                if a.category == AssertionCategory.RATE:
+                    summary.has_rate = True
+                elif a.category == AssertionCategory.CURRENCY:
+                    summary.has_currency = True
+                elif a.category == AssertionCategory.VALIDITY:
+                    summary.has_validity = True
+                elif a.category == AssertionCategory.ROUTING:
+                    summary.has_routing = True
+                elif a.category == AssertionCategory.ACCEPTANCE:
+                    summary.has_acceptance = True
+        
+        return summary
+    
+    @classmethod
+    def _generate_warnings(
+        cls,
+        summary: 'AnalysisSummary',
+        assertions: List['ExtractedAssertion'],
+    ) -> List[str]:
+        """Generate user-facing warnings."""
+        from quotes.reply_schemas import AssertionStatus
+        
+        warnings = []
+        
+        # Mandatory field warnings
+        if not summary.has_rate:
+            warnings.append("⛔ MISSING: Airfreight rate is required")
+        if not summary.has_currency:
+            warnings.append("⛔ MISSING: Rate currency is required")
+        if not summary.has_validity:
+            warnings.append("⛔ MISSING: Rate validity is required")
+        
+        # Optional field warnings
+        if not summary.has_routing:
+            warnings.append("⚠️ Routing not specified - may involve multiple legs")
+        if not summary.has_acceptance:
+            warnings.append("⚠️ Space/acceptance not confirmed")
+        
+        # Conditional/implicit warnings
+        conditional = [a for a in assertions if a.status == AssertionStatus.CONDITIONAL]
+        if conditional:
+            warnings.append(f"⚠️ {len(conditional)} item(s) are conditional - requires acknowledgement")
+        
+        implicit = [a for a in assertions if a.status == AssertionStatus.IMPLICIT]
+        if implicit:
+            warnings.append(f"⚠️ {len(implicit)} item(s) are implicit assumptions - verify before proceeding")
+        
+        return warnings
+    
+    @classmethod
+    def build_spe_charges_from_analysis(
+        cls,
+        analysis: 'ReplyAnalysisResult',
+        source_reference: str = "Agent reply",
+    ) -> List[dict]:
+        """
+        Convert analysis assertions to SPE charge line inputs.
+        
+        Args:
+            analysis: Completed analysis result
+            source_reference: Source reference for charge lines
+            
+        Returns:
+            List of charge line dicts ready for SPE creation
+        """
+        from quotes.reply_schemas import AssertionStatus, AssertionCategory
+        
+        charges = []
+        
+        for a in analysis.assertions:
+            # Skip missing assertions
+            if a.status == AssertionStatus.MISSING:
+                continue
+            
+            # Only create charge lines for rate-related assertions
+            if a.category in (
+                AssertionCategory.RATE,
+                AssertionCategory.ORIGIN_CHARGES,
+                AssertionCategory.DEST_CHARGES,
+            ):
+                # Determine bucket
+                if a.category == AssertionCategory.RATE:
+                    bucket = "airfreight"
+                elif a.category == AssertionCategory.ORIGIN_CHARGES:
+                    bucket = "origin_charges"
+                else:
+                    bucket = "destination_charges"
+                
+                charges.append({
+                    'code': a.category.value.upper(),
+                    'description': a.text,
+                    'amount': str(a.rate_amount) if a.rate_amount else a.value or '0',
+                    'currency': a.rate_currency or 'USD',
+                    'unit': a.rate_unit or 'per_kg',
+                    'bucket': bucket,
+                    'is_primary_cost': a.category == AssertionCategory.RATE,
+                    'conditional': a.status == AssertionStatus.CONDITIONAL,
+                    'source_reference': source_reference,
+                })
+        
+        return charges

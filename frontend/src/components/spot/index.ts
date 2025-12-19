@@ -18,3 +18,8 @@ export { SpotManagerApproval } from './SpotManagerApproval';
 export { SpotRateEntryForm } from './SpotRateEntryForm';
 
 export { SpotEmailDraftCard } from './SpotEmailDraftCard';
+
+// Reply Analysis components
+export { ReplyPasteCard } from './ReplyPasteCard';
+
+export { AssertionReviewCard } from './AssertionReviewCard';
