@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/context/auth-context";
-import { createQuoteVersion, getQuoteV3, getQuoteCompute } from "@/lib/api"; // Updated import
+import { createQuoteVersion, getQuoteV3, getQuoteCompute } from "@/lib/api";
 import {
   QuoteVersionCreatePayload,
   V3ManualOverride,
@@ -14,6 +15,9 @@ import {
 import ManualRateForm from "@/components/ManualRateForm";
 import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
+import QuoteSummaryBar from "@/components/QuoteSummaryBar";
+import QuoteDocumentPreview from "@/components/QuoteDocumentPreview";
+import QuoteSettings from "@/components/QuoteSettings";
 import RoutingWarning from "@/components/RoutingWarning";
 import { BucketSourcingView } from "@/components/pricing/BucketSourcingView";
 import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDisplay";
@@ -36,12 +40,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronRight, ArrowLeft, CheckCircle } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions, isQuoteEditable } from "@/components/QuoteStatusBadge";
 
 export default function QuoteDetailPage() {
   const { user, token } = useAuth();
   const params = useParams();
+  const router = useRouter();
   const id = params.id as string;
 
   const [quote, setQuote] = useState<V3QuoteComputeResponse | null>(null);
@@ -183,7 +188,7 @@ export default function QuoteDetailPage() {
 
   if (error) {
     return (
-      <div className="container mx-auto max-w-4xl p-4">
+      <div className="container mx-auto max-w-6xl p-4">
         <Alert variant="destructive">
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
@@ -194,7 +199,7 @@ export default function QuoteDetailPage() {
 
   if (!quote) {
     return (
-      <div className="container mx-auto max-w-4xl p-4">
+      <div className="container mx-auto max-w-6xl p-4">
         <Alert variant="default">
           <AlertTitle>No Quote Found</AlertTitle>
           <AlertDescription>
@@ -207,21 +212,68 @@ export default function QuoteDetailPage() {
 
   const isIncomplete = quote.status === "INCOMPLETE";
 
+  // For finalized view, use the new two-column layout
+  const showFinalizedLayout = !isIncomplete;
+
   return (
-    <div className="container mx-auto max-w-4xl space-y-6 p-4">
-      <CustomerSummaryCard
-        quote={quote}
-        onStatusChange={() => {
-          // Refresh quote data after status change
-          getQuoteV3(id).then((data) => setQuote(data));
-        }}
-      />
+    <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
+      {/* Breadcrumb Navigation */}
+      <nav className="flex items-center gap-2 text-sm text-slate-500">
+        <Link href="/quotes" className="hover:text-slate-700 transition-colors">
+          Quotes
+        </Link>
+        <ChevronRight className="w-4 h-4" />
+        <span className="text-slate-400">New Quote</span>
+        <ChevronRight className="w-4 h-4" />
+        <span className="font-medium text-slate-700">Finalize</span>
+      </nav>
+
+      {/* Page Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <h1 className="text-2xl font-bold text-slate-900">
+              {quote.quote_number}
+            </h1>
+            <QuoteStatusBadge status={quote.status} size="default" />
+          </div>
+          <p className="text-sm text-slate-500">
+            Created on {new Date(quote.created_at).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric'
+            })} • {quote.shipment_type} Air Freight
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={() => router.push(`/quotes/new?edit=${quote.id}`)}
+            className="gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Edit
+          </Button>
+          <QuoteStatusActions
+            quoteId={quote.id}
+            status={quote.status}
+            hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+            onStatusChange={() => {
+              getQuoteV3(id).then((data) => setQuote(data));
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Summary Bar */}
+      <QuoteSummaryBar quote={quote} />
 
       {/* Display routing warning if VIA routing is required */}
       {computeResult?.routing && (
         <RoutingWarning routingInfo={computeResult.routing} />
       )}
 
+      {/* Main Content Area */}
       {isIncomplete ? (
         <BucketSourcingView
           quote={quote}
@@ -234,14 +286,25 @@ export default function QuoteDetailPage() {
           }}
         />
       ) : (
-        // For finalized quotes: show spot charge results if available, otherwise old breakdown
-        hasSpotCharges ? (
-          <SpotChargeResultDisplay quote={quote} />
-        ) : computeResult ? (
-          <QuoteFinancialBreakdown result={computeResult} />
-        ) : (
-          <QuoteResultDisplay quote={quote} />
-        )
+        /* Two-Column Layout for Finalized Quotes */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Financial Breakdown (2/3 width) */}
+          <div className="lg:col-span-2 space-y-6">
+            {hasSpotCharges ? (
+              <SpotChargeResultDisplay quote={quote} />
+            ) : computeResult ? (
+              <QuoteFinancialBreakdown result={computeResult} />
+            ) : (
+              <QuoteResultDisplay quote={quote} />
+            )}
+          </div>
+
+          {/* Right Column - Document Preview & Settings (1/3 width) */}
+          <div className="space-y-6">
+            <QuoteDocumentPreview quote={quote} />
+            <QuoteSettings defaultPaymentTerm={quote.payment_term?.toLowerCase()} />
+          </div>
+        </div>
       )}
     </div>
   );
@@ -446,173 +509,5 @@ function ManualSourcingView({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function CustomerSummaryCard({ quote, onStatusChange }: { quote: V3QuoteComputeResponse; onStatusChange?: () => void }) {
-  const customerDetails =
-    quote.customer && typeof quote.customer === "object"
-      ? quote.customer
-      : null;
-  const contactDetails =
-    quote.contact && typeof quote.contact === "object"
-      ? quote.contact
-      : null;
-
-  const customerName =
-    customerDetails?.name ||
-    customerDetails?.company_name ||
-    (typeof quote.customer === "string" ? quote.customer : "Customer");
-  const customerEmail = customerDetails?.email || null;
-
-  const contactName = contactDetails
-    ? [contactDetails.first_name, contactDetails.last_name]
-      .filter(Boolean)
-      .join(" ")
-      .trim() || contactDetails.email || "Contact"
-    : typeof quote.contact === "string"
-      ? quote.contact
-      : "Contact";
-  const contactEmail = contactDetails?.email || null;
-
-  // Helper to clean location names (remove airport codes and airport names)
-  const cleanLocationName = (location: string) => {
-    // Remove airport codes like "BNE - " or "POM - "
-    let cleaned = location.replace(/^[A-Z]{3}\s*-\s*/i, '');
-    // Remove common airport name suffixes and patterns
-    cleaned = cleaned.replace(/\s+(Intl|International|Airport)(\s|$)/gi, '');
-    // Remove specific airport names (Jacksons, etc.)
-    cleaned = cleaned.replace(/\s+(Jacksons|Jackson)(\s|$)/gi, '');
-    return cleaned.trim();
-  };
-
-  // Expand service scope abbreviation
-  const expandServiceScope = (scope: string) => {
-    const expansions: Record<string, string> = {
-      'D2D': 'Door to Door',
-      'CY': 'Container Yard',
-      'CFS': 'Container Freight Station',
-    };
-    return expansions[scope] || scope;
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Professional Header */}
-      <div className="bg-slate-900 text-white rounded-lg p-8 shadow-sm">
-        <div className="flex items-start justify-between gap-8">
-          <div className="flex-1">
-            <div className="flex items-center gap-4 mb-3">
-              <h1 className="text-3xl font-semibold tracking-tight">
-                {quote.quote_number}
-              </h1>
-              <QuoteStatusBadge status={quote.status} size="lg" />
-            </div>
-            <div className="flex items-center gap-6 text-sm text-slate-400">
-              <span>
-                Created {new Date(quote.created_at).toLocaleDateString('en-US', {
-                  year: 'numeric',
-                  month: 'short',
-                  day: 'numeric'
-                })}
-              </span>
-              <span className="text-slate-600">•</span>
-              <span className="uppercase text-xs font-medium tracking-wider">
-                {quote.shipment_type}
-              </span>
-            </div>
-          </div>
-          <div className="flex-shrink-0">
-            <QuoteStatusActions
-              quoteId={quote.id}
-              status={quote.status}
-              hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
-              onStatusChange={onStatusChange}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Clean Info Grid */}
-      <Card className="overflow-hidden border-slate-200">
-        <CardContent className="p-0">
-          <div className="divide-y divide-slate-100">
-            {/* Customer & Contact Row */}
-            <div className="grid grid-cols-2 divide-x divide-slate-100">
-              <div className="p-6">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-                  Customer
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900 mb-1">
-                    {customerName}
-                  </div>
-                  {customerEmail && (
-                    <div className="text-sm text-slate-600">
-                      {customerEmail}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="p-6">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-                  Contact
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900 mb-1">
-                    {contactName}
-                  </div>
-                  {contactEmail && (
-                    <div className="text-sm text-slate-600">
-                      {contactEmail}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Route & Service Scope Row */}
-            <div className="grid grid-cols-2 divide-x divide-slate-100">
-              <div className="p-6">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-                  Route
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-900 mb-1 flex items-center gap-2">
-                    <span>{cleanLocationName(quote.origin_location)}</span>
-                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
-                    <span>{cleanLocationName(quote.destination_location)}</span>
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    {expandServiceScope(quote.service_scope)}
-                  </div>
-                </div>
-              </div>
-              <div className="p-6">
-                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
-                  Service Details
-                </div>
-                <div className="flex items-center gap-6 text-sm">
-                  <div>
-                    <span className="text-slate-500">Mode: </span>
-                    <span className="text-slate-900 font-medium">{quote.mode}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Incoterm: </span>
-                    <span className="text-slate-700 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">{quote.incoterm}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Payment: </span>
-                    <span className="text-slate-700 font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">{quote.payment_term}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
   );
 }
