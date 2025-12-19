@@ -880,3 +880,188 @@ export async function cloneQuote(quoteId: string): Promise<CloneQuoteResponse> {
 
   return response.json();
 }
+
+// =============================================================================
+// SPOT MODE APIs
+// =============================================================================
+
+import type {
+  ScopeValidateRequest,
+  ScopeValidateResponse,
+  TriggerEvaluateRequest,
+  TriggerEvaluateResponse,
+  CreateSPERequest,
+  SpotPricingEnvelope,
+  SPEComputeRequest,
+  SPEComputeResponse,
+} from './spot-types';
+
+/**
+ * Validate shipment is within PNG scope.
+ * Must be called BEFORE any SPOT logic.
+ */
+export async function validateSpotScope(
+  request: ScopeValidateRequest
+): Promise<ScopeValidateResponse> {
+  const url = API_BASE_URL + '/api/v3/spot/validate-scope/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Scope validation failed: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Evaluate if SPOT mode is required for shipment.
+ */
+export async function evaluateSpotTrigger(
+  request: TriggerEvaluateRequest
+): Promise<TriggerEvaluateResponse> {
+  const url = API_BASE_URL + '/api/v3/spot/evaluate-trigger/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Trigger evaluation failed: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Create a new SPOT Pricing Envelope.
+ */
+export async function createSpotEnvelope(
+  request: CreateSPERequest
+): Promise<SpotPricingEnvelope> {
+  const url = API_BASE_URL + '/api/v3/spot/envelopes/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create SPE: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get SPOT Pricing Envelope by ID.
+ */
+export async function getSpotEnvelope(id: string): Promise<SpotPricingEnvelope> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to get SPE: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Submit Sales acknowledgement for SPE.
+ */
+export async function acknowledgeSpotEnvelope(
+  id: string
+): Promise<{ success: boolean; status: string; requires_manager_approval: boolean }> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/acknowledge/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Acknowledgement failed: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Submit Manager approval for SPE.
+ */
+export async function approveSpotEnvelope(
+  id: string,
+  approved: boolean,
+  comment?: string
+): Promise<{ success: boolean; status: string; approved: boolean }> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/approve/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify({ approved, comment }),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Approval failed: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Compute SPOT quote using SPE charges.
+ */
+export async function computeSpotQuote(
+  id: string,
+  request: SPEComputeRequest
+): Promise<SPEComputeResponse> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/compute/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  // Allow 400 responses with validation errors
+  const data = await response.json();
+
+  if (!response.ok && response.status !== 400) {
+    throw new Error(data.error || 'SPOT quote computation failed');
+  }
+
+  return data;
+}
+
