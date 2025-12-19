@@ -17,6 +17,15 @@ from .views import (
     QuoteTransitionAPIView,
     QuoteCloneAPIView,
 )
+from .spot_views import (
+    SpotScopeValidateAPIView,
+    SpotTriggerEvaluateAPIView,
+    SpotEnvelopeListCreateAPIView,
+    SpotEnvelopeDetailAPIView,
+    SpotEnvelopeAcknowledgeAPIView,
+    SpotEnvelopeApproveAPIView,
+    SpotEnvelopeComputeAPIView,
+)
 
 app_name = 'quotes'
 
@@ -38,4 +47,14 @@ urlpatterns = [
     path('v3/ratecards/upload/', RatecardUploadAPIView.as_view(), name='ratecard-upload'),
     path('v3/stations/', StationListAPIView.as_view(), name='station-list'),
     path('v3/', include(router_v3.urls)),
+    
+    # --- SPOT Mode Endpoints ---
+    path('v3/spot/validate-scope/', SpotScopeValidateAPIView.as_view(), name='spot-validate-scope'),
+    path('v3/spot/evaluate-trigger/', SpotTriggerEvaluateAPIView.as_view(), name='spot-evaluate-trigger'),
+    path('v3/spot/envelopes/', SpotEnvelopeListCreateAPIView.as_view(), name='spot-envelope-list-create'),
+    path('v3/spot/envelopes/<uuid:envelope_id>/', SpotEnvelopeDetailAPIView.as_view(), name='spot-envelope-detail'),
+    path('v3/spot/envelopes/<uuid:envelope_id>/acknowledge/', SpotEnvelopeAcknowledgeAPIView.as_view(), name='spot-envelope-acknowledge'),
+    path('v3/spot/envelopes/<uuid:envelope_id>/approve/', SpotEnvelopeApproveAPIView.as_view(), name='spot-envelope-approve'),
+    path('v3/spot/envelopes/<uuid:envelope_id>/compute/', SpotEnvelopeComputeAPIView.as_view(), name='spot-envelope-compute'),
 ]
+
