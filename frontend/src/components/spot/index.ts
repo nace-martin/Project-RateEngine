@@ -16,3 +16,5 @@ export { SpotAcknowledgementModal } from './SpotAcknowledgementModal';
 export { SpotManagerApproval } from './SpotManagerApproval';
 
 export { SpotRateEntryForm } from './SpotRateEntryForm';
+
+export { SpotEmailDraftCard } from './SpotEmailDraftCard';

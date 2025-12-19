@@ -520,3 +520,140 @@ class SpotApprovalPolicy:
                 return True
         
         return False
+
+
+# =============================================================================
+# SPOT EMAIL DRAFT GENERATOR
+# =============================================================================
+
+@dataclass
+class SpotEmailDraft:
+    """Generated SPOT rate request email draft."""
+    subject: str
+    body: str
+
+
+class SpotEmailDraftGenerator:
+    """
+    Generate standardized SPOT rate request emails.
+    
+    HARD RULES:
+    - No send button
+    - No email integration
+    - No rate guessing
+    - No commitments
+    - Only in SPOT mode
+    - Never for out-of-scope shipments
+    """
+    
+    # Commodity display names
+    COMMODITY_NAMES = {
+        'GCR': 'General Cargo',
+        'DG': 'Dangerous Goods',
+        'PER': 'Perishables',
+        'AVI': 'Live Animals',
+        'HVC': 'High Value Cargo',
+        'HUM': 'Human Remains',
+        'OOG': 'Oversized/Heavy',
+        'VUL': 'Vulnerable Cargo',
+        'TTS': 'Time/Temperature Sensitive',
+        'SCR': 'Special Cargo',
+    }
+    
+    @classmethod
+    def generate(
+        cls,
+        origin_code: str,
+        destination_code: str,
+        commodity: str,
+        weight_kg: float,
+        pieces: int,
+        dimensions: Optional[List[dict]] = None,
+        trigger_code: Optional[str] = None,
+        user_name: Optional[str] = None,
+        recipient_name: Optional[str] = None,
+    ) -> SpotEmailDraft:
+        """
+        Generate a SPOT rate request email draft.
+        
+        Args:
+            origin_code: Airport/location code (e.g., SYD)
+            destination_code: Airport/location code (e.g., POM)
+            commodity: Commodity code (GCR, DG, PER, etc.)
+            weight_kg: Total weight in kg
+            pieces: Number of pieces
+            dimensions: Optional list of piece dimensions
+            trigger_code: SPOT trigger reason code
+            user_name: Name for signature
+            recipient_name: Agent/carrier name
+            
+        Returns:
+            SpotEmailDraft with subject and body
+        """
+        # Build subject
+        subject = f"SPOT Rate Request – {origin_code} → {destination_code} – {weight_kg}kg Airfreight"
+        
+        # Resolve names
+        sender = user_name or "[Your Name]"
+        recipient = recipient_name or "[Agent / Carrier Name]"
+        commodity_display = cls.COMMODITY_NAMES.get(commodity, commodity)
+        
+        # Build dimensions list
+        dimensions_text = ""
+        if dimensions:
+            for i, dim in enumerate(dimensions, 1):
+                pcs = dim.get('pieces', 1)
+                l = dim.get('length_cm', 0)
+                w = dim.get('width_cm', 0)
+                h = dim.get('height_cm', 0)
+                wt = dim.get('gross_weight_kg', 0)
+                dimensions_text += f"  - {pcs}x: {l}×{w}×{h} cm, {wt} kg\n"
+        else:
+            dimensions_text = f"  - {pieces} piece(s), {weight_kg} kg total\n"
+        
+        # Build conditional notes
+        notes = []
+        if commodity == 'DG':
+            notes.append("This shipment is Dangerous Goods. Please advise acceptance and surcharges.")
+        elif commodity in ('PER', 'AVI', 'TTS'):
+            notes.append("This shipment requires special handling. Please advise conditions.")
+        elif commodity in ('HVC', 'VUL'):
+            notes.append("This shipment contains high-value/vulnerable cargo. Please advise security requirements.")
+        elif commodity in ('OOG',):
+            notes.append("This shipment is oversized. Please advise dimensional constraints and surcharges.")
+        elif commodity == 'HUM':
+            notes.append("This shipment contains human remains. Please advise handling requirements.")
+        
+        # Check for multi-leg trigger
+        if trigger_code == 'MULTI_LEG_ROUTING':
+            notes.append("If multiple legs apply, please quote per leg.")
+        
+        notes_text = ""
+        if notes:
+            notes_text = "\n" + "\n".join(notes) + "\n"
+        
+        # Build body
+        body = f"""Hi {recipient},
+
+Please provide a SPOT airfreight rate for the shipment below:
+
+Origin: {origin_code}
+Destination: {destination_code}
+Commodity: {commodity_display}
+Weight: {weight_kg} kg
+Pieces / Dimensions:
+{dimensions_text.rstrip()}
+{notes_text}
+Please include:
+- Airfreight rate (per kg)
+- Origin charges (if any)
+- Routing / number of legs
+- Rate validity
+- Any conditions or exclusions
+
+If acceptance or capacity is subject to confirmation, please advise.
+
+Thank you,
+{sender}"""
+        
+        return SpotEmailDraft(subject=subject.strip(), body=body.strip())

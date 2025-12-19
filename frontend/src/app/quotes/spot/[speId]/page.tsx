@@ -23,7 +23,8 @@ import {
     SpotManagerApproval,
     AwaitingManagerBanner,
     ExpiredBanner,
-    RejectedBanner
+    RejectedBanner,
+    SpotEmailDraftCard
 } from "@/components/spot";
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import type { SPEChargeLine, CreateSPERequest, SPEShipmentContext, SPECommodity } from "@/lib/spot-types";
@@ -277,11 +278,24 @@ export default function SpotRateEntryPage() {
 
             {/* Step Content */}
             {currentStep === "entry" && (
-                <SpotRateEntryForm
-                    onSubmit={handleCreateSPE}
-                    isLoading={state.isLoading}
-                    initialCharges={state.spe?.charges || []}
-                />
+                <div className="space-y-6">
+                    {/* Email Draft Card - Request rates before entering them */}
+                    <SpotEmailDraftCard
+                        originCode={originCode || state.spe?.shipment_context.origin_code || ""}
+                        destinationCode={destCode || state.spe?.shipment_context.destination_code || ""}
+                        commodity={commodity || state.spe?.shipment_context.commodity || "GCR"}
+                        weightKg={weight || state.spe?.shipment_context.total_weight_kg || 0}
+                        pieces={pieces || state.spe?.shipment_context.pieces || 1}
+                        triggerCode={triggerCode || state.spe?.trigger_code}
+                    />
+
+                    {/* Rate Entry Form */}
+                    <SpotRateEntryForm
+                        onSubmit={handleCreateSPE}
+                        isLoading={state.isLoading}
+                        initialCharges={state.spe?.charges || []}
+                    />
+                </div>
             )}
 
             {currentStep === "acknowledge" && (
