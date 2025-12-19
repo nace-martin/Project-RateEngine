@@ -1,7 +1,8 @@
 import uuid
 import logging
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
+from uuid import UUID
 
 from core.models import FxSnapshot, Policy
 from pricing_v2.dataclasses_v3 import (
@@ -15,14 +16,28 @@ from services.models import ServiceComponent
 
 logger = logging.getLogger(__name__)
 
+
+class PricingMode:
+    """Pricing mode constants."""
+    NORMAL = "NORMAL"
+    SPOT = "SPOT"
+
+
 class PricingServiceV4Adapter:
     """
     Adapts V4 Pricing Engines (Export, Import, Domestic) to the V3 Service interface.
     This allows swapping the implementation in views.py without changing the entire view logic.
+    
+    SPOT Mode Integration:
+    - If spot_envelope_id is provided, validates SPE and uses its charges as BUY lines
+    - Applies FX/CAF/margin as normal, marks output as pricing_mode=SPOT
     """
 
-    def __init__(self, quote_input: QuoteInput):
+    def __init__(self, quote_input: QuoteInput, spot_envelope_id: Optional[UUID] = None):
         self.quote_input = quote_input
+        self.spot_envelope_id = spot_envelope_id
+        self.pricing_mode = PricingMode.NORMAL
+        
         # Fetch Policy and FX just like V3 did, so views can save them to Quote
         try:
             self.policy = Policy.objects.filter(is_active=True).latest('effective_from')
@@ -39,9 +54,17 @@ class PricingServiceV4Adapter:
 
     def get_policy(self):
         return self.policy
+    
+    def get_pricing_mode(self) -> str:
+        """Return the pricing mode used (NORMAL or SPOT)."""
+        return self.pricing_mode
 
     def calculate_charges(self) -> QuoteCharges:
         shipment = self.quote_input.shipment
+        
+        # SPOT Mode: if spot_envelope_id provided, use SPE charges instead of DB rates
+        if self.spot_envelope_id:
+            return self._calculate_spot_charges()
         
         # 1. Determine which engine to use
         # Logic matches _classify_shipment_type in views.py but we trust the input object
@@ -249,3 +272,202 @@ class PricingServiceV4Adapter:
         
         # Other shipment types default to provided output_currency or PGK
         return self.quote_input.output_currency or 'PGK'
+
+    def _calculate_spot_charges(self) -> QuoteCharges:
+        """
+        Calculate charges using SPOT Pricing Envelope.
+        
+        1. Load and validate SPE
+        2. Convert SPE charge lines to BUY lines
+        3. Apply FX conversion
+        4. Apply margin per policy
+        5. Apply GST
+        6. Mark output as SPOT mode
+        """
+        from quotes.models import SpotPricingEnvelopeDB
+        from quotes.spot_services import SpotEnvelopeService
+        from quotes.spot_schemas import (
+            SpotPricingEnvelope,
+            SPEShipmentContext,
+            SPEChargeLine,
+            SPEConditions,
+            SPEAcknowledgement,
+            SPEManagerApproval,
+            SPEStatus,
+        )
+        
+        # 1. Load SPE from database
+        try:
+            spe_db = SpotPricingEnvelopeDB.objects.prefetch_related(
+                'charge_lines', 'acknowledgement', 'manager_approval'
+            ).get(id=self.spot_envelope_id)
+        except SpotPricingEnvelopeDB.DoesNotExist:
+            raise ValueError(f"SPOT Pricing Envelope not found: {self.spot_envelope_id}")
+        
+        # Verify context integrity (Tweak #4)
+        if not spe_db.verify_context_integrity():
+            raise ValueError(
+                "SPOT Pricing Envelope integrity check failed. "
+                "Shipment context has been modified."
+            )
+        
+        # 2. Reconstruct Pydantic SPE for validation
+        # Build acknowledgement if exists
+        ack = None
+        if hasattr(spe_db, 'acknowledgement') and spe_db.acknowledgement:
+            ack_db = spe_db.acknowledgement
+            ack = SPEAcknowledgement(
+                acknowledged_by_user_id=str(ack_db.acknowledged_by_id) if ack_db.acknowledged_by_id else "",
+                acknowledged_at=ack_db.acknowledged_at,
+                statement=ack_db.statement,
+            )
+        
+        # Build manager approval if exists
+        mgr = None
+        if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
+            mgr_db = spe_db.manager_approval
+            mgr = SPEManagerApproval(
+                approved=mgr_db.approved,
+                manager_user_id=str(mgr_db.manager_id) if mgr_db.manager_id else "",
+                decision_at=mgr_db.decision_at,
+                comment=mgr_db.comment,
+            )
+        
+        # Build charge lines
+        charges = []
+        for cl in spe_db.charge_lines.all():
+            charges.append(SPEChargeLine(
+                code=cl.code,
+                description=cl.description,
+                amount=float(cl.amount),
+                currency=cl.currency,
+                unit=cl.unit,
+                bucket=cl.bucket,
+                is_primary_cost=cl.is_primary_cost,
+                conditional=cl.conditional,
+                source_reference=cl.source_reference,
+                entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
+                entered_at=cl.entered_at,
+            ))
+        
+        # Build context
+        ctx_json = spe_db.shipment_context_json
+        ctx = SPEShipmentContext(
+            origin_country=ctx_json.get('origin_country', 'OTHER'),
+            destination_country=ctx_json.get('destination_country', 'OTHER'),
+            origin_code=ctx_json.get('origin_code', 'XXX'),
+            destination_code=ctx_json.get('destination_code', 'XXX'),
+            commodity=ctx_json.get('commodity', 'GCR'),
+            total_weight_kg=ctx_json.get('total_weight_kg', 0),
+            pieces=ctx_json.get('pieces', 1),
+        )
+        
+        # Build conditions
+        cond_json = spe_db.conditions_json or {}
+        conditions = SPEConditions(
+            space_not_confirmed=cond_json.get('space_not_confirmed', True),
+            airline_acceptance_not_confirmed=cond_json.get('airline_acceptance_not_confirmed', True),
+            rate_validity_hours=cond_json.get('rate_validity_hours', 72),
+            conditional_charges_present=cond_json.get('conditional_charges_present', False),
+            notes=cond_json.get('notes'),
+        )
+        
+        # Build full SPE for validation
+        spe = SpotPricingEnvelope(
+            id=str(spe_db.id),
+            status=SPEStatus(spe_db.status),
+            shipment=ctx,
+            charges=charges,
+            conditions=conditions,
+            acknowledgement=ack,
+            manager_approval=mgr,
+            spot_trigger_reason_code=spe_db.spot_trigger_reason_code,
+            spot_trigger_reason_text=spe_db.spot_trigger_reason_text,
+            created_by_user_id=str(spe_db.created_by_id) if spe_db.created_by_id else "",
+            created_at=spe_db.created_at,
+            expires_at=spe_db.expires_at,
+        )
+        
+        # 3. Validate SPE is ready for pricing (Tweak #3)
+        is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
+        if not is_valid:
+            raise ValueError(f"SPOT Pricing Envelope not valid for pricing: {error}")
+        
+        # 4. Mark as SPOT mode
+        self.pricing_mode = PricingMode.SPOT
+        
+        # 5. Convert SPE charges to V3 CalculatedChargeLines
+        # Apply FX conversion if charges are in foreign currency
+        lines: List[CalculatedChargeLine] = []
+        
+        # Get FX rate if needed
+        fx_rate = Decimal('1.0')
+        if self.fx_snapshot:
+            # Find rate for source currency to PGK
+            for charge in charges:
+                if charge.currency != 'PGK':
+                    rates = self.fx_snapshot.rates.get(charge.currency, {})
+                    fx_rate = Decimal(str(rates.get('tt_buy', '1.0')))
+                    break
+        
+        # Get margin from policy
+        margin_pct = Decimal('0.15')  # Default 15%
+        if self.policy:
+            margin_pct = self.policy.margin_pct
+        
+        # Prefetch ServiceComponents
+        codes = [c.code for c in charges]
+        component_map = {
+            sc.code: sc for sc in ServiceComponent.objects.filter(code__in=codes)
+        }
+        
+        for charge in charges:
+            # Calculate cost in PGK
+            cost_fcy = Decimal(str(charge.amount))
+            cost_pgk = cost_fcy * fx_rate
+            
+            # Apply margin for sell price
+            sell_pgk = cost_pgk * (Decimal('1') + margin_pct)
+            
+            # Apply GST (10%)
+            gst = sell_pgk * Decimal('0.10')
+            sell_incl_gst = sell_pgk + gst
+            
+            # Get ServiceComponent if exists
+            sc = component_map.get(charge.code)
+            sc_id = sc.id if sc else None
+            
+            lines.append(CalculatedChargeLine(
+                service_component_id=sc_id,
+                service_component_code=charge.code,
+                service_component_desc=charge.description,
+                leg='SPOT',  # Mark as SPOT leg
+                cost_pgk=cost_pgk,
+                sell_pgk=sell_pgk,
+                sell_pgk_incl_gst=sell_incl_gst,
+                sell_fcy=cost_fcy,  # Original FCY amount
+                sell_fcy_incl_gst=cost_fcy * (Decimal('1') + margin_pct) * Decimal('1.10'),
+                cost_source=f'SPOT: {charge.source_reference}',
+                sell_fcy_currency=charge.currency,
+            ))
+        
+        # 6. Calculate totals
+        total_cost = sum(l.cost_pgk for l in lines)
+        total_sell = sum(l.sell_pgk for l in lines)
+        total_gst = sum(l.sell_pgk_incl_gst - l.sell_pgk for l in lines)
+        
+        totals = CalculatedTotals(
+            total_cost_pgk=total_cost,
+            total_sell_pgk=total_sell,
+            total_sell_pgk_incl_gst=total_sell + total_gst,
+            total_sell_fcy=sum(l.sell_fcy for l in lines),
+            total_sell_fcy_incl_gst=sum(l.sell_fcy_incl_gst for l in lines),
+            total_sell_fcy_currency=charges[0].currency if charges else 'PGK',
+        )
+        
+        logger.info(
+            "SPOT pricing calculated: envelope=%s, lines=%d, total_sell=%.2f PGK",
+            self.spot_envelope_id, len(lines), total_sell
+        )
+        
+        return QuoteCharges(lines=lines, totals=totals)
