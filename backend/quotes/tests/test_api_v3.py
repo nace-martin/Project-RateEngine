@@ -35,12 +35,10 @@ class QuoteRetrieveV3APITest(APITestCase):
         )
 
         origin_location = Location.objects.create(
-            kind=Location.Kind.AIRPORT,
             name="Los Angeles",
             code="LAX",
         )
         destination_location = Location.objects.create(
-            kind=Location.Kind.AIRPORT,
             name="Port Moresby",
             code="POM",
         )

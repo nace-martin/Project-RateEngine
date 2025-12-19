@@ -13,6 +13,7 @@ from decimal import Decimal
 from quotes.models import Quote
 from services.models import ServiceRule, ServiceComponent
 from .resolvers import QuoteContextBuilder, BuyChargeResolver
+from pricing_v2.dataclasses_v3 import Piece, ShipmentDetails, QuoteInput
 
 from rest_framework import viewsets
 from .models import Zone, RateCard, RateLine, RateBreak, QuoteSpotRate, QuoteSpotCharge
@@ -247,8 +248,6 @@ class QuoteComputeV3View(APIView):
     """
     def get(self, request, quote_id):
         from quotes.models import Quote
-        from pricing_v2.pricing_service_v3 import PricingServiceV3
-        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
         from decimal import Decimal
         
         try:
@@ -313,103 +312,84 @@ class QuoteComputeV3View(APIView):
                 shipment=shipment
             )
             
-            # 3. Run PricingServiceV3
-            service = PricingServiceV3(quote_input)
-            charges = service.calculate_charges()
+            # 3. Return stored quote lines from the database instead of recalculating
+            # This ensures UI shows the same values that were computed and saved by the V4 engine
+            latest_version = quote.versions.order_by('-version_number').first()
             
-            # 4. Build response
-            # Group lines by origin/destination for buy_lines
+            if not latest_version:
+                return Response(
+                    {"error": "Quote has no computed version"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Build response from stored lines
             buy_lines = []
             sell_lines = []
             
             # Track totals
             total_cost_pgk = Decimal('0.00')
-            total_cost_fcy = Decimal('0.00')
-            cost_fcy_currency = None
+            total_sell_pgk = Decimal('0.00')
+            total_gst = Decimal('0.00')
             
-            for line in charges.lines:
+            for line in latest_version.lines.select_related('service_component'):
+                sc = line.service_component
+                
                 # Build buy line
                 buy_line = {
-                    "component": line.service_component_code,
-                    "source": line.cost_source,
+                    "component": sc.code,
+                    "source": line.cost_source or 'V4 Engine',
                     "currency": line.cost_fcy_currency or 'PGK',
-                    "method": "PARTNER_RATECARD",
-                    "description": line.service_component_desc,
+                    "method": "V4_ENGINE",
+                    "description": sc.description,
                 }
                 buy_lines.append(buy_line)
                 
-                #Build sell line (matches ChargeEngine format)
+                # Calculate GST (10%)
+                gst_amount = line.sell_pgk_incl_gst - line.sell_pgk if line.sell_pgk_incl_gst else Decimal('0')
+                
+                # Derive leg from service component code (DEST = DESTINATION, ORIGIN = ORIGIN, else MAIN)
+                leg = 'MAIN'
+                if 'DEST' in sc.code or 'CLEAR' in sc.code:
+                    leg = 'DESTINATION'
+                elif 'ORIGIN' in sc.code or 'PICKUP' in sc.code:
+                    leg = 'ORIGIN'
+                elif 'FREIGHT' in sc.code or 'AIR' in sc.code:
+                    leg = 'FREIGHT'
+                
+                # Build sell line
                 sell_line = {
                     "line_type": "COMPONENT",
-                    "component": line.service_component_code,
-                    "description": line.service_component_desc,
-                    "leg": line.leg,  # Add leg for categorization
+                    "component": sc.code,
+                    "description": sc.description,
+                    "leg": leg,
                     "cost_pgk": str(line.cost_pgk),
                     "sell_pgk": str(line.sell_pgk),
-                    "sell_pgk_incl_gst": str(line.sell_pgk_incl_gst),
-                    "gst_amount": str(line.sell_pgk_incl_gst - line.sell_pgk),
-                    "sell_fcy": str(line.sell_fcy),
-                    "sell_fcy_incl_gst": str(line.sell_fcy_incl_gst),
-                    "sell_currency": line.sell_fcy_currency,
+                    "sell_pgk_incl_gst": str(line.sell_pgk_incl_gst or line.sell_pgk * Decimal('1.1')),
+                    "gst_amount": str(gst_amount),
+                    "sell_fcy": str(line.sell_fcy or line.sell_pgk),
+                    "sell_fcy_incl_gst": str(line.sell_fcy_incl_gst or line.sell_fcy or line.sell_pgk),
+                    "sell_currency": line.sell_fcy_currency or 'PGK',
                     "margin_percent": str(((line.sell_pgk - line.cost_pgk) / line.cost_pgk * 100) if line.cost_pgk > 0 else 0),
                     "exchange_rate": str(line.exchange_rate or 1.0),
-                    "source": line.cost_source
+                    "source": line.cost_source or 'V4 Engine'
                 }
                 sell_lines.append(sell_line)
                 
-                # Accumulate costs
+                # Accumulate totals
                 total_cost_pgk += line.cost_pgk
-                if line.cost_fcy and line.cost_fcy_currency:
-                    # For origin charges (AUD), accumulate the FCY
-                    if line.cost_fcy_currency != 'PGK':
-                        total_cost_fcy += Decimal(str(line.cost_fcy))
-                        cost_fcy_currency = line.cost_fcy_currency
-                
-                # Ensure cost_fcy_currency is set if not already (default to None or handle appropriately)
-                # But wait, the error says "cannot access local variable 'cost_fcy' where it is not associated with a value"
-                # The error is likely in the loop or how cost_fcy is accessed.
-                # Actually, looking at the code:
-                # if line.cost_fcy and line.cost_fcy_currency:
-                #     if line.cost_fcy_currency != 'PGK':
-                #         total_cost_fcy += Decimal(str(line.cost_fcy))
-                #         cost_fcy_currency = line.cost_fcy_currency
-                
-                # The variable `cost_fcy` is NOT a local variable here, it's `line.cost_fcy`.
-                # The error message "cannot access local variable 'cost_fcy'" suggests there is a variable named `cost_fcy` being accessed.
-                # Let me check line 348 again.
-                # `if line.cost_fcy and line.cost_fcy_currency:`
-                # This looks fine.
-                
-                # Wait, the error might be in `total_cost_fcy += Decimal(str(line.cost_fcy))`?
-                # No.
-                
-                # Let's look at the traceback provided by the user.
-                # The user provided a frontend error.
-                # "Failed to create quote: An unexpected error occurred: cannot access local variable 'cost_fcy' where it is not associated with a value"
-                # This message comes from the backend response.
-                
-                # Let's look at where `cost_fcy` is defined in `views.py`.
-                # I don't see `cost_fcy` as a local variable in the snippet I viewed.
-                # I see `total_cost_fcy`.
-                
-                # Maybe I missed a line where `cost_fcy` is used?
-                # Let me check the file content again, specifically around line 348.
-                # Ah, I see `total_cost_fcy += Decimal(str(line.cost_fcy))`.
-                
-                # Is it possible that `line.cost_fcy` is raising the error? No, that would be an AttributeError.
-                # The error `UnboundLocalError: local variable 'cost_fcy' referenced before assignment` usually happens when you try to use a variable that is assigned later in the function, but hasn't been assigned yet.
-                
-                # I suspect the error is actually in `PricingServiceV3` or `QuoteCharges` dataclass, or maybe I am misreading `views.py`.
-                # Let me search for `cost_fcy` in `views.py`.
-
+                total_sell_pgk += line.sell_pgk
+                total_gst += gst_amount
             
-            # Get exchange rates used
-            fx_snapshot = service.get_fx_snapshot()
+            # Get exchange rates from FX snapshot
+            fx_snapshot = quote.fx_snapshot
             rates_dict = {}
             if fx_snapshot and fx_snapshot.rates:
                 import json
                 rates = fx_snapshot.rates if isinstance(fx_snapshot.rates, dict) else json.loads(fx_snapshot.rates)
                 rates_dict = {k: v.get('tt_buy', 1.0) for k, v in rates.items() if isinstance(v, dict)}
+            
+            # Get totals from QuoteTotal if available
+            quote_total = getattr(latest_version, 'totals', None)
             
             response_data = {
                 "quote_id": str(quote_id),
@@ -418,36 +398,23 @@ class QuoteComputeV3View(APIView):
                 "sell_lines": sell_lines,
                 "totals": {
                     "cost_pgk": str(total_cost_pgk),
-                    "sell_pgk": str(charges.totals.total_sell_pgk),
-                    "sell_pgk_incl_gst": str(charges.totals.total_sell_pgk_incl_gst),
-                    "gst_amount": str(charges.totals.total_sell_pgk_incl_gst - charges.totals.total_sell_pgk),
-                    "sell_fcy": str(charges.totals.total_sell_fcy),
-                    "total_sell_fcy_incl_gst": str(charges.totals.total_sell_fcy_incl_gst),
-                    "currency": charges.totals.total_sell_fcy_currency,
+                    "sell_pgk": str(total_sell_pgk),
+                    "sell_pgk_incl_gst": str(total_sell_pgk + total_gst),
+                    "gst_amount": str(total_gst),
+                    "sell_fcy": str(quote_total.total_sell_fcy if quote_total else total_sell_pgk),
+                    "total_sell_fcy_incl_gst": str(quote_total.total_sell_fcy_incl_gst if quote_total else total_sell_pgk + total_gst),
+                    "currency": quote_total.total_sell_fcy_currency if quote_total else (quote.output_currency or 'PGK'),
                 },
                 "exchange_rates": rates_dict,
-                "computation_date": quote.created_at.strftime('%Y-%m-%d'),
+                "computation_date": latest_version.created_at.strftime('%Y-%m-%d') if latest_version.created_at else quote.created_at.strftime('%Y-%m-%d'),
                 "routing": {
-                    "service_level": service.required_service_level,
-                    "routing_reason": service.routing_reason,
-                    "requires_via_routing": service.required_service_level.startswith('VIA_'),
-                    "violations": [
-                        {
-                            "piece_number": v.piece_number,
-                            "dimension": v.dimension,
-                            "actual": str(v.actual_value),
-                            "limit": str(v.limit_value),
-                            "message": v.message
-                        }
-                        for v in service.routing_violations
-                    ]
+                    "service_level": "DIRECT",
+                    "routing_reason": None,
+                    "requires_via_routing": False,
+                    "violations": []
                 },
                 "notes": []
             }
-            
-            # Add cost_fcy total if available
-            if cost_fcy_currency:
-                response_data["totals"][f"cost_{cost_fcy_currency.lower()}"] = str(total_cost_fcy)
             
             return Response(response_data)
             
@@ -577,4 +544,3 @@ class RoutingValidationView(APIView):
             return Response({
                 'error': f'Routing validation failed: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-

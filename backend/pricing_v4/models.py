@@ -412,6 +412,12 @@ class ImportCOGS(models.Model):
     # Additive calculation flag
     is_additive = models.BooleanField(default=False)
     
+    # Percentage rate for surcharges (e.g. 20% FSC)
+    percent_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text='Percentage rate (e.g., 20.00 for 20%)'
+    )
+    
     # Weight break tiers
     weight_breaks = models.JSONField(null=True, blank=True)
     
@@ -530,12 +536,22 @@ class DomesticCOGS(models.Model):
     origin_zone = models.CharField(max_length=20, db_index=True)
     destination_zone = models.CharField(max_length=20, db_index=True)
     
-    # Domestic COGS references an agent (local service provider)
+    # Counterparty: carrier OR agent (never both)
+    carrier = models.ForeignKey(
+        Carrier,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='domestic_cogs_rates',
+        help_text='For freight linehaul (e.g. PX)'
+    )
     agent = models.ForeignKey(
         Agent,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='domestic_cogs_rates',
-        help_text='Local service provider'
+        help_text='For local services (e.g. Cartage)'
     )
     
     # Rate values - domestic is always PGK
@@ -548,6 +564,9 @@ class DomesticCOGS(models.Model):
     # Additive calculation flag
     is_additive = models.BooleanField(default=False)
     
+    # Weight break tiers (for tiered pricing)
+    weight_breaks = models.JSONField(null=True, blank=True)
+    
     # Validity
     valid_from = models.DateField()
     valid_until = models.DateField()
@@ -558,13 +577,28 @@ class DomesticCOGS(models.Model):
     
     class Meta:
         db_table = 'domestic_cogs'
-        unique_together = ['product_code', 'origin_zone', 'destination_zone', 'agent', 'valid_from']
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(carrier__isnull=False, agent__isnull=True) |
+                    models.Q(carrier__isnull=True, agent__isnull=False)
+                ),
+                name='domestic_cogs_one_counterparty'
+            )
+        ]
         ordering = ['product_code', 'origin_zone', 'destination_zone']
         verbose_name = 'Domestic COGS'
         verbose_name_plural = 'Domestic COGS'
     
+    def clean(self):
+        if self.carrier and self.agent:
+            raise ValidationError("Cannot set both carrier and agent.")
+        if not self.carrier and not self.agent:
+            raise ValidationError("Must set either carrier or agent.")
+
     def __str__(self):
-        return f"COGS: {self.product_code.code} {self.origin_zone}→{self.destination_zone} ({self.agent})"
+        cp = self.carrier or self.agent
+        return f"COGS: {self.product_code.code} {self.origin_zone}→{self.destination_zone} ({cp})"
 
 
 class DomesticSellRate(models.Model):
@@ -602,6 +636,9 @@ class DomesticSellRate(models.Model):
         help_text='Percentage rate (e.g., 10.00 for 10%)'
     )
     
+    # Weight break tiers (for tiered pricing)
+    weight_breaks = models.JSONField(null=True, blank=True)
+    
     # Validity
     valid_from = models.DateField()
     valid_until = models.DateField()
@@ -619,3 +656,110 @@ class DomesticSellRate(models.Model):
     
     def __str__(self):
         return f"SELL: {self.product_code.code} {self.origin_zone}→{self.destination_zone}"
+
+
+# =============================================================================
+# GLOBAL SURCHARGES (Normalized Design)
+# =============================================================================
+
+class Surcharge(models.Model):
+    """
+    Global surcharges that apply to service types, not individual routes.
+    
+    Design Principle:
+    - Store surcharges ONCE, apply to all routes of a service type
+    - Avoids duplication across 25+ routes
+    - Single point of update for rate changes
+    
+    Examples:
+    - Documentation Fee: K35.00 flat (DOMESTIC_AIR)
+    - Fuel Surcharge: K0.25/kg (DOMESTIC_AIR)
+    """
+    
+    SERVICE_TYPE_CHOICES = [
+        ('DOMESTIC_AIR', 'Domestic Air'),
+        ('EXPORT_AIR', 'Export Air'),
+        ('IMPORT_AIR', 'Import Air'),
+        ('EXPORT_ORIGIN', 'Export Origin Services'),
+        ('EXPORT_DEST', 'Export Destination Services'),
+        ('IMPORT_ORIGIN', 'Import Origin Services'),
+        ('IMPORT_DEST', 'Import Destination Services'),
+        ('ALL', 'All Service Types'),
+    ]
+    
+    RATE_TYPE_CHOICES = [
+        ('FLAT', 'Fixed Per Shipment'),
+        ('PER_KG', 'Per Kilogram'),
+        ('PERCENT', 'Percentage'),
+    ]
+    
+    RATE_SIDE_CHOICES = [
+        ('COGS', 'Cost of Goods Sold'),
+        ('SELL', 'Sell Rate'),
+    ]
+    
+    # Link to ProductCode for consistency
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        related_name='surcharges',
+        help_text='The ProductCode this surcharge represents'
+    )
+    
+    # COGS or SELL
+    rate_side = models.CharField(
+        max_length=4,
+        choices=RATE_SIDE_CHOICES,
+        default='COGS',
+        db_index=True
+    )
+    
+    # Service type this surcharge applies to
+    service_type = models.CharField(
+        max_length=20,
+        choices=SERVICE_TYPE_CHOICES,
+        db_index=True
+    )
+    
+    # Rate definition
+    rate_type = models.CharField(max_length=10, choices=RATE_TYPE_CHOICES)
+    amount = models.DecimalField(max_digits=10, decimal_places=4)
+    min_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    max_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    
+    currency = models.CharField(max_length=3, default='PGK')
+    
+    # Optional lane filters (NULL = apply to ALL lanes)
+    origin_filter = models.CharField(
+        max_length=3,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='IATA code to restrict origin (NULL = all origins)'
+    )
+    destination_filter = models.CharField(
+        max_length=3,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='IATA code to restrict destination (NULL = all destinations)'
+    )
+    
+    # Validity
+    valid_from = models.DateField()
+    valid_until = models.DateField()
+    is_active = models.BooleanField(default=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'surcharges'
+        unique_together = ['product_code', 'service_type', 'rate_side', 'valid_from']
+        ordering = ['service_type', 'product_code']
+        verbose_name = 'Surcharge'
+        verbose_name_plural = 'Surcharges'
+    
+    def __str__(self):
+        return f"{self.product_code.code} ({self.service_type}): {self.amount} {self.rate_type}"

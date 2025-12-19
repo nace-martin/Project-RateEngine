@@ -30,7 +30,8 @@ from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
 from .schemas import QuoteComputeRequest
 from pydantic import ValidationError
 from pydantic_core import ValidationError as PydanticCoreValidationError
-from pricing_v2.pricing_service_v3 import PricingServiceV3
+# from pricing_v2.pricing_service_v3 import PricingServiceV3
+from pricing_v4.adapter import PricingServiceV4Adapter as PricingServiceV3 # Using V4 Adapter
 from pricing_v2.dataclasses_v3 import (
     QuoteInput,
     QuoteCharges,
@@ -128,6 +129,15 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         existing_quote = None
         if payload.quote_id:
             existing_quote = get_object_or_404(Quote, id=payload.quote_id)
+            
+            # Block recalculation for locked quotes (FINALIZED or SENT)
+            from .state_machine import is_quote_editable
+            if not is_quote_editable(existing_quote):
+                return Response(
+                    {"detail": f"Cannot recalculate. Quote is {existing_quote.status} and locked for editing."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            
             if existing_quote.created_by_id and existing_quote.created_by_id != request.user.id:
                 return Response(
                     {"detail": "You do not have permission to update this quote."},
@@ -200,13 +210,23 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
             return Response(QuoteModelSerializerV3(quote).data, status=status.HTTP_201_CREATED)
 
-        except Exception as e:
-            # Log the full exception
-            logger.exception(f"Error during quote computation: {e}")
+        except (ValueError, NotImplementedError) as e:
+            # Domain logic errors (e.g., "Unsupported shipment type") -> 400 Bad Request
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            
+        except ServiceComponent.DoesNotExist:
+            # Configuration error -> 500 but with specific message
+            logger.exception("Missing service component configuration")
             return Response(
-                {"detail": f"An unexpected error occurred: {str(e)}"},
+                {"detail": "Configuration Error: Missing required Service Components. Please contact support."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+        except Exception as e:
+            # Unexpected errors (bugs) -> Log and 500, but do NOT mask the stack trace in dev
+            logger.exception(f"Unexpected error during quote computation: {e}")
+            # Re-raise so Django's exception handler can do its job (or return generic 500)
+            raise
 
     def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location):
         """Helper to convert Pydantic model to PricingService dataclasses."""
@@ -228,11 +248,20 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         )
         
         overrides = [ManualOverride(**o.model_dump()) for o in (data.overrides or [])]
-        
+
+        from datetime import date # Import locally or ensure it's at top
+        output_currency = self._derive_output_currency(
+            shipment_type,
+            data.payment_term,
+            origin_location,
+            destination_location,
+        )
+
         return QuoteInput(
             customer_id=data.customer_id,
             contact_id=data.contact_id,
-            output_currency='PGK',
+            output_currency=output_currency,
+            quote_date=date.today(),
             shipment=shipment_details,
             overrides=overrides,
             spot_rates=data.spot_rates or {}
@@ -251,6 +280,21 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             country_code=country_code,
             currency_code=currency_code,
         )
+
+    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location) -> str:
+        """
+        Determine the correct output currency based on shipment type and payment term.
+        Import PREPAID should surface FCY (origin currency) while COLLECT stays PGK.
+        """
+        if shipment_type == Quote.ShipmentType.IMPORT:
+            if payment_term == Quote.PaymentTerm.PREPAID:
+                if origin_location.country and origin_location.country.currency:
+                    return origin_location.country.currency.code
+                return 'AUD'  # Fallback FCY for prepaid imports
+            return 'PGK'
+        
+        # Default to PGK for other shipment types
+        return 'PGK'
 
     @transaction.atomic
     def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None):
@@ -333,9 +377,9 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             created_by=request.user
         )
 
-        # Create QuoteLines
-        for line_charge in charges.lines:
-            QuoteLine.objects.create(
+        # Create QuoteLines (bulk insert for performance)
+        lines_to_create = [
+            QuoteLine(
                 quote_version=version,
                 service_component_id=line_charge.service_component_id,
                 cost_pgk=line_charge.cost_pgk,
@@ -351,6 +395,9 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 cost_source_description=line_charge.cost_source_description,
                 is_rate_missing=line_charge.is_rate_missing
             )
+            for line_charge in charges.lines
+        ]
+        QuoteLine.objects.bulk_create(lines_to_create)
             
         # Create QuoteTotal
         QuoteTotal.objects.create(
@@ -764,6 +811,14 @@ class QuoteVersionCreateAPIView(APIView):
         """
         quote_id = self.kwargs.get("quote_id")
         original_quote = get_object_or_404(Quote, id=quote_id)
+        
+        # Block version creation for locked quotes (FINALIZED or SENT)
+        from .state_machine import is_quote_editable
+        if not is_quote_editable(original_quote):
+            return Response(
+                {"detail": f"Cannot create new version. Quote is {original_quote.status} and locked for editing."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         
         # 1. Load original payload
         original_payload = original_quote.request_details_json

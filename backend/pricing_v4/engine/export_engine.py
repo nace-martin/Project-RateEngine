@@ -144,6 +144,9 @@ class ExportPricingEngine:
         Returns:
             QuoteResult with all charge lines and totals
         """
+        # OPTIMIZATION: Prefetch rates to prevent N+1 queries
+        self._prefetch_rates(product_code_ids)
+        
         lines = []
         
         # First pass: calculate all non-percentage charges
@@ -197,8 +200,50 @@ class ExportPricingEngine:
     # SIMPLE LOOKUPS (Rule 5: No business logic in ORM)
     # =========================================================================
     
+    def _prefetch_rates(self, product_code_ids: List[int]):
+        """Load all necessary rate data into memory."""
+        self._pc_cache = {}
+        self._cogs_rate_cache = {}
+        self._sell_rate_cache = {}
+        
+        # 1. ProductCodes
+        pcs = ProductCode.objects.filter(id__in=product_code_ids)
+        for pc in pcs:
+            self._pc_cache[pc.id] = pc
+            
+        # 2. ExportCOGS
+        cogs_qs = ExportCOGS.objects.filter(
+            product_code_id__in=product_code_ids,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        )
+        for rate in cogs_qs:
+            self._cogs_rate_cache[rate.product_code_id] = rate
+            
+        # 3. ExportSellRate
+        sell_qs = ExportSellRate.objects.filter(
+            product_code_id__in=product_code_ids,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        )
+        for rate in sell_qs:
+            self._sell_rate_cache[rate.product_code_id] = rate
+
     def _get_product_code(self, product_code_id: int) -> Optional[ProductCode]:
         """Simple lookup. No business logic."""
+        if hasattr(self, '_pc_cache') and product_code_id in self._pc_cache:
+            return self._pc_cache[product_code_id]
+        if hasattr(self, '_pc_cache'):
+            # Cache active but item not found -> fallback to DB slightly safer or just return None?
+            # Existing logic handled DoesNotExist.
+            # If we prefetch, we should trust it, but for safety, fallback if critical.
+            # Actually, prefetch uses id_in, so it should catch everything that exists.
+            return None
+            
         try:
             return ProductCode.objects.get(id=product_code_id)
         except ProductCode.DoesNotExist:
@@ -206,6 +251,11 @@ class ExportPricingEngine:
     
     def _get_cogs(self, product_code_id: int) -> Optional[ExportCOGS]:
         """Simple lookup. No business logic."""
+        if hasattr(self, '_cogs_rate_cache') and product_code_id in self._cogs_rate_cache:
+            return self._cogs_rate_cache[product_code_id]
+        if hasattr(self, '_cogs_rate_cache'):
+            return None
+
         return ExportCOGS.objects.filter(
             product_code_id=product_code_id,
             origin_airport=self.origin,
@@ -216,6 +266,11 @@ class ExportPricingEngine:
     
     def _get_sell_rate(self, product_code_id: int) -> Optional[ExportSellRate]:
         """Simple lookup. No business logic."""
+        if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache:
+            return self._sell_rate_cache[product_code_id]
+        if hasattr(self, '_sell_rate_cache'):
+            return None
+            
         return ExportSellRate.objects.filter(
             product_code_id=product_code_id,
             origin_airport=self.origin,

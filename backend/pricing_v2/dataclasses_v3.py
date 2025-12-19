@@ -69,6 +69,7 @@ class QuoteInput(BaseModel):
     customer_id: uuid.UUID
     contact_id: uuid.UUID
     output_currency: str
+    quote_date: Any = Field(default=None) # Use Any/None to avoid circular imports or strict validation issues for now
     shipment: ShipmentDetails
     overrides: List[ManualOverride] = Field(default_factory=list)
     spot_rates: Dict[str, Any] = Field(default_factory=dict)
