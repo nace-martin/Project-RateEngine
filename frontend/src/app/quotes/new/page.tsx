@@ -582,9 +582,19 @@ export default function NewQuotePage() {
             <SpotModeBanner
               triggerResult={spotTriggerResult}
               onEnterSpotMode={() => {
-                // TODO: Navigate to SPOT rate entry flow
-                console.log('Entering SPOT mode');
-                setShowSpotBanner(false);
+                // Navigate to SPOT rate entry page with shipment context
+                const params = new URLSearchParams({
+                  origin_country: originLocation?.country_code || '',
+                  dest_country: destinationLocation?.country_code || '',
+                  origin_code: form.getValues('origin_airport') || '',
+                  dest_code: form.getValues('destination_airport') || '',
+                  commodity: mapCargoToSPECommodity(form.getValues('cargo_type')),
+                  weight: String(cargoMetrics.chargeableWeight),
+                  pieces: String(cargoMetrics.pieces),
+                  trigger_code: spotTriggerResult.code,
+                  trigger_text: spotTriggerResult.text,
+                });
+                router.push(`/quotes/spot/new?${params.toString()}`);
               }}
               isLoading={isSubmitting}
             />
