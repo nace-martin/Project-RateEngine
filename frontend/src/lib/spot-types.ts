@@ -28,7 +28,7 @@ export type SpotFlowState =
 export type SPEChargeBucket = 'airfreight' | 'origin_charges' | 'destination_charges';
 
 /** Charge units */
-export type SPEChargeUnit = 'per_kg' | 'flat' | 'per_awb' | 'per_shipment' | 'percentage';
+export type SPEChargeUnit = 'per_kg' | 'flat' | 'per_awb' | 'per_shipment' | 'min_or_per_kg' | 'percentage';
 
 /** Commodity types */
 export type SPECommodity =
@@ -71,12 +71,14 @@ export interface TriggerEvaluateRequest {
     has_valid_cogs?: boolean;
     has_valid_sell?: boolean;
     is_multi_leg?: boolean;
+    service_scope?: string;
 }
 
 /** Trigger result from backend */
 export interface TriggerResult {
     code: string;
     text: string;
+    missing_components?: string[];
 }
 
 /** Trigger evaluation response */
@@ -98,6 +100,7 @@ export interface SPEShipmentContext {
     commodity: SPECommodity;
     total_weight_kg: number;
     pieces: number;
+    service_scope?: string;
 }
 
 /** SPE charge line */
@@ -106,12 +109,18 @@ export interface SPEChargeLine {
     code: string;
     description: string;
     amount: string;
-    currency: 'USD' | 'AUD' | 'PGK';
+    currency: 'SGD' | 'USD' | 'AUD' | 'PGK' | 'NZD' | 'HKD';
     unit: SPEChargeUnit;
     bucket: SPEChargeBucket;
     is_primary_cost: boolean;
     conditional: boolean;
     source_reference: string;
+
+    // Extended fields
+    min_charge?: string | number;
+    note?: string;
+    exclude_from_totals?: boolean;
+    percentage_basis?: string;
 }
 
 /** SPE conditions */
@@ -152,11 +161,11 @@ export interface CreateSPERequest {
 export interface SpotPricingEnvelope {
     id: string;
     status: SPEStatus;
-    shipment_context: SPEShipmentContext;
+    shipment: SPEShipmentContext;
     shipment_context_hash?: string;
     conditions: SPEConditions;
-    trigger_code: string;
-    trigger_text: string;
+    spot_trigger_reason_code: string;
+    spot_trigger_reason_text: string;
     created_at: string;
     expires_at: string;
     is_expired: boolean;
@@ -185,6 +194,8 @@ export interface SPEComputeResultLine {
     sell_pgk_incl_gst: string;
     leg: string;
     source: string;
+    is_informational?: boolean;
+    bucket: string;
 }
 
 /** SPE compute response */
@@ -202,6 +213,110 @@ export interface SPEComputeResponse {
 }
 
 // =============================================================================
+// REPLY ANALYSIS TYPES (Phase 1)
+// =============================================================================
+
+/** Classification of certainty for extracted assertions */
+export type AssertionStatus = 'confirmed' | 'conditional' | 'implicit' | 'missing';
+
+/** Categories of information we expect in agent replies */
+export type AssertionCategory =
+    | 'rate'
+    | 'currency'
+    | 'validity'
+    | 'routing'
+    | 'acceptance'
+    | 'origin_charges'
+    | 'dest_charges'
+    | 'conditions'
+    | 'transit_time';
+
+/** Single claim extracted from agent reply */
+export interface ExtractedAssertion {
+    text: string;
+    category: AssertionCategory;
+    value?: string | null;
+    status: AssertionStatus;
+    confidence: number;
+    source_line?: number | null;
+
+    // Parsed values
+    rate_amount?: string | null;
+    rate_per_unit?: string | null;  // Per-unit rate for MIN_OR_PER_KG
+    rate_currency?: string | null;
+    rate_unit?: string | null;
+    validity_date?: string | null;
+}
+
+/** Quick status check of analysis results */
+export interface AnalysisSummary {
+    confirmed_count: number;
+    conditional_count: number;
+    implicit_count: number;
+    missing_count: number;
+    has_rate: boolean;
+    has_currency: boolean;
+    has_validity: boolean;
+    has_routing: boolean;
+    has_acceptance: boolean;
+    can_proceed: boolean;
+}
+
+/** Full analysis of an agent reply */
+export interface ReplyAnalysisResult {
+    raw_text: string;
+    assertions: ExtractedAssertion[];
+    summary: AnalysisSummary;
+    warnings: string[];
+    can_proceed: boolean;
+    blocked_reason: string | null;
+}
+
+/** Input for manually adding an assertion */
+export interface ManualAssertionInput {
+    text: string;
+    category: AssertionCategory;
+    status: AssertionStatus;
+    value?: string;
+    rate_amount?: string;
+    rate_currency?: string;
+    rate_unit?: string;
+    validity_date?: string;
+}
+
+// =============================================================================
+// UI CONSTANTS
+// =============================================================================
+
+export const STATUS_LABELS: Record<AssertionStatus, string> = {
+    confirmed: 'Confirmed',
+    conditional: 'Conditional',
+    implicit: 'Implicit',
+    missing: 'Missing',
+};
+
+export const STATUS_COLORS: Record<AssertionStatus, string> = {
+    confirmed: 'bg-green-50 border-green-200 text-green-700',
+    conditional: 'bg-amber-50 border-amber-200 text-amber-700',
+    implicit: 'bg-orange-50 border-orange-200 text-orange-700',
+    missing: 'bg-red-50 border-red-200 text-red-700',
+};
+
+export const CATEGORY_LABELS: Record<AssertionCategory, string> = {
+    rate: 'Air Freight Rate',
+    currency: 'Currency',
+    validity: 'Validity/Expiry',
+    routing: 'Routing',
+    acceptance: 'Acceptance/Subject To',
+    origin_charges: 'Origin Charges',
+    dest_charges: 'Destination Charges',
+    conditions: 'Special Conditions',
+    transit_time: 'Transit Time',
+};
+
+export const MANDATORY_CATEGORIES: AssertionCategory[] = ['rate', 'currency'];
+
+// =============================================================================
 // STATE MACHINE TYPES
 // =============================================================================
 
@@ -212,6 +327,7 @@ export interface SpotModeState {
     triggerResult: TriggerResult | null;
     error: string | null;
     isLoading: boolean;
+    quoteResult: SPEComputeResponse | null;
 }
 
 /** SPOT mode hook actions */

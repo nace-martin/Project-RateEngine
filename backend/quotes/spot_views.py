@@ -13,23 +13,29 @@ Endpoints:
 """
 
 import logging
+import uuid
+from typing import Optional
 from datetime import datetime, timedelta
 from uuid import UUID
+
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 
 from django.shortcuts import get_object_or_404
 
 from quotes.spot_services import (
     ScopeValidator,
     SpotTriggerEvaluator,
-    SpotEnvelopeService,
     SpotApprovalPolicy,
+    SpotEnvelopeService,
     SpotTriggerReason,
     TriggerResult,
+    ReplyAnalysisService,
 )
 from quotes.spot_schemas import (
     SPEShipmentContext,
@@ -49,6 +55,91 @@ from quotes.models import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _user_can_access_spe(user, spe_db: SpotPricingEnvelopeDB) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    user_role = getattr(user, 'role', '')
+    if user_role in ['manager', 'admin']:
+        return True
+    return spe_db.created_by_id == user.id
+
+
+def _get_spe_or_404(user, envelope_id, queryset=None):
+    spe_db = get_object_or_404(queryset or SpotPricingEnvelopeDB, id=envelope_id)
+    if not _user_can_access_spe(user, spe_db):
+        raise PermissionDenied("You do not have access to this SPOT envelope.")
+    return spe_db
+
+
+def _build_spe_from_db(
+    spe_db: SpotPricingEnvelopeDB,
+    status_override: Optional[str] = None,
+    acknowledgement_override: Optional[SPEAcknowledgement] = None,
+) -> SpotPricingEnvelope:
+    ack = acknowledgement_override
+    if ack is None and hasattr(spe_db, 'acknowledgement') and spe_db.acknowledgement:
+        ack_db = spe_db.acknowledgement
+        ack = SPEAcknowledgement(
+            acknowledged_by_user_id=str(ack_db.acknowledged_by_id) if ack_db.acknowledged_by_id else "",
+            acknowledged_at=ack_db.acknowledged_at,
+            statement=ack_db.statement,
+        )
+
+    mgr = None
+    if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
+        mgr_db = spe_db.manager_approval
+        mgr = SPEManagerApproval(
+            approved=mgr_db.approved,
+            manager_user_id=str(mgr_db.manager_id) if mgr_db.manager_id else "",
+            decision_at=mgr_db.decision_at,
+            comment=mgr_db.comment,
+        )
+
+    charges = [
+        SPEChargeLine(
+            code=cl.code,
+            description=cl.description,
+            amount=float(cl.amount),
+            currency=cl.currency,
+            unit=cl.unit,
+            bucket=cl.bucket,
+            is_primary_cost=cl.is_primary_cost,
+            conditional=cl.conditional,
+            source_reference=cl.source_reference,
+            entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
+            entered_at=cl.entered_at,
+        )
+        for cl in spe_db.charge_lines.all()
+    ]
+
+    ctx = spe_db.shipment_context_json
+    status_value = status_override or spe_db.status
+
+    return SpotPricingEnvelope(
+        id=str(spe_db.id),
+        status=SPEStatus(status_value),
+        shipment=SPEShipmentContext(
+            origin_country=ctx.get('origin_country', 'OTHER'),
+            destination_country=ctx.get('destination_country', 'OTHER'),
+            origin_code=ctx.get('origin_code', 'XXX'),
+            destination_code=ctx.get('destination_code', 'XXX'),
+            commodity=ctx.get('commodity', 'GCR'),
+            total_weight_kg=ctx.get('total_weight_kg', 1.0),
+            pieces=ctx.get('pieces', 1),
+            service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+        ),
+        charges=charges,
+        conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
+        acknowledgement=ack,
+        manager_approval=mgr,
+        spot_trigger_reason_code=spe_db.spot_trigger_reason_code,
+        spot_trigger_reason_text=spe_db.spot_trigger_reason_text,
+        created_by_user_id=str(spe_db.created_by_id) if spe_db.created_by_id else "",
+        created_at=spe_db.created_at,
+        expires_at=spe_db.expires_at,
+    )
 
 
 # =============================================================================
@@ -121,16 +212,36 @@ class SpotTriggerEvaluateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
+        # Calculate direction
+        origin_country = request.data.get('origin_country', '')
+        destination_country = request.data.get('destination_country', '')
+        
+        if origin_country == 'PG' and destination_country == 'PG':
+            direction = 'DOMESTIC'
+        elif origin_country == 'PG':
+            direction = 'EXPORT'
+        else:
+            direction = 'IMPORT'
+        
+        # Build component availability map from DB
+        service_scope = request.data.get('service_scope', 'P2P')
+        origin_airport = request.data.get('origin_airport', '')
+        destination_airport = request.data.get('destination_airport', '')
+        
+        from quotes.spot_services import RateAvailabilityService
+        component_availability = RateAvailabilityService.get_availability(
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            direction=direction,
+            service_scope=service_scope
+        )
+
         is_spot, trigger = SpotTriggerEvaluator.evaluate(
-            origin_country=request.data.get('origin_country', ''),
-            destination_country=request.data.get('destination_country', ''),
-            commodity=request.data.get('commodity', 'GCR'),
-            origin_airport=request.data.get('origin_airport'),
-            destination_airport=request.data.get('destination_airport'),
-            has_valid_buy_rate=request.data.get('has_valid_buy_rate', True),
-            has_valid_cogs=request.data.get('has_valid_cogs', True),
-            has_valid_sell=request.data.get('has_valid_sell', True),
-            is_multi_leg=request.data.get('is_multi_leg', False),
+            origin_country=origin_country,
+            destination_country=destination_country,
+            direction=direction,
+            service_scope=service_scope,
+            component_availability=component_availability
         )
         
         return Response({
@@ -138,8 +249,77 @@ class SpotTriggerEvaluateAPIView(APIView):
             'trigger': {
                 'code': trigger.code,
                 'text': trigger.text,
+                'missing_components': trigger.missing_components,
             } if trigger else None,
         })
+
+
+# =============================================================================
+# STANDARD CHARGES API (Hybrid SPOT)
+# =============================================================================
+
+class StandardChargesAPIView(APIView):
+    """
+    POST /api/v3/spot/standard-charges/
+    
+    Fetch standard charges from DB for hybrid SPOT pre-population.
+    Returns airfreight and origin charges where DB coverage exists.
+    
+    Request:
+        {
+            "origin_code": "POM",
+            "destination_code": "SIN",
+            "direction": "EXPORT",
+            "service_scope": "D2D",
+            "weight_kg": 100,
+            "commodity": "GCR"
+        }
+    
+    Response:
+        {
+            "charges": [
+                {
+                    "code": "FREIGHT",
+                    "description": "Airfreight",
+                    "amount": "5.50",
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": true,
+                    "source_reference": "Standard Rate (ExportCOGS)"
+                },
+                ...
+            ]
+        }
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        from quotes.spot_services import StandardChargeService
+        
+        origin_code = request.data.get("origin_code", "").upper()
+        destination_code = request.data.get("destination_code", "").upper()
+        direction = request.data.get("direction", "EXPORT").upper()
+        service_scope = request.data.get("service_scope", "D2D").upper()
+        weight_kg = float(request.data.get("weight_kg", 100))
+        commodity = request.data.get("commodity", "GCR").upper()
+        
+        if not origin_code or not destination_code:
+            return Response(
+                {"error": "origin_code and destination_code are required"},
+                status=400
+            )
+        
+        charges = StandardChargeService.get_standard_charges(
+            origin_code=origin_code,
+            destination_code=destination_code,
+            direction=direction,
+            service_scope=service_scope,
+            weight_kg=weight_kg,
+            commodity=commodity,
+        )
+        
+        return Response({"charges": charges})
 
 
 # =============================================================================
@@ -155,9 +335,11 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def get(self, request):
         """List SPEs created by user."""
-        spes = SpotPricingEnvelopeDB.objects.filter(
-            created_by=request.user
-        ).order_by('-created_at')[:20]
+        spe_qs = SpotPricingEnvelopeDB.objects.all()
+        if getattr(request.user, 'role', '') not in ['manager', 'admin']:
+            spe_qs = spe_qs.filter(created_by=request.user)
+
+        spes = spe_qs.order_by('-created_at')[:20]
         
         return Response([
             self._serialize_spe(spe) for spe in spes
@@ -165,80 +347,101 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def post(self, request):
         """Create new SPE in DRAFT status."""
-        data = request.data
-        
-        # Validate required fields
-        required = ['shipment_context', 'charges', 'trigger_code', 'trigger_text']
-        for field in required:
-            if field not in data:
+        with open("debug_spe.log", "a") as f:
+            f.write(f"\n--- {timezone.now()} --- POST to envelopes ---\n")
+            f.write(f"Data: {request.data}\n")
+        try:
+            data = request.data
+            
+            # Validate required fields
+            required = ['shipment_context', 'trigger_code', 'trigger_text']
+            for field in required:
+                if field not in data:
+                    return Response(
+                        {'error': f'Missing required field: {field}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Create DB record
+            ctx = data['shipment_context']
+            now = timezone.now()
+            validity_hours = data.get('validity_hours', 72)
+            
+            spe_db = SpotPricingEnvelopeDB.objects.create(
+                status='draft',
+                shipment_context_json=ctx,
+                conditions_json=data.get('conditions', {}),
+                spot_trigger_reason_code=data['trigger_code'],
+                spot_trigger_reason_text=data['trigger_text'],
+                created_by=request.user,
+                expires_at=now + timedelta(hours=validity_hours),
+            )
+            
+            # Create charge lines (optional)
+            charges_data = data.get('charges', [])
+            for charge in charges_data:
+                SPEChargeLineDB.objects.create(
+                    envelope=spe_db,
+                    code=charge['code'],
+                    description=charge['description'],
+                    amount=charge['amount'],
+                    currency=charge['currency'],
+                    unit=charge['unit'],
+                    bucket=charge['bucket'],
+                    is_primary_cost=charge.get('is_primary_cost', False),
+                    conditional=charge.get('conditional', False),
+                    source_reference=charge['source_reference'],
+                    entered_by=request.user,
+                    entered_at=now,
+                )
+            
+            # Validate via Pydantic (will raise if invalid)
+            try:
+                self._validate_spe(spe_db)
+            except Exception as e:
+                logger.error("Validation failed for SPE %s: %s", spe_db.id, str(e), exc_info=True)
+                spe_db.delete()
                 return Response(
-                    {'error': f'Missing required field: {field}'},
+                    {'error': f"Validation Error: {str(e)}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        
-        # Create DB record
-        ctx = data['shipment_context']
-        now = datetime.now()
-        validity_hours = data.get('validity_hours', 72)
-        
-        spe_db = SpotPricingEnvelopeDB.objects.create(
-            status='draft',
-            shipment_context_json=ctx,
-            conditions_json=data.get('conditions', {}),
-            spot_trigger_reason_code=data['trigger_code'],
-            spot_trigger_reason_text=data['trigger_text'],
-            created_by=request.user,
-            expires_at=now + timedelta(hours=validity_hours),
-        )
-        
-        # Create charge lines
-        for charge in data['charges']:
-            SPEChargeLineDB.objects.create(
-                envelope=spe_db,
-                code=charge['code'],
-                description=charge['description'],
-                amount=charge['amount'],
-                currency=charge['currency'],
-                unit=charge['unit'],
-                bucket=charge['bucket'],
-                is_primary_cost=charge.get('is_primary_cost', False),
-                conditional=charge.get('conditional', False),
-                source_reference=charge['source_reference'],
-                entered_by=request.user,
-                entered_at=now,
-            )
-        
-        # Validate via Pydantic (will raise if invalid)
-        try:
-            self._validate_spe(spe_db)
-        except ValueError as e:
-            spe_db.delete()
+            
+            logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
+            
             return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+                self._serialize_spe(spe_db),
+                status=status.HTTP_201_CREATED
             )
-        
-        logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
-        
-        return Response(
-            self._serialize_spe(spe_db),
-            status=status.HTTP_201_CREATED
-        )
+        except Exception as e:
+            logger.exception("Unexpected error creating SPE")
+            with open("debug_spe.log", "a") as f:
+                import traceback
+                f.write(f"ERROR: {str(e)}\n")
+                f.write(traceback.format_exc())
+            return Response(
+                {'error': f"Internal Server Error: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def _serialize_spe(self, spe_db):
         """Serialize SPE DB to JSON."""
         return {
             'id': str(spe_db.id),
             'status': spe_db.status,
-            'shipment_context': spe_db.shipment_context_json,
+            'shipment': spe_db.shipment_context_json,
             'conditions': spe_db.conditions_json,
-            'trigger_code': spe_db.spot_trigger_reason_code,
-            'trigger_text': spe_db.spot_trigger_reason_text,
+            'spot_trigger_reason_code': spe_db.spot_trigger_reason_code,
+            'spot_trigger_reason_text': spe_db.spot_trigger_reason_text,
             'created_at': spe_db.created_at.isoformat(),
             'expires_at': spe_db.expires_at.isoformat(),
             'is_expired': spe_db.is_expired,
             'has_acknowledgement': hasattr(spe_db, 'acknowledgement'),
             'has_manager_approval': hasattr(spe_db, 'manager_approval'),
+            'requires_manager_approval': SpotApprovalPolicy.requires_manager_approval(
+                commodity=spe_db.shipment_context_json.get('commodity', 'GCR'),
+                margin_percent=None,
+                is_multi_leg=spe_db.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING,
+            ),
             'charges': [
                 {
                     'id': str(cl.id),
@@ -288,6 +491,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 commodity=ctx.get('commodity', 'GCR'),
                 total_weight_kg=ctx.get('total_weight_kg', 1.0),
                 pieces=ctx.get('pieces', 1),
+                service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
             ),
             charges=charges,
             conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
@@ -308,15 +512,77 @@ class SpotEnvelopeDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request, envelope_id):
-        spe_db = get_object_or_404(
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
             SpotPricingEnvelopeDB.objects.prefetch_related(
                 'charge_lines', 'acknowledgement', 'manager_approval'
             ),
-            id=envelope_id
         )
         
         return Response(self._serialize_spe(spe_db))
     
+    def patch(self, request, envelope_id):
+        """Update DRAFT SPE with new charges or conditions."""
+        spe_db = _get_spe_or_404(request.user, envelope_id)
+        
+        if spe_db.status != 'draft':
+            return Response(
+                {'error': f"Cannot update SPE in status '{spe_db.status}'"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        data = request.data
+        now = timezone.now()
+        
+        # Update conditions
+        if 'conditions' in data:
+            spe_db.conditions_json = data['conditions']
+            
+        # Update charges (replace all)
+        if 'charges' in data:
+            # Delete existing
+            spe_db.charge_lines.all().delete()
+            
+            # Create new
+            for charge in data['charges']:
+                # Sanitize decimal fields
+                amount_val = charge.get('amount')
+                if amount_val == "":
+                    amount_val = None
+                    
+                min_charge_val = charge.get('min_charge')
+                if min_charge_val == "":
+                    min_charge_val = None
+
+                # Map Special Units
+                unit_val = charge['unit']
+                if unit_val == 'min_or_per_kg':
+                    unit_val = 'per_kg'
+                elif unit_val == 'flat': 
+                    unit_val = 'flat' # Explicitly supported by model
+
+                SPEChargeLineDB.objects.create(
+                    envelope=spe_db,
+                    code=charge['code'],
+                    description=charge['description'],
+                    amount=amount_val,
+                    currency=charge['currency'],
+                    unit=unit_val,        # Correct field: unit
+                    bucket=charge['bucket'],
+                    is_primary_cost=charge.get('is_primary_cost', False),
+                    conditional=charge.get('conditional', False),
+                    min_charge=min_charge_val,
+                    note=charge.get('note') or "", # Correct field: note (singular)
+                    source_reference=charge['source_reference'],
+                    entered_by=request.user,
+                    entered_at=now,
+                )
+        
+        spe_db.save()
+        
+        return Response(self._serialize_spe(spe_db))
+
     def _serialize_spe(self, spe_db):
         """Full serialization including ack and approval."""
         ack = None
@@ -341,11 +607,11 @@ class SpotEnvelopeDetailAPIView(APIView):
         return {
             'id': str(spe_db.id),
             'status': spe_db.status,
-            'shipment_context': spe_db.shipment_context_json,
+            'shipment': spe_db.shipment_context_json,
             'shipment_context_hash': spe_db.shipment_context_hash,
             'conditions': spe_db.conditions_json,
-            'trigger_code': spe_db.spot_trigger_reason_code,
-            'trigger_text': spe_db.spot_trigger_reason_text,
+            'spot_trigger_reason_code': spe_db.spot_trigger_reason_code,
+            'spot_trigger_reason_text': spe_db.spot_trigger_reason_text,
             'created_at': spe_db.created_at.isoformat(),
             'expires_at': spe_db.expires_at.isoformat(),
             'is_expired': spe_db.is_expired,
@@ -368,6 +634,11 @@ class SpotEnvelopeDetailAPIView(APIView):
                     'bucket': cl.bucket,
                     'is_primary_cost': cl.is_primary_cost,
                     'conditional': cl.conditional,
+                    'conditional': cl.conditional,
+                    'min_charge': str(cl.min_charge) if cl.min_charge is not None else None,
+                    'note': cl.note,
+                    'exclude_from_totals': cl.exclude_from_totals,
+                    'percentage_basis': cl.percentage_basis,
                     'source_reference': cl.source_reference,
                 }
                 for cl in spe_db.charge_lines.all()
@@ -384,7 +655,7 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, envelope_id):
-        spe_db = get_object_or_404(SpotPricingEnvelopeDB, id=envelope_id)
+        spe_db = _get_spe_or_404(request.user, envelope_id)
         
         if spe_db.status != 'draft':
             return Response(
@@ -398,21 +669,53 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Create acknowledgement
-        SPEAcknowledgementDB.objects.create(
-            envelope=spe_db,
-            acknowledged_by=request.user,
-            acknowledged_at=datetime.now(),
-            statement="I acknowledge this is a conditional SPOT quote and not guaranteed",
-        )
-        
-        # Check if we can transition to READY
         requires_approval = SpotApprovalPolicy.requires_manager_approval(
             commodity=spe_db.shipment_context_json.get('commodity', 'GCR'),
             margin_percent=None,
             is_multi_leg=spe_db.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING,
         )
         
+        temp_ack = SPEAcknowledgement(
+            acknowledged_by_user_id=str(request.user.id),
+            acknowledged_at=timezone.now(),
+            statement=SPEAcknowledgementDB.ACKNOWLEDGEMENT_STATEMENT,
+        )
+
+        try:
+            status_override = 'ready'
+            spe = _build_spe_from_db(
+                spe_db,
+                status_override=status_override,
+                acknowledgement_override=temp_ack,
+            )
+        except ValueError as e:
+            return Response(
+                {'error': f'Validation Error: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if spe.is_expired:
+            return Response(
+                {'error': 'SPE has expired and cannot be acknowledged.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not requires_approval:
+            is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
+            if not is_valid:
+                return Response(
+                    {'error': error},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Create acknowledgement
+        SPEAcknowledgementDB.objects.create(
+            envelope=spe_db,
+            acknowledged_by=request.user,
+            acknowledged_at=temp_ack.acknowledged_at,
+            statement=temp_ack.statement,
+        )
+
         if not requires_approval:
             spe_db.status = 'ready'
             spe_db.save()
@@ -440,7 +743,7 @@ class SpotEnvelopeApproveAPIView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, envelope_id):
-        spe_db = get_object_or_404(SpotPricingEnvelopeDB, id=envelope_id)
+        spe_db = _get_spe_or_404(request.user, envelope_id)
         
         # Check user has manager role
         user_role = getattr(request.user, 'role', 'sales')
@@ -464,7 +767,7 @@ class SpotEnvelopeApproveAPIView(APIView):
             envelope=spe_db,
             approved=approved,
             manager=request.user,
-            decision_at=datetime.now(),
+            decision_at=timezone.now(),
             comment=comment,
         )
         
@@ -502,19 +805,20 @@ class SpotEnvelopeComputeAPIView(APIView):
     
     def post(self, request, envelope_id):
         from pricing_v4.adapter import PricingServiceV4Adapter
-        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentInput, PieceInput
+        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
         from core.models import Location
         
-        spe_db = get_object_or_404(
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
             SpotPricingEnvelopeDB.objects.prefetch_related(
                 'charge_lines', 'acknowledgement', 'manager_approval'
             ),
-            id=envelope_id
         )
         
         # Build Pydantic SPE for validation
         try:
-            spe = self._build_spe(spe_db)
+            spe = _build_spe_from_db(spe_db)
         except ValueError as e:
             return Response(
                 {'error': f'Invalid SPE: {str(e)}'},
@@ -556,15 +860,29 @@ class SpotEnvelopeComputeAPIView(APIView):
         
         from datetime import date
         
-        shipment = ShipmentInput(
-            origin_location=origin_loc,
-            destination_location=dest_loc,
+        origin_ref = LocationRef(
+            id=origin_loc.id,
+            code=origin_loc.code,
+            name=origin_loc.name,
+            country_code=origin_loc.country.code if origin_loc.country else None,
+            currency_code=origin_loc.country.currency.code if origin_loc.country and origin_loc.country.currency else None,
+        )
+        dest_ref = LocationRef(
+            id=dest_loc.id,
+            code=dest_loc.code,
+            name=dest_loc.name,
+            country_code=dest_loc.country.code if dest_loc.country else None,
+            currency_code=dest_loc.country.currency.code if dest_loc.country and dest_loc.country.currency else None,
+        )
+
+        shipment = ShipmentDetails(
+            mode='AIR',
             shipment_type=shipment_type,
+            incoterm=quote_data.get('incoterm', 'DAP'),
             payment_term=quote_data.get('payment_term', 'PREPAID'),
-            service_scope=quote_data.get('service_scope', 'D2D'),
             is_dangerous_goods=ctx.get('commodity') == 'DG',
             pieces=[
-                PieceInput(
+                Piece(
                     pieces=ctx.get('pieces', 1),
                     length_cm=0,
                     width_cm=0,
@@ -572,9 +890,14 @@ class SpotEnvelopeComputeAPIView(APIView):
                     gross_weight_kg=ctx.get('total_weight_kg', 0) / max(ctx.get('pieces', 1), 1),
                 )
             ],
+            service_scope=quote_data.get('service_scope', 'D2D'),
+            origin_location=origin_ref,
+            destination_location=dest_ref,
         )
         
         quote_input = QuoteInput(
+            customer_id=getattr(spe_db.quote, 'customer_id', None) or uuid.uuid4(),
+            contact_id=getattr(spe_db.quote, 'contact_id', None) or uuid.uuid4(),
             shipment=shipment,
             quote_date=date.today(),
             output_currency=quote_data.get('output_currency', 'PGK'),
@@ -586,7 +909,14 @@ class SpotEnvelopeComputeAPIView(APIView):
             spot_envelope_id=UUID(str(spe_db.id))
         )
         
-        result = adapter.calculate_charges()
+        try:
+            result = adapter.calculate_charges()
+        except ValueError as e:
+            logger.error(f"Compute failed with ValueError: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         return Response({
             'is_complete': True,
@@ -601,6 +931,8 @@ class SpotEnvelopeComputeAPIView(APIView):
                     'sell_pgk_incl_gst': str(line.sell_pgk_incl_gst),
                     'leg': line.leg,
                     'source': line.cost_source,
+                    'is_informational': getattr(line, 'is_informational', False),
+                    'bucket': line.bucket,
                 }
                 for line in result.lines
             ],
@@ -611,65 +943,79 @@ class SpotEnvelopeComputeAPIView(APIView):
             },
         })
     
-    def _build_spe(self, spe_db):
-        """Build Pydantic SPE from DB."""
-        ctx = spe_db.shipment_context_json
+class SpotReplyAnalysisAPIView(APIView):
+    """
+    POST /api/v3/spot/analyze-reply/
+    
+    Analyze agent rate reply text and return assertions.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        text = request.data.get('text', '')
+        spe_id = request.data.get('spe_id')
+        manual_assertions = request.data.get('assertions', [])
+        use_ai = request.data.get('use_ai', True)
         
-        ack = None
-        if hasattr(spe_db, 'acknowledgement') and spe_db.acknowledgement:
-            ack_db = spe_db.acknowledgement
-            ack = SPEAcknowledgement(
-                acknowledged_by_user_id=str(ack_db.acknowledged_by_id) if ack_db.acknowledged_by_id else "",
-                acknowledged_at=ack_db.acknowledged_at,
-                statement="I acknowledge this is a conditional SPOT quote and not guaranteed",
+        if not text:
+            return Response(
+                {'error': 'No text provided'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        shipment_context = None
+        if spe_id:
+            try:
+                spe_db = _get_spe_or_404(request.user, spe_id)
+                shipment_context = spe_db.shipment_context_json
+            except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
+                pass
+            
+        if shipment_context:
+            # Enrich with real names for the AI prompt
+            from core.models import Airport
+            orig_ap = Airport.objects.filter(iata_code=shipment_context.get('origin_code')).first()
+            dest_ap = Airport.objects.filter(iata_code=shipment_context.get('destination_code')).first()
+            if orig_ap: shipment_context['origin'] = orig_ap.city.name
+            if dest_ap: shipment_context['destination'] = dest_ap.city.name
+            
+        # Calculate direction and availability to guide the analyst
+        direction = 'IMPORT'
+        availability = None
+        if shipment_context:
+            origin_country = shipment_context.get('origin_country', '')
+            destination_country = shipment_context.get('destination_country', '')
+            if origin_country == 'PG' and destination_country == 'PG':
+                direction = 'DOMESTIC'
+            elif origin_country == 'PG':
+                direction = 'EXPORT'
+            else:
+                direction = 'IMPORT'
+            
+            from quotes.spot_services import RateAvailabilityService
+            availability = RateAvailabilityService.get_availability(
+                origin_airport=shipment_context.get('origin_code', ''),
+                destination_airport=shipment_context.get('destination_code', ''),
+                direction=direction,
+                service_scope=shipment_context.get('service_scope', 'P2P')
+            )
+            
+            # Enrich context with missing status to guide AI
+            if availability:
+                shipment_context['missing_components'] = [k for k, v in availability.items() if not v]
+
+        if use_ai and not manual_assertions:
+            # If AI is requested and no manual edits provided, do full AI analysis
+            result = ReplyAnalysisService.analyze_with_ai(
+                raw_text=text,
+                shipment_context=shipment_context,
+                availability=availability
+            )
+        else:
+            # Manual edit flow or fallback
+            result = ReplyAnalysisService.analyze_manual(
+                raw_text=text,
+                assertions=manual_assertions
             )
         
-        mgr = None
-        if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
-            mgr_db = spe_db.manager_approval
-            mgr = SPEManagerApproval(
-                approved=mgr_db.approved,
-                manager_user_id=str(mgr_db.manager_id) if mgr_db.manager_id else "",
-                decision_at=mgr_db.decision_at,
-                comment=mgr_db.comment,
-            )
-        
-        charges = [
-            SPEChargeLine(
-                code=cl.code,
-                description=cl.description,
-                amount=float(cl.amount),
-                currency=cl.currency,
-                unit=cl.unit,
-                bucket=cl.bucket,
-                is_primary_cost=cl.is_primary_cost,
-                conditional=cl.conditional,
-                source_reference=cl.source_reference,
-                entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
-                entered_at=cl.entered_at,
-            )
-            for cl in spe_db.charge_lines.all()
-        ]
-        
-        return SpotPricingEnvelope(
-            id=str(spe_db.id),
-            status=SPEStatus(spe_db.status),
-            shipment=SPEShipmentContext(
-                origin_country=ctx.get('origin_country', 'OTHER'),
-                destination_country=ctx.get('destination_country', 'OTHER'),
-                origin_code=ctx.get('origin_code', 'XXX'),
-                destination_code=ctx.get('destination_code', 'XXX'),
-                commodity=ctx.get('commodity', 'GCR'),
-                total_weight_kg=ctx.get('total_weight_kg', 1.0),
-                pieces=ctx.get('pieces', 1),
-            ),
-            charges=charges,
-            conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
-            acknowledgement=ack,
-            manager_approval=mgr,
-            spot_trigger_reason_code=spe_db.spot_trigger_reason_code,
-            spot_trigger_reason_text=spe_db.spot_trigger_reason_text,
-            created_by_user_id=str(spe_db.created_by_id) if spe_db.created_by_id else "",
-            created_at=spe_db.created_at,
-            expires_at=spe_db.expires_at,
-        )
+        return Response(result.model_dump())

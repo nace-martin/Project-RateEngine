@@ -24,16 +24,20 @@ import {
     AwaitingManagerBanner,
     ExpiredBanner,
     RejectedBanner,
-    SpotEmailDraftCard
+    ReplyPasteCard,
+    AssertionReviewCard
 } from "@/components/spot";
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import type { SPEChargeLine, CreateSPERequest, SPEShipmentContext, SPECommodity } from "@/lib/spot-types";
+import type { ReplyAnalysisResult } from "@/lib/spot-types";
 
 // Progress steps
-type Step = "entry" | "acknowledge" | "approval" | "compute";
+type Step = "intake" | "analysis" | "entry" | "acknowledge" | "approval" | "compute";
 
 const STEPS: { id: Step; label: string }[] = [
-    { id: "entry", label: "Enter Rates" },
+    { id: "intake", label: "Intake" },
+    { id: "analysis", label: "Analysis" },
+    { id: "entry", label: "Entry" },
     { id: "acknowledge", label: "Acknowledge" },
     { id: "approval", label: "Approval" },
     { id: "compute", label: "Compute" },
@@ -57,22 +61,31 @@ export default function SpotRateEntryPage() {
     const pieces = parseInt(searchParams.get("pieces") || "1");
     const triggerCode = searchParams.get("trigger_code") || "";
     const triggerText = searchParams.get("trigger_text") || "";
+    const serviceScope = searchParams.get("service_scope") || "";
+    const paymentTerm = searchParams.get("payment_term") || "PREPAID";
+    const outputCurrency = searchParams.get("output_currency") || "PGK";
+    const shipmentType = (searchParams.get("shipment_type") || "EXPORT") as "EXPORT" | "IMPORT" | "DOMESTIC";
+    const missingComponents = searchParams.get("missing_components")?.split(",") || [];
 
     const { state, actions, derived } = useSpotMode();
-    const [currentStep, setCurrentStep] = useState<Step>("entry");
+    const { loadSPE } = actions;
+    const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [showAckModal, setShowAckModal] = useState(false);
     const [chargeLines, setChargeLines] = useState<Omit<SPEChargeLine, 'id'>[]>([]);
+    const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
 
-    // Load existing SPE if not new
+    // Load existing SPE
     useEffect(() => {
-        if (!isNew && speId) {
-            actions.loadSPE(speId);
+        if (speId && !isNew) {
+            loadSPE(speId);
         }
-    }, [isNew, speId, actions]);
+    }, [isNew, speId, loadSPE]);
 
     // Determine current step from SPE state
     useEffect(() => {
         if (state.spe) {
+            // Only auto-advance if we're not in a manual transition step (like analysis)
+            // or if the backend state is significantly further ahead.
             if (state.flowState === "READY") {
                 setCurrentStep("compute");
             } else if (state.flowState === "AWAITING_MANAGER") {
@@ -80,44 +93,50 @@ export default function SpotRateEntryPage() {
             } else if (state.spe.acknowledgement) {
                 setCurrentStep("approval");
             } else if (state.spe.charges.length > 0) {
+                // If we have charges, we should at least be in Entry
+                // But don't override analysis/acknowledge if we just finished them
+                setCurrentStep(prev => {
+                    if (prev === "acknowledge" || prev === "compute") return prev;
+                    return "entry";
+                });
+            } else {
+                // Initial state
+                setCurrentStep(prev => (prev === "analysis" ? prev : "intake"));
+            }
+        }
+    }, [state.spe, state.flowState]);
+
+    // Handle updating SPE with charges
+    const handleUpdateSPE = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
+        setChargeLines(charges);
+
+        if (state.spe) {
+            const spe = await actions.updateSPE(state.spe.id, {
+                charges,
+                conditions: {
+                    space_not_confirmed: true,
+                    airline_acceptance_not_confirmed: true,
+                    rate_validity_hours: 72,
+                    conditional_charges_present: charges.some(c => c.conditional),
+                }
+            });
+
+            if (spe) {
                 setCurrentStep("acknowledge");
             }
         }
-    }, [state]);
+    };
 
-    // Handle creating new SPE with charges
-    const handleCreateSPE = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
-        setChargeLines(charges);
+    // Handle analysis complete from intake step
+    const handleAnalysisComplete = (result: ReplyAnalysisResult) => {
+        setAnalysisResult(result);
+        setCurrentStep("analysis");
+    };
 
-        const shipmentContext: SPEShipmentContext = {
-            origin_country: originCountry,
-            destination_country: destCountry,
-            origin_code: originCode,
-            destination_code: destCode,
-            commodity,
-            total_weight_kg: weight,
-            pieces,
-        };
-
-        const request: CreateSPERequest = {
-            shipment_context: shipmentContext,
-            charges: charges,
-            trigger_code: triggerCode,
-            trigger_text: triggerText,
-            conditions: {
-                space_not_confirmed: true,
-                airline_acceptance_not_confirmed: true,
-                rate_validity_hours: 72,
-                conditional_charges_present: charges.some(c => c.conditional),
-            },
-        };
-
-        const spe = await actions.createSPE(request);
-        if (spe) {
-            // Navigate to the non-new URL
-            router.replace(`/quotes/spot/${spe.id}`);
-            setCurrentStep("acknowledge");
-        }
+    // Handle assertion confirmation from analysis step
+    const handleAssertionConfirm = (updatedResult: ReplyAnalysisResult) => {
+        setAnalysisResult(updatedResult);
+        setCurrentStep("entry");
     };
 
     // Handle acknowledgement
@@ -143,11 +162,14 @@ export default function SpotRateEntryPage() {
 
     // Handle compute
     const handleCompute = async () => {
+        const resolvedScope = serviceScope || "D2D";
+        const resolvedPaymentTerm = paymentTerm || "PREPAID";
+        const resolvedOutputCurrency = outputCurrency || "PGK";
         const result = await actions.computeQuote({
             quote_request: {
-                payment_term: "PREPAID",
-                service_scope: "D2D",
-                output_currency: "PGK",
+                payment_term: resolvedPaymentTerm,
+                service_scope: resolvedScope,
+                output_currency: resolvedOutputCurrency,
             },
         });
 
@@ -212,7 +234,24 @@ export default function SpotRateEntryPage() {
     }
 
     return (
-        <div className="container mx-auto max-w-4xl p-6">
+        <div className="container mx-auto max-w-5xl space-y-6 p-6">
+            {/* Context Header */}
+            {isNew && triggerCode && (
+                <div className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                    <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="border-amber-500 bg-amber-100 text-amber-700">
+                            SPOT Quote Required
+                        </Badge>
+                        <Badge variant="secondary" className="font-mono text-xs">
+                            {triggerCode}
+                        </Badge>
+                    </div>
+                    <p className="text-sm font-medium text-amber-900">
+                        {triggerText || "This shipment requires manual rate sourcing."}
+                    </p>
+                </div>
+            )}
+
             {/* Header */}
             <div className="flex items-center gap-4 mb-6">
                 <Button variant="ghost" size="icon" onClick={() => router.back()}>
@@ -221,19 +260,48 @@ export default function SpotRateEntryPage() {
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2">
                         <Package className="h-6 w-6 text-amber-600" />
-                        SPOT Rate Entry
+                        {isNew ? "SPOT Rate Request" : "SPOT Pricing"}
                     </h1>
                     <p className="text-muted-foreground">
-                        {isNew ? "Create new SPOT quote" : `SPE: ${speId.slice(0, 8)}...`}
+                        {isNew ? "Solicit and process manual rates" : `SPE: ${speId.slice(0, 8)}...`}
                     </p>
                 </div>
                 <Badge variant="outline" className="ml-auto text-amber-600 border-amber-400">
-                    {triggerCode || state.spe?.trigger_code || "SPOT"}
+                    {triggerCode || state.spe?.spot_trigger_reason_code || "SPOT"}
                 </Badge>
             </div>
 
             {/* Progress */}
             {renderProgress()}
+
+            {/* Shipment Summary (Always visible) */}
+            <Card className="mb-6">
+                <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-semibold">Shipment Summary</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="grid grid-cols-4 gap-6 text-sm">
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Route</span>
+                            <span className="font-bold text-slate-900">
+                                {originCode || state.spe?.shipment.origin_code} → {destCode || state.spe?.shipment.destination_code}
+                            </span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Commodity</span>
+                            <span className="font-bold text-slate-900">{commodity || state.spe?.shipment.commodity}</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Weight</span>
+                            <span className="font-bold text-slate-900">{weight || state.spe?.shipment.total_weight_kg} kg</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Pieces</span>
+                            <span className="font-bold text-slate-900">{pieces || state.spe?.shipment.pieces}</span>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Error display */}
             {state.error && (
@@ -247,53 +315,40 @@ export default function SpotRateEntryPage() {
                 </Card>
             )}
 
-            {/* Shipment Summary */}
-            <Card className="mb-6">
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Shipment Summary</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-4 gap-4 text-sm">
-                        <div>
-                            <span className="text-muted-foreground">Route:</span>{" "}
-                            <span className="font-medium">
-                                {originCode || state.spe?.shipment_context.origin_code} → {destCode || state.spe?.shipment_context.destination_code}
-                            </span>
-                        </div>
-                        <div>
-                            <span className="text-muted-foreground">Commodity:</span>{" "}
-                            <span className="font-medium">{commodity || state.spe?.shipment_context.commodity}</span>
-                        </div>
-                        <div>
-                            <span className="text-muted-foreground">Weight:</span>{" "}
-                            <span className="font-medium">{weight || state.spe?.shipment_context.total_weight_kg} kg</span>
-                        </div>
-                        <div>
-                            <span className="text-muted-foreground">Pieces:</span>{" "}
-                            <span className="font-medium">{pieces || state.spe?.shipment_context.pieces}</span>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
             {/* Step Content */}
+
+            {currentStep === "intake" && (
+                <ReplyPasteCard
+                    speId={speId as string}
+                    missingComponents={missingComponents}
+                    onAnalysisComplete={(result) => {
+                        setAnalysisResult(result);
+                        setCurrentStep("analysis");
+                    }}
+                />
+            )}
+
+            {currentStep === "analysis" && analysisResult && (
+                <AssertionReviewCard
+                    result={analysisResult}
+                    onConfirm={(refinedResult) => {
+                        setAnalysisResult(refinedResult);
+                        setCurrentStep("entry");
+                    }}
+                    onBack={() => setCurrentStep("intake")}
+                />
+            )}
+
             {currentStep === "entry" && (
                 <div className="space-y-6">
-                    {/* Email Draft Card - Request rates before entering them */}
-                    <SpotEmailDraftCard
-                        originCode={originCode || state.spe?.shipment_context.origin_code || ""}
-                        destinationCode={destCode || state.spe?.shipment_context.destination_code || ""}
-                        commodity={commodity || state.spe?.shipment_context.commodity || "GCR"}
-                        weightKg={weight || state.spe?.shipment_context.total_weight_kg || 0}
-                        pieces={pieces || state.spe?.shipment_context.pieces || 1}
-                        triggerCode={triggerCode || state.spe?.trigger_code}
-                    />
-
                     {/* Rate Entry Form */}
                     <SpotRateEntryForm
-                        onSubmit={handleCreateSPE}
+                        onSubmit={handleUpdateSPE}
                         isLoading={state.isLoading}
                         initialCharges={state.spe?.charges || []}
+                        suggestedCharges={analysisResult?.assertions}
+                        shipmentType={shipmentType}
+                        serviceScope={serviceScope}
                     />
                 </div>
             )}
@@ -311,9 +366,23 @@ export default function SpotRateEntryPage() {
                         <div className="rounded-lg border p-4 space-y-2">
                             <h4 className="font-medium">Charges Summary</h4>
                             {(state.spe?.charges || chargeLines).map((charge, i) => (
-                                <div key={i} className="flex justify-between text-sm">
-                                    <span>{charge.description}</span>
-                                    <span className="font-mono">{charge.amount} {charge.currency}</span>
+                                <div key={i} className="flex justify-between items-start text-sm py-1">
+                                    <span className="mt-0.5">{charge.description}</span>
+                                    <div className="text-right">
+                                        <span className="font-mono block">
+                                            {charge.amount} {charge.currency}
+                                            <span className="text-muted-foreground text-xs ml-1">
+                                                /{charge.unit === 'per_kg' ? 'kg' :
+                                                    charge.unit === 'flat' ? 'flat' :
+                                                        charge.unit.replace('per_', '')}
+                                            </span>
+                                        </span>
+                                        {charge.min_charge && (
+                                            <span className="text-xs text-muted-foreground block">
+                                                Min: {charge.min_charge} {charge.currency}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -345,30 +414,150 @@ export default function SpotRateEntryPage() {
             )}
 
             {currentStep === "compute" && derived.canProceedToPricing && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <CheckCircle2 className="h-5 w-5 text-green-500" />
-                            Ready to Compute
-                        </CardTitle>
-                        <CardDescription>
-                            All approvals complete. Click below to generate the SPOT quote.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <Button
-                            onClick={handleCompute}
-                            disabled={state.isLoading}
-                            className="w-full"
-                            size="lg"
-                        >
-                            {state.isLoading ? (
-                                <Clock className="h-4 w-4 mr-2 animate-spin" />
-                            ) : null}
-                            Compute SPOT Quote
-                        </Button>
-                    </CardContent>
-                </Card>
+                <>
+                    {!state.quoteResult ? (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                                    Ready to Compute
+                                </CardTitle>
+                                <CardDescription>
+                                    All approvals complete. Click below to generate the SPOT quote.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <Button
+                                    onClick={handleCompute}
+                                    disabled={state.isLoading}
+                                    className="w-full"
+                                    size="lg"
+                                >
+                                    {state.isLoading ? (
+                                        <Clock className="h-4 w-4 mr-2 animate-spin" />
+                                    ) : null}
+                                    Compute SPOT Quote
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                                    SPOT Quote Preview
+                                </CardTitle>
+                                <CardDescription>
+                                    Breakdown of charges based on SPOT entry and pricing logic.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                                <div className="space-y-4">
+                                    {[
+                                        { title: "Origin Charges", bucket: "origin_charges", icon: "arrow-up" },
+                                        { title: "Air Freight", bucket: ["freight_charges", "airfreight"], icon: "plane" },
+                                        { title: "Destination Charges", bucket: "destination_charges", icon: "arrow-down" }
+                                    ].map((group) => {
+                                        const groupLines = state.quoteResult!.lines?.filter(
+                                            l => !l.is_informational && (Array.isArray(group.bucket) ? group.bucket.includes(l.bucket) : l.bucket === group.bucket)
+                                        );
+
+                                        // Determine if we should show this group (always show if lines exist, 
+                                        // maybe catch-all "Other" later?)
+                                        if (!groupLines || groupLines.length === 0) return null;
+
+                                        return (
+                                            <div key={group.title} className="space-y-2">
+                                                <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground border-b pb-1">
+                                                    {group.title}
+                                                </div>
+                                                <div className="rounded-md divide-y border-x border-b border-t-0">
+                                                    {groupLines.map((line, idx) => (
+                                                        <div key={idx} className="flex justify-between p-3 text-sm bg-card hover:bg-accent/5 transition-colors">
+                                                            <div>
+                                                                <div className="font-medium">{line.description}</div>
+                                                                <div className="text-xs text-muted-foreground">{line.source}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="font-mono">{parseFloat(line.sell_pgk_incl_gst || "0").toLocaleString('en-US', { style: 'currency', currency: 'PGK' })}</div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+
+                                    {/* Catch-all for any lines not in the main groups */}
+                                    {(() => {
+                                        const mainBuckets = ["origin_charges", "freight_charges", "airfreight", "destination_charges"];
+                                        const otherLines = state.quoteResult!.lines?.filter(
+                                            l => !l.is_informational && !mainBuckets.includes(l.bucket)
+                                        );
+
+                                        if (!otherLines || otherLines.length === 0) return null;
+
+                                        return (
+                                            <div className="space-y-2">
+                                                <div className="font-semibold text-xs uppercase tracking-wider text-muted-foreground border-b pb-1">
+                                                    Other Charges
+                                                </div>
+                                                <div className="rounded-md divide-y border-x border-b border-t-0">
+                                                    {otherLines.map((line, idx) => (
+                                                        <div key={idx} className="flex justify-between p-3 text-sm bg-card">
+                                                            <div>
+                                                                <div className="font-medium">{line.description}</div>
+                                                                <div className="text-xs text-muted-foreground">{line.source}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="font-mono">{parseFloat(line.sell_pgk_incl_gst || "0").toLocaleString('en-US', { style: 'currency', currency: 'PGK' })}</div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+
+                                {state.quoteResult.lines?.some(l => l.is_informational) && (
+                                    <div className="space-y-2">
+                                        <div className="font-semibold text-sm text-amber-600 flex items-center gap-2">
+                                            <AlertTriangle className="h-4 w-4" />
+                                            Conditions & Notes (Excluded from Total)
+                                        </div>
+                                        <div className="bg-amber-50 border border-amber-200 rounded-md p-3 space-y-2">
+                                            {state.quoteResult.lines?.filter(l => l.is_informational).map((line, idx) => (
+                                                <div key={idx} className="text-sm text-amber-800 flex justify-between">
+                                                    <span>{line.description}</span>
+                                                    <span className="italic text-xs opacity-70">Note</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <Separator />
+
+                                <div className="flex justify-between items-center text-lg font-bold">
+                                    <div>Total (Inc. GST)</div>
+                                    <div>
+                                        {parseFloat(state.quoteResult.totals?.total_sell_pgk_incl_gst || "0").toLocaleString('en-US', { style: 'currency', currency: 'PGK' })}
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <Button variant="outline" onClick={() => router.push('/quotes')} className="w-full">
+                                        Back to Dashboard
+                                    </Button>
+                                    <Button className="w-full bg-blue-600 hover:bg-blue-700">
+                                        Create Quote
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+                </>
             )}
 
             {/* Acknowledgement Modal */}

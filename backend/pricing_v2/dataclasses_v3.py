@@ -101,6 +101,8 @@ class CalculatedChargeLine(BaseModel):
     exchange_rate: Optional[Decimal] = None
     cost_source_description: Optional[str] = None
     is_rate_missing: bool = False
+    bucket: str = "origin_charges"
+    is_informational: bool = False
 
 class CalculatedTotals(BaseModel):
     """The final, summed totals for the quote."""

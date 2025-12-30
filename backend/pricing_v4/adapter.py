@@ -1,4 +1,5 @@
 import uuid
+import json
 import logging
 from decimal import Decimal
 from typing import List, Optional
@@ -62,13 +63,34 @@ class PricingServiceV4Adapter:
     def calculate_charges(self) -> QuoteCharges:
         shipment = self.quote_input.shipment
         
-        # SPOT Mode: if spot_envelope_id provided, use SPE charges instead of DB rates
+        # 1. Calculate Standard Charges (Base)
+        standard_lines = []
+        try:
+            standard_lines = self._calculate_standard_lines()
+        except Exception as e:
+            # If standard engine fails (e.g. Unsupported Route), and we have no SPOT info, re-raise.
+            # If we have SPOT info, proceed with SPOT only overlay.
+            if self.spot_envelope_id:
+                logger.warning(f"Standard pricing engine failed, relying on SPOT overlay: {e}")
+            else:
+                raise e
+
+        # 2. Calculate Spot Charges (Overlay)
+        spot_lines = []
         if self.spot_envelope_id:
-            return self._calculate_spot_charges()
+            spot_lines = self._calculate_spot_lines()
+            self.pricing_mode = PricingMode.SPOT
+
+        # 3. Merge Strategies (Standard + Spot Overlay)
+        # Using bucket-level override logic
+        final_lines = self._merge_charge_lines(standard_lines, spot_lines)
         
-        # 1. Determine which engine to use
-        # Logic matches _classify_shipment_type in views.py but we trust the input object
-        
+        # 4. Calculate Final Totals (Unified Pass)
+        return self._calculate_totals(final_lines)
+
+    def _calculate_standard_lines(self) -> List[CalculatedChargeLine]:
+        """Run standard V4 pricing engine and return raw charge lines."""
+        shipment = self.quote_input.shipment
         engine = None
         result = None
         
@@ -83,12 +105,6 @@ class PricingServiceV4Adapter:
 
         if shipment.shipment_type == 'EXPORT':
             # Export Engine
-            # needs: quote_date, origin, destination, chargeable_weight_kg
-            # (service_scope/incoterm are handled by logic or not needed for basic constructor yet?)
-            # Wait, verify ExportEngine uses them?
-            # Looking at current ExportEngine.__init__ it DOES NOT take service_scope or incoterm.
-            # It DOES take quote_date.
-            
             engine = ExportPricingEngine(
                 quote_date=self.quote_input.quote_date, # Add quote_date
                 origin=origin_code,
@@ -97,7 +113,6 @@ class PricingServiceV4Adapter:
             )
         elif shipment.shipment_type == 'IMPORT':
             # Import Engine
-            # needs: quote_date, origin, destination, chargeable_weight_kg, payment_term, service_scope
             # Convert strings to enum values
             payment_term_enum = PaymentTerm(shipment.payment_term)
             service_scope_enum = ServiceScope(shipment.service_scope)
@@ -112,7 +127,6 @@ class PricingServiceV4Adapter:
             )
         elif shipment.shipment_type == 'DOMESTIC':
             # Domestic Engine
-            # needs: cogs_origin, destination, weight_kg, service_scope
             engine = DomesticPricingEngine(
                 cogs_origin=origin_code,
                 destination=dest_code,
@@ -126,16 +140,19 @@ class PricingServiceV4Adapter:
         # 2. Run Calculation
         # Export Engine requires product_code_ids; others may not
         if shipment.shipment_type == 'EXPORT':
-            product_code_ids = ExportPricingEngine.get_product_codes(is_dg=shipment.is_dangerous_goods)
+            product_code_ids = ExportPricingEngine.get_product_codes(
+                is_dg=shipment.is_dangerous_goods,
+                service_scope=shipment.service_scope
+            )
             result = engine.calculate_quote(product_code_ids)
         else:
             # Import and Domestic engines use calculate_quote() without args
             result = engine.calculate_quote()
         
-        # 3. Convert Result to V3 QuoteCharges
-        return self._convert_to_v3_response(result)
+        # 3. Convert Result to V3 QuoteCharges (now returns List[CalculatedChargeLine])
+        return self._convert_result_to_lines(result)
 
-    def _convert_to_v3_response(self, result) -> QuoteCharges:
+    def _convert_result_to_lines(self, result) -> List[CalculatedChargeLine]:
         lines: List[CalculatedChargeLine] = []
         
         # We need to consolidate Cost and Sell lines into single ChargeLines for V3.
@@ -161,6 +178,18 @@ class PricingServiceV4Adapter:
         # Process Import/Export Style (Unified lines)
         for line in import_or_export_lines:
             code = line.product_code
+            # Map V4 category to V3 bucket
+            v4_category = getattr(line, 'category', 'HANDLING')
+            bucket = 'origin_charges'
+            if v4_category == 'FREIGHT':
+                bucket = 'airfreight'
+            elif 'DEST' in code.upper() or 'DEST' in getattr(line, 'description', '').upper():
+                bucket = 'destination_charges'
+            elif v4_category in ['HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'CARTAGE', 'SURCHARGE']:
+                bucket = 'origin_charges'
+
+            sell_currency = getattr(line, 'sell_currency', 'PGK')
+            cost_currency = getattr(line, 'cost_currency', sell_currency)
             if code not in consolidated:
                 consolidated[code] = {
                     'description': line.description,
@@ -168,6 +197,10 @@ class PricingServiceV4Adapter:
                     'sell_amount': Decimal('0'),
                     'sell_incl_gst': Decimal('0'),
                     'gst_amount': Decimal('0'),
+                    'is_rate_missing': getattr(line, 'is_rate_missing', False),
+                    'bucket': bucket,
+                    'sell_currency': sell_currency,
+                    'cost_currency': cost_currency,
                 }
             
             # Sum up (though typically one per code)
@@ -176,14 +209,6 @@ class PricingServiceV4Adapter:
             
             # Handle Tax
             gst = getattr(line, 'gst_amount', Decimal('0'))
-            # Import engine doesn't expressly return gst_amount in datastruct, it implies inclusion?
-            # Checking ImportEngine: validation verify_import_engine check "sell_incl_gst".
-            # ImportEngine ChargeLine has no gst field?
-            # ImportEngine uses logic inside? No, let's look at ImportEngine datastruct.
-            # ChargeLine: product_code, cost_amount, sell_amount.
-            # If ImportEngine doesn't calculate GST, we might need to add it here or ensure Engine does it.
-            # For now, rely on what's there.
-            
             if hasattr(line, 'sell_incl_gst'):
                 consolidated[code]['sell_incl_gst'] += line.sell_incl_gst
             else:
@@ -195,21 +220,16 @@ class PricingServiceV4Adapter:
             for item in result.cogs_breakdown:
                 code = item.product_code
                 if code not in consolidated:
-                    consolidated[code] = {'description': item.description.replace(' (Cost)', ''), 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0')}
+                    consolidated[code] = {'description': item.description.replace(' (Cost)', ''), 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges'} # Domestic simplified
                 consolidated[code]['cost_amount'] += item.amount
 
             for item in result.sell_breakdown:
                 code = item.product_code
                 if code not in consolidated:
-                    consolidated[code] = {'description': item.description, 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0')}
+                    consolidated[code] = {'description': item.description, 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges'}
                 consolidated[code]['sell_amount'] += item.amount
                 
                 # Domestic GST Logic (10%)
-                # DomesticEngine adds GST at total level, but here we need per line?
-                # V3 expects per-line GST.
-                # DomesticEngine: "GST added at end".
-                # We need to distribute it or apply it here.
-                # All domestic sell rates are taxable in PNG.
                 gst = item.amount * Decimal('0.10')
                 consolidated[code]['sell_incl_gst'] += (item.amount + gst)
 
@@ -228,40 +248,73 @@ class PricingServiceV4Adapter:
             sc_id = sc.id
             sc_desc = sc.description
 
-            lines.append(CalculatedChargeLine(
-                service_component_id=sc_id,
-                service_component_code=code,
-                service_component_desc=data['description'] or sc_desc,
-                leg='MAIN', # TODO: Map properly based on ProductCode
-                cost_pgk=data['cost_amount'],
-                sell_pgk=data['sell_amount'],
-                sell_pgk_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
-                sell_fcy=data['sell_amount'], # Assuming PGK centric for now
-                sell_fcy_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
-                cost_source='V4 Engine',
-                sell_fcy_currency='PGK'
-            ))
+            # [FIX P1] Handle non-PGK currency from Standard Engine (e.g. Import Prepaid)
+            currency = data.get('sell_currency', 'PGK')
+            cost_currency = data.get('cost_currency', currency)
+            
+            if currency != 'PGK':
+                sell_fcy = Decimal(str(data['sell_amount']))
+                sell_fcy_incl_gst = Decimal(str(data.get('sell_incl_gst', sell_fcy)))
+                cost_fcy = Decimal(str(data['cost_amount']))
+                
+                fx_sell_rate = self._get_fx_sell_rate(currency, self._get_fx_rates_dict())
+                fx_buy_rate = self._get_fx_buy_rate(cost_currency, self._get_fx_rates_dict())
+                
+                if fx_sell_rate > 0:
+                    sell_pgk = sell_fcy * fx_sell_rate
+                    sell_pgk_incl_gst = sell_fcy_incl_gst * fx_sell_rate
+                else:
+                    sell_pgk = sell_fcy
+                    sell_pgk_incl_gst = sell_fcy_incl_gst
 
-        # 3. Totals
-        # We can re-sum from lines to be safe
-        total_cost = sum(l.cost_pgk for l in lines)
-        total_sell = sum(l.sell_pgk for l in lines)
-        total_gst = sum(l.sell_pgk_incl_gst - l.sell_pgk for l in lines)
-        
-        totals = CalculatedTotals(
-            total_cost_pgk=total_cost,
-            total_sell_pgk=total_sell,
-            total_sell_pgk_incl_gst=total_sell + total_gst,
-            total_sell_fcy=total_sell,
-            total_sell_fcy_incl_gst=total_sell + total_gst,
-            total_sell_fcy_currency='PGK'
-        )
-        
-        return QuoteCharges(lines=lines, totals=totals)
+                if fx_buy_rate > 0:
+                    cost_pgk = cost_fcy * fx_buy_rate
+                else:
+                    cost_pgk = cost_fcy
+
+                lines.append(CalculatedChargeLine(
+                    service_component_id=sc_id,
+                    service_component_code=code,
+                    service_component_desc=data['description'] or sc_desc,
+                    leg='MAIN',
+                    cost_pgk=cost_pgk,
+                    sell_pgk=sell_pgk,
+                    sell_pgk_incl_gst=sell_pgk_incl_gst,
+                    sell_fcy=sell_fcy,
+                    sell_fcy_incl_gst=sell_fcy_incl_gst,
+                    sell_fcy_currency=currency,
+                    cost_fcy=cost_fcy,
+                    cost_fcy_currency=cost_currency,
+                    bucket=data.get('bucket', 'origin_charges'),
+                    cost_source='V4 Engine',
+                    is_rate_missing=data.get('is_rate_missing', False),
+                ))
+            else:
+                if cost_currency != 'PGK':
+                    fx_buy_rate = self._get_fx_buy_rate(cost_currency, self._get_fx_rates_dict())
+                    cost_pgk = data['cost_amount'] * fx_buy_rate if fx_buy_rate > 0 else data['cost_amount']
+                else:
+                    cost_pgk = data['cost_amount']
+                lines.append(CalculatedChargeLine(
+                    service_component_id=sc_id,
+                    service_component_code=code,
+                    service_component_desc=data['description'] or sc_desc,
+                    leg='MAIN',
+                    cost_pgk=cost_pgk,
+                    sell_pgk=data['sell_amount'],
+                    sell_pgk_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
+                    sell_fcy=data['sell_amount'],
+                    sell_fcy_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
+                    sell_fcy_currency='PGK',
+                    bucket=data.get('bucket', 'origin_charges'),
+                    cost_source='V4 Engine',
+                    is_rate_missing=data.get('is_rate_missing', False),
+                ))
+
+        return lines
 
     def get_output_currency(self):
         shipment = self.quote_input.shipment
-        # Import PREPAID = FCY (use origin currency if available, fallback AUD)
         if shipment.shipment_type == 'IMPORT':
             if shipment.payment_term == 'PREPAID':
                 origin_ccy = None
@@ -269,20 +322,105 @@ class PricingServiceV4Adapter:
                     origin_ccy = getattr(shipment.origin_location, 'currency_code', None)
                 return origin_ccy or self.quote_input.output_currency or 'AUD'
             return 'PGK'
-        
-        # Other shipment types default to provided output_currency or PGK
         return self.quote_input.output_currency or 'PGK'
 
-    def _calculate_spot_charges(self) -> QuoteCharges:
+    def _get_fx_rates_dict(self) -> dict:
+        if not self.fx_snapshot:
+            return {}
+        rates = self.fx_snapshot.rates
+        if isinstance(rates, str):
+            try:
+                return json.loads(rates)
+            except json.JSONDecodeError:
+                logger.warning("Invalid FX rates JSON; falling back to empty rates.")
+                return {}
+        return rates or {}
+
+    def _get_fx_buy_rate(self, currency: str, rates: dict) -> Decimal:
+        if currency == 'PGK':
+            return Decimal('1')
+        info = rates.get(currency, {})
+        if info and info.get('tt_buy'):
+            return Decimal(str(info['tt_buy']))
+        logger.warning("No FX BUY rate found for %s; using 1.0", currency)
+        return Decimal('1')
+
+    def _get_fx_sell_rate(self, currency: str, rates: dict) -> Decimal:
+        if currency == 'PGK':
+            return Decimal('1')
+        info = rates.get(currency, {})
+        if info and info.get('tt_sell'):
+            return Decimal(str(info['tt_sell']))
+        logger.warning("No FX SELL rate found for %s; using 1.0", currency)
+        return Decimal('1')
+
+    def _calculate_chargeable_weight(self) -> Decimal:
+        total_actual = Decimal('0')
+        total_volumetric = Decimal('0')
+        pieces = getattr(self.quote_input.shipment, 'pieces', []) or []
+        for piece in pieces:
+            piece_count = Decimal(str(piece.pieces))
+            gross_weight = Decimal(str(piece.gross_weight_kg))
+            total_actual += piece_count * gross_weight
+            if piece.length_cm and piece.width_cm and piece.height_cm:
+                vol = (Decimal(str(piece.length_cm)) * Decimal(str(piece.width_cm)) * Decimal(str(piece.height_cm))) / Decimal('6000')
+                total_volumetric += piece_count * vol
+        return max(total_actual, total_volumetric)
+
+    def _calculate_totals(self, lines: List[CalculatedChargeLine]) -> QuoteCharges:
+        total_cost = sum(l.cost_pgk for l in lines)
+        total_sell = sum(l.sell_pgk for l in lines)
+        total_gst = sum(l.sell_pgk_incl_gst - l.sell_pgk for l in lines)
+        total_sell_pgk_incl_gst = total_sell + total_gst
+
+        fx_rates = self._get_fx_rates_dict()
+        output_currency = self.quote_input.output_currency or 'PGK'
+        output_fx_sell = self._get_fx_sell_rate(output_currency, fx_rates)
+
+        if output_currency == 'PGK' or output_fx_sell <= 0:
+            total_sell_fcy = total_sell
+            total_sell_fcy_incl_gst = total_sell_pgk_incl_gst
+        else:
+            total_sell_fcy = total_sell / output_fx_sell
+            total_sell_fcy_incl_gst = total_sell_pgk_incl_gst / output_fx_sell
+        
+        totals = CalculatedTotals(
+            total_cost_pgk=total_cost,
+            total_sell_pgk=total_sell,
+            total_sell_pgk_incl_gst=total_sell_pgk_incl_gst,
+            total_sell_fcy=total_sell_fcy,
+            total_sell_fcy_incl_gst=total_sell_fcy_incl_gst,
+            total_sell_fcy_currency=output_currency,
+            has_missing_rates=any(l.is_rate_missing for l in lines)
+        )
+        return QuoteCharges(lines=lines, totals=totals)
+
+    def _merge_charge_lines(
+        self, 
+        standard_lines: List[CalculatedChargeLine], 
+        spot_lines: List[CalculatedChargeLine]
+    ) -> List[CalculatedChargeLine]:
+        """
+        [FIX P2] Domestic Logic: Append strategy for Domestic to preserve origin/freight.
+        """
+        is_domestic = (self.quote_input.shipment.shipment_type == 'DOMESTIC')
+        if not spot_lines:
+            return standard_lines
+            
+        if is_domestic:
+            final_lines = list(standard_lines)
+            final_lines.extend(spot_lines)
+            return final_lines
+
+        spot_buckets = {l.bucket for l in spot_lines}
+        final_lines = [l for l in standard_lines if l.bucket not in spot_buckets]
+        final_lines.extend(spot_lines)
+        return final_lines
+
+    def _calculate_spot_lines(self) -> List[CalculatedChargeLine]:
         """
         Calculate charges using SPOT Pricing Envelope.
-        
-        1. Load and validate SPE
-        2. Convert SPE charge lines to BUY lines
-        3. Apply FX conversion
-        4. Apply margin per policy
-        5. Apply GST
-        6. Mark output as SPOT mode
+        Returns list of CalculatedChargeLine (no totals).
         """
         from quotes.models import SpotPricingEnvelopeDB
         from quotes.spot_services import SpotEnvelopeService
@@ -304,7 +442,7 @@ class PricingServiceV4Adapter:
         except SpotPricingEnvelopeDB.DoesNotExist:
             raise ValueError(f"SPOT Pricing Envelope not found: {self.spot_envelope_id}")
         
-        # Verify context integrity (Tweak #4)
+        # Verify context integrity
         if not spe_db.verify_context_integrity():
             raise ValueError(
                 "SPOT Pricing Envelope integrity check failed. "
@@ -312,7 +450,6 @@ class PricingServiceV4Adapter:
             )
         
         # 2. Reconstruct Pydantic SPE for validation
-        # Build acknowledgement if exists
         ack = None
         if hasattr(spe_db, 'acknowledgement') and spe_db.acknowledgement:
             ack_db = spe_db.acknowledgement
@@ -322,7 +459,6 @@ class PricingServiceV4Adapter:
                 statement=ack_db.statement,
             )
         
-        # Build manager approval if exists
         mgr = None
         if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
             mgr_db = spe_db.manager_approval
@@ -333,7 +469,6 @@ class PricingServiceV4Adapter:
                 comment=mgr_db.comment,
             )
         
-        # Build charge lines
         charges = []
         for cl in spe_db.charge_lines.all():
             charges.append(SPEChargeLine(
@@ -348,9 +483,9 @@ class PricingServiceV4Adapter:
                 source_reference=cl.source_reference,
                 entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
                 entered_at=cl.entered_at,
+                min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
             ))
         
-        # Build context
         ctx_json = spe_db.shipment_context_json
         ctx = SPEShipmentContext(
             origin_country=ctx_json.get('origin_country', 'OTHER'),
@@ -360,9 +495,9 @@ class PricingServiceV4Adapter:
             commodity=ctx_json.get('commodity', 'GCR'),
             total_weight_kg=ctx_json.get('total_weight_kg', 0),
             pieces=ctx_json.get('pieces', 1),
+            service_scope=str(ctx_json.get('service_scope', 'p2p')).lower(),
         )
         
-        # Build conditions
         cond_json = spe_db.conditions_json or {}
         conditions = SPEConditions(
             space_not_confirmed=cond_json.get('space_not_confirmed', True),
@@ -372,7 +507,6 @@ class PricingServiceV4Adapter:
             notes=cond_json.get('notes'),
         )
         
-        # Build full SPE for validation
         spe = SpotPricingEnvelope(
             id=str(spe_db.id),
             status=SPEStatus(spe_db.status),
@@ -388,86 +522,176 @@ class PricingServiceV4Adapter:
             expires_at=spe_db.expires_at,
         )
         
-        # 3. Validate SPE is ready for pricing (Tweak #3)
+        # 3. Validate SPE is ready for pricing
         is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
         if not is_valid:
             raise ValueError(f"SPOT Pricing Envelope not valid for pricing: {error}")
         
-        # 4. Mark as SPOT mode
-        self.pricing_mode = PricingMode.SPOT
-        
-        # 5. Convert SPE charges to V3 CalculatedChargeLines
-        # Apply FX conversion if charges are in foreign currency
+        # 4. Convert SPE charges to V3 CalculatedChargeLines
         lines: List[CalculatedChargeLine] = []
         
-        # Get FX rate if needed
-        fx_rate = Decimal('1.0')
-        if self.fx_snapshot:
-            # Find rate for source currency to PGK
-            for charge in charges:
-                if charge.currency != 'PGK':
-                    rates = self.fx_snapshot.rates.get(charge.currency, {})
-                    fx_rate = Decimal(str(rates.get('tt_buy', '1.0')))
-                    break
-        
+        fx_rates = self._get_fx_rates_dict()
+        output_currency = self.quote_input.output_currency or 'PGK'
+        output_fx_sell = self._get_fx_sell_rate(output_currency, fx_rates)
+        chargeable_weight = self._calculate_chargeable_weight()
+
         # Get margin from policy
         margin_pct = Decimal('0.15')  # Default 15%
-        if self.policy:
-            margin_pct = self.policy.margin_pct
+        if self.policy and self.policy.margin_pct is not None:
+            margin_pct = Decimal(str(self.policy.margin_pct))
         
-        # Prefetch ServiceComponents
         codes = [c.code for c in charges]
         component_map = {
             sc.code: sc for sc in ServiceComponent.objects.filter(code__in=codes)
         }
         
         for charge in charges:
-            # Calculate cost in PGK
-            cost_fcy = Decimal(str(charge.amount))
-            cost_pgk = cost_fcy * fx_rate
+            # [FIX] Handle conditional/informational charges
+            # If conditional, we strip the value to prevent it affecting totals, 
+            # and mark it as informational.
+            is_info = charge.conditional
+            
+            # Determine CAF pct
+            caf_pct = Decimal("0")
+            if self.policy:
+                shipment_type = self.quote_input.shipment.shipment_type
+                if shipment_type == 'IMPORT':
+                    caf_pct = Decimal(str(self.policy.caf_import_pct))
+                elif shipment_type == 'EXPORT':
+                    caf_pct = Decimal(str(self.policy.caf_export_pct))
+
+            # Apply CAF to FX Rate (User Request)
+            fx_buy = self._get_fx_buy_rate(charge.currency, fx_rates)
+            fx_buy_adjusted = fx_buy * (Decimal('1') + caf_pct)
+            
+            # Calculate Base Cost in FCY
+            # Handle 'per_kg' OR 'min_or_per_kg' using min_charge if present
+            cost_fcy_base = Decimal("0")
+            
+            # Clean cost_fcy from amount
+            unit_rate = Decimal(str(charge.amount))
+            if is_info:
+                unit_rate = Decimal("0")
+                
+            if charge.unit == 'per_kg' or charge.unit == 'min_or_per_kg':
+                base_calc = unit_rate * chargeable_weight
+                min_val = Decimal(str(charge.min_charge)) if charge.min_charge is not None else Decimal("0")
+                if is_info: 
+                    min_val = Decimal("0")
+                cost_fcy = max(base_calc, min_val)
+            elif charge.unit == 'percentage':
+                # Existing logic
+                logger.warning(f"Percentage charge '{charge.code}' skipped. Setting cost to 0.")
+                cost_fcy = Decimal("0")
+            else:
+                # Flat or other
+                cost_fcy = unit_rate
+                
+            # Convert to PGK using Adjusted FX
+            cost_pgk = cost_fcy * fx_buy_adjusted
             
             # Apply margin for sell price
             sell_pgk = cost_pgk * (Decimal('1') + margin_pct)
             
-            # Apply GST (10%)
-            gst = sell_pgk * Decimal('0.10')
+            # [FIX] Apply Tax Policy (GST)
+            # We map the SPOT bucket/info to the attributes expected by apply_gst_policy
+            from quotes.tax_policy import apply_gst_policy
+            
+            # Define minimal mocks to satisfy the policy interface
+            class TaxLocation:
+                def __init__(self, cc): self.country_code = cc
+            
+            class TaxQuotation:
+                def __init__(self, st): self.service_type = st
+                
+            class TaxVersion:
+                def __init__(self, origin_cc, dest_cc, svc_type, snap):
+                    self.origin = TaxLocation(origin_cc)
+                    self.destination = TaxLocation(dest_cc)
+                    self.quotation = TaxQuotation(svc_type)
+                    self.policy_snapshot = snap
+            
+            class TaxCharge:
+                def __init__(self, code, stage):
+                    self.code = code
+                    self.stage = stage
+                    self.is_taxable = False
+                    self.gst_percentage = 0
+            
+            # Prepare context
+            s = self.quote_input.shipment
+            origin_cc = s.origin_location.country_code if s.origin_location else 'PG'
+            dest_cc = s.destination_location.country_code if s.destination_location else 'PG'
+            # Map shipment_type to service_type (IMPORT/EXPORT/DOMESTIC)
+            svc_type = s.shipment_type
+            
+            policy_snap = {} # Could populate export_evidence if available
+            
+            version_mock = TaxVersion(origin_cc, dest_cc, svc_type, policy_snap)
+            
+            # Map charge to stage
+            stage = "ORIGIN"
+            if charge.bucket == 'destination_charges':
+                stage = "DESTINATION"
+            elif charge.bucket == 'airfreight':
+                stage = "AIR"
+            
+            charge_mock = TaxCharge(charge.code, stage)
+            
+            # Apply Policy
+            apply_gst_policy(version_mock, charge_mock)
+            
+            # Calculate GST
+            gst_rate = Decimal(str(charge_mock.gst_percentage)) / Decimal('100')
+            gst = sell_pgk * gst_rate
             sell_incl_gst = sell_pgk + gst
+
+            if output_currency == 'PGK' or output_fx_sell <= 0:
+                sell_fcy = sell_pgk
+                sell_fcy_incl_gst = sell_incl_gst
+            else:
+                sell_fcy = sell_pgk / output_fx_sell
+                sell_fcy_incl_gst = sell_incl_gst / output_fx_sell
             
             # Get ServiceComponent if exists
             sc = component_map.get(charge.code)
-            sc_id = sc.id if sc else None
+            
+            # [FIX] Fallback for dynamic SPOT charges not in DB (e.g. agent ad-hoc charges)
+            if not sc:
+                sc = ServiceComponent.objects.filter(code='SPOT_CHARGE').first()
+            if not sc:
+                sc = ServiceComponent.objects.filter(code__in=['MISC', 'OTHER', 'GENERIC']).first()
+            if not sc:
+                # Last resort Fallback 
+                # Create a dummy or use ID of first available?
+                # Using a known safe ID if possible, or fail gracefully
+                # Better to use one from the map if list not empty?
+                if charges:
+                     # Re-use first charge's SC just to pass validation? No, confusing.
+                     pass
+            
+            # If still no SC, we have a problem because CalculatedChargeLine needs ID.
+            # We assume database seeding has 'SPOT_CHARGE' or similar.
+            sc_id = sc.id if sc else uuid.uuid4() # Danger but ensures UUID
+            sc_desc = sc.description if sc else charge.description
             
             lines.append(CalculatedChargeLine(
                 service_component_id=sc_id,
                 service_component_code=charge.code,
-                service_component_desc=charge.description,
-                leg='SPOT',  # Mark as SPOT leg
+                service_component_desc=charge.description or sc_desc, # Use charge desc from SPE preferentially
+                leg='MAIN',
                 cost_pgk=cost_pgk,
                 sell_pgk=sell_pgk,
                 sell_pgk_incl_gst=sell_incl_gst,
-                sell_fcy=cost_fcy,  # Original FCY amount
-                sell_fcy_incl_gst=cost_fcy * (Decimal('1') + margin_pct) * Decimal('1.10'),
-                cost_source=f'SPOT: {charge.source_reference}',
-                sell_fcy_currency=charge.currency,
+                sell_fcy=sell_fcy,
+                sell_fcy_incl_gst=sell_fcy_incl_gst,
+                cost_source='SPOT Envelope',
+                cost_fcy=cost_fcy,
+                cost_fcy_currency=charge.currency,
+                sell_fcy_currency=output_currency,
+                bucket=charge.bucket, # Ensure bucket is passed
+                is_informational=is_info,
+                is_rate_missing=False,
             ))
-        
-        # 6. Calculate totals
-        total_cost = sum(l.cost_pgk for l in lines)
-        total_sell = sum(l.sell_pgk for l in lines)
-        total_gst = sum(l.sell_pgk_incl_gst - l.sell_pgk for l in lines)
-        
-        totals = CalculatedTotals(
-            total_cost_pgk=total_cost,
-            total_sell_pgk=total_sell,
-            total_sell_pgk_incl_gst=total_sell + total_gst,
-            total_sell_fcy=sum(l.sell_fcy for l in lines),
-            total_sell_fcy_incl_gst=sum(l.sell_fcy_incl_gst for l in lines),
-            total_sell_fcy_currency=charges[0].currency if charges else 'PGK',
-        )
-        
-        logger.info(
-            "SPOT pricing calculated: envelope=%s, lines=%d, total_sell=%.2f PGK",
-            self.spot_envelope_id, len(lines), total_sell
-        )
-        
-        return QuoteCharges(lines=lines, totals=totals)
+            
+        return lines
