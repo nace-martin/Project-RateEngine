@@ -1,6 +1,7 @@
 // frontend/src/lib/api.ts
 import axios from 'axios';
 import { API_BASE_URL } from './config';
+import { ReplyAnalysisResult, SPEChargeLine, SPEConditions } from './spot-types';
 import {
   LoginData,
   User,
@@ -14,6 +15,7 @@ import {
   QuoteVersionCreatePayload,
   StationSummary,
   QuoteComputeResult,
+  PaginatedResponse,
 } from './types';
 
 // Helper to get the token
@@ -216,7 +218,7 @@ export async function searchLocations(
 
 // --- Quotes V3 ---
 
-export async function getQuotesV3(): Promise<V3QuoteComputeResponse[]> {
+export async function getQuotesV3(): Promise<PaginatedResponse<V3QuoteComputeResponse>> {
   const url = API_BASE_URL + '/api/v3/quotes/';
   const response = await fetch(url, {
     headers: {
@@ -228,7 +230,19 @@ export async function getQuotesV3(): Promise<V3QuoteComputeResponse[]> {
     throw new Error('Failed to fetch quotes.');
   }
 
-  return response.json();
+  const data = await response.json();
+  if (Array.isArray(data)) {
+    return {
+      count: data.length,
+      next: null,
+      previous: null,
+      results: data,
+    };
+  }
+  if (data && typeof data === 'object' && Array.isArray(data.results)) {
+    return data as PaginatedResponse<V3QuoteComputeResponse>;
+  }
+  throw new Error('Unexpected quotes response format.');
 }
 
 export async function computeQuoteV3(
@@ -785,6 +799,7 @@ export interface AIRateIntakeLine {
   bucket: string;
   description: string;
   amount: string | null;
+  rate_per_unit: string | null; // Per-kg rate for PER_KG and MIN_OR_PER_KG
   currency: string;
   unit_basis: string;
   percentage: string | null;
@@ -798,6 +813,7 @@ export interface AIRateIntakeLine {
 export interface AIRateIntakeResponse {
   success: boolean;
   lines?: AIRateIntakeLine[];
+  analysis_text?: string;
   warnings?: string[];
   error?: string;
   raw_text_length?: number;
@@ -970,6 +986,31 @@ export async function createSpotEnvelope(
 }
 
 /**
+ * Update a DRAFT SPOT Pricing Envelope.
+ */
+export async function updateSpotEnvelope(
+  id: string,
+  data: { charges?: Omit<SPEChargeLine, 'id'>[]; conditions?: Partial<SPEConditions> }
+): Promise<SpotPricingEnvelope> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update SPE: ${detail}`);
+  }
+
+  return response.json();
+}
+
+/**
  * Get SPOT Pricing Envelope by ID.
  */
 export async function getSpotEnvelope(id: string): Promise<SpotPricingEnvelope> {
@@ -1063,5 +1104,37 @@ export async function computeSpotQuote(
   }
 
   return data;
+}
+
+/**
+ * Analyze agent rate reply text and return assertions.
+ */
+export async function analyzeSpotReply(
+  text: string,
+  assertions: import('./spot-types').ExtractedAssertion[] = [],
+  speId?: string,
+  useAi: boolean = true
+): Promise<ReplyAnalysisResult> {
+  const url = API_BASE_URL + '/api/v3/spot/analyze-reply/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify({
+      text,
+      assertions,
+      spe_id: speId,
+      use_ai: useAi
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Reply analysis failed: ${detail}`);
+  }
+
+  return response.json();
 }
 

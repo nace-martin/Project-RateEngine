@@ -43,8 +43,8 @@ export default function QuoteSummaryBar({ quote }: QuoteSummaryBarProps) {
     const serviceScope = quote.service_scope || "D2D";
 
     return (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <div className="grid grid-cols-4 divide-x divide-slate-200">
+        <div className="bg-white border border-border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-4 divide-x divide-border">
                 {/* Customer Section */}
                 <div className="p-4">
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
@@ -106,17 +106,17 @@ export default function QuoteSummaryBar({ quote }: QuoteSummaryBarProps) {
                 </div>
 
                 {/* Total Estimated Cost Section */}
-                <div className="p-4 bg-blue-50">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-blue-600 mb-2">
+                <div className="p-4 bg-primary/5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-primary mb-2">
                         Total Estimated Cost
                     </div>
                     <div className="flex items-baseline gap-1">
-                        <span className="text-xs font-medium text-blue-600">{currency}</span>
-                        <span className="font-bold text-xl text-blue-700">
+                        <span className="text-xs font-medium text-primary">{currency}</span>
+                        <span className="font-bold text-xl text-primary font-mono">
                             {formatCurrency(totalAmount, currency).replace(/^[A-Z]{3}\s*/, "").replace(/^\$/, "")}
                         </span>
                     </div>
-                    <div className="text-[10px] text-blue-500 mt-0.5">
+                    <div className="text-[10px] text-primary/70 mt-0.5">
                         Excl. GST
                     </div>
                 </div>

@@ -122,3 +122,80 @@ class QuoteRetrieveV3APITest(APITestCase):
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class QuoteListV3APITest(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="v3listtester",
+            password="pass123",
+            email="v3listtester@example.com",
+        )
+        self.client.force_authenticate(user=self.user)
+
+        # Create multiple quotes to test pagination
+        self.quotes = []
+        for i in range(5):
+            self.quotes.append(self._create_simple_quote(i))
+        
+        self.url = reverse("quotes:quote-v3-list")
+
+    def _create_simple_quote(self, index):
+        customer = Company.objects.create(name=f"Customer {index}")
+        origin = Location.objects.create(name=f"Origin {index}", code=f"ORG{index}")
+        dest = Location.objects.create(name=f"Dest {index}", code=f"DST{index}")
+        
+        quote = Quote.objects.create(
+            customer=customer,
+            mode="AIR",
+            origin_location=origin,
+            destination_location=dest,
+            created_by=self.user,
+        )
+        
+        version = QuoteVersion.objects.create(
+            quote=quote,
+            version_number=1,
+            created_by=self.user,
+        )
+        
+        QuoteTotal.objects.create(
+            quote_version=version,
+            total_sell_fcy=Decimal("100.00"),
+            total_sell_fcy_currency="PGK",
+        )
+        
+        # Add a line item to check if it's EXCLUDED in list view
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_pgk=Decimal("50.00"),
+        )
+        
+        return quote
+
+    def test_list_is_paginated(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        data = response.json()
+        self.assertIn("results", data)
+        self.assertIn("count", data)
+        self.assertEqual(data["count"], 5)
+        self.assertEqual(len(data["results"]), 5)
+
+    def test_list_uses_summary_serializer(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        data = response.json()
+        first_quote = data["results"][0]
+        
+        # Check that latest_version is present but lines/payload_json are NOT
+        self.assertIn("latest_version", first_quote)
+        self.assertNotIn("lines", first_quote["latest_version"])
+        self.assertNotIn("payload_json", first_quote["latest_version"])
+        
+        # Totals should still be there
+        self.assertIn("totals", first_quote["latest_version"])
+        self.assertEqual(first_quote["latest_version"]["totals"]["total_sell_fcy"], "100.00")

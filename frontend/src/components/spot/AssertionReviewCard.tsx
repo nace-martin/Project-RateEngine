@@ -19,24 +19,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import type {
+    ReplyAnalysisResult,
     ExtractedAssertion,
     AssertionStatus,
     AssertionCategory,
-    AnalysisSummary,
-} from "@/lib/reply-analysis-types";
+} from "@/lib/spot-types";
 import {
     STATUS_LABELS,
     STATUS_COLORS,
     CATEGORY_LABELS,
     MANDATORY_CATEGORIES,
-} from "@/lib/reply-analysis-types";
+} from "@/lib/spot-types";
 
 interface AssertionReviewCardProps {
-    assertions: ExtractedAssertion[];
-    onUpdate: (assertions: ExtractedAssertion[]) => void;
-    summary: AnalysisSummary;
-    warnings: string[];
-    onProceed: () => void;
+    result: ReplyAnalysisResult;
+    onUpdate?: (result: ReplyAnalysisResult) => void;
+    onConfirm: (result: ReplyAnalysisResult) => void;
+    onBack: () => void;
     isLoading?: boolean;
 }
 
@@ -48,7 +47,6 @@ const STATUS_ICONS: Record<AssertionStatus, React.ReactNode> = {
 };
 
 const createEmptyAssertion = (): ExtractedAssertion => ({
-    id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     text: "",
     category: "rate",
     status: "confirmed",
@@ -56,25 +54,31 @@ const createEmptyAssertion = (): ExtractedAssertion => ({
 });
 
 export function AssertionReviewCard({
-    assertions,
+    result,
     onUpdate,
-    summary,
-    warnings,
-    onProceed,
+    onConfirm,
+    onBack,
     isLoading,
 }: AssertionReviewCardProps) {
+    const { assertions, summary, warnings } = result;
+
+    const handleUpdate = (updatedAssertions: ExtractedAssertion[]) => {
+        if (onUpdate) {
+            onUpdate({ ...result, assertions: updatedAssertions });
+        }
+    };
 
     const addAssertion = () => {
-        onUpdate([...assertions, createEmptyAssertion()]);
+        handleUpdate([...assertions, createEmptyAssertion()]);
     };
 
-    const removeAssertion = (id: string) => {
-        onUpdate(assertions.filter(a => a.id !== id));
+    const removeAssertion = (index: number) => {
+        handleUpdate(assertions.filter((_, i) => i !== index));
     };
 
-    const updateAssertion = (id: string, field: keyof ExtractedAssertion, value: string) => {
-        onUpdate(assertions.map(a =>
-            a.id === id ? { ...a, [field]: value } : a
+    const updateAssertion = (index: number, field: keyof ExtractedAssertion, value: string | number) => {
+        handleUpdate(assertions.map((a, i) =>
+            i === index ? { ...a, [field]: value } : a
         ));
     };
 
@@ -150,9 +154,9 @@ export function AssertionReviewCard({
 
                 {/* Assertions table */}
                 <div className="space-y-3">
-                    {assertions.map((assertion) => (
+                    {assertions.map((assertion, index) => (
                         <div
-                            key={assertion.id}
+                            key={index}
                             className={`p-3 rounded-lg border ${STATUS_COLORS[assertion.status]}`}
                         >
                             <div className="grid grid-cols-12 gap-3 items-start">
@@ -165,7 +169,7 @@ export function AssertionReviewCard({
                                 <div className="col-span-4">
                                     <Input
                                         value={assertion.text}
-                                        onChange={(e) => updateAssertion(assertion.id, 'text', e.target.value)}
+                                        onChange={(e) => updateAssertion(index, 'text', e.target.value)}
                                         placeholder="e.g., USD 10.20/kg"
                                         className="bg-white"
                                     />
@@ -175,7 +179,7 @@ export function AssertionReviewCard({
                                 <div className="col-span-3">
                                     <Select
                                         value={assertion.category}
-                                        onValueChange={(v) => updateAssertion(assertion.id, 'category', v)}
+                                        onValueChange={(v) => updateAssertion(index, 'category', v)}
                                     >
                                         <SelectTrigger className="bg-white">
                                             <SelectValue />
@@ -197,7 +201,7 @@ export function AssertionReviewCard({
                                 <div className="col-span-3">
                                     <Select
                                         value={assertion.status}
-                                        onValueChange={(v) => updateAssertion(assertion.id, 'status', v)}
+                                        onValueChange={(v) => updateAssertion(index, 'status', v)}
                                     >
                                         <SelectTrigger className="bg-white">
                                             <SelectValue />
@@ -217,7 +221,7 @@ export function AssertionReviewCard({
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        onClick={() => removeAssertion(assertion.id)}
+                                        onClick={() => removeAssertion(index)}
                                         className="text-red-500 hover:text-red-700"
                                     >
                                         <Trash2 className="h-4 w-4" />
@@ -225,46 +229,64 @@ export function AssertionReviewCard({
                                 </div>
                             </div>
 
-                            {/* Additional fields for rate category */}
-                            {assertion.category === 'rate' && (
+                            {/* Additional fields for rate/charge categories */}
+                            {['rate', 'origin_charges', 'dest_charges'].includes(assertion.category) && (
                                 <div className="grid grid-cols-12 gap-3 mt-2 ml-8">
                                     <div className="col-span-2">
                                         <Input
                                             type="number"
                                             step="0.01"
-                                            placeholder="Amount"
+                                            placeholder={assertion.rate_unit === 'min_or_per_kg' ? 'Min' : 'Amount'}
                                             value={assertion.rate_amount || ''}
-                                            onChange={(e) => updateAssertion(assertion.id, 'rate_amount' as keyof ExtractedAssertion, e.target.value)}
+                                            onChange={(e) => updateAssertion(index, 'rate_amount' as keyof ExtractedAssertion, e.target.value)}
                                             className="bg-white text-sm"
                                         />
                                     </div>
+                                    {/* Show Per KG rate field for MIN_OR_PER_KG unit */}
+                                    {assertion.rate_unit === 'min_or_per_kg' && (
+                                        <div className="col-span-2">
+                                            <Input
+                                                type="number"
+                                                step="0.01"
+                                                placeholder="Per KG"
+                                                value={assertion.rate_per_unit || ''}
+                                                onChange={(e) => updateAssertion(index, 'rate_per_unit' as keyof ExtractedAssertion, e.target.value)}
+                                                className="bg-white text-sm"
+                                            />
+                                        </div>
+                                    )}
                                     <div className="col-span-2">
                                         <Select
-                                            value={assertion.rate_currency || 'USD'}
-                                            onValueChange={(v) => updateAssertion(assertion.id, 'rate_currency' as keyof ExtractedAssertion, v)}
+                                            value={assertion.rate_currency || 'SGD'}
+                                            onValueChange={(v) => updateAssertion(index, 'rate_currency' as keyof ExtractedAssertion, v)}
                                         >
                                             <SelectTrigger className="bg-white text-sm">
                                                 <SelectValue />
                                             </SelectTrigger>
                                             <SelectContent>
+                                                <SelectItem value="SGD">SGD</SelectItem>
                                                 <SelectItem value="USD">USD</SelectItem>
                                                 <SelectItem value="AUD">AUD</SelectItem>
                                                 <SelectItem value="PGK">PGK</SelectItem>
+                                                <SelectItem value="NZD">NZD</SelectItem>
+                                                <SelectItem value="HKD">HKD</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
                                     <div className="col-span-2">
                                         <Select
-                                            value={assertion.rate_unit || 'per_kg'}
-                                            onValueChange={(v) => updateAssertion(assertion.id, 'rate_unit' as keyof ExtractedAssertion, v)}
+                                            value={assertion.rate_unit || 'per_shipment'}
+                                            onValueChange={(v) => updateAssertion(index, 'rate_unit' as keyof ExtractedAssertion, v)}
                                         >
                                             <SelectTrigger className="bg-white text-sm">
                                                 <SelectValue />
                                             </SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="per_kg">Per KG</SelectItem>
-                                                <SelectItem value="flat">Flat</SelectItem>
+                                                <SelectItem value="per_shipment">Per Shpt</SelectItem>
                                                 <SelectItem value="per_awb">Per AWB</SelectItem>
+                                                <SelectItem value="min_or_per_kg">Min or Per KG</SelectItem>
+                                                <SelectItem value="percentage">Percentage</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
@@ -278,7 +300,7 @@ export function AssertionReviewCard({
                                         <Input
                                             type="date"
                                             value={assertion.validity_date || ''}
-                                            onChange={(e) => updateAssertion(assertion.id, 'validity_date' as keyof ExtractedAssertion, e.target.value)}
+                                            onChange={(e) => updateAssertion(index, 'validity_date' as keyof ExtractedAssertion, e.target.value)}
                                             className="bg-white text-sm"
                                         />
                                     </div>
@@ -298,29 +320,35 @@ export function AssertionReviewCard({
                     </Button>
                 </div>
 
-                {/* Proceed button */}
-                <div className="pt-4 border-t">
+                {/* Proceed and Back buttons */}
+                <div className="pt-4 border-t flex gap-3">
                     <Button
-                        onClick={onProceed}
+                        variant="outline"
+                        onClick={onBack}
+                        className="w-1/3"
+                        size="lg"
+                    >
+                        Back
+                    </Button>
+                    <Button
+                        onClick={() => onConfirm(result)}
                         disabled={isLoading || !summary.can_proceed}
-                        className="w-full"
+                        className="w-2/3"
                         size="lg"
                     >
                         {!summary.can_proceed ? (
-                            "Complete Required Fields to Proceed"
-                        ) : summary.requires_acknowledgement ? (
-                            "Proceed with Acknowledgement Required"
+                            "Required Fields Missing"
                         ) : (
                             "Proceed to Rate Entry"
                         )}
                     </Button>
-
-                    {!summary.can_proceed && (
-                        <p className="text-center text-sm text-muted-foreground mt-2">
-                            Missing: {summary.mandatory_missing.join(', ')}
-                        </p>
-                    )}
                 </div>
+
+                {!summary.can_proceed && (
+                    <p className="text-center text-sm text-muted-foreground mt-2 italic">
+                        Missing or unconfirmed mandatory information
+                    </p>
+                )}
             </CardContent>
         </Card>
     );

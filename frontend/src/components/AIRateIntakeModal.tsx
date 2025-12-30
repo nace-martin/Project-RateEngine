@@ -43,6 +43,7 @@ interface ParsedLine {
     bucket: SpotChargeBucket;
     description: string;
     amount: string;
+    rate_per_unit: string;
     currency: string;
     unit_basis: SpotChargeUnitBasis;
     percentage: string;
@@ -50,6 +51,7 @@ interface ParsedLine {
     notes: string;
     confidence: number;
     selected: boolean;
+    anomalyWarnings?: string[];
 }
 
 type InputMode = "text" | "file";
@@ -61,8 +63,44 @@ const UNIT_OPTIONS: SpotChargeUnitBasis[] = [
     "PER_AWB",
     "MINIMUM",
     "PERCENTAGE",
+    "MIN_OR_PER_KG",
     "OTHER",
 ];
+
+// AI Anomaly Detection - flag unusual rates for human review
+function detectAnomalies(lines: ParsedLine[]): ParsedLine[] {
+    return lines.map((line) => {
+        const warnings: string[] = [];
+        const amount = parseFloat(line.amount) || 0;
+        const ratePerUnit = parseFloat(line.rate_per_unit) || 0;
+        const minimum = parseFloat(line.minimum) || 0;
+
+        // High per-kg rate warning (typical airfreight is $2-15/kg)
+        if (line.unit_basis === "PER_KG" || line.unit_basis === "MIN_OR_PER_KG") {
+            const rate = ratePerUnit || amount;
+            if (rate > 25) {
+                warnings.push(`High rate: ${rate}/kg (typical <$20/kg)`);
+            }
+        }
+
+        // High flat fee warning
+        if (line.unit_basis === "PER_SHIPMENT" && amount > 1000) {
+            warnings.push(`High flat fee: ${line.currency} ${amount}`);
+        }
+
+        // High minimum warning
+        if (minimum > 500) {
+            warnings.push(`High minimum: ${line.currency} ${minimum}`);
+        }
+
+        // Missing currency warning
+        if (!line.currency || line.currency.length !== 3) {
+            warnings.push("Missing or invalid currency");
+        }
+
+        return { ...line, anomalyWarnings: warnings };
+    });
+}
 
 export function AIRateIntakeModal({
     open,
@@ -76,6 +114,7 @@ export function AIRateIntakeModal({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [warnings, setWarnings] = useState<string[]>([]);
+    const [analysisText, setAnalysisText] = useState<string | null>(null);
     const [parsedLines, setParsedLines] = useState<ParsedLine[]>([]);
     const [showPreview, setShowPreview] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -86,6 +125,7 @@ export function AIRateIntakeModal({
         setSelectedFile(null);
         setError(null);
         setWarnings([]);
+        setAnalysisText(null);
         setParsedLines([]);
         setShowPreview(false);
         setLoading(false);
@@ -125,11 +165,12 @@ export function AIRateIntakeModal({
             }
 
             // Convert API response to editable lines
-            const lines: ParsedLine[] = (result.lines || []).map((line, index) => ({
+            const rawLines: ParsedLine[] = (result.lines || []).map((line, index) => ({
                 id: line.id || `temp-${index}`,
                 bucket: line.bucket as SpotChargeBucket,
                 description: line.description || "",
                 amount: line.amount || "",
+                rate_per_unit: line.rate_per_unit || "",
                 currency: line.currency || "AUD",
                 unit_basis: line.unit_basis as SpotChargeUnitBasis,
                 percentage: line.percentage || "",
@@ -139,7 +180,11 @@ export function AIRateIntakeModal({
                 selected: true,
             }));
 
-            setParsedLines(lines);
+            // Apply anomaly detection
+            const linesWithAnomalies = detectAnomalies(rawLines);
+
+            setParsedLines(linesWithAnomalies);
+            setAnalysisText(result.analysis_text || null);
             setWarnings(result.warnings || []);
             setShowPreview(true);
         } catch (err) {
@@ -184,6 +229,7 @@ export function AIRateIntakeModal({
                 bucket: line.bucket,
                 description: line.description,
                 amount: line.amount || null,
+                rate_per_unit: line.rate_per_unit || null,
                 currency: line.currency,
                 unit_basis: line.unit_basis,
                 min_charge: line.minimum || null,
@@ -332,11 +378,28 @@ export function AIRateIntakeModal({
                 ) : (
                     // PREVIEW VIEW
                     <div className="space-y-4">
+                        {/* AI Analyst Summary */}
+                        {analysisText && (
+                            <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 shadow-sm">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                        AI Analyst
+                                    </div>
+                                    <h3 className="text-sm font-semibold text-blue-900">Analyst Review</h3>
+                                </div>
+                                <p className="text-sm text-blue-800 leading-relaxed whitespace-pre-wrap">
+                                    {analysisText}
+                                </p>
+                            </div>
+                        )}
+
                         {/* Warnings */}
                         {warnings.length > 0 && (
-                            <div className="bg-yellow-50 text-yellow-800 p-3 rounded-md text-sm">
-                                <p className="font-medium">AI Parsing Notes:</p>
-                                <ul className="list-disc list-inside mt-1">
+                            <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <h3 className="text-sm font-semibold text-amber-900">Parsing Notes</h3>
+                                </div>
+                                <ul className="list-disc list-inside text-sm text-amber-800 space-y-0.5">
                                     {warnings.map((w, i) => (
                                         <li key={i}>{w}</li>
                                     ))}
@@ -352,105 +415,127 @@ export function AIRateIntakeModal({
                                         <TableHead className="w-12">Select</TableHead>
                                         <TableHead className="w-28">Bucket</TableHead>
                                         <TableHead>Description</TableHead>
-                                        <TableHead className="w-24">Amount</TableHead>
-                                        <TableHead className="w-20">Currency</TableHead>
-                                        <TableHead className="w-28">Unit</TableHead>
+                                        <TableHead className="w-20">Amount</TableHead>
+                                        <TableHead className="w-20">Rate/kg</TableHead>
+                                        <TableHead className="w-16">Ccy</TableHead>
+                                        <TableHead className="w-32">Unit</TableHead>
                                         <TableHead className="w-20">Min</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {parsedLines.map((line, index) => (
-                                        <TableRow
-                                            key={line.id}
-                                            className={line.confidence < 0.7 ? "bg-yellow-50" : ""}
-                                        >
-                                            <TableCell>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={line.selected}
-                                                    onChange={() => handleToggleSelect(index)}
-                                                    className="h-4 w-4"
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Select
-                                                    value={line.bucket}
-                                                    onValueChange={(v) =>
-                                                        handleLineChange(index, "bucket", v)
-                                                    }
-                                                >
-                                                    <SelectTrigger className="h-8">
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {BUCKET_OPTIONS.map((b) => (
-                                                            <SelectItem key={b} value={b}>
-                                                                {b}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Input
-                                                    value={line.description}
-                                                    onChange={(e) =>
-                                                        handleLineChange(index, "description", e.target.value)
-                                                    }
-                                                    className="h-8"
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Input
-                                                    value={line.amount}
-                                                    onChange={(e) =>
-                                                        handleLineChange(index, "amount", e.target.value)
-                                                    }
-                                                    className="h-8 text-right"
-                                                    placeholder={line.unit_basis === "PERCENTAGE" ? "—" : "0.00"}
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Input
-                                                    value={line.currency}
-                                                    onChange={(e) =>
-                                                        handleLineChange(index, "currency", e.target.value.toUpperCase())
-                                                    }
-                                                    className="h-8 w-16"
-                                                    maxLength={3}
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Select
-                                                    value={line.unit_basis}
-                                                    onValueChange={(v) =>
-                                                        handleLineChange(index, "unit_basis", v)
-                                                    }
-                                                >
-                                                    <SelectTrigger className="h-8">
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {UNIT_OPTIONS.map((u) => (
-                                                            <SelectItem key={u} value={u}>
-                                                                {u.replace(/_/g, " ")}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Input
-                                                    value={line.minimum}
-                                                    onChange={(e) =>
-                                                        handleLineChange(index, "minimum", e.target.value)
-                                                    }
-                                                    className="h-8 text-right w-20"
-                                                    placeholder="—"
-                                                />
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                    {parsedLines.map((line, index) => {
+                                        const hasAnomalies = line.anomalyWarnings && line.anomalyWarnings.length > 0;
+                                        return (
+                                            <TableRow
+                                                key={line.id}
+                                                className={`${line.confidence < 0.7 ? "bg-yellow-50" : ""} ${hasAnomalies ? "border-l-4 border-l-orange-500" : ""}`}
+                                                title={hasAnomalies ? line.anomalyWarnings?.join("; ") : undefined}
+                                            >
+                                                <TableCell>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={line.selected}
+                                                        onChange={() => handleToggleSelect(index)}
+                                                        className="h-4 w-4"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Select
+                                                        value={line.bucket}
+                                                        onValueChange={(v) =>
+                                                            handleLineChange(index, "bucket", v)
+                                                        }
+                                                    >
+                                                        <SelectTrigger className="h-8">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {BUCKET_OPTIONS.map((b) => (
+                                                                <SelectItem key={b} value={b}>
+                                                                    {b}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-col gap-1">
+                                                        <Input
+                                                            value={line.description}
+                                                            onChange={(e) =>
+                                                                handleLineChange(index, "description", e.target.value)
+                                                            }
+                                                            className="h-8"
+                                                        />
+                                                        {hasAnomalies && (
+                                                            <span className="text-xs text-orange-600 font-medium">
+                                                                ⚠ {line.anomalyWarnings?.[0]}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Input
+                                                        value={line.amount}
+                                                        onChange={(e) =>
+                                                            handleLineChange(index, "amount", e.target.value)
+                                                        }
+                                                        className="h-8 text-right w-20"
+                                                        placeholder={line.unit_basis === "PERCENTAGE" ? "—" : "0.00"}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Input
+                                                        value={line.rate_per_unit}
+                                                        onChange={(e) =>
+                                                            handleLineChange(index, "rate_per_unit", e.target.value)
+                                                        }
+                                                        className="h-8 text-right w-20"
+                                                        placeholder={line.unit_basis === "PER_KG" || line.unit_basis === "MIN_OR_PER_KG" ? "0.00" : "—"}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Input
+                                                        value={line.currency}
+                                                        onChange={(e) =>
+                                                            handleLineChange(index, "currency", e.target.value.toUpperCase())
+                                                        }
+                                                        className="h-8 w-14"
+                                                        maxLength={3}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Select
+                                                        value={line.unit_basis}
+                                                        onValueChange={(v) =>
+                                                            handleLineChange(index, "unit_basis", v)
+                                                        }
+                                                    >
+                                                        <SelectTrigger className="h-8">
+                                                            <SelectValue />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {UNIT_OPTIONS.map((u) => (
+                                                                <SelectItem key={u} value={u}>
+                                                                    {u.replace(/_/g, " ")}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Input
+                                                        value={line.minimum}
+                                                        onChange={(e) =>
+                                                            handleLineChange(index, "minimum", e.target.value)
+                                                        }
+                                                        className="h-8 text-right w-20"
+                                                        placeholder="—"
+                                                    />
+                                                </TableCell>
+                                            </TableRow>
+                                        )
+                                    })}
                                 </TableBody>
                             </Table>
                         </div>

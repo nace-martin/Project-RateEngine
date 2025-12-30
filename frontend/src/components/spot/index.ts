@@ -17,7 +17,7 @@ export { SpotManagerApproval } from './SpotManagerApproval';
 
 export { SpotRateEntryForm } from './SpotRateEntryForm';
 
-export { SpotEmailDraftCard } from './SpotEmailDraftCard';
+export * from "./archive/SpotEmailDraftCard";
 
 // Reply Analysis components
 export { ReplyPasteCard } from './ReplyPasteCard';

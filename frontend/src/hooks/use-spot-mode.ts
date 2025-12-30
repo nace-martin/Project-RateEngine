@@ -6,7 +6,7 @@
  * Provides actions for each step: scope check, trigger eval, SPE lifecycle.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type {
     SpotFlowState,
     SpotModeState,
@@ -21,6 +21,7 @@ import {
     validateSpotScope,
     evaluateSpotTrigger,
     createSpotEnvelope,
+    updateSpotEnvelope,
     getSpotEnvelope,
     acknowledgeSpotEnvelope,
     approveSpotEnvelope,
@@ -33,6 +34,7 @@ const initialState: SpotModeState = {
     triggerResult: null,
     error: null,
     isLoading: false,
+    quoteResult: null,
 };
 
 /**
@@ -156,6 +158,32 @@ export function useSpotMode() {
     }, [updateState]);
 
     // ==========================================================================
+    // STEP 3.5: Update SPE (Draft)
+    // ==========================================================================
+    const updateSPE = useCallback(async (
+        id: string,
+        data: { charges?: Omit<import('@/lib/spot-types').SPEChargeLine, 'id'>[]; conditions?: Partial<import('@/lib/spot-types').SPEConditions> }
+    ): Promise<SpotPricingEnvelope | null> => {
+        updateState({ isLoading: true, error: null });
+
+        try {
+            const spe = await updateSpotEnvelope(id, data);
+            updateState({
+                flowState: 'RATE_ENTRY',
+                spe,
+                isLoading: false,
+            });
+            return spe;
+        } catch (err) {
+            updateState({
+                error: err instanceof Error ? err.message : 'Failed to update SPE',
+                isLoading: false,
+            });
+            return null;
+        }
+    }, [updateState]);
+
+    // ==========================================================================
     // Load SPE by ID
     // ==========================================================================
     const loadSPE = useCallback(async (
@@ -185,7 +213,10 @@ export function useSpotMode() {
             updateState({
                 flowState,
                 spe,
-                triggerResult: { code: spe.trigger_code, text: spe.trigger_text },
+                triggerResult: {
+                    code: spe.spot_trigger_reason_code,
+                    text: spe.spot_trigger_reason_text
+                },
                 isLoading: false,
             });
             return spe;
@@ -291,7 +322,10 @@ export function useSpotMode() {
                 return result;
             }
 
-            updateState({ isLoading: false });
+            updateState({
+                isLoading: false,
+                quoteResult: result,
+            });
             return result;
         } catch (err) {
             updateState({
@@ -334,21 +368,36 @@ export function useSpotMode() {
         }
     })();
 
+    const actions = useMemo(() => ({
+        checkScope,
+        evaluateTrigger,
+        createSPE,
+        updateSPE,
+        loadSPE,
+        submitAcknowledgement,
+        submitManagerApproval,
+        computeQuote,
+        reset,
+    }), [
+        checkScope,
+        evaluateTrigger,
+        createSPE,
+        updateSPE,
+        loadSPE,
+        submitAcknowledgement,
+        submitManagerApproval,
+        computeQuote,
+        reset
+    ]);
+
+    const derived = useMemo(() => ({
+        canProceedToPricing,
+        blockedReason,
+    }), [canProceedToPricing, blockedReason]);
+
     return {
         state,
-        actions: {
-            checkScope,
-            evaluateTrigger,
-            createSPE,
-            loadSPE,
-            submitAcknowledgement,
-            submitManagerApproval,
-            computeQuote,
-            reset,
-        },
-        derived: {
-            canProceedToPricing,
-            blockedReason,
-        },
+        actions,
+        derived,
     };
 }

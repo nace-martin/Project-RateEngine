@@ -11,8 +11,6 @@ from .views import (
     RatecardUploadAPIView,
     StationListAPIView,
     QuoteVersionCreateAPIView,
-    SpotChargeListCreateAPIView,
-    SpotChargeCalculateAPIView,
     AIRateIntakeAPIView,
     QuoteTransitionAPIView,
     QuoteCloneAPIView,
@@ -20,11 +18,13 @@ from .views import (
 from .spot_views import (
     SpotScopeValidateAPIView,
     SpotTriggerEvaluateAPIView,
+    StandardChargesAPIView,
     SpotEnvelopeListCreateAPIView,
     SpotEnvelopeDetailAPIView,
     SpotEnvelopeAcknowledgeAPIView,
     SpotEnvelopeApproveAPIView,
     SpotEnvelopeComputeAPIView,
+    SpotReplyAnalysisAPIView,
 )
 
 app_name = 'quotes'
@@ -37,8 +37,6 @@ router_v3.register(r'quotes', QuoteV3ViewSet, basename='quote-v3')
 urlpatterns = [
     path('v3/quotes/compute/', QuoteComputeV3APIView.as_view(), name='quote-compute-v3'),
     path('v3/quotes/<uuid:quote_id>/versions/', QuoteVersionCreateAPIView.as_view(), name='quote-version-create'),
-    path('v3/quotes/<uuid:quote_id>/spot-charges/', SpotChargeListCreateAPIView.as_view(), name='spot-charge-list-create'),
-    path('v3/quotes/<uuid:quote_id>/spot-charges/calculate/', SpotChargeCalculateAPIView.as_view(), name='spot-charge-calculate'),
     path('v3/quotes/<uuid:quote_id>/ai-intake/', AIRateIntakeAPIView.as_view(), name='ai-rate-intake'),
     path('v3/quotes/<uuid:quote_id>/transition/', QuoteTransitionAPIView.as_view(), name='quote-transition'),
     path('v3/quotes/<uuid:quote_id>/clone/', QuoteCloneAPIView.as_view(), name='quote-clone'),
@@ -51,10 +49,12 @@ urlpatterns = [
     # --- SPOT Mode Endpoints ---
     path('v3/spot/validate-scope/', SpotScopeValidateAPIView.as_view(), name='spot-validate-scope'),
     path('v3/spot/evaluate-trigger/', SpotTriggerEvaluateAPIView.as_view(), name='spot-evaluate-trigger'),
+    path('v3/spot/standard-charges/', StandardChargesAPIView.as_view(), name='spot-standard-charges'),
     path('v3/spot/envelopes/', SpotEnvelopeListCreateAPIView.as_view(), name='spot-envelope-list-create'),
     path('v3/spot/envelopes/<uuid:envelope_id>/', SpotEnvelopeDetailAPIView.as_view(), name='spot-envelope-detail'),
     path('v3/spot/envelopes/<uuid:envelope_id>/acknowledge/', SpotEnvelopeAcknowledgeAPIView.as_view(), name='spot-envelope-acknowledge'),
     path('v3/spot/envelopes/<uuid:envelope_id>/approve/', SpotEnvelopeApproveAPIView.as_view(), name='spot-envelope-approve'),
     path('v3/spot/envelopes/<uuid:envelope_id>/compute/', SpotEnvelopeComputeAPIView.as_view(), name='spot-envelope-compute'),
+    path('v3/spot/analyze-reply/', SpotReplyAnalysisAPIView.as_view(), name='spot-analyze-reply'),
 ]
 

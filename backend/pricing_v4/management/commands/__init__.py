@@ -1,1 +1,1 @@
-# Empty __init__.py for Python package
+"""Management commands package for pricing_v4."""

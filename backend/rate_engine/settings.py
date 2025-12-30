@@ -150,3 +150,25 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
 }
+
+# Explicit SPOT coverage overrides for known lanes.
+SPOT_ROUTE_COVERAGE = {
+    # Export D2A lanes we already have origin coverage for.
+    'export_d2a_lanes': [
+        'POM-SIN',
+        'POM-HKG',
+        'POM-BNE',
+        'POM-SYD',
+        'POM-VLI',
+        'POM-HIR',
+        'POM-NAN',
+        'POM-CNS',
+    ],
+    # Import: we always have destination A2D coverage in PNG.
+    'import_a2d_destination_global': True,
+    # Import D2A lanes with known airfreight coverage.
+    'import_d2a_lanes': [
+        'BNE-POM',
+        'SYD-POM',
+    ],
+}

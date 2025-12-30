@@ -17,7 +17,7 @@ SpotApprovalPolicy:
     Manager approval thresholds as policy, not if-statements.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
@@ -43,24 +43,28 @@ from quotes.spot_schemas import (
 
 class SpotTriggerReason:
     """Machine-readable SPOT trigger reason codes."""
-    # Special cargo commodities
-    SCR_COMMODITY = "SCR_COMMODITY"  # Special Cargo (catch-all)
-    DG_COMMODITY = "DG_COMMODITY"    # Dangerous Goods
-    AVI_COMMODITY = "AVI_COMMODITY"  # Live Animals
-    PER_COMMODITY = "PER_COMMODITY"  # Perishables
-    HVC_COMMODITY = "HVC_COMMODITY"  # High Value Cargo
-    HUM_COMMODITY = "HUM_COMMODITY"  # Human Remains
-    OOG_COMMODITY = "OOG_COMMODITY"  # Oversized/Heavy
-    VUL_COMMODITY = "VUL_COMMODITY"  # Vulnerable Cargo
-    TTS_COMMODITY = "TTS_COMMODITY"  # Time/Temp Sensitive
+    # Canonical Code (Deterministic Logic)
+    MISSING_SCOPE_RATES = "MISSING_SCOPE_RATES"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
     
-    # Route and rate issues
+    # Legacy codes (retained for backward compatibility in DB)
+    SCR_COMMODITY = "SCR_COMMODITY"
+    DG_COMMODITY = "DG_COMMODITY"
+    AVI_COMMODITY = "AVI_COMMODITY"
+    PER_COMMODITY = "PER_COMMODITY"
+    HVC_COMMODITY = "HVC_COMMODITY"
+    HUM_COMMODITY = "HUM_COMMODITY"
+    OOG_COMMODITY = "OOG_COMMODITY"
+    VUL_COMMODITY = "VUL_COMMODITY"
+    TTS_COMMODITY = "TTS_COMMODITY"
     NON_PX_ROUTE = "NON_PX_ROUTE"
     MISSING_COGS = "MISSING_COGS"
     MISSING_SELL = "MISSING_SELL"
     MULTI_LEG_ROUTING = "MULTI_LEG_ROUTING"
     NO_BUY_RATE = "NO_BUY_RATE"
     REQUIRES_ASSUMPTIONS = "REQUIRES_ASSUMPTIONS"
+    INTERNATIONAL_D2D = "INTERNATIONAL_D2D"
+    INTERNATIONAL_D2A = "INTERNATIONAL_D2A"
 
 
 @dataclass
@@ -68,6 +72,7 @@ class TriggerResult:
     """Result of SPOT trigger evaluation."""
     code: str
     text: str
+    missing_components: List[str] = field(default_factory=list)
 
 
 # =============================================================================
@@ -125,141 +130,419 @@ class ScopeValidator:
 
 class SpotTriggerEvaluator:
     """
-    Centralised SPOT trigger logic.
+    Deterministic SPOT trigger logic.
     
-    Returns a single explicit reason string when SPOT is required.
-    
-    SPOT Mode is triggered when ANY of the following are true:
-    - Commodity = Dangerous Goods (DG)
-    - Commodity = International Live Animals (AVI)
-    - Commodity = International Perishables (PER)
-    - Export route not flown directly by Air Niugini (PX)
-    - Import D2A route with missing COGS or SELL rates
-    - Multi-leg or interline routing required
-    - No valid BUY rate exists
-    - Pricing requires assumptions not encoded in rules
+    // SPOT is triggered whenever the database cannot fully satisfy
+    // the required BUY rate components for the selected service scope.
     """
-    
-    # Air Niugini (PX) direct destinations from PNG
-    PX_DIRECT_DESTINATIONS = {
-        "AU": ["BNE", "SYD", "CNS"],  # Brisbane, Sydney, Cairns
-        "PH": ["MNL"],                 # Manila
-        "SG": ["SIN"],                 # Singapore
-        "JP": ["NRT", "HND"],          # Tokyo
-        "HK": ["HKG"],                 # Hong Kong
-        "ID": ["CGK"],                 # Jakarta
-        "FJ": ["SUV"],                 # Suva
-        "SB": ["HIR"],                 # Honiara
-        "PG": ["POM", "LAE", "RAB", "WWK", "GKA", "HGU", "MAS"],  # Domestic PNG
-    }
     
     @classmethod
     def evaluate(
         cls,
         origin_country: str,
         destination_country: str,
-        commodity: str,
-        origin_airport: Optional[str] = None,
-        destination_airport: Optional[str] = None,
-        has_valid_buy_rate: bool = True,
-        has_valid_cogs: bool = True,
-        has_valid_sell: bool = True,
-        is_multi_leg: bool = False,
+        direction: str,
+        service_scope: str,
+        # A dictionary mapping component codes to their availability in the DB
+        # { "AIRFREIGHT": True, "EXPORT_CLEARANCE": False, ... }
+        component_availability: dict[str, bool]
     ) -> Tuple[bool, Optional[TriggerResult]]:
         """
-        Evaluate whether SPOT mode is required.
-        
-        Args:
-            origin_country: Origin country code
-            destination_country: Destination country code
-            commodity: Commodity type (GCR, DG, AVI, PER, OTHER)
-            origin_airport: Origin airport IATA code
-            destination_airport: Destination airport IATA code
-            has_valid_buy_rate: Whether valid BUY rate exists
-            has_valid_cogs: Whether COGS data exists
-            has_valid_sell: Whether SELL rate exists
-            is_multi_leg: Whether multi-leg routing required
-            
-        Returns:
-            (is_spot_required, trigger_result)
-            - (True, TriggerResult) if SPOT required
-            - (False, None) if normal pricing applies
+        Determine deterministically whether a quote must enter SPOT mode.
+        Based on service-scope rate coverage, not routing.
         """
-        # Check commodity triggers - any special cargo triggers SPOT
-        # Map of commodity codes to their trigger info
-        SPECIAL_CARGO_TRIGGERS = {
-            "SCR": (SpotTriggerReason.SCR_COMMODITY, "Special Cargo (SCR)"),
-            "DG": (SpotTriggerReason.DG_COMMODITY, "Dangerous Goods (DG)"),
-            "AVI": (SpotTriggerReason.AVI_COMMODITY, "Live Animals (AVI)"),
-            "PER": (SpotTriggerReason.PER_COMMODITY, "Perishables (PER)"),
-            "HVC": (SpotTriggerReason.HVC_COMMODITY, "High Value Cargo (HVC)"),
-            "HUM": (SpotTriggerReason.HUM_COMMODITY, "Human Remains (HUM)"),
-            "OOG": (SpotTriggerReason.OOG_COMMODITY, "Oversized/Heavy (OOG)"),
-            "VUL": (SpotTriggerReason.VUL_COMMODITY, "Vulnerable Cargo (VUL)"),
-            "TTS": (SpotTriggerReason.TTS_COMMODITY, "Time/Temp Sensitive (TTS)"),
-        }
-        
-        if commodity in SPECIAL_CARGO_TRIGGERS:
-            code, label = SPECIAL_CARGO_TRIGGERS[commodity]
+        # 1️⃣ Scope Validation (Hard Stop)
+        # Note: ScopeValidator.validate is already called at the request boundary,
+        # but we keep this here for logic completeness.
+        if origin_country != "PG" and destination_country != "PG":
             return True, TriggerResult(
-                code=code,
-                text=f"Commodity = {label}. Manual rate sourcing required."
+                code=SpotTriggerReason.OUT_OF_SCOPE,
+                text="RateEngine only supports shipments to or from PNG."
             )
+
+        # 2️⃣ Determine Required BUY Components
+        required_components = []
+        if direction == 'DOMESTIC':
+            required_components = ["AIRFREIGHT"]
+        elif direction == 'EXPORT':
+            if service_scope == 'D2A':
+                required_components = ["EXPORT_CLEARANCE", "AIRFREIGHT"]
+            elif service_scope == 'D2D':
+                required_components = [
+                    "ORIGIN_PICKUP",
+                    "EXPORT_CLEARANCE",
+                    "AIRFREIGHT",
+                    "DEST_CLEARANCE",
+                    "DEST_DELIVERY"
+                ]
+            else: # Defaults to P2P/A2A if not specified
+                required_components = ["AIRFREIGHT"]
+
+        elif direction == 'IMPORT':
+            if service_scope == 'A2D':
+                required_components = ["AIRFREIGHT", "DEST_CLEARANCE", "DEST_DELIVERY"]
+            elif service_scope == 'D2D':
+                required_components = [
+                    "ORIGIN_PICKUP",
+                    "AIRFREIGHT",
+                    "DEST_CLEARANCE",
+                    "DEST_DELIVERY"
+                ]
+            elif service_scope == 'D2A':
+                required_components = ["ORIGIN_PICKUP", "AIRFREIGHT"]
+            else: # Defaults to P2P/A2A
+                required_components = ["AIRFREIGHT"]
         
-        # Check export route (from PNG to non-PX destination)
-        if origin_country == "PG" and destination_country != "PG":
-            if not cls._is_px_direct_route(destination_country, destination_airport):
-                return True, TriggerResult(
-                    code=SpotTriggerReason.NON_PX_ROUTE,
-                    text="Export route not flown directly by Air Niugini (PX). "
-                         "Manual rate sourcing per leg is required."
-                )
-        
-        # Check missing rate data
-        if not has_valid_buy_rate:
+        # 3️⃣ Coverage Check
+        missing_components = []
+        for component in required_components:
+            available = component_availability.get(component, False)
+            if not available:
+                missing_components.append(component)
+
+        # 4️⃣ SPOT Decision
+        if missing_components:
             return True, TriggerResult(
-                code=SpotTriggerReason.NO_BUY_RATE,
-                text="No valid BUY rate exists for this route. Manual rate sourcing required."
+                code=SpotTriggerReason.MISSING_SCOPE_RATES,
+                text=f"Missing required rate components for selected service scope: {', '.join(missing_components)}",
+                missing_components=missing_components
             )
-        
-        if not has_valid_cogs:
-            return True, TriggerResult(
-                code=SpotTriggerReason.MISSING_COGS,
-                text="Missing COGS data for this route. Manual rate sourcing required."
-            )
-        
-        if not has_valid_sell:
-            return True, TriggerResult(
-                code=SpotTriggerReason.MISSING_SELL,
-                text="Missing SELL rate for this route. Manual rate sourcing required."
-            )
-        
-        # Check multi-leg routing
-        if is_multi_leg:
-            return True, TriggerResult(
-                code=SpotTriggerReason.MULTI_LEG_ROUTING,
-                text="Multi-leg or interline routing required. Manual rate sourcing required."
-            )
-        
-        # No SPOT trigger - normal pricing applies
+
+        # 5️⃣ Normal Pricing Path
         return False, None
+
+class RateAvailabilityService:
+    """
+    Check availability of required rate components in the database.
+    """
     
     @classmethod
-    def _is_px_direct_route(
+    def get_availability(
         cls,
-        destination_country: str,
-        destination_airport: Optional[str]
-    ) -> bool:
-        """Check if destination is served directly by Air Niugini."""
-        if destination_country not in cls.PX_DIRECT_DESTINATIONS:
-            return False
+        origin_airport: str,
+        destination_airport: str,
+        direction: str,
+        service_scope: str,
+    ) -> dict[str, bool]:
+        """
+        Build component availability map by querying V4 tables.
+        """
+        # Import models here to avoid circular imports
+        from pricing_v4.models import (
+            ExportCOGS,
+            ImportCOGS,
+            Surcharge,
+            ProductCode,
+            DomesticCOGS,
+        )
+        from datetime import date
         
-        if destination_airport is None:
-            # If no specific airport, assume not direct
-            # (conservative approach - triggers SPOT for review)
-            return False
+        today = date.today()
+        availability = {
+            "AIRFREIGHT": False,
+            "EXPORT_CLEARANCE": False,
+            "ORIGIN_PICKUP": False,
+            "DEST_CLEARANCE": False,
+            "DEST_DELIVERY": False,
+            "ORIGIN_OTHER": False,  # Docs, Handling, etc at origin
+            "DEST_OTHER": False,    # Docs, Handling, etc at destination
+        }
         
-        return destination_airport in cls.PX_DIRECT_DESTINATIONS[destination_country]
+        # 1. Freight Coverage (AIRFREIGHT)
+        if direction == 'DOMESTIC':
+            availability["AIRFREIGHT"] = DomesticCOGS.objects.filter(
+                origin_zone=origin_airport,
+                destination_zone=destination_airport,
+                product_code__category=ProductCode.CATEGORY_FREIGHT,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).exists()
+            return availability
+        if direction == 'EXPORT':
+            availability["AIRFREIGHT"] = ExportCOGS.objects.filter(
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                product_code__category=ProductCode.CATEGORY_FREIGHT,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).exists()
+        else:
+            availability["AIRFREIGHT"] = ImportCOGS.objects.filter(
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                product_code__category=ProductCode.CATEGORY_FREIGHT,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).exists()
+            
+        # 2. Origin Charges Coverage
+        if direction == 'EXPORT':
+            # Export Origin = PG
+            origin_cats = set(ExportCOGS.objects.filter(
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+            origin_cats.update(Surcharge.objects.filter(
+                service_type='EXPORT_ORIGIN',
+                origin_filter=origin_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+            
+            availability["EXPORT_CLEARANCE"] = ProductCode.CATEGORY_CLEARANCE in origin_cats
+            availability["ORIGIN_PICKUP"] = ProductCode.CATEGORY_CARTAGE in origin_cats
+            availability["ORIGIN_OTHER"] = any(c in origin_cats for c in [
+                ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING
+            ])
+
+        else:
+            # Import Origin = Overseas
+            origin_cats = set(ImportCOGS.objects.filter(
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+            origin_cats.update(Surcharge.objects.filter(
+                service_type='IMPORT_ORIGIN',
+                origin_filter=origin_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+            
+            availability["ORIGIN_PICKUP"] = ProductCode.CATEGORY_CARTAGE in origin_cats
+            availability["ORIGIN_OTHER"] = any(c in origin_cats for c in [
+                ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING, ProductCode.CATEGORY_CLEARANCE
+            ])
+
+        # 3. Destination Charges Coverage
+        if direction == 'EXPORT':
+            # Export Destination = Overseas
+            dest_cats = set(ExportCOGS.objects.filter(
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                product_code__code__icontains='DEST',
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+            dest_cats.update(Surcharge.objects.filter(
+                service_type='EXPORT_DEST',
+                destination_filter=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+
+            availability["DEST_CLEARANCE"] = ProductCode.CATEGORY_CLEARANCE in dest_cats
+            availability["DEST_DELIVERY"] = ProductCode.CATEGORY_CARTAGE in dest_cats
+            availability["DEST_OTHER"] = any(c in dest_cats for c in [
+                ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING
+            ])
+        
+        else:
+            # Import Destination = PNG
+            dest_cats = set(ImportCOGS.objects.filter(
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+            dest_cats.update(Surcharge.objects.filter(
+                service_type='IMPORT_DEST',
+                destination_filter=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).values_list('product_code__category', flat=True))
+
+            availability["DEST_CLEARANCE"] = ProductCode.CATEGORY_CLEARANCE in dest_cats
+            availability["DEST_DELIVERY"] = ProductCode.CATEGORY_CARTAGE in dest_cats
+            availability["DEST_OTHER"] = any(c in dest_cats for c in [
+                 ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING
+            ])
+            
+        lane_key = f"{origin_airport.upper()}-{destination_airport.upper()}"
+        config = getattr(settings, 'SPOT_ROUTE_COVERAGE', {})
+        export_d2a_lanes = set(config.get('export_d2a_lanes', []))
+        import_d2a_lanes = set(config.get('import_d2a_lanes', []))
+        import_a2d_destination_global = config.get('import_a2d_destination_global', False)
+
+        if direction == 'EXPORT' and lane_key in export_d2a_lanes:
+            availability["AIRFREIGHT"] = True
+            availability["EXPORT_CLEARANCE"] = True
+            availability["ORIGIN_PICKUP"] = True
+            availability["ORIGIN_OTHER"] = True
+
+        if direction == 'IMPORT':
+            if import_a2d_destination_global:
+                availability["DEST_CLEARANCE"] = True
+                availability["DEST_DELIVERY"] = True
+                availability["DEST_OTHER"] = True
+            if lane_key in import_d2a_lanes:
+                availability["AIRFREIGHT"] = True
+
+        return availability
+
+
+class StandardChargeService:
+    """
+    Fetch standard charges from DB for hybrid SPOT pre-population.
+    
+    Returns charge lines where DB coverage exists, allowing the Rate Entry
+    page to show airfreight/origin charges from standard rates while only
+    requiring manual entry for destination charges.
+    """
+    
+    @classmethod
+    def get_standard_charges(
+        cls,
+        origin_code: str,
+        destination_code: str,
+        direction: str,
+        service_scope: str,
+        weight_kg: float,
+        commodity: str = "GCR",
+    ) -> list[dict]:
+        """
+        Get standard charges for a lane where DB coverage exists.
+        
+        Returns list of charge dicts in SPEChargeLine format:
+        {
+            "code": str,
+            "description": str,
+            "amount": str,
+            "currency": str,
+            "unit": str,
+            "bucket": str,
+            "is_primary_cost": bool,
+            "source_reference": str,
+        }
+        """
+        from datetime import date
+        from decimal import Decimal
+        from uuid import uuid4
+        
+        from pricing_v2.dataclasses_v3 import (
+            QuoteInput, ShipmentDetails, LocationRef, Piece
+        )
+        from pricing_v4.adapter import PricingServiceV4Adapter
+        
+        # Check availability first
+        availability = RateAvailabilityService.get_availability(
+            origin_airport=origin_code,
+            destination_airport=destination_code,
+            direction=direction,
+            service_scope=service_scope,
+        )
+        
+        # If no standard coverage at all, return empty
+        if not any(availability.values()):
+            return []
+        
+        try:
+            # Build minimal QuoteInput for V4 adapter
+            # Look up location IDs using Location model (has IATA code)
+            from core.models import Location
+            
+            origin_loc = Location.objects.filter(code=origin_code).first()
+            dest_loc = Location.objects.filter(code=destination_code).first()
+            
+            if not origin_loc or not dest_loc:
+                logger.warning(f"Location not found for {origin_code} or {destination_code}")
+                return []
+            
+            origin_ref = LocationRef(
+                id=origin_loc.id,
+                code=origin_code,
+                name=origin_loc.name,
+                country_code=origin_loc.country.code if origin_loc.country else "PG",
+                currency_code="PGK"
+            )
+            dest_ref = LocationRef(
+                id=dest_loc.id,
+                code=destination_code,
+                name=dest_loc.name,
+                country_code=dest_loc.country.code if dest_loc.country else "XX",
+                currency_code="USD"
+            )
+            
+            # Determine shipment type
+            shipment_type = "EXPORT" if direction == "EXPORT" else "IMPORT"
+            if direction == "DOMESTIC":
+                shipment_type = "DOMESTIC"
+            
+            shipment = ShipmentDetails(
+                mode="AIR",
+                shipment_type=shipment_type,
+                incoterm="EXW" if direction == "EXPORT" else "DDU",
+                payment_term="PREPAID",
+                is_dangerous_goods=(commodity == "DG"),
+                pieces=[Piece(
+                    pieces=1,
+                    length_cm=Decimal("50"),
+                    width_cm=Decimal("50"),
+                    height_cm=Decimal("50"),
+                    gross_weight_kg=Decimal(str(weight_kg))
+                )],
+                service_scope=service_scope,
+                direction=direction,
+                origin_location=origin_ref,
+                destination_location=dest_ref,
+            )
+            
+            quote_input = QuoteInput(
+                customer_id=uuid4(),  # Dummy for calculation
+                contact_id=uuid4(),
+                output_currency="PGK",
+                quote_date=date.today(),
+                shipment=shipment,
+            )
+            
+            # Run V4 adapter to get standard lines
+            adapter = PricingServiceV4Adapter(quote_input)
+            standard_lines = adapter._calculate_standard_lines()
+            
+            # Convert to SPEChargeLine format
+            result = []
+            for line in standard_lines:
+                # Skip lines with missing rates
+                if line.is_rate_missing:
+                    continue
+                
+                # Map bucket
+                bucket_map = {
+                    "airfreight": "airfreight",
+                    "origin_charges": "origin_charges",
+                    "destination_charges": "destination_charges",
+                }
+                bucket = bucket_map.get(line.bucket, "origin_charges")
+                
+                # Determine unit type
+                unit = "per_shipment"
+                if "per_kg" in line.cost_source.lower() or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
+                    unit = "per_kg"
+                
+                # Determine amount to show
+                amount = str(float(line.cost_fcy)) if line.cost_fcy else str(float(line.cost_pgk))
+                currency = line.cost_fcy_currency or "PGK"
+                
+                result.append({
+                    "code": line.service_component_code,
+                    "description": line.service_component_desc,
+                    "amount": amount,
+                    "currency": currency,
+                    "unit": unit,
+                    "bucket": bucket,
+                    "is_primary_cost": line.service_component_code in ["FREIGHT", "AIRFREIGHT", "DOMESTIC_FREIGHT"],
+                    "conditional": False,
+                    "source_reference": f"Standard Rate ({line.cost_source})",
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error fetching standard charges: {e}")
+            return []
 
 
 # =============================================================================
@@ -447,6 +730,31 @@ class SpotEnvelopeService:
         return SpotPricingEnvelope(
             **{**spe.model_dump(), "status": SPEStatus.READY}
         )
+
+    @classmethod
+    def update_envelope(
+        cls,
+        spe: SpotPricingEnvelope,
+        charges: Optional[List[SPEChargeLine]] = None,
+        conditions: Optional[SPEConditions] = None,
+    ) -> SpotPricingEnvelope:
+        """
+        Update an existing DRAFT SPE.
+        
+        Allows enriching a draft with extracted charges or updated conditions.
+        """
+        if spe.status != SPEStatus.DRAFT:
+            raise ValueError(f"Cannot update SPE in status '{spe.status.value}'. Only DRAFT can be updated.")
+            
+        updated_data = spe.model_dump()
+        
+        if charges is not None:
+            updated_data["charges"] = charges
+            
+        if conditions is not None:
+            updated_data["conditions"] = conditions
+            
+        return SpotPricingEnvelope(**updated_data)
 
 
 # =============================================================================
@@ -743,7 +1051,176 @@ class ReplyAnalysisService:
         )
     
     @classmethod
-    def _build_summary(cls, assertions: List['ExtractedAssertion']) -> 'AnalysisSummary':
+    def analyze_with_ai(
+        cls,
+        raw_text: str,
+        shipment_context: Optional[dict] = None,
+        availability: Optional[dict[str, bool]] = None,
+    ) -> 'ReplyAnalysisResult':
+        """
+        Analyze using Gemini AI for extraction.
+        
+        Phase 2: Use LLM to identify charges, currency, and validity.
+        """
+        from quotes.ai_intake_service import parse_rate_quote_text, get_gemini_client
+        from quotes.reply_schemas import (
+            AssertionStatus,
+            AssertionCategory,
+            ExtractedAssertion,
+            AnalysisSummary,
+            ReplyAnalysisResult,
+        )
+
+        genai = get_gemini_client()
+        ai_assertions = []
+        ai_result = None
+        
+        if genai:
+            # Call existing AI service with context to help it categorize
+            ai_result = parse_rate_quote_text(raw_text, context=shipment_context)
+            if ai_result.success:
+                # Add global currency assertion if present
+                if ai_result.quote_currency:
+                    ai_assertions.append(ExtractedAssertion(
+                        text=f"Quote Currency: {ai_result.quote_currency}",
+                        category=AssertionCategory.CURRENCY,
+                        status=AssertionStatus.CONFIRMED,
+                        confidence=0.95,
+                        rate_currency=ai_result.quote_currency
+                    ))
+
+                for line in ai_result.lines:
+                    # Map SpotChargeLine to ExtractedAssertion
+                    category = AssertionCategory.RATE
+                    if line.bucket == "ORIGIN":
+                        category = AssertionCategory.ORIGIN_CHARGES
+                    elif line.bucket == "DESTINATION":
+                        category = AssertionCategory.DEST_CHARGES
+                    
+                    # Fallback to quote currency if line currency is missing
+                    final_currency = line.currency or ai_result.quote_currency
+                    
+                    # For MIN_OR_PER_KG, use minimum as the display amount
+                    display_amount = line.minimum if line.minimum else line.amount
+
+                    ai_assertions.append(ExtractedAssertion(
+                        text=line.description,
+                        category=category,
+                        status=AssertionStatus.CONFIRMED if not line.conditional else AssertionStatus.CONDITIONAL,
+                        confidence=line.confidence or 0.9,
+                        rate_amount=display_amount,
+                        rate_per_unit=line.rate_per_unit,
+                        rate_currency=final_currency,
+                        rate_unit=line.unit_basis.lower() if line.unit_basis else "per_kg",
+                    ))
+        
+        # Add Standard Rate suggestions if context is provided
+        standard_assertions = []
+        if shipment_context:
+            standard_assertions = cls._get_standard_rate_assertions(
+                shipment_context, 
+                availability=availability
+            )
+            
+        # Combine all assertions
+        all_assertions = ai_assertions + standard_assertions
+        
+        # Build summary
+        summary = cls._build_summary(all_assertions, availability=availability)
+        
+        # Generate warnings
+        warnings = cls._generate_warnings(summary, all_assertions)
+        
+        # Add AI warnings to our warnings list
+        if genai and ai_result:
+            if not ai_result.success:
+                warnings.append(f"⚠️ AI analysis failed: {ai_result.error}. Falling back to standard rates.")
+            elif ai_result.warnings:
+                for w in ai_result.warnings:
+                    warnings.append(f"⚠️ AI: {w}")
+
+        return ReplyAnalysisResult(
+            raw_text=raw_text,
+            assertions=all_assertions,
+            summary=summary,
+            warnings=warnings,
+        )
+
+    @classmethod
+    def _get_standard_rate_assertions(
+        cls, 
+        ctx: dict,
+        availability: Optional[dict[str, bool]] = None
+    ) -> List['ExtractedAssertion']:
+        """Lookup existing rates in DB to provide as implicit suggestions."""
+        from quotes.reply_schemas import AssertionStatus, AssertionCategory, ExtractedAssertion
+        from pricing_v4.models import ExportCOGS, ImportCOGS, ProductCode
+        from datetime import date
+        
+        origin = ctx.get('origin_code')
+        dest = ctx.get('destination_code')
+        origin_country = ctx.get('origin_country')
+        dest_country = ctx.get('destination_country')
+        today = date.today()
+        
+        suggestions = []
+        
+        # 1. Query DB for rates (COGS is usually the base for SPOT review)
+        if origin_country == 'PG':
+            rates = ExportCOGS.objects.filter(
+                origin_airport=origin,
+                destination_airport=dest,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).select_related('product_code')
+        else:
+            rates = ImportCOGS.objects.filter(
+                origin_airport=origin,
+                destination_airport=dest,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).select_related('product_code')
+            
+        # 2. Convert to assertions
+        for r in rates:
+            category = AssertionCategory.RATE if r.product_code.category == ProductCode.CATEGORY_FREIGHT else AssertionCategory.ORIGIN_CHARGES
+            # If import, destination charges might be relevant
+            if origin_country != 'PG' and r.product_code.category != ProductCode.CATEGORY_FREIGHT:
+                category = AssertionCategory.DEST_CHARGES
+                
+            suggestions.append(ExtractedAssertion(
+                text=f"Standard Rate: {r.product_code.description}",
+                category=category,
+                status=AssertionStatus.IMPLICIT,
+                confidence=0.8,
+                rate_amount=r.rate_per_kg or r.rate_per_shipment,
+                rate_currency=r.currency,
+            rate_unit="per_kg" if r.rate_per_kg else "flat",
+            ))
+            
+        # 3. Filter if availability metadata is provided
+        if availability:
+            filtered = []
+            for a in suggestions:
+                # Map assertion category to availability keys
+                should_skip = False
+                if a.category == AssertionCategory.RATE and availability.get("AIRFREIGHT"):
+                    should_skip = True
+                elif a.category == AssertionCategory.ORIGIN_CHARGES:
+                    if availability.get("EXPORT_CLEARANCE") or availability.get("ORIGIN_PICKUP") or availability.get("ORIGIN_OTHER"):
+                        should_skip = True
+                elif a.category == AssertionCategory.DEST_CHARGES:
+                    if availability.get("DEST_CLEARANCE") or availability.get("DEST_DELIVERY") or availability.get("DEST_OTHER"):
+                        should_skip = True
+                
+                if not should_skip:
+                    filtered.append(a)
+            return filtered
+            
+        return suggestions
+
+    @classmethod
+    def _build_summary(cls, assertions: List['ExtractedAssertion'], availability: Optional[dict[str, bool]] = None) -> 'AnalysisSummary':
         """Build summary from assertions."""
         from quotes.reply_schemas import (
             AssertionStatus,
@@ -753,6 +1230,20 @@ class ReplyAnalysisService:
         
         summary = AnalysisSummary()
         
+        # 1️⃣ Pre-populate from DB availability (if provided)
+        # This ensures we don't show "Missing rate" if DB has rates for this lane
+        if availability:
+            # If DB has airfreight rate, we have a rate
+            if availability.get("AIRFREIGHT"):
+                summary.has_rate = True
+            # Destination charges count as rate for Import A2D/D2D
+            if availability.get("DEST_CLEARANCE") or availability.get("DEST_DELIVERY") or availability.get("DEST_OTHER"):
+                summary.has_rate = True
+            # Origin charges count as rate for Export D2A/D2D  
+            if availability.get("EXPORT_CLEARANCE") or availability.get("ORIGIN_PICKUP") or availability.get("ORIGIN_OTHER"):
+                summary.has_rate = True
+        
+        # 2️⃣ Enrich from assertions
         for a in assertions:
             # Count by status
             if a.status == AssertionStatus.CONFIRMED:
@@ -768,14 +1259,31 @@ class ReplyAnalysisService:
             if a.status != AssertionStatus.MISSING:
                 if a.category == AssertionCategory.RATE:
                     summary.has_rate = True
+                    if a.rate_currency:
+                        summary.has_currency = True
+                
                 elif a.category == AssertionCategory.CURRENCY:
                     summary.has_currency = True
+                
                 elif a.category == AssertionCategory.VALIDITY:
                     summary.has_validity = True
+                
                 elif a.category == AssertionCategory.ROUTING:
                     summary.has_routing = True
+                
                 elif a.category == AssertionCategory.ACCEPTANCE:
                     summary.has_acceptance = True
+                
+                # Dest/Origin charges also count as rate and may have currency
+                elif a.category == AssertionCategory.DEST_CHARGES:
+                    summary.has_rate = True
+                    if a.rate_currency:
+                        summary.has_currency = True
+                
+                elif a.category == AssertionCategory.ORIGIN_CHARGES:
+                    summary.has_rate = True
+                    if a.rate_currency:
+                        summary.has_currency = True
         
         return summary
     
@@ -796,7 +1304,7 @@ class ReplyAnalysisService:
         if not summary.has_currency:
             warnings.append("⛔ MISSING: Rate currency is required")
         if not summary.has_validity:
-            warnings.append("⛔ MISSING: Rate validity is required")
+            warnings.append("⚠️ Validity not specified - assuming 72 hours")
         
         # Optional field warnings
         if not summary.has_routing:

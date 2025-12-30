@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
-@source "../";
 
 @theme {
   --color-border: hsl(var(--border));
@@ -81,9 +80,9 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
-    /* Primary - Vibrant Indigo */
-    --primary: 221 83% 53%;
-    /* #2563EB */
+    /* Primary - EFM Blue */
+    --primary: 221 70% 40%;
+    /* #1E40AF */
     --primary-foreground: 210 40% 98%;
 
     /* Secondary - Slate/Grey for subtle actions */
@@ -94,8 +93,9 @@
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
 
-    /* Accent - Coral/Orange for highlights */
-    --accent: 15 100% 65%;
+    /* Accent - EFM Orange */
+    --accent: 25 95% 53%;
+    /* #F97316 */
     --accent-foreground: 210 40% 98%;
 
     /* Destructive - Red */
@@ -112,7 +112,7 @@
 
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
-    --ring: 221 83% 53%;
+    --ring: 221 70% 40%;
 
     --radius: 0.75rem;
 

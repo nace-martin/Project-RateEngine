@@ -16,6 +16,11 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.pagination import LimitOffsetPagination
+
+class QuoteLimitOffsetPagination(LimitOffsetPagination):
+    default_limit = 20
+    max_limit = 100
 
 # RBAC permissions
 from accounts.permissions import (
@@ -26,7 +31,7 @@ from accounts.permissions import (
 )
 
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
+from .serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3, QuoteListSerializerV3
 from .schemas import QuoteComputeRequest
 from pydantic import ValidationError
 from pydantic_core import ValidationError as PydanticCoreValidationError
@@ -426,12 +431,27 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
     queryset = Quote.objects.all().order_by('-created_at')
     serializer_class = QuoteModelSerializerV3
     permission_classes = [IsAuthenticated]
+    pagination_class = QuoteLimitOffsetPagination
     # Limit write operations to update only
     http_method_names = ['get', 'patch', 'head', 'options']
 
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return QuoteListSerializerV3
+        return QuoteModelSerializerV3
+
     def get_queryset(self):
         # Prefetch related data to optimize query
-        return super().get_queryset().prefetch_related(
+        qs = Quote.objects.all().select_related(
+            'customer', 'contact', 'origin_location', 'destination_location'
+        ).order_by('-created_at')
+
+        if self.action == 'list':
+            # List view only needs totals for the latest version
+            return qs.prefetch_related('versions__totals')
+        
+        # Detail view needs lines for the latest version
+        return qs.prefetch_related(
             'versions__lines__service_component',
             'versions__totals'
         )
@@ -449,15 +469,23 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         """
-        Custom list to add 'latest_version' to each quote.
+        Custom list to add 'latest_version' to each quote using prefetched data.
         """
-        queryset = self.get_queryset()
-        
-        # This is less efficient than retrieve, but fine for a list view.
-        # A more optimized way would be to use Subquery or Annotation.
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            for quote in page:
+                # Use prefetched cache to avoid DB hit
+                versions = list(quote.versions.all())
+                # QuoteVersion has ordering = ['quote', '-version_number'] so we can just grab first
+                quote.latest_version = versions[0] if versions else None
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
         for quote in queryset:
-             latest_version = quote.versions.order_by('-version_number').first()
-             quote.latest_version = latest_version
+             versions = list(quote.versions.all())
+             quote.latest_version = versions[0] if versions else None
 
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
@@ -897,114 +925,7 @@ class QuoteVersionCreateAPIView(APIView):
 
 # --- SPOT CHARGE API VIEWS ---
 
-class SpotChargeListCreateAPIView(APIView):
-    """
-    GET: List spot charges for a quote, grouped by bucket.
-    POST: Add/replace spot charges for a quote.
-    """
-    permission_classes = [IsAuthenticated]
 
-    def get(self, request, quote_id):
-        from .models import SpotChargeLine
-        from .serializers import SpotChargeLineSerializer
-        
-        quote = get_object_or_404(Quote, id=quote_id)
-        charges = quote.spot_charges.all()
-        
-        # Group by bucket
-        grouped = {
-            'ORIGIN': [],
-            'FREIGHT': [],
-            'DESTINATION': [],
-        }
-        for charge in charges:
-            serialized = SpotChargeLineSerializer(charge).data
-            grouped[charge.bucket].append(serialized)
-        
-        return Response({
-            'quote_id': str(quote.id),
-            'charges': grouped,
-        })
-
-    def post(self, request, quote_id):
-        from .models import SpotChargeLine
-        from .serializers import SpotChargeLineSerializer, SpotChargesInputSerializer
-        from .state_machine import is_quote_editable
-        
-        quote = get_object_or_404(Quote, id=quote_id)
-        
-        # Block edits for FINALIZED/SENT quotes
-        if not is_quote_editable(quote):
-            return Response(
-                {'detail': f'Cannot modify spot charges. Quote is {quote.status}.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = SpotChargesInputSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Clear existing spot charges and replace with new ones
-        with transaction.atomic():
-            quote.spot_charges.all().delete()
-            
-            created_lines = []
-            for charge_data in serializer.validated_data['charges']:
-                charge_data['quote'] = quote
-                line = SpotChargeLine.objects.create(**charge_data)
-                created_lines.append(line)
-        
-        # Return created charges grouped by bucket
-        grouped = {
-            'ORIGIN': [],
-            'FREIGHT': [],
-            'DESTINATION': [],
-        }
-        for line in created_lines:
-            serialized = SpotChargeLineSerializer(line).data
-            grouped[line.bucket].append(serialized)
-        
-        return Response({
-            'quote_id': str(quote.id),
-            'charges': grouped,
-        }, status=status.HTTP_201_CREATED)
-
-
-class SpotChargeCalculateAPIView(APIView):
-    """
-    POST: Calculate bucket totals with FX/CAF/margin applied.
-    This triggers the 5-pass pricing engine for spot charges.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, quote_id):
-        from .models import SpotChargeLine
-        from pricing_v2.spot_bucket_calculator import SpotBucketCalculator
-        
-        quote = get_object_or_404(Quote, id=quote_id)
-        
-        if not quote.spot_charges.exists():
-            return Response(
-                {'detail': 'No spot charges found. Add charges first.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            calculator = SpotBucketCalculator(quote)
-            result = calculator.calculate()
-            
-            # Update quote status to DRAFT if previously INCOMPLETE
-            if quote.status == Quote.Status.INCOMPLETE:
-                quote.status = Quote.Status.DRAFT
-                quote.save(update_fields=['status'])
-            
-            return Response(result)
-        except Exception as e:
-            logger.exception(f"Error calculating spot charges: {e}")
-            return Response(
-                {'detail': f'Calculation error: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 
 # --- AI RATE INTAKE API VIEW ---
@@ -1029,12 +950,22 @@ class AIRateIntakeAPIView(APIView):
         
         quote = get_object_or_404(Quote, id=quote_id)
         
+        # Build context for AI analysis
+        context = {
+            'origin': str(quote.origin_location),
+            'destination': str(quote.destination_location),
+            'weight': float(quote.chargeable_weight_kg or quote.gross_weight_kg or 0),
+            'shipment_type': quote.shipment_type,
+            'incoterm': quote.incoterm,
+            'payment_term': quote.payment_term,
+        }
+        
         # Check for PDF upload
         pdf_file = request.FILES.get('file')
         if pdf_file:
             # Read PDF content
             pdf_content = pdf_file.read()
-            result = parse_pdf_rate_quote(pdf_content)
+            result = parse_pdf_rate_quote(pdf_content, context=context)
             return self._format_response(result)
         
         # Check for text input
@@ -1045,7 +976,7 @@ class AIRateIntakeAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        result = parse_rate_quote_text(text, source_type="TEXT")
+        result = parse_rate_quote_text(text, source_type="TEXT", context=context)
         return self._format_response(result)
     
     def _format_response(self, result):
@@ -1082,6 +1013,7 @@ class AIRateIntakeAPIView(APIView):
         return Response({
             'success': True,
             'lines': lines_data,
+            'analysis_text': result.analysis_text,
             'warnings': result.warnings,
             'raw_text_length': result.raw_text_length,
             'source_type': result.source_type,
@@ -1185,7 +1117,6 @@ class QuoteCloneAPIView(APIView):
     permission_classes = [CanEditQuotes]  # Sales/Manager/Admin can clone
     
     def post(self, request, quote_id):
-        from .models import SpotChargeLine
         
         # Get source quote
         source_quote = get_object_or_404(Quote, id=quote_id)
@@ -1224,23 +1155,6 @@ class QuoteCloneAPIView(APIView):
                 # Note: quote_number is auto-generated on save
             )
             
-            # Copy spot charges
-            source_spot_charges = source_quote.spot_charges.all()
-            for charge in source_spot_charges:
-                SpotChargeLine.objects.create(
-                    quote=new_quote,
-                    bucket=charge.bucket,
-                    description=charge.description,
-                    amount=charge.amount,
-                    currency=charge.currency,
-                    unit_basis=charge.unit_basis,
-                    min_charge=charge.min_charge,
-                    percentage=charge.percentage,
-                    percent_applies_to=charge.percent_applies_to,
-                    target_line=None,  # Don't copy target_line references
-                    notes=f"Cloned from {source_quote.quote_number}",
-                )
-            
             # Attach a placeholder latest_version for serialization
             new_quote.latest_version = None
             
@@ -1254,6 +1168,6 @@ class QuoteCloneAPIView(APIView):
                 'id': str(source_quote.id),
                 'quote_number': source_quote.quote_number,
             },
-            'spot_charges_copied': source_spot_charges.count(),
+            'spot_charges_copied': 0,
             'created_at': new_quote.created_at.isoformat(),
         }, status=status.HTTP_201_CREATED)

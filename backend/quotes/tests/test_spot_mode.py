@@ -102,103 +102,82 @@ class TestScopeValidation:
 # =============================================================================
 
 class TestSpotTriggerEvaluation:
-    """Centralised SPOT trigger logic tests."""
+    """Deterministic SPOT trigger logic tests based on rate coverage."""
     
-    def test_spot_trigger_dg_commodity(self):
-        """Dangerous Goods triggers SPOT mode."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
-            origin_country="PG",
-            destination_country="AU",
-            commodity="DG"
+    def test_spot_trigger_out_of_scope(self):
+        """Cross-trade (neither is PNG) triggers SPOT with OUT_OF_SCOPE."""
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="AU",
+            destination_country="SG",
+            direction="EXPORT",
+            service_scope="P2P",
+            component_availability={}
         )
         
         assert is_spot is True
-        assert reason.code == SpotTriggerReason.DG_COMMODITY
-        assert "Dangerous Goods" in reason.text
+        assert result.code == SpotTriggerReason.OUT_OF_SCOPE
     
-    def test_spot_trigger_avi_commodity(self):
-        """Live Animals triggers SPOT mode."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
+    def test_spot_trigger_missing_airfreight(self):
+        """Missing airfreight triggers SPOT."""
+        is_spot, result = SpotTriggerEvaluator.evaluate(
             origin_country="PG",
             destination_country="AU",
-            commodity="AVI"
+            direction="EXPORT",
+            service_scope="P2P",
+            component_availability={"AIRFREIGHT": False}
         )
         
         assert is_spot is True
-        assert reason.code == SpotTriggerReason.AVI_COMMODITY
-        assert "Live Animals" in reason.text
+        assert result.code == SpotTriggerReason.MISSING_SCOPE_RATES
+        assert "AIRFREIGHT" in result.text
     
-    def test_spot_trigger_per_commodity(self):
-        """Perishables triggers SPOT mode."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
+    def test_spot_trigger_complete_p2p(self):
+        """Standard P2P with airfreight does NOT trigger SPOT."""
+        is_spot, result = SpotTriggerEvaluator.evaluate(
             origin_country="PG",
             destination_country="AU",
-            commodity="PER"
-        )
-        
-        assert is_spot is True
-        assert reason.code == SpotTriggerReason.PER_COMMODITY
-        assert "Perishables" in reason.text
-    
-    def test_spot_trigger_non_px_export_route(self):
-        """Export to destination not served by Air Niugini triggers SPOT."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
-            origin_country="PG",
-            destination_country="US",  # LAX - not PX direct
-            commodity="GCR"
-        )
-        
-        assert is_spot is True
-        assert reason.code == SpotTriggerReason.NON_PX_ROUTE
-        assert "Air Niugini" in reason.text
-    
-    def test_spot_trigger_normal_pricing(self):
-        """Standard POM→BNE GCR does NOT trigger SPOT."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
-            origin_country="PG",
-            destination_country="AU",
-            commodity="GCR",
-            destination_airport="BNE"  # PX direct route
+            direction="EXPORT",
+            service_scope="P2P",
+            component_availability={"AIRFREIGHT": True}
         )
         
         assert is_spot is False
-        assert reason is None
+        assert result is None
     
-    def test_spot_trigger_hvc_commodity(self):
-        """High Value Cargo triggers SPOT mode."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
+    def test_spot_trigger_missing_d2d_components(self):
+        """D2D with missing destination charges triggers SPOT."""
+        is_spot, result = SpotTriggerEvaluator.evaluate(
             origin_country="PG",
             destination_country="AU",
-            commodity="HVC"
+            direction="EXPORT",
+            service_scope="D2D",
+            component_availability={
+                "ORIGIN_PICKUP": True,
+                "EXPORT_CLEARANCE": True,
+                "AIRFREIGHT": True,
+                "DEST_CLEARANCE": False,
+                "DEST_DELIVERY": False
+            }
         )
         
         assert is_spot is True
-        assert reason.code == SpotTriggerReason.HVC_COMMODITY
-        assert "High Value" in reason.text
-    
-    def test_spot_trigger_oog_commodity(self):
-        """Oversized/Heavy cargo triggers SPOT mode."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
+        assert result.code == SpotTriggerReason.MISSING_SCOPE_RATES
+        assert "DEST_CLEARANCE" in result.text
+        assert "DEST_DELIVERY" in result.text
+
+    def test_spot_trigger_commodity_no_longer_trigger(self):
+        """Commodity type (like DG) is no longer a direct SPOT trigger in the evaluator."""
+        # Note: DG might still be SPOT if rates are missing, but the evaluator 
+        # itself no longer has commodity logic.
+        is_spot, result = SpotTriggerEvaluator.evaluate(
             origin_country="PG",
             destination_country="AU",
-            commodity="OOG"
+            direction="EXPORT",
+            service_scope="P2P",
+            component_availability={"AIRFREIGHT": True}
         )
         
-        assert is_spot is True
-        assert reason.code == SpotTriggerReason.OOG_COMMODITY
-        assert "Oversized" in reason.text
-    
-    def test_spot_trigger_vul_commodity(self):
-        """Vulnerable Cargo triggers SPOT mode."""
-        is_spot, reason = SpotTriggerEvaluator.evaluate(
-            origin_country="PG",
-            destination_country="AU",
-            commodity="VUL"
-        )
-        
-        assert is_spot is True
-        assert reason.code == SpotTriggerReason.VUL_COMMODITY
-        assert "Vulnerable" in reason.text
+        assert is_spot is False
 
 
 # =============================================================================

@@ -49,7 +49,7 @@ export default function HomePage() {
       setError(null);
       try {
         const data = await getQuotesV3();
-        setRecentQuotes(data.slice(0, 5));
+        setRecentQuotes(data.results.slice(0, 5));
       } catch (err: unknown) {
         const message =
           err instanceof Error ? err.message : "Unable to load recent quotes.";

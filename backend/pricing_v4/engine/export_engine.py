@@ -101,7 +101,7 @@ class ExportPricingEngine:
     # =========================================================================
     
     @staticmethod
-    def get_product_codes(is_dg: bool = False) -> List[int]:
+    def get_product_codes(is_dg: bool = False, service_scope: str = 'P2P') -> List[int]:
         """
         Get the list of ProductCode IDs to include in an Export quote.
         
@@ -110,23 +110,32 @@ class ExportPricingEngine:
         
         Args:
             is_dg: True if shipment contains dangerous goods
+            service_scope: 'P2P' (Port to Port), 'D2A' (Door to Airport), 'D2D' (Door to Door)
             
         Returns:
             List of ProductCode IDs to quote
         """
-        # Standard Export charges (always included)
+        # Standard Export charges (always included in all scopes)
         codes = [
             1001,  # EXP-FRT-AIR - Air Freight
             1010,  # EXP-DOC - Documentation
             1011,  # EXP-AWB - AWB Fee
-            1020,  # EXP-CLEAR - Customs Clearance
             1021,  # EXP-AGENCY - Agency Fee
             1030,  # EXP-TERM - Terminal Handling
             1031,  # EXP-BUILDUP - Build-Up
             1040,  # EXP-SCREEN - Security Screening
-            1050,  # EXP-PICKUP - Pickup/Collection
-            1060,  # EXP-FSC-PICKUP - Fuel Surcharge on Pickup
         ]
+        
+        # Origin Pickup (D2A, D2D)
+        if service_scope in ('D2A', 'D2D'):
+            codes.append(1050)  # EXP-PICKUP - Pickup/Collection
+            codes.append(1060)  # EXP-FSC-PICKUP - Fuel Surcharge on Pickup
+            codes.append(1020)  # EXP-CLEAR - Customs Clearance (Origin)
+        
+        # Destination Charges (D2D)
+        if service_scope == 'D2D':
+            codes.append(1080)  # EXP-CLEAR-DEST
+            codes.append(1081)  # EXP-DELIVERY-DEST
         
         # Conditional charges
         if is_dg:

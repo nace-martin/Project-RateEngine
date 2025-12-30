@@ -48,7 +48,7 @@ export function SpotManagerApproval({
                     <MessageSquare className="h-5 w-5 text-blue-600" />
                     Manager Approval Required
                     <Badge variant="outline" className="ml-2 text-xs">
-                        {spe.shipment_context.commodity}
+                        {spe.shipment.commodity}
                     </Badge>
                 </CardTitle>
                 <CardDescription>
@@ -62,16 +62,16 @@ export function SpotManagerApproval({
                     <div>
                         <span className="text-slate-500">Route:</span>{" "}
                         <span className="font-medium">
-                            {spe.shipment_context.origin_code} → {spe.shipment_context.destination_code}
+                            {spe.shipment.origin_code} → {spe.shipment.destination_code}
                         </span>
                     </div>
                     <div>
                         <span className="text-slate-500">Weight:</span>{" "}
-                        <span className="font-medium">{spe.shipment_context.total_weight_kg} kg</span>
+                        <span className="font-medium">{spe.shipment.total_weight_kg} kg</span>
                     </div>
                     <div>
                         <span className="text-slate-500">Trigger:</span>{" "}
-                        <span className="font-medium">{spe.trigger_code}</span>
+                        <span className="font-medium">{spe.spot_trigger_reason_code}</span>
                     </div>
                     <div>
                         <span className="text-slate-500">Charges:</span>{" "}

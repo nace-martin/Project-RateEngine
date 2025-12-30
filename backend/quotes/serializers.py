@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 from rest_framework import serializers
-from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal, SpotChargeLine
+from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
@@ -116,81 +116,13 @@ class V3QuoteVersionSerializer(serializers.ModelSerializer):
 
 # --- SPOT CHARGE LINE SERIALIZERS ---
 
-class SpotChargeLineSerializer(serializers.ModelSerializer):
-    """Serializer for freeform spot charge lines."""
-    target_line_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-    
-    class Meta:
-        model = SpotChargeLine
-        fields = (
-            'id', 'bucket', 'description', 'amount', 'currency', 'unit_basis',
-            'min_charge', 'percentage', 'percent_applies_to', 'target_line', 'target_line_id',
-            'notes', 'created_at'
-        )
-        read_only_fields = ('id', 'created_at', 'target_line')
-    
-    def validate(self, attrs):
-        unit_basis = attrs.get('unit_basis')
-        
-        if unit_basis == SpotChargeLine.UnitBasis.PERCENTAGE:
-            if attrs.get('percentage') is None:
-                raise serializers.ValidationError(
-                    {'percentage': 'Percentage is required for percentage-based charges.'}
-                )
-            if not attrs.get('percent_applies_to'):
-                raise serializers.ValidationError(
-                    {'percent_applies_to': 'Must specify what the percentage applies to.'}
-                )
-            if attrs.get('percent_applies_to') == SpotChargeLine.PercentAppliesTo.SPECIFIC_LINE:
-                if not attrs.get('target_line_id'):
-                    raise serializers.ValidationError(
-                        {'target_line_id': 'Target line is required for SPECIFIC_LINE percentage.'}
-                    )
-        else:
-            if attrs.get('amount') is None:
-                raise serializers.ValidationError(
-                    {'amount': 'Amount is required for non-percentage charges.'}
-                )
-        
-        return attrs
-    
-    def create(self, validated_data):
-        target_line_id = validated_data.pop('target_line_id', None)
-        if target_line_id:
-            validated_data['target_line_id'] = target_line_id
-        return super().create(validated_data)
 
 
-class SpotChargesInputSerializer(serializers.Serializer):
-    """Serializer for bulk spot charge submission."""
-    charges = SpotChargeLineSerializer(many=True)
-
-class V3QuoteLineSerializer(serializers.ModelSerializer):
-    service_component = V3ServiceComponentSerializer()
-    class Meta:
-        model = QuoteLine
-        exclude = ('quote_version',) # Exclude the parent link
-
-class V3QuoteTotalSerializer(serializers.ModelSerializer):
-    # Alias for frontend compatibility - maps total_sell_fcy_currency to 'currency'
-    currency = serializers.CharField(source='total_sell_fcy_currency', read_only=True)
-    
-    class Meta:
-        model = QuoteTotal
-        fields = (
-            'currency',  # Alias for total_sell_fcy_currency
-            'total_cost_pgk',
-            'total_sell_pgk', 'total_sell_pgk_incl_gst',
-            'total_sell_fcy', 'total_sell_fcy_incl_gst', 'total_sell_fcy_currency',
-            'has_missing_rates', 'notes',
-        )
-
-class V3QuoteVersionSerializer(serializers.ModelSerializer):
-    lines = V3QuoteLineSerializer(many=True)
+class V3QuoteVersionSummarySerializer(serializers.ModelSerializer):
     totals = V3QuoteTotalSerializer()
     class Meta:
         model = QuoteVersion
-        exclude = ('quote',) # Exclude the parent link
+        exclude = ('quote', 'payload_json') # Also exclude payload_json for list view
 
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
@@ -206,14 +138,32 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     # Use StringRelatedField to return the IATA code (e.g., "BNE")
     origin_location = serializers.StringRelatedField()
     destination_location = serializers.StringRelatedField()
+
     class Meta:
         model = Quote
-        # --- UPDATED FIELDS ---
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
             'origin_location', 'destination_location',
-            # 'origin_port', 'destination_port', # Add when ready for SEA
             'status', 'valid_until', 'created_at', 'latest_version'
         )
-        # --- END UPDATES ---
+
+class QuoteListSerializerV3(serializers.ModelSerializer):
+    """
+    Lightweight serializer for listing quotes.
+    Uses a summary version without line items.
+    """
+    latest_version = V3QuoteVersionSummarySerializer(read_only=True)
+    customer = CustomerV3Serializer(read_only=True)
+    contact = ContactV3Serializer(read_only=True)
+    origin_location = serializers.StringRelatedField()
+    destination_location = serializers.StringRelatedField()
+
+    class Meta:
+        model = Quote
+        fields = (
+            'id', 'quote_number', 'customer', 'contact', 'mode', 
+            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
+            'origin_location', 'destination_location',
+            'status', 'valid_until', 'created_at', 'latest_version'
+        )

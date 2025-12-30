@@ -87,10 +87,23 @@ def run():
 
     # 4. Helper: Get/Create Airport
     def get_airport(code, country_code):
+        IATA_TO_CITY = {
+            'BNE': 'Brisbane',
+            'SYD': 'Sydney',
+            'CNS': 'Cairns',
+            'POM': 'Port Moresby',
+            'HKG': 'Hong Kong',
+            'MNL': 'Manila',
+            'HIR': 'Honiara',
+            'SIN': 'Singapore',
+            'VLI': 'Port Vila',
+            'NAN': 'Nadi',
+        }
+        city_name = IATA_TO_CITY.get(code, code)
+        
         ctry, _ = Country.objects.get_or_create(code=country_code, defaults={'name': country_code})
-        # Use code as city name since prompt table implies they match/are simple
         city, _ = City.objects.get_or_create(
-            name=code,
+            name=city_name,
             country=ctry
         )
         apt, _ = Airport.objects.get_or_create(

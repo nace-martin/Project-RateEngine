@@ -9,7 +9,7 @@
  * - Source reference required per line
  */
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Plus, Trash2, AlertTriangle, DollarSign } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,12 +18,15 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit } from "@/lib/spot-types";
+import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion } from "@/lib/spot-types";
 
 interface SpotRateEntryFormProps {
     onSubmit: (charges: Omit<SPEChargeLine, 'id'>[]) => Promise<void>;
     isLoading?: boolean;
     initialCharges?: SPEChargeLine[];
+    suggestedCharges?: ExtractedAssertion[];
+    shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";  // Determines which buckets to show
+    serviceScope?: string; // e.g., "D2D", "D2A", "A2D", "A2A"
 }
 
 interface ChargeLineInput {
@@ -31,25 +34,28 @@ interface ChargeLineInput {
     code: string;
     description: string;
     amount: string;
-    currency: "USD" | "AUD" | "PGK";
-    unit: SPEChargeUnit;
+    min_amount?: string;
+    currency: "SGD" | "USD" | "AUD" | "PGK" | "NZD" | "HKD";
+    unit: SPEChargeUnit | "min_or_per_kg";
     bucket: SPEChargeBucket;
     is_primary_cost: boolean;
     conditional: boolean;
     source_reference: string;
 }
 
+// Full list of buckets - filtered dynamically based on shipment rules
 const CHARGE_BUCKETS: { id: SPEChargeBucket; label: string; color: string }[] = [
     { id: "airfreight", label: "Airfreight", color: "bg-blue-50 border-blue-200" },
     { id: "origin_charges", label: "Origin Charges", color: "bg-emerald-50 border-emerald-200" },
     { id: "destination_charges", label: "Destination Charges", color: "bg-amber-50 border-amber-200" },
 ];
 
-const CHARGE_UNITS: { value: SPEChargeUnit; label: string }[] = [
+const CHARGE_UNITS: { value: SPEChargeUnit | "min_or_per_kg"; label: string }[] = [
     { value: "per_kg", label: "Per KG" },
     { value: "flat", label: "Flat" },
     { value: "per_awb", label: "Per AWB" },
     { value: "per_shipment", label: "Per Shipment" },
+    { value: "min_or_per_kg", label: "Min or Per KG" },
     { value: "percentage", label: "Percentage" },
 ];
 
@@ -58,6 +64,7 @@ const createEmptyLine = (bucket: SPEChargeBucket): ChargeLineInput => ({
     code: "",
     description: "",
     amount: "",
+    min_amount: "",
     currency: "USD",
     unit: bucket === "airfreight" ? "per_kg" : "flat",
     bucket,
@@ -66,7 +73,42 @@ const createEmptyLine = (bucket: SPEChargeBucket): ChargeLineInput => ({
     source_reference: "",
 });
 
-export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: SpotRateEntryFormProps) {
+// ... inside component ...
+
+
+export function SpotRateEntryForm({
+    onSubmit,
+    isLoading,
+    initialCharges = [],
+    suggestedCharges = [],
+    shipmentType = "EXPORT",
+    serviceScope = "D2D",
+}: SpotRateEntryFormProps) {
+    // Determine which buckets should be visible based on shipment type and scope
+    const visibleBuckets = useMemo(() => {
+        const buckets = new Set<SPEChargeBucket>();
+        const scope = serviceScope.toUpperCase();
+
+        if (shipmentType === "IMPORT") {
+            // Import: Agent provides Airfreight + Origin (if Door)
+            buckets.add("airfreight");
+            if (scope.startsWith("D")) {
+                buckets.add("origin_charges");
+            }
+        } else {
+            // Export / Domestic: DB provides Airfreight + Origin
+            // Agent provides Destination (if Door)
+            if (scope.endsWith("D")) {
+                buckets.add("destination_charges");
+            }
+
+            // Special case: If hidden, show destination by default to avoid empty form?
+            // Or maybe allow manual override? For now, stick to strict rules.
+        }
+
+        return CHARGE_BUCKETS.filter(b => buckets.has(b.id));
+    }, [shipmentType, serviceScope]);
+
     const [lines, setLines] = useState<ChargeLineInput[]>(() => {
         if (initialCharges.length > 0) {
             return initialCharges.map(c => ({
@@ -74,7 +116,8 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
                 code: c.code,
                 description: c.description,
                 amount: c.amount,
-                currency: c.currency,
+                min_amount: c.min_charge ? c.min_charge.toString() : "",
+                currency: c.currency as "SGD" | "USD" | "AUD" | "PGK" | "NZD" | "HKD",
                 unit: c.unit,
                 bucket: c.bucket,
                 is_primary_cost: c.is_primary_cost,
@@ -82,8 +125,72 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
                 source_reference: c.source_reference,
             }));
         }
-        // Start with one empty airfreight line
-        return [createEmptyLine("airfreight")];
+
+        const allLines: ChargeLineInput[] = [];
+
+        // Add suggested charges from analysis (only for visible buckets)
+        if (suggestedCharges.length > 0) {
+            suggestedCharges
+                .filter(a => ['rate', 'origin_charges', 'dest_charges'].includes(a.category))
+                .forEach(a => {
+                    const bucketMap: Record<string, SPEChargeBucket> = {
+                        rate: 'airfreight',
+                        origin_charges: 'origin_charges',
+                        dest_charges: 'destination_charges'
+                    };
+
+                    const bucket = bucketMap[a.category] || 'airfreight';
+
+                    // Only add if bucket is visible
+                    const isVisible = visibleBuckets.some(b => b.id === bucket);
+                    if (!isVisible) return;
+
+                    // Advanced parsing for "Min or Per KG"
+                    // Pattern: "35.00 min or 0.25 per KGS"
+                    let amount = a.rate_amount || "";
+                    let minAmount = "";
+                    let unit = (a.rate_unit as SPEChargeUnit | "min_or_per_kg") || (bucket === "airfreight" ? "per_kg" : "flat");
+
+                    // Check for min/rate pattern in text if strict unit not set or generic
+                    const minRateMatch = a.text.match(/(\d+(?:\.\d+)?)\s*(?:min|minimum).*?(\d+(?:\.\d+)?)\s*per\s*(?:kg|kgs|kilo)/i);
+                    const singleMinMatch = a.text.match(/(\d+(?:\.\d+)?)\s*(?:min|minimum)/i);
+
+                    if (minRateMatch) {
+                        minAmount = minRateMatch[1];
+                        amount = minRateMatch[2];
+                        unit = "min_or_per_kg";
+                    } else if (a.rate_unit === "min_or_per_kg" && a.rate_per_unit) {
+                        // Use AI parsed values if available
+                        minAmount = a.rate_amount || ""; // usually min is in amount
+                        amount = a.rate_per_unit; // rate in per_unit
+                    } else if (singleMinMatch && !amount) {
+                        // Case: "Terminal Fee 35.00 min" -> treat as Min or Per KG with 0 rate? Or flat?
+                        // User wants "Min or Per KG" usually.
+                        // But if no rate, maybe just flat min?
+                        // Sticking to regex for dual values.
+                    }
+
+                    allLines.push({
+                        tempId: `temp-${Date.now()}-${Math.random()}`,
+                        code: "",
+                        description: a.text,
+                        amount: amount,
+                        min_amount: minAmount,
+                        currency: (a.rate_currency as "SGD" | "USD" | "AUD" | "PGK" | "NZD" | "HKD") || "SGD",
+                        unit: unit,
+                        bucket,
+                        is_primary_cost: a.category === 'rate',
+                        conditional: a.status !== 'confirmed',
+                        source_reference: "Analyzed Agent Reply",
+                    });
+                });
+        }
+
+        // If we have any lines, return them
+        if (allLines.length > 0) return allLines;
+
+        // Return empty lines for visible buckets
+        return visibleBuckets.map(b => createEmptyLine(b.id));
     });
 
     const [validationError, setValidationError] = useState<string | null>(null);
@@ -94,6 +201,7 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
     };
 
     // Remove charge line
+
     const removeLine = (tempId: string) => {
         setLines(lines.filter(l => l.tempId !== tempId));
     };
@@ -106,24 +214,28 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
     };
 
     // Validate and submit
+    // Validate and submit
     const handleSubmit = async () => {
         setValidationError(null);
 
-        // Validation 1: At least one line
-        if (lines.length === 0) {
+        // Validation 1: At least one line (if any buckets are visible)
+        if (visibleBuckets.length > 0 && lines.length === 0) {
             setValidationError("At least one charge line is required.");
             return;
         }
 
-        // Validation 2: Exactly one primary airfreight
-        const primaryCount = lines.filter(l => l.is_primary_cost && l.bucket === "airfreight").length;
-        if (primaryCount === 0) {
-            setValidationError("Exactly one primary airfreight charge is required.");
-            return;
-        }
-        if (primaryCount > 1) {
-            setValidationError("Only one primary airfreight charge is allowed.");
-            return;
+        // Validation 2: Exactly one primary airfreight (ONLY if airfreight is visible)
+        const isAirfreightVisible = visibleBuckets.some(b => b.id === "airfreight");
+        if (isAirfreightVisible) {
+            const primaryCount = lines.filter(l => l.is_primary_cost && l.bucket === "airfreight").length;
+            if (primaryCount === 0) {
+                setValidationError("Exactly one primary airfreight charge is required.");
+                return;
+            }
+            if (primaryCount > 1) {
+                setValidationError("Only one primary airfreight charge is allowed.");
+                return;
+            }
         }
 
         // Validation 3: All lines have source reference
@@ -148,17 +260,21 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
         }
 
         // Convert to API format
-        const charges: Omit<SPEChargeLine, 'id'>[] = lines.map(l => ({
-            code: l.code || l.description.toUpperCase().replace(/\s+/g, "_").slice(0, 20),
-            description: l.description,
-            amount: l.amount,
-            currency: l.currency,
-            unit: l.unit,
-            bucket: l.bucket,
-            is_primary_cost: l.is_primary_cost,
-            conditional: l.conditional,
-            source_reference: l.source_reference,
-        }));
+        const charges: Omit<SPEChargeLine, 'id'>[] = lines.map(l => {
+            const isWeightBased = l.unit === "min_or_per_kg" || l.unit === "per_kg";
+            return {
+                code: l.code || l.description.toUpperCase().replace(/\s+/g, "_").slice(0, 20),
+                description: l.description,
+                amount: l.amount,
+                currency: l.currency,
+                unit: isWeightBased ? "per_kg" : (l.unit as SPEChargeUnit),
+                min_charge: isWeightBased && l.min_amount ? parseFloat(l.min_amount) : undefined,
+                bucket: l.bucket,
+                is_primary_cost: l.is_primary_cost,
+                conditional: l.conditional,
+                source_reference: l.source_reference,
+            };
+        });
 
         await onSubmit(charges);
     };
@@ -176,7 +292,7 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
                 </Alert>
             )}
 
-            {CHARGE_BUCKETS.map(bucket => (
+            {visibleBuckets.map(bucket => (
                 <Card key={bucket.id} className={bucket.color}>
                     <CardHeader className="pb-3">
                         <CardTitle className="text-lg flex items-center gap-2">
@@ -185,6 +301,7 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
                         </CardTitle>
                         <CardDescription>
                             {bucket.id === "airfreight" && "Primary cost line required"}
+                            {bucket.id === "destination_charges" && "From agent reply analysis"}
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -201,17 +318,42 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
                                         />
                                     </div>
 
-                                    {/* Amount */}
-                                    <div className="col-span-2">
-                                        <Label className="text-xs">Amount</Label>
-                                        <Input
-                                            type="number"
-                                            step="0.01"
-                                            placeholder="0.00"
-                                            value={line.amount}
-                                            onChange={(e) => updateLine(line.tempId, "amount", e.target.value)}
-                                        />
-                                    </div>
+                                    {/* Amount or Min/PerKG */}
+                                    {(line.unit === "min_or_per_kg" || line.unit === "per_kg") ? (
+                                        <>
+                                            <div className="col-span-1">
+                                                <Label className="text-xs">Min</Label>
+                                                <Input
+                                                    type="number"
+                                                    step="0.01"
+                                                    placeholder="Min"
+                                                    value={line.min_amount || ""}
+                                                    onChange={(e) => updateLine(line.tempId, "min_amount", e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="col-span-1">
+                                                <Label className="text-xs">Per KG</Label>
+                                                <Input
+                                                    type="number"
+                                                    step="0.01"
+                                                    placeholder="Rate"
+                                                    value={line.amount}
+                                                    onChange={(e) => updateLine(line.tempId, "amount", e.target.value)}
+                                                />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="col-span-2">
+                                            <Label className="text-xs">Amount</Label>
+                                            <Input
+                                                type="number"
+                                                step="0.01"
+                                                placeholder="0.00"
+                                                value={line.amount}
+                                                onChange={(e) => updateLine(line.tempId, "amount", e.target.value)}
+                                            />
+                                        </div>
+                                    )}
 
                                     {/* Currency */}
                                     <div className="col-span-2">
@@ -224,9 +366,12 @@ export function SpotRateEntryForm({ onSubmit, isLoading, initialCharges = [] }: 
                                                 <SelectValue />
                                             </SelectTrigger>
                                             <SelectContent>
+                                                <SelectItem value="SGD">SGD</SelectItem>
                                                 <SelectItem value="USD">USD</SelectItem>
                                                 <SelectItem value="AUD">AUD</SelectItem>
                                                 <SelectItem value="PGK">PGK</SelectItem>
+                                                <SelectItem value="NZD">NZD</SelectItem>
+                                                <SelectItem value="HKD">HKD</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>

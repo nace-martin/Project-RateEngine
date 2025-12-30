@@ -1,5 +1,12 @@
 // frontend/src/lib/types.ts
 
+export interface PaginatedResponse<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+}
+
 // --- AUTH TYPES ---
 export interface LoginData {
   username: string;
@@ -306,6 +313,7 @@ export type SpotChargeUnitBasis =
   | 'MINIMUM'
   | 'PER_HOUR'
   | 'PERCENTAGE'
+  | 'MIN_OR_PER_KG'  // Dual pricing: MAX(minimum, rate_per_unit * weight)
   | 'OTHER';
 
 export type SpotChargePercentAppliesTo =
@@ -320,6 +328,7 @@ export interface SpotChargeLine {
   bucket: SpotChargeBucket;
   description: string;
   amount?: string | null;
+  rate_per_unit?: string | null; // Per-kg rate for PER_KG and MIN_OR_PER_KG
   currency: string;
   unit_basis: SpotChargeUnitBasis;
   min_charge?: string | null; // Optional minimum charge for PER_KG rates

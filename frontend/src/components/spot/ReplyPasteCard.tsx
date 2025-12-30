@@ -16,16 +16,47 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+import { analyzeSpotReply } from "@/lib/api";
+import type { ReplyAnalysisResult } from "@/lib/spot-types";
+
 interface ReplyPasteCardProps {
-    onSubmit: (text: string) => void;
+    onAnalysisComplete: (result: ReplyAnalysisResult) => void;
     isLoading?: boolean;
+    speId?: string;
+    missingComponents?: string[];
 }
 
-export function ReplyPasteCard({ onSubmit, isLoading }: ReplyPasteCardProps) {
+export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoading, speId, missingComponents = [] }: ReplyPasteCardProps) {
     const [text, setText] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const [internalIsLoading, setInternalIsLoading] = useState(false);
 
-    const handleSubmit = () => {
+    const isLoading = externalIsLoading || internalIsLoading;
+
+    // Helper to format missing components
+    const getMissingMessage = () => {
+        if (!missingComponents || missingComponents.length === 0) return null;
+
+        // Map codes to friendly names
+        const friendlyNames = missingComponents.map(c => {
+            if (c.includes('DEST')) return 'Destination Charges';
+            if (c.includes('ORIGIN')) return 'Origin Charges';
+            if (c.includes('AIRFREIGHT')) return 'Freight Rate';
+            return c.replace(/_/g, ' ');
+        });
+
+        // Deduplicate
+        const unique = Array.from(new Set(friendlyNames));
+
+        return (
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mb-4 text-sm text-blue-800">
+                <span className="font-semibold">Hybrid Quote:</span> Standard rates are available for some components.
+                Please provide rates for: <strong>{unique.join(', ')}</strong>.
+            </div>
+        );
+    };
+
+    const handleSubmit = async () => {
         setError(null);
 
         if (!text.trim()) {
@@ -38,7 +69,15 @@ export function ReplyPasteCard({ onSubmit, isLoading }: ReplyPasteCardProps) {
             return;
         }
 
-        onSubmit(text);
+        setInternalIsLoading(true);
+        try {
+            const result = await analyzeSpotReply(text, [], speId);
+            onAnalysisComplete(result);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Failed to analyze reply");
+        } finally {
+            setInternalIsLoading(false);
+        }
     };
 
     const lineCount = text.split('\n').length;
@@ -57,6 +96,8 @@ export function ReplyPasteCard({ onSubmit, isLoading }: ReplyPasteCardProps) {
             </CardHeader>
 
             <CardContent className="space-y-4">
+                {getMissingMessage()}
+
                 {error && (
                     <Alert variant="destructive">
                         <AlertDescription>{error}</AlertDescription>

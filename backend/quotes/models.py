@@ -334,121 +334,7 @@ class OverrideNote(models.Model):
         ordering = ['-created_at']
 
 # --- V3 SpotChargeLine MODEL ---
-class SpotChargeLine(models.Model):
-    """
-    Freeform charge line for bucket-based spot rate entry.
-    Supports flexible agent rate structures from any country/format.
-    """
-    
-    class Bucket(models.TextChoices):
-        ORIGIN = 'ORIGIN', _('Origin Charges')
-        FREIGHT = 'FREIGHT', _('Freight')
-        DESTINATION = 'DESTINATION', _('Destination Charges')
-    
-    class UnitBasis(models.TextChoices):
-        PER_KG = 'PER_KG', _('Per KG')
-        PER_SHIPMENT = 'PER_SHIPMENT', _('Per Shipment')
-        PER_AWB = 'PER_AWB', _('Per AWB')
-        MINIMUM = 'MINIMUM', _('Minimum Charge')
-        PER_HOUR = 'PER_HOUR', _('Per Hour')
-        PERCENTAGE = 'PERCENTAGE', _('Percentage')
-        OTHER = 'OTHER', _('Other')
-    
-    class PercentAppliesTo(models.TextChoices):
-        SPECIFIC_LINE = 'SPECIFIC_LINE', _('Specific Charge Line')
-        BUCKET_ORIGIN = 'BUCKET_ORIGIN', _('Origin Bucket')
-        BUCKET_FREIGHT = 'BUCKET_FREIGHT', _('Freight Bucket')
-        BUCKET_DESTINATION = 'BUCKET_DESTINATION', _('Destination Bucket')
-        BUCKET_TOTAL = 'BUCKET_TOTAL', _('Total of All Buckets')
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    quote = models.ForeignKey(
-        Quote,
-        on_delete=models.CASCADE,
-        related_name='spot_charges',
-        help_text="The quote this spot charge belongs to."
-    )
-    
-    bucket = models.CharField(
-        max_length=20,
-        choices=Bucket.choices,
-        help_text="Which cost bucket this charge belongs to."
-    )
-    
-    description = models.CharField(
-        max_length=255,
-        help_text="Freeform description exactly as received from agent."
-    )
-    
-    amount = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Charge amount. Null when unit_basis is PERCENTAGE."
-    )
-    
-    currency = models.CharField(
-        max_length=3,
-        help_text="3-letter ISO currency code (e.g., USD, AUD, PGK)."
-    )
-    
-    unit_basis = models.CharField(
-        max_length=50,
-        choices=UnitBasis.choices,
-        help_text="How this charge is calculated."
-    )
-    
-    min_charge = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Minimum charge amount for PER_KG rates. If rate × weight is less than this, the minimum applies."
-    )
-    
-    # FSC / Percentage fields
-    percentage = models.DecimalField(
-        max_digits=6,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Percentage value (e.g., 20.00 for 20%). Required when unit_basis is PERCENTAGE."
-    )
-    
-    percent_applies_to = models.CharField(
-        max_length=30,
-        choices=PercentAppliesTo.choices,
-        null=True,
-        blank=True,
-        help_text="What the percentage applies to. Required when unit_basis is PERCENTAGE."
-    )
-    
-    target_line = models.ForeignKey(
-        'self',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name='dependent_charges',
-        help_text="Target line for SPECIFIC_LINE percentage calculation."
-    )
-    
-    notes = models.TextField(
-        blank=True,
-        help_text="Optional notes about this charge."
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['bucket', 'created_at']
-        verbose_name = 'Spot Charge Line'
-        verbose_name_plural = 'Spot Charge Lines'
-    
-    def __str__(self):
-        return f"{self.bucket}: {self.description} ({self.amount} {self.currency})"
+
     
     def clean(self):
         from django.core.exceptions import ValidationError
@@ -580,6 +466,7 @@ class SPEChargeLineDB(models.Model):
     Single charge line within a Spot Pricing Envelope.
     
     Requires source + timestamp. Anonymous values rejected.
+    Extended to support destination agent quote structures.
     """
     
     class Bucket(models.TextChoices):
@@ -593,6 +480,10 @@ class SPEChargeLineDB(models.Model):
         PER_AWB = 'per_awb', _('Per AWB')
         PER_SHIPMENT = 'per_shipment', _('Per Shipment')
         PERCENTAGE = 'percentage', _('Percentage')
+        # Extended units for destination agent quotes
+        PER_TRIP = 'per_trip', _('Per Trip')
+        PER_SET = 'per_set', _('Per Set')
+        PER_MAN = 'per_man', _('Per Man')
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -620,6 +511,37 @@ class SPEChargeLineDB(models.Model):
     )
     
     conditional = models.BooleanField(default=False)
+    
+    # === Extended fields for agent quote representation ===
+    
+    min_charge = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Minimum charge for 'min OR per kg' logic"
+    )
+    
+    note = models.CharField(
+        max_length=500, 
+        blank=True, 
+        null=True,
+        help_text="Narrative conditions from agent (e.g., 'if applicable')"
+    )
+    
+    exclude_from_totals = models.BooleanField(
+        default=False,
+        help_text="True for invoice-value taxes that cannot be computed"
+    )
+    
+    percentage_basis = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True,
+        help_text="What the percentage applies to (e.g., 'commercial_invoice')"
+    )
+    
+    # === Original fields ===
     
     source_reference = models.CharField(
         max_length=500,

@@ -18,7 +18,7 @@ Field Rules:
 from enum import Enum
 from typing import Optional, List
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class AssertionStatus(str, Enum):
@@ -49,7 +49,7 @@ class AssertionCategory(str, Enum):
 MANDATORY_CATEGORIES = {
     AssertionCategory.RATE,
     AssertionCategory.CURRENCY,
-    AssertionCategory.VALIDITY,
+    # AssertionCategory.VALIDITY,
 }
 
 # Fields that are nice to have
@@ -94,9 +94,10 @@ class ExtractedAssertion(BaseModel):
     )
     
     # Parsed values for specific categories
-    rate_amount: Optional[Decimal] = Field(None)
+    rate_amount: Optional[Decimal] = Field(None, description="Flat amount or minimum for MIN_OR_PER_KG")
+    rate_per_unit: Optional[Decimal] = Field(None, description="Per-unit rate (e.g., per kg)")
     rate_currency: Optional[str] = Field(None)
-    rate_unit: Optional[str] = Field(None, description="per_kg, flat, etc.")
+    rate_unit: Optional[str] = Field(None, description="per_kg, flat, min_or_per_kg, etc.")
     validity_date: Optional[str] = Field(None, description="ISO date string")
 
 
@@ -117,11 +118,14 @@ class AnalysisSummary(BaseModel):
     has_routing: bool = False
     has_acceptance: bool = False
     
+    @computed_field
     @property
     def can_proceed(self) -> bool:
         """True if all mandatory fields are present (any status except MISSING)."""
-        return self.has_rate and self.has_currency and self.has_validity
+        # Validity is no longer blocking - only rate and currency required
+        return self.has_rate and self.has_currency
     
+    @computed_field
     @property
     def mandatory_missing(self) -> List[str]:
         """List of mandatory fields that are missing."""
@@ -134,6 +138,7 @@ class AnalysisSummary(BaseModel):
             missing.append("validity")
         return missing
     
+    @computed_field
     @property
     def requires_acknowledgement(self) -> bool:
         """True if any assertions are IMPLICIT or CONDITIONAL."""

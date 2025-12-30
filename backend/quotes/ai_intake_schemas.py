@@ -24,7 +24,8 @@ from uuid import uuid4
 SpotChargeBucket = Literal["ORIGIN", "FREIGHT", "DESTINATION"]
 
 # Valid unit basis for charge calculation
-UnitBasis = Literal["PER_KG", "PER_SHIPMENT", "PERCENTAGE"]
+# MIN_OR_PER_KG: Dual pricing - charge is MAX(minimum, rate_per_unit * weight)
+UnitBasis = Literal["PER_KG", "PER_SHIPMENT", "PERCENTAGE", "MIN_OR_PER_KG"]
 
 # Common currencies for validation (extendable)
 VALID_CURRENCIES = {
@@ -66,11 +67,18 @@ class SpotChargeLine(BaseModel):
         description="Charge description as extracted from source"
     )
     
-    # Amount in foreign currency (optional if percentage-based)
+    # Amount in foreign currency (for flat charges or minimums)
     amount: Optional[Decimal] = Field(
         None, 
         ge=0,
-        description="Charge amount in FCY. Required unless unit_basis is PERCENTAGE."
+        description="Charge amount in FCY. Required for PER_SHIPMENT. For MIN_OR_PER_KG, this is the minimum."
+    )
+    
+    # Rate per unit (for PER_KG or MIN_OR_PER_KG charges)
+    rate_per_unit: Optional[Decimal] = Field(
+        None, 
+        ge=0,
+        description="Rate per kg/unit. Used for PER_KG and MIN_OR_PER_KG unit basis."
     )
     
     # Currency code (must be valid 3-letter ISO code)
@@ -122,6 +130,12 @@ class SpotChargeLine(BaseModel):
         description="AI notes about extraction or ambiguity"
     )
     
+    # Conditional flag (e.g. "if applicable")
+    conditional: bool = Field(
+        default=False,
+        description="True if charge is conditional or optional (e.g. 'if applicable')"
+    )
+    
     # Confidence score from AI (metadata only - does NOT drive logic in MVP)
     confidence: Optional[float] = Field(
         None,
@@ -147,12 +161,38 @@ class SpotChargeLine(BaseModel):
     def validate_charge_type(self):
         """Ensure charge has required fields based on unit_basis."""
         
-        # PER_KG and PER_SHIPMENT require amount and currency
-        if self.unit_basis in ("PER_KG", "PER_SHIPMENT"):
+        # PER_SHIPMENT requires amount
+        if self.unit_basis == "PER_SHIPMENT":
             if self.amount is None:
                 raise ValueError(f"amount is required for unit_basis={self.unit_basis}")
-            if self.currency is None:
-                raise ValueError(f"currency is required for unit_basis={self.unit_basis}")
+        
+        # PER_KG requires rate_per_unit (or amount as legacy support)
+        if self.unit_basis == "PER_KG":
+            # Accept either rate_per_unit or amount for per-kg rate
+            if self.rate_per_unit is None and self.amount is None:
+                raise ValueError("rate_per_unit or amount is required for unit_basis=PER_KG")
+        
+        # MIN_OR_PER_KG: Dual pricing structure (min OR per kg, whichever is greater)
+        if self.unit_basis == "MIN_OR_PER_KG":
+            # Must have either minimum or amount (both mean the same - the floor)
+            min_value = self.minimum or self.amount
+            
+            # If missing required fields, downgrade to simpler unit type
+            if min_value is None and self.rate_per_unit is None:
+                # No data at all - let it through with warning
+                pass
+            elif min_value is None and self.rate_per_unit is not None:
+                # Only has per-kg rate, downgrade to PER_KG
+                object.__setattr__(self, 'unit_basis', 'PER_KG')
+            elif min_value is not None and self.rate_per_unit is None:
+                # Only has minimum, downgrade to PER_SHIPMENT
+                object.__setattr__(self, 'unit_basis', 'PER_SHIPMENT')
+                if self.amount is None:
+                    object.__setattr__(self, 'amount', min_value)
+            else:
+                # Has both - normalize minimum field
+                if self.minimum is None and self.amount is not None:
+                    object.__setattr__(self, 'minimum', self.amount)
         
         # PERCENTAGE requires percentage value AND percent_applies_to
         if self.unit_basis == "PERCENTAGE":
@@ -218,6 +258,14 @@ class AIRateIntakeResponse(BaseModel):
         description="List of extracted charge lines"
     )
     
+    # Document-level currency fallback
+    quote_currency: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=3,
+        description="Default currency for the entire quote (if not specified per line)"
+    )
+    
     # Non-fatal warnings (e.g., ambiguous currency, low confidence)
     warnings: List[str] = Field(
         default_factory=list,
@@ -257,6 +305,13 @@ class AIRateIntakeResponse(BaseModel):
         description="AI model identifier (e.g., 'gemini-2.0-flash')"
     )
 
+    # Pricing Analysis from AI
+    analysis_text: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Pricing and rate analysis provided by the AI"
+    )
+
     @model_validator(mode='after')
     def validate_response(self):
         """Ensure response is internally consistent."""
@@ -269,6 +324,23 @@ class AIRateIntakeResponse(BaseModel):
         if not self.success and not self.error:
             self.error = "Extraction failed without specific error"
         
+        # Validate currency requirements
+        # If line lacks currency, quote_currency MUST be present
+        for i, line in enumerate(self.lines):
+            # Skip percentage as it might not strictly need currency (it's ratio)
+            if line.unit_basis == "PERCENTAGE":
+                continue
+            
+            if line.currency is None:
+                if self.quote_currency is None:
+                    raise ValueError(f"Line {i+1} ({line.description}): Currency is missing and no global quote_currency provided")
+            
+            # Determine effective currency
+            eff_eur = line.currency or self.quote_currency
+            if eff_eur and eff_eur not in VALID_CURRENCIES:
+                 if f"Unknown currency '{eff_eur}'" not in str(self.warnings):
+                    self.warnings.append(f"Line {i+1}: Unknown currency '{eff_eur}'")
+
         # Collect currency warnings from lines
         for line in self.lines:
             line_warnings = line.get_warnings()

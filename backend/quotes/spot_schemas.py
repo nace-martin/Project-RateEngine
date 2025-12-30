@@ -20,7 +20,7 @@ Hard Guardrails (model-level):
 - Shipment context hash for integrity verification
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional, Literal
@@ -50,13 +50,18 @@ class ChargeBucket(str, Enum):
 
 
 class ChargeUnit(str, Enum):
-    """Charge unit basis."""
+    """Charge unit basis - extended for agent quote representation."""
     PER_KG = "per_kg"
     FLAT = "flat"
     PER_AWB = "per_awb"
     PER_SHIPMENT = "per_shipment"
     PERCENTAGE = "percentage"
+    # Extended units for destination agent quotes
+    PER_TRIP = "per_trip"      # Per delivery/collection trip
+    PER_SET = "per_set"        # Per document set
+    PER_MAN = "per_man"        # Per labor (per man per hour)
     UNKNOWN = "unknown"
+
 
 
 class Commodity(str, Enum):
@@ -88,6 +93,8 @@ class Currency(str, Enum):
     USD = "USD"
     AUD = "AUD"
     PGK = "PGK"
+    SGD = "SGD"  # Singapore Dollar for destination agent quotes
+
 
 
 # =============================================================================
@@ -197,8 +204,9 @@ class SPEShipmentContext(BaseModel):
     
     commodity: Literal["GCR", "SCR", "DG", "AVI", "PER", "HVC", "HUM", "OOG", "VUL", "TTS", "OTHER"]
     
-    total_weight_kg: float = Field(gt=0)
-    pieces: int = Field(ge=1)
+    total_weight_kg: float = Field(default=0, description="Total Weight in KG")
+    pieces: int = Field(default=1, description="Number of pieces")
+    service_scope: Literal['p2p', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
     
     @property
     def context_hash(self) -> str:
@@ -224,6 +232,7 @@ class SPEChargeLine(BaseModel):
     Authoritative charge line in SPE.
     
     Requires source + timestamp. Anonymous values rejected.
+    Extended to support destination agent quote structures (min/max, notes, etc.)
     """
     code: str = Field(
         description="Canonical internal charge code (e.g., AIRFREIGHT_SPOT)"
@@ -232,14 +241,17 @@ class SPEChargeLine(BaseModel):
     description: str
     
     amount: float = Field(gt=0)
-    currency: Literal["USD", "AUD", "PGK"]
+    currency: Literal["USD", "AUD", "PGK", "SGD"]
     
     unit: Literal[
         "per_kg",
         "flat",
         "per_awb",
         "per_shipment",
-        "percentage"
+        "percentage",
+        "per_trip",
+        "per_set",
+        "per_man"
     ]
     
     bucket: Literal["airfreight", "origin_charges", "destination_charges"]
@@ -250,6 +262,31 @@ class SPEChargeLine(BaseModel):
     )
     
     conditional: bool = False
+    
+    # === Extended fields for agent quote representation ===
+    
+    min_charge: Optional[float] = Field(
+        default=None,
+        description="Minimum charge for 'min OR per kg' logic. If set, applied_cost = max(rate * qty, min_charge)"
+    )
+    
+    note: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Narrative conditions from agent (e.g., 'if applicable', 'weekdays only')"
+    )
+    
+    exclude_from_totals: bool = Field(
+        default=False,
+        description="True for invoice-value taxes that cannot be computed (e.g., '9% of Commercial Invoice')"
+    )
+    
+    percentage_basis: Optional[str] = Field(
+        default=None,
+        description="What the percentage applies to (e.g., 'commercial_invoice', 'freight')"
+    )
+    
+    # === Original fields ===
     
     source_reference: str = Field(
         min_length=1,
@@ -357,31 +394,45 @@ class SpotPricingEnvelope(BaseModel):
         
         Uses is_primary_cost=True OR code==AIRFREIGHT_SPOT to identify.
         Prevents slipping in two "airfreight-ish" lines.
+        
+        Note: Empty charges allowed in DRAFT status - validation applies
+        when charges are present (before compute).
         """
+        # Skip validation if no charges yet (draft SPE awaiting rate input)
+        if not self.charges:
+            return self
+        
         primary_charges = [
             c for c in self.charges
             if c.is_primary_cost or c.code == "AIRFREIGHT_SPOT"
         ]
         
-        if len(primary_charges) == 0:
-            raise ValueError(
-                "SPE requires exactly one primary airfreight charge. "
-                "No charge with is_primary_cost=True or code='AIRFREIGHT_SPOT' found."
-            )
+        # Check if any airfreight charges exist
+        has_airfreight = any(c.bucket == "airfreight" for c in self.charges)
         
-        if len(primary_charges) > 1:
-            raise ValueError(
-                f"SPE requires exactly one primary airfreight charge. "
-                f"Found {len(primary_charges)} charges marked as primary. "
-                "Only one is allowed."
-            )
+        primary_charges = [
+            c for c in self.charges
+            if c.is_primary_cost or c.code == "AIRFREIGHT_SPOT"
+        ]
+        
+        if has_airfreight:
+            if len(primary_charges) != 1:
+                raise ValueError(
+                    f"SPE with Airfreight charges requires exactly one primary airfreight charge. "
+                    f"Found {len(primary_charges)}."
+                )
+        elif len(primary_charges) > 0:
+             # Should not happen if data is consistent, but good to check
+             raise ValueError(
+                 "Primary airfreight charge found but no charges are in 'airfreight' bucket."
+             )
         
         return self
     
     @property
     def is_expired(self) -> bool:
         """Check if SPE has expired."""
-        return datetime.now() >= self.expires_at
+        return datetime.now(timezone.utc) >= self.expires_at
     
     @property
     def shipment_context_hash(self) -> str:

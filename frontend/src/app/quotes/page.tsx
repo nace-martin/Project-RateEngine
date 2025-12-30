@@ -48,7 +48,7 @@ export default function QuotesPage() {
         try {
           // Use the new V3 API function
           const data = await getQuotesV3();
-          setQuotes(data);
+          setQuotes(data.results);
         } catch (err: unknown) {
           const message =
             err instanceof Error ? err.message : "An unexpected error occurred.";

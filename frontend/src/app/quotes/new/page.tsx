@@ -10,7 +10,7 @@ import type {
   LocationSearchResult,
   V3QuoteComputeRequest,
 } from "@/lib/types";
-import { getContactsForCompany, computeQuoteV3, validateSpotScope, evaluateSpotTrigger } from "@/lib/api";
+import { getContactsForCompany, computeQuoteV3, validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api";
 import { useSpotMode } from "@/hooks/use-spot-mode";
 import { SpotModeBanner, OutOfScopeBanner } from "@/components/spot";
 import type { SPECommodity, TriggerResult } from "@/lib/spot-types";
@@ -148,8 +148,6 @@ export default function NewQuotePage() {
 
   // SPOT Mode State
   const { state: spotState, actions: spotActions } = useSpotMode();
-  const [showSpotBanner, setShowSpotBanner] = useState(false);
-  const [spotTriggerResult, setSpotTriggerResult] = useState<TriggerResult | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -404,8 +402,6 @@ export default function NewQuotePage() {
     setIsSubmitting(true);
     setApiError(null);
     setMissingRates({ carrier: false, agent: false });
-    setShowSpotBanner(false);
-    setSpotTriggerResult(null);
 
     if (!user) {
       setApiError("Authentication token not available. Please log in.");
@@ -446,13 +442,65 @@ export default function NewQuotePage() {
         origin_airport: data.origin_airport,
         destination_airport: data.destination_airport,
         has_valid_buy_rate: true, // Will be determined by pricing attempt
+        service_scope: data.service_scope,
       });
 
       if (triggerResult.is_spot_required && triggerResult.trigger) {
-        // SPOT mode required - show banner
-        setShowSpotBanner(true);
-        setSpotTriggerResult(triggerResult.trigger);
-        setIsSubmitting(false);
+        // SPOT mode required - create SPE immediately and redirect to intake
+        try {
+          const spe = await createSpotEnvelope({
+            shipment_context: {
+              origin_country: originCountry,
+              destination_country: destCountry,
+              origin_code: data.origin_airport || '',
+              destination_code: data.destination_airport || '',
+              commodity: commodity as SPECommodity,
+              total_weight_kg: cargoMetrics.chargeableWeight,
+              pieces: cargoMetrics.pieces,
+              service_scope: (data.service_scope || 'P2P').toLowerCase(),
+            },
+            charges: [], // Empty for now, will be filled via AI intake
+            trigger_code: triggerResult.trigger.code,
+            trigger_text: triggerResult.trigger.text,
+            conditions: {
+              rate_validity_hours: 72,
+            }
+          });
+
+          if (spe) {
+            const shipmentType =
+              originCountry === 'PG' && destCountry === 'PG'
+                ? 'DOMESTIC'
+                : originCountry === 'PG'
+                  ? 'EXPORT'
+                  : 'IMPORT';
+            const params = new URLSearchParams({
+              origin_country: originCountry,
+              dest_country: destCountry,
+              origin_code: data.origin_airport || '',
+              dest_code: data.destination_airport || '',
+              commodity,
+              weight: String(cargoMetrics.chargeableWeight),
+              pieces: String(cargoMetrics.pieces),
+              trigger_code: triggerResult.trigger.code,
+              trigger_text: triggerResult.trigger.text,
+              service_scope: data.service_scope,
+              payment_term: data.payment_term,
+              output_currency: data.output_currency || 'PGK',
+              shipment_type: shipmentType,
+            });
+
+            if (triggerResult.trigger.missing_components && triggerResult.trigger.missing_components.length > 0) {
+              params.append('missing_components', triggerResult.trigger.missing_components.join(','));
+            }
+
+            router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
+          }
+        } catch (speError) {
+          console.error("Failed to create SPE:", speError);
+          // If SPE creation fails, provide feedback or fallback
+          setApiError("Failed to initialize SPOT pricing session. Please try again.");
+        }
         return;
       }
     } catch (error) {
@@ -577,28 +625,7 @@ export default function NewQuotePage() {
             </Alert>
           )}
 
-          {/* SPOT Mode Banner */}
-          {showSpotBanner && spotTriggerResult && (
-            <SpotModeBanner
-              triggerResult={spotTriggerResult}
-              onEnterSpotMode={() => {
-                // Navigate to SPOT rate entry page with shipment context
-                const params = new URLSearchParams({
-                  origin_country: originLocation?.country_code || '',
-                  dest_country: destinationLocation?.country_code || '',
-                  origin_code: form.getValues('origin_airport') || '',
-                  dest_code: form.getValues('destination_airport') || '',
-                  commodity: mapCargoToSPECommodity(form.getValues('cargo_type')),
-                  weight: String(cargoMetrics.chargeableWeight),
-                  pieces: String(cargoMetrics.pieces),
-                  trigger_code: spotTriggerResult.code,
-                  trigger_text: spotTriggerResult.text,
-                });
-                router.push(`/quotes/spot/new?${params.toString()}`);
-              }}
-              isLoading={isSubmitting}
-            />
-          )}
+          {/* No SPOT banner - auto-redirect is handled in onSubmit */}
 
           {/* 1. Customer */}
           <Card>

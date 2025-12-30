@@ -19,7 +19,7 @@ export type AssertionCategory =
     | 'transit_time';
 
 // Fields that MUST be present to proceed
-export const MANDATORY_CATEGORIES: AssertionCategory[] = ['rate', 'currency', 'validity'];
+export const MANDATORY_CATEGORIES: AssertionCategory[] = ['rate', 'currency'];
 
 // Fields that are nice to have
 export const OPTIONAL_CATEGORIES: AssertionCategory[] = [

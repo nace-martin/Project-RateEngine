@@ -13,6 +13,8 @@ Architecture Principles:
 import json
 import logging
 import os
+import re
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List
 
@@ -25,8 +27,79 @@ from .ai_intake_schemas import (
 logger = logging.getLogger(__name__)
 
 # Gemini model configuration
-GEMINI_MODEL = "gemini-2.0-flash-exp"
+GEMINI_MODEL = "gemini-2.0-flash-lite"
 MAX_RETRIES = 2
+
+CURRENCY_HINT_PATTERNS = [
+    r"\bABOVE\s+QUOTE\s+IN\s+([A-Z]{3})\b",
+    r"\bQUOTE(?:D)?\s+IN\s+([A-Z]{3})\b",
+    r"\bALL\s+RATES\s+IN\s+([A-Z]{3})\b",
+    r"\bAMOUNT\s*\(\s*([A-Z]{3})\b",
+    r"\bCURRENCY\s*[:=]\s*([A-Z]{3})\b",
+    r"\bCCY\s*[:=]\s*([A-Z]{3})\b",
+]
+
+CURRENCY_SYMBOL_PATTERNS = {
+    "USD": r"US\$",
+    "AUD": r"A\$",
+    "NZD": r"NZ\$",
+    "SGD": r"(?<!U)S\$",
+    "HKD": r"HK\$",
+}
+
+CURRENCY_SYMBOL_MAP = {
+    "US$": "USD",
+    "A$": "AUD",
+    "NZ$": "NZD",
+    "S$": "SGD",
+    "HK$": "HKD",
+}
+
+
+def _normalize_currency_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = value.strip().upper()
+    for symbol, code in CURRENCY_SYMBOL_MAP.items():
+        if symbol in raw:
+            return code
+    letters = re.sub(r"[^A-Z]", "", raw)
+    if len(letters) >= 3:
+        return letters[:3]
+    return None
+
+
+def _infer_quote_currency_from_text(text: str) -> Optional[str]:
+    if not text:
+        return None
+    upper = text.upper()
+
+    for pattern in CURRENCY_HINT_PATTERNS:
+        match = re.search(pattern, upper)
+        if match:
+            code = match.group(1)
+            if code in VALID_CURRENCIES:
+                return code
+
+    counts = Counter()
+    codes = re.findall(r"\b[A-Z]{3}\b", upper)
+    for code in codes:
+        if code in VALID_CURRENCIES:
+            counts[code] += 1
+
+    for code, pattern in CURRENCY_SYMBOL_PATTERNS.items():
+        matches = re.findall(pattern, upper)
+        if matches:
+            counts[code] += len(matches)
+
+    if not counts:
+        return None
+
+    most_common = counts.most_common(2)
+    if len(most_common) == 1 or most_common[0][1] > most_common[1][1]:
+        return most_common[0][0]
+
+    return None
 
 
 def get_gemini_client():
@@ -48,17 +121,19 @@ def get_gemini_client():
 
 def parse_rate_quote_text(
     text: str,
-    source_type: str = "TEXT"
+    source_type: str = "TEXT",
+    context: Optional[dict] = None
 ) -> AIRateIntakeResponse:
     """
-    Parse unstructured rate quote text into structured charge lines.
+    Parse unstructured rate quote text into structured charge lines and provide analysis.
     
     Args:
         text: Extracted text from agent quote (email, PDF, etc.)
         source_type: Source document type (TEXT, PDF, EMAIL)
+        context: Optional dictionary with quote details (origin, dest, weight, etc.)
         
     Returns:
-        AIRateIntakeResponse with validated charge lines
+        AIRateIntakeResponse with validated charge lines and pricing analysis
     """
     
     if not text or len(text.strip()) < 10:
@@ -79,7 +154,7 @@ def parse_rate_quote_text(
         )
     
     # Build the extraction prompt
-    prompt = _build_extraction_prompt(text)
+    prompt = _build_extraction_prompt(text, context)
     
     # Try extraction with retries
     for attempt in range(MAX_RETRIES + 1):
@@ -130,49 +205,76 @@ def parse_rate_quote_text(
     )
 
 
-def _build_extraction_prompt(text: str) -> str:
-    """Build the prompt for Gemini to extract charge lines."""
+def _build_extraction_prompt(text: str, context: Optional[dict] = None) -> str:
+    """Build the prompt for Gemini to act as an Assistive Reviewer for agent rate replies."""
     
-    return f'''You are an air freight rate extraction assistant. Extract charge lines from the following rate quote text.
+    context_str = ""
+    if context:
+        context_str = f"""
+SHIPMENT CONTEXT:
+- From: {context.get('origin', 'Unknown')} ({context.get('origin_code', 'Unknown')})
+- To: {context.get('destination', 'Unknown')} ({context.get('destination_code', 'Unknown')})
+- Weight: {context.get('weight', 'Unknown')} kg
+- Shipment Type: {context.get('shipment_type', 'Unknown')}
+- Incoterm: {context.get('incoterm', 'Unknown')}
+- Payment: {context.get('payment_term', 'Unknown')}
+- TARGET COMPONENTS (MISSING IN DB): {", ".join(context.get('missing_components', []))}
+"""
 
-IMPORTANT RULES:
-1. Extract ONLY charges that appear in the text
-2. Do NOT invent or assume charges that aren't explicitly mentioned
-3. Categorize each charge into one of these buckets:
-   - ORIGIN: Pickup, collection, export clearance, export agency, export documentation
-   - FREIGHT: Air freight, fuel surcharge on freight, security surcharge
-   - DESTINATION: Delivery, import clearance, import agency, import documentation, handling
-4. Identify the unit basis:
-   - PER_KG: Charged per kilogram (e.g., "$2.50/kg")
-   - PER_SHIPMENT: Flat fee per shipment (e.g., "$150.00")
-   - PERCENTAGE: Percentage of another charge (e.g., "10% of freight")
-5. For PERCENTAGE charges, you MUST specify what it applies to in percent_applies_to
-6. Extract currency codes (AUD, USD, PGK, etc.)
-7. Extract minimum and maximum charges if mentioned
+    return f'''You are an expert Air Freight Assistive Reviewer. Your job is to interpret an agent's rate reply and identify the specific charges we are missing for this shipment.
 
-OUTPUT FORMAT (JSON array):
+{context_str}
+
+TASKS:
+1. **Identify Missing Charges**: We already have standard rates for some parts of this shipment. We are SPECIFICALLY looking for the "TARGET COMPONENTS" listed above.
+2. **Determine Applicability**: Based on the context, decide if the agent's charges apply to the ORIGIN or DESTINATION. 
+   - Example: If the agent is in Singapore (SIN) and SIN is the Destination, their local charges (Delivery, Clearance, Terminal) are DESTINATION charges.
+3. **Interpret Meaning**: Read the email/text to understand what is explicitly confirmed and what is conditional.
+4. **Structured Checklist**: Provide a 3-4 sentence "Analyst Review" that says exactly what was found and what is still missing.
+
+EXTRACTION RULES:
+1. Extract individual charges into the `lines` array.
+2. Categorize into ORIGIN, FREIGHT, or DESTINATION.
+3. Identify unit_basis using these options:
+   - **PER_KG**: Simple per-kg rate. Use `rate_per_unit` for the per-kg rate.
+   - **PER_SHIPMENT**: Flat fee per shipment. Use `amount` for the flat amount.
+   - **PERCENTAGE**: Percentage of another charge. Use `percentage` and `percent_applies_to`.
+   - **MIN_OR_PER_KG**: Dual pricing like "35.00 min or 0.25 per kg". Use BOTH `minimum` (the floor) AND `rate_per_unit` (the per-kg rate). The final charge is MAX(minimum, rate_per_unit * weight).
+4. For PERCENTAGE, specify what it applies to (e.g., "Commercial Invoice", "FREIGHT").
+
+OUTPUT FORMAT (JSON):
 {{
+  "analysis_text": "✅ Confirmed: ... \\n⚠️ Conditional: ... \\n❌ Missing: ...",
+  "quote_currency": "Default currency code (e.g. SGD) if stated globally",
   "lines": [
     {{
       "bucket": "ORIGIN" | "FREIGHT" | "DESTINATION",
-      "description": "string - the charge name",
-      "amount": "decimal or null for percentages",
-      "currency": "3-letter code or null for percentages",
-      "unit_basis": "PER_KG" | "PER_SHIPMENT" | "PERCENTAGE",
-      "percentage": "decimal (0-100) if percentage-based, else null",
-      "minimum": "decimal or null",
-      "maximum": "decimal or null",
-      "percent_applies_to": "what this percentage is based on, required for PERCENTAGE"
+      "description": "string (charge name)",
+      "amount": number | null (for PER_SHIPMENT flat fees),
+      "rate_per_unit": number | null (for PER_KG or MIN_OR_PER_KG per-kg rate),
+      "currency": "3-letter code (optional if quote_currency is set)",
+      "unit_basis": "PER_KG" | "PER_SHIPMENT" | "PERCENTAGE" | "MIN_OR_PER_KG",
+      "percentage": number | null (for PERCENTAGE only),
+      "minimum": number | null (floor amount for MIN_OR_PER_KG),
+      "maximum": number | null (ceiling if applicable),
+      "percent_applies_to": "string" | null (for PERCENTAGE only),
+      "conditional": boolean (true if charge is 'if applicable' or option)
     }}
   ]
 }}
 
-RATE QUOTE TEXT:
+EXAMPLES:
+- "Terminal Fee: 35.00 min or 0.25 per KGS" → unit_basis="MIN_OR_PER_KG", minimum=35.00, rate_per_unit=0.25
+- "Handling: 50.00 per shpt" → unit_basis="PER_SHIPMENT", amount=50.00
+- "Airfreight: 6.80/kg" → unit_basis="PER_KG", rate_per_unit=6.80
+- "GST: 9% of Commercial Invoice" → unit_basis="PERCENTAGE", percentage=9, percent_applies_to="Commercial Invoice"
+
+AGENT RATE REPLY TEXT:
 ---
 {text}
 ---
 
-Extract all charges and return ONLY valid JSON. If no charges found, return {{"lines": []}}'''
+Return ONLY valid JSON. Focus on accuracy and risk prevention. If the email is vague, flag it clearly in the analysis_text.'''
 
 
 def _validate_ai_response(
@@ -186,6 +288,10 @@ def _validate_ai_response(
     validated_lines: List[SpotChargeLine] = []
     
     lines_data = parsed.get("lines", [])
+    analysis_text = parsed.get("analysis_text", "")
+    quote_currency = _normalize_currency_value(parsed.get("quote_currency"))
+    if not quote_currency:
+        quote_currency = _infer_quote_currency_from_text(original_text)
     
     if not isinstance(lines_data, list):
         return AIRateIntakeResponse(
@@ -198,32 +304,17 @@ def _validate_ai_response(
     
     for i, line_data in enumerate(lines_data):
         try:
-            # Convert string decimals to Decimal
-            if line_data.get("amount"):
-                try:
-                    line_data["amount"] = Decimal(str(line_data["amount"]))
-                except (InvalidOperation, ValueError):
-                    line_data["amount"] = None
-                    warnings.append(f"Line {i+1}: Invalid amount format")
-            
-            if line_data.get("percentage"):
-                try:
-                    line_data["percentage"] = Decimal(str(line_data["percentage"]))
-                except (InvalidOperation, ValueError):
-                    line_data["percentage"] = None
-                    warnings.append(f"Line {i+1}: Invalid percentage format")
-            
-            if line_data.get("minimum"):
-                try:
-                    line_data["minimum"] = Decimal(str(line_data["minimum"]))
-                except (InvalidOperation, ValueError):
-                    line_data["minimum"] = None
-            
-            if line_data.get("maximum"):
-                try:
-                    line_data["maximum"] = Decimal(str(line_data["maximum"]))
-                except (InvalidOperation, ValueError):
-                    line_data["maximum"] = None
+            if line_data.get("currency"):
+                line_data["currency"] = _normalize_currency_value(line_data.get("currency"))
+
+            # Convert string decimals or numbers to Decimal
+            for field in ["amount", "rate_per_unit", "percentage", "minimum", "maximum"]:
+                if line_data.get(field) is not None:
+                    try:
+                        line_data[field] = Decimal(str(line_data[field]))
+                    except (InvalidOperation, ValueError):
+                        line_data[field] = None
+                        warnings.append(f"Line {i+1}: Invalid {field} format")
             
             # Validate with Pydantic
             validated_line = SpotChargeLine(**line_data)
@@ -240,14 +331,16 @@ def _validate_ai_response(
     return AIRateIntakeResponse(
         success=True,
         lines=validated_lines,
+        analysis_text=analysis_text,
         warnings=warnings,
+        quote_currency=quote_currency,
         raw_text_length=len(original_text),
         source_type=source_type,
         model_used=GEMINI_MODEL
     )
 
 
-def parse_pdf_rate_quote(pdf_content: bytes) -> AIRateIntakeResponse:
+def parse_pdf_rate_quote(pdf_content: bytes, context: Optional[dict] = None) -> AIRateIntakeResponse:
     """
     Extract text from PDF and parse into charge lines.
     
@@ -267,7 +360,7 @@ def parse_pdf_rate_quote(pdf_content: bytes) -> AIRateIntakeResponse:
         )
     
     # Step 2: Parse extracted text with AI
-    result = parse_rate_quote_text(extraction_result.text, source_type="PDF")
+    result = parse_rate_quote_text(extraction_result.text, source_type="PDF", context=context)
     
     # Add any PDF extraction warnings
     if extraction_result.warnings:
