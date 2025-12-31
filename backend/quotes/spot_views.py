@@ -1019,3 +1019,212 @@ class SpotReplyAnalysisAPIView(APIView):
             )
         
         return Response(result.model_dump())
+
+# Add this to the end of spot_views.py
+
+class SpotEnvelopeCreateQuoteAPIView(APIView):
+    """
+    POST /api/v3/spot/envelopes/<id>/create-quote/
+    
+    Convert SPE to a formal Quote (v3).
+    Creates Quote, QuoteVersion, QuoteLines, and QuoteTotals.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, envelope_id):
+        from pricing_v4.adapter import PricingServiceV4Adapter
+        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
+        from core.models import Location
+        from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, ServiceComponent
+        from parties.models import Company, Contact
+        from uuid import UUID
+        from datetime import date
+        
+        spe_db = _get_spe_or_404(
+            request.user, 
+            envelope_id,
+            SpotPricingEnvelopeDB.objects.prefetch_related('charge_lines', 'acknowledgement', 'manager_approval')
+        )
+        
+        # --- 1. Re-run Computation (Same as ComputeView) ---
+        # Note: Ideally this setup logic should be shared, but duplicating for safety now.
+        
+        try:
+            spe = _build_spe_from_db(spe_db)
+        except ValueError as e:
+            return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        quote_data = request.data.get('quote_request', {})
+        ctx = spe_db.shipment_context_json
+        
+        try:
+            origin_loc = Location.objects.get(code=ctx.get('origin_code'))
+            dest_loc = Location.objects.get(code=ctx.get('destination_code'))
+        except Location.DoesNotExist as e:
+            return Response({'error': f'Location not found: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        origin_country = ctx.get('origin_country')
+        dest_country = ctx.get('destination_country')
+        if origin_country == 'PG' and dest_country == 'PG':
+            shipment_type = 'DOMESTIC'
+        elif origin_country == 'PG':
+            shipment_type = 'EXPORT'
+        else:
+            shipment_type = 'IMPORT'
+            
+        origin_ref = LocationRef(
+            id=origin_loc.id, code=origin_loc.code, name=origin_loc.name,
+            country_code=origin_loc.country.code if origin_loc.country else None,
+            currency_code=origin_loc.country.currency.code if origin_loc.country and origin_loc.country.currency else None,
+        )
+        dest_ref = LocationRef(
+            id=dest_loc.id, code=dest_loc.code, name=dest_loc.name,
+            country_code=dest_loc.country.code if dest_loc.country else None,
+            currency_code=dest_loc.country.currency.code if dest_loc.country and dest_loc.country.currency else None,
+        )
+
+        shipment = ShipmentDetails(
+            mode='AIR',
+            shipment_type=shipment_type,
+            incoterm=quote_data.get('incoterm', 'DAP'),
+            payment_term=quote_data.get('payment_term', 'PREPAID'),
+            is_dangerous_goods=ctx.get('commodity') == 'DG',
+            pieces=[Piece(
+                pieces=ctx.get('pieces', 1),
+                length_cm=0, width_cm=0, height_cm=0,
+                gross_weight_kg=ctx.get('total_weight_kg', 0) / max(ctx.get('pieces', 1), 1),
+            )],
+            service_scope=quote_data.get('service_scope', 'D2D'),
+            origin_location=origin_ref,
+            destination_location=dest_ref,
+        )
+        
+        # Ensure customer/contact logic
+        cust_id = None
+        cont_id = None
+        
+        if spe_db.quote:
+            cust_id = spe_db.quote.customer_id
+            cont_id = spe_db.quote.contact_id
+
+        if not cust_id:
+             req_cust = request.data.get('customer_id')
+             if req_cust:
+                 cust_id = UUID(req_cust)
+             else:
+                 # Last resort: Try "Cash Customer" or similar
+                 cust = Company.objects.first()
+                 if cust: cust_id = cust.id
+        
+        if not cust_id:
+            return Response({'error': 'Customer required to create quote'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create QuoteInput
+        # Note: If QuoteInput enforces contact_id is not None, we might need to fake it if cont_id is None.
+        # But generally, for Spot, we just need basic input.
+        # Check if QuoteInput accepts None. If not, we use cust_id as placeholder for logic ONLY, but NOT for DB.
+        
+        qi_contact_id = cont_id if cont_id else cust_id # Placeholder for computation if needed
+        
+        quote_input = QuoteInput(
+            customer_id=cust_id,
+            contact_id=qi_contact_id, 
+            shipment=shipment,
+            quote_date=date.today(),
+            output_currency=quote_data.get('output_currency', 'PGK'),
+        )
+        
+        adapter = PricingServiceV4Adapter(quote_input=quote_input, spot_envelope_id=UUID(str(spe_db.id)))
+        
+        try:
+            result = adapter.calculate_charges()
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # --- 2. Create/Update Quote ---
+        if spe_db.quote:
+            quote = spe_db.quote
+            # Update fields?
+            # quote.status = Quote.Status.DRAFT 
+            # quote.save()
+        else:
+            quote = Quote.objects.create(
+                customer_id=cust_id,
+                contact_id=cont_id, # FIX: Pass actual contact ID (can be None)
+                origin_location=origin_loc,
+                destination_location=dest_loc,
+                shipment_type=shipment_type,
+                mode='AIR',
+                incoterm=shipment.incoterm,
+                payment_term=shipment.payment_term,
+                service_scope=shipment.service_scope,
+                output_currency=quote_input.output_currency,
+                is_dangerous_goods=shipment.is_dangerous_goods,
+                created_by=request.user,
+                status=Quote.Status.DRAFT,
+                request_details_json=quote_input.model_dump(mode='json'),
+            )
+            spe_db.quote = quote
+            spe_db.save()
+
+        # --- 3. Create Version ---
+        # Determine version number
+        last_version = quote.versions.order_by('-version_number').first()
+        new_v_num = (last_version.version_number + 1) if last_version else 1
+        
+        version = QuoteVersion.objects.create(
+            quote=quote,
+            version_number=new_v_num,
+            status=Quote.Status.DRAFT,
+            created_by=request.user,
+            payload_json=quote_input.model_dump(mode='json'),
+            reason="Created from SPOT Envelope"
+        )
+        
+        # --- 4. Save Lines ---
+        
+        for line_data in result.lines:
+            # Resolve Component ID
+            sc = None
+            if line_data.service_component_id:
+                try:
+                    sc = ServiceComponent.objects.get(id=line_data.service_component_id)
+                except ServiceComponent.DoesNotExist:
+                    pass
+            
+            QuoteLine.objects.create(
+                quote_version=version,
+                service_component=sc,
+                cost_pgk=line_data.cost_pgk,
+                cost_fcy=line_data.cost_fcy,
+                cost_fcy_currency=line_data.cost_fcy_currency,
+                sell_pgk=line_data.sell_pgk,
+                sell_pgk_incl_gst=line_data.sell_pgk_incl_gst,
+                sell_fcy=line_data.sell_fcy,
+                sell_fcy_incl_gst=line_data.sell_fcy_incl_gst,
+                sell_fcy_currency=line_data.sell_fcy_currency,
+                exchange_rate=line_data.exchange_rate,
+                cost_source=line_data.cost_source,
+                cost_source_description=line_data.cost_source_description,
+                is_rate_missing=line_data.is_rate_missing,
+                is_informational=getattr(line_data, 'is_informational', False)
+            )
+
+        # --- 5. Save Totals ---
+        QuoteTotal.objects.create(
+            quote_version=version,
+            total_cost_pgk=result.totals.total_cost_pgk,
+            total_sell_pgk=result.totals.total_sell_pgk,
+            total_sell_pgk_incl_gst=result.totals.total_sell_pgk_incl_gst,
+            total_sell_fcy=result.totals.total_sell_fcy,
+            total_sell_fcy_incl_gst=result.totals.total_sell_fcy_incl_gst,
+            total_sell_fcy_currency=result.totals.total_sell_fcy_currency,
+            has_missing_rates=result.totals.has_missing_rates,
+            notes=result.totals.notes
+        )
+        
+        return Response({
+            'success': True,
+            'quote_id': str(quote.id),
+            'quote_number': quote.quote_number
+        })

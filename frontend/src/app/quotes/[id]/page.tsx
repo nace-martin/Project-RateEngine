@@ -248,7 +248,15 @@ export default function QuoteDetailPage() {
         <div className="flex items-center gap-3">
           <Button
             variant="outline"
-            onClick={() => router.push(`/quotes/new?edit=${quote.id}`)}
+            onClick={() => {
+              // Check if this is a spot quote derived from an envelope
+              const speId = quote.latest_version?.payload_json?.spot_envelope_id;
+              if (speId) {
+                router.push(`/quotes/spot/${speId}`);
+              } else {
+                router.push(`/quotes/new?edit=${quote.id}`);
+              }
+            }}
             className="gap-2"
           >
             <ArrowLeft className="w-4 h-4" />

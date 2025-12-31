@@ -26,6 +26,7 @@ import {
     acknowledgeSpotEnvelope,
     approveSpotEnvelope,
     computeSpotQuote,
+    createSpotQuote,
 } from '@/lib/api';
 
 const initialState: SpotModeState = {
@@ -337,6 +338,32 @@ export function useSpotMode() {
     }, [state.spe, updateState]);
 
     // ==========================================================================
+    // STEP 7: Create Final Quote
+    // ==========================================================================
+    const createQuote = useCallback(async (
+        request: {
+            payment_term: string;
+            service_scope: string;
+            output_currency: string;
+            customer_id?: string;
+        }
+    ): Promise<{ success: boolean; quote_id: string } | null> => {
+        if (!state.spe) return null;
+        updateState({ isLoading: true, error: null });
+        try {
+            const result = await createSpotQuote(state.spe.id, request);
+            updateState({ isLoading: false });
+            return result;
+        } catch (err) {
+            updateState({
+                error: err instanceof Error ? err.message : 'Failed to create quote',
+                isLoading: false,
+            });
+            return null;
+        }
+    }, [state.spe, updateState]);
+
+    // ==========================================================================
     // Reset
     // ==========================================================================
     const reset = useCallback(() => {
@@ -377,6 +404,7 @@ export function useSpotMode() {
         submitAcknowledgement,
         submitManagerApproval,
         computeQuote,
+        createQuote,
         reset,
     }), [
         checkScope,
@@ -384,9 +412,9 @@ export function useSpotMode() {
         createSPE,
         updateSPE,
         loadSPE,
-        submitAcknowledgement,
         submitManagerApproval,
         computeQuote,
+        createQuote,
         reset
     ]);
 

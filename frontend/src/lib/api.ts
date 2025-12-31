@@ -1138,3 +1138,28 @@ export async function analyzeSpotReply(
   return response.json();
 }
 
+
+export async function createSpotQuote(
+  speId: string,
+  request: {
+    payment_term: string;
+    service_scope: string;
+    output_currency: string;
+    customer_id?: string;
+  }
+): Promise<{ success: boolean; quote_id: string; quote_number: string }> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${speId}/create-quote/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify({ quote_request: request }),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create quote: ${detail}`);
+  }
+  return response.json();
+}

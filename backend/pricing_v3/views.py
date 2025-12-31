@@ -333,14 +333,16 @@ class QuoteComputeV3View(APIView):
             
             for line in latest_version.lines.select_related('service_component'):
                 sc = line.service_component
-                
+                sc_code = sc.code if sc else 'MANUAL'
+                sc_desc = line.cost_source_description or (sc.description if sc else 'Spot Charge')
+
                 # Build buy line
                 buy_line = {
-                    "component": sc.code,
+                    "component": sc_code,
                     "source": line.cost_source or 'V4 Engine',
                     "currency": line.cost_fcy_currency or 'PGK',
                     "method": "V4_ENGINE",
-                    "description": sc.description,
+                    "description": sc_desc,
                 }
                 buy_lines.append(buy_line)
                 
@@ -349,18 +351,32 @@ class QuoteComputeV3View(APIView):
                 
                 # Derive leg from service component code (DEST = DESTINATION, ORIGIN = ORIGIN, else MAIN)
                 leg = 'MAIN'
-                if 'DEST' in sc.code or 'CLEAR' in sc.code:
-                    leg = 'DESTINATION'
-                elif 'ORIGIN' in sc.code or 'PICKUP' in sc.code:
-                    leg = 'ORIGIN'
-                elif 'FREIGHT' in sc.code or 'AIR' in sc.code:
-                    leg = 'FREIGHT'
+                if sc and sc.leg:
+                    leg = sc.leg
+                    # Map 'FREIGHT' legacy to 'MAIN' if needed, or vice versa. 
+                    # DB uses 'MAIN'. Frontend expects 'MAIN' or 'FREIGHT'. 
+                    if leg == 'MAIN': leg = 'MAIN' 
+                elif sc:
+                    if 'DEST' in sc.code or 'CLEAR' in sc.code:
+                        leg = 'DESTINATION'
+                    elif 'ORIGIN' in sc.code or 'PICKUP' in sc.code:
+                        leg = 'ORIGIN'
+                    elif 'FREIGHT' in sc.code or 'AIR' in sc.code:
+                        leg = 'FREIGHT'
+                else:
+                    # Fallback for manual lines
+                    if 'ORIGIN' in (line.cost_source or '').upper():
+                        leg = 'ORIGIN'
+                    elif 'DEST' in (line.cost_source or '').upper():
+                        leg = 'DESTINATION'
+                    else:
+                        leg = 'FREIGHT' # Assume Spot is mostly freight if unknown?
                 
                 # Build sell line
                 sell_line = {
                     "line_type": "COMPONENT",
-                    "component": sc.code,
-                    "description": sc.description,
+                    "component": sc_code,
+                    "description": sc_desc,
                     "leg": leg,
                     "cost_pgk": str(line.cost_pgk),
                     "sell_pgk": str(line.sell_pgk),
@@ -371,14 +387,16 @@ class QuoteComputeV3View(APIView):
                     "sell_currency": line.sell_fcy_currency or 'PGK',
                     "margin_percent": str(((line.sell_pgk - line.cost_pgk) / line.cost_pgk * 100) if line.cost_pgk > 0 else 0),
                     "exchange_rate": str(line.exchange_rate or 1.0),
-                    "source": line.cost_source or 'V4 Engine'
+                    "source": line.cost_source or 'V4 Engine',
+                    "is_informational": getattr(line, 'is_informational', False)
                 }
                 sell_lines.append(sell_line)
                 
-                # Accumulate totals
-                total_cost_pgk += line.cost_pgk
-                total_sell_pgk += line.sell_pgk
-                total_gst += gst_amount
+                # Accumulate totals (exclude informational lines)
+                if not getattr(line, 'is_informational', False):
+                    total_cost_pgk += line.cost_pgk
+                    total_sell_pgk += line.sell_pgk
+                    total_gst += gst_amount
             
             # Get exchange rates from FX snapshot
             fx_snapshot = quote.fx_snapshot

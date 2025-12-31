@@ -259,6 +259,7 @@ export interface SellLine {
   margin_percent: string;
   exchange_rate: string;
   source: string;
+  is_informational?: boolean; // If true, shown as note, not in totals
 }
 
 export interface QuoteComputeTotals {

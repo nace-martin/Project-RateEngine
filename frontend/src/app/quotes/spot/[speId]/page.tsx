@@ -180,6 +180,23 @@ export default function SpotRateEntryPage() {
         }
     };
 
+    // Handle create quote from SPE
+    const handleCreateQuote = async () => {
+        const resolvedScope = serviceScope || "D2D";
+        const resolvedPaymentTerm = paymentTerm || "PREPAID";
+        const resolvedOutputCurrency = outputCurrency || "PGK";
+
+        const result = await actions.createQuote({
+            payment_term: resolvedPaymentTerm,
+            service_scope: resolvedScope,
+            output_currency: resolvedOutputCurrency,
+        });
+
+        if (result?.success && result.quote_id) {
+            router.push(`/quotes/${result.quote_id}`);
+        }
+    };
+
     // Render step progress
     const renderProgress = () => (
         <div className="flex items-center justify-between mb-8">
@@ -550,7 +567,11 @@ export default function SpotRateEntryPage() {
                                     <Button variant="outline" onClick={() => router.push('/quotes')} className="w-full">
                                         Back to Dashboard
                                     </Button>
-                                    <Button className="w-full bg-blue-600 hover:bg-blue-700">
+                                    <Button
+                                        onClick={handleCreateQuote}
+                                        disabled={state.isLoading}
+                                        className="w-full bg-blue-600 hover:bg-blue-700"
+                                    >
                                         Create Quote
                                     </Button>
                                 </div>

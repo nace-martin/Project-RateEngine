@@ -658,17 +658,20 @@ class PricingServiceV4Adapter:
             
             # [FIX] Fallback for dynamic SPOT charges not in DB (e.g. agent ad-hoc charges)
             if not sc:
+                if charge.bucket == 'origin_charges':
+                    sc = ServiceComponent.objects.filter(code='SPOT_ORIGIN').first()
+                elif charge.bucket == 'destination_charges':
+                    sc = ServiceComponent.objects.filter(code='SPOT_DEST').first()
+                elif charge.bucket == 'airfreight':
+                     sc = ServiceComponent.objects.filter(code='SPOT_FREIGHT').first()
+
+            if not sc:
                 sc = ServiceComponent.objects.filter(code='SPOT_CHARGE').first()
             if not sc:
                 sc = ServiceComponent.objects.filter(code__in=['MISC', 'OTHER', 'GENERIC']).first()
             if not sc:
                 # Last resort Fallback 
-                # Create a dummy or use ID of first available?
-                # Using a known safe ID if possible, or fail gracefully
-                # Better to use one from the map if list not empty?
-                if charges:
-                     # Re-use first charge's SC just to pass validation? No, confusing.
-                     pass
+                pass
             
             # If still no SC, we have a problem because CalculatedChargeLine needs ID.
             # We assume database seeding has 'SPOT_CHARGE' or similar.
@@ -679,13 +682,14 @@ class PricingServiceV4Adapter:
                 service_component_id=sc_id,
                 service_component_code=charge.code,
                 service_component_desc=charge.description or sc_desc, # Use charge desc from SPE preferentially
-                leg='MAIN',
+                leg=sc.leg if sc else 'MAIN',
                 cost_pgk=cost_pgk,
                 sell_pgk=sell_pgk,
                 sell_pgk_incl_gst=sell_incl_gst,
                 sell_fcy=sell_fcy,
                 sell_fcy_incl_gst=sell_fcy_incl_gst,
                 cost_source='SPOT Envelope',
+                cost_source_description=charge.description, # Ensure desc is passed
                 cost_fcy=cost_fcy,
                 cost_fcy_currency=charge.currency,
                 sell_fcy_currency=output_currency,

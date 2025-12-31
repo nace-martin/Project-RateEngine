@@ -67,15 +67,15 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
         </div>
 
         <div className="space-y-8">
-          <ChargeSection title="Origin Charges" lines={version.lines.filter(l => l.service_component.leg === 'ORIGIN')} currency={currency} />
-          <ChargeSection title="Freight Charges" lines={version.lines.filter(l => l.service_component.leg === 'MAIN')} currency={currency} />
-          <ChargeSection title="Destination Charges" lines={version.lines.filter(l => l.service_component.leg === 'DESTINATION')} currency={currency} />
+          <ChargeSection title="Origin Charges" lines={version.lines.filter(l => (l.service_component?.leg || 'MAIN') === 'ORIGIN')} currency={currency} />
+          <ChargeSection title="Freight Charges" lines={version.lines.filter(l => ['MAIN', 'FREIGHT'].includes(l.service_component?.leg || 'MAIN'))} currency={currency} />
+          <ChargeSection title="Destination Charges" lines={version.lines.filter(l => (l.service_component?.leg || 'MAIN') === 'DESTINATION')} currency={currency} />
 
           {/* Catch-all for any others */}
-          {version.lines.some(l => !['ORIGIN', 'MAIN', 'DESTINATION'].includes(l.service_component.leg)) && (
+          {version.lines.some(l => !['ORIGIN', 'MAIN', 'FREIGHT', 'DESTINATION'].includes(l.service_component?.leg || 'MAIN')) && (
             <ChargeSection
               title="Other Charges"
-              lines={version.lines.filter(l => !['ORIGIN', 'MAIN', 'DESTINATION'].includes(l.service_component.leg))}
+              lines={version.lines.filter(l => !['ORIGIN', 'MAIN', 'FREIGHT', 'DESTINATION'].includes(l.service_component?.leg || 'MAIN'))}
               currency={currency}
             />
           )}
@@ -136,11 +136,11 @@ function ChargeSection({ title, lines, currency }: { title: string, lines: V3Quo
           {lines.map((line) => (
             <TableRow key={line.id} className="hover:bg-muted/30">
               <TableCell className="font-medium text-muted-foreground">
-                {line.service_component.category}
+                {line.service_component?.category || 'Manual'}
               </TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  {line.service_component.description}
+                  {line.cost_source_description || line.service_component?.description || 'Spot Charge'}
                   {line.is_rate_missing && (
                     <Badge variant="destructive" className="text-[10px] h-5 px-1.5">
                       Missing

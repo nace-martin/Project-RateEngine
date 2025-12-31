@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { ChevronDown, ChevronRight, Package, MapPin, ReceiptText } from "lucide-react";
+import { ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane } from "lucide-react";
 
 interface QuoteFinancialBreakdownProps {
     result: QuoteComputeResult;
@@ -42,11 +42,11 @@ const formatAmount = (amountStr: string | number | undefined, currency: string) 
     return `${currency} ${formatted}`;
 };
 
-type BucketType = 'ORIGIN' | 'DESTINATION';
-
+type BucketType = 'ORIGIN' | 'FREIGHT' | 'DESTINATION';
 // Get bucket for a line
 function getBucket(line: SellLine): BucketType {
-    if (line.leg === 'ORIGIN' || line.leg === 'MAIN') return 'ORIGIN';
+    if (line.leg === 'MAIN' || line.leg === 'FREIGHT') return 'FREIGHT';
+    if (line.leg === 'ORIGIN') return 'ORIGIN';
     return 'DESTINATION';
 }
 
@@ -74,24 +74,29 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     const isOverallPassthrough = isFCYPassthrough(sell_lines);
     const displayCurrency = isOverallPassthrough ? (sell_lines[0]?.sell_currency || 'PGK') : 'PGK';
 
-    // Group lines by bucket (Origin includes Freight, Destination separate)
+    // Separate informational (conditional) charges from priced lines
+    const pricedLines = sell_lines.filter((line: SellLine) => !line.is_informational);
+    const informationalLines = sell_lines.filter((line: SellLine) => line.is_informational);
+
+    // Group PRICED lines by bucket (not informational ones)
     const buckets: Record<BucketType, SellLine[]> = {
         ORIGIN: [],
+        FREIGHT: [],
         DESTINATION: [],
     };
 
-    sell_lines.forEach((line: SellLine) => {
+    pricedLines.forEach((line: SellLine) => {
         const bucket = getBucket(line);
         buckets[bucket].push(line);
     });
 
-    // Calculate totals
+    // Calculate totals (only from priced lines - backend already excludes informational)
     const totalExGst = isOverallPassthrough
-        ? calculateBucketTotal(sell_lines, 'sell_fcy')
-        : calculateBucketTotal(sell_lines, 'sell_pgk');
+        ? calculateBucketTotal(pricedLines, 'sell_fcy')
+        : calculateBucketTotal(pricedLines, 'sell_pgk');
     const totalGst = isOverallPassthrough
         ? 0 // No GST for passthrough
-        : sell_lines.reduce((sum, l) => sum + parseFloat(l.gst_amount || '0'), 0);
+        : pricedLines.reduce((sum, l) => sum + parseFloat(l.gst_amount || '0'), 0);
     const totalIncGst = totalExGst + totalGst;
 
     return (
@@ -117,6 +122,17 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         isPassthrough={isOverallPassthrough}
                         icon={<Package className="w-4 h-4 text-blue-600" />}
                         colorClass="blue"
+                    />
+                )}
+                {/* FREIGHT CHARGES */}
+                {buckets.FREIGHT.length > 0 && (
+                    <BucketSection
+                        title="Freight Charges"
+                        lines={buckets.FREIGHT}
+                        displayCurrency={displayCurrency}
+                        isPassthrough={isOverallPassthrough}
+                        icon={<Plane className="w-4 h-4 text-purple-600" />}
+                        colorClass="purple"
                     />
                 )}
 
@@ -161,6 +177,23 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         </div>
                     </div>
                 </div>
+
+                {/* Conditional Charges Footnotes */}
+                {informationalLines.length > 0 && (
+                    <div className="p-4 bg-amber-50/50 border-t border-amber-200">
+                        <div className="flex items-start gap-2">
+                            <span className="text-amber-600 text-xs font-semibold uppercase tracking-wide">Conditions & Notes</span>
+                        </div>
+                        <ul className="mt-2 space-y-1">
+                            {informationalLines.map((line, idx) => (
+                                <li key={idx} className="text-xs text-amber-800 flex items-start gap-2">
+                                    <span className="text-amber-500">•</span>
+                                    <span>{line.description} — <em className="text-amber-600">if applicable</em></span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
@@ -180,7 +213,7 @@ function BucketSection({
     displayCurrency: string;
     isPassthrough: boolean;
     icon: React.ReactNode;
-    colorClass: 'blue' | 'emerald';
+    colorClass: 'blue' | 'emerald' | 'purple';
 }) {
     const [isExpanded, setIsExpanded] = useState(true);
 
@@ -189,11 +222,23 @@ function BucketSection({
         ? calculateBucketTotal(lines, 'sell_fcy')
         : calculateBucketTotal(lines, 'sell_pgk');
 
-    const bgColor = colorClass === 'blue' ? 'bg-blue-50' : 'bg-emerald-50';
-    const textColor = colorClass === 'blue' ? 'text-blue-700' : 'text-emerald-700';
-    const badgeClass = colorClass === 'blue'
-        ? 'bg-blue-100 text-blue-600 border-blue-200'
-        : 'bg-emerald-100 text-emerald-600 border-emerald-200';
+    let bgColor = 'bg-slate-50';
+    let textColor = 'text-slate-700';
+    let badgeClass = 'bg-slate-100 text-slate-600 border-slate-200';
+
+    if (colorClass === 'blue') {
+        bgColor = 'bg-blue-50';
+        textColor = 'text-blue-700';
+        badgeClass = 'bg-blue-100 text-blue-600 border-blue-200';
+    } else if (colorClass === 'emerald') {
+        bgColor = 'bg-emerald-50';
+        textColor = 'text-emerald-700';
+        badgeClass = 'bg-emerald-100 text-emerald-600 border-emerald-200';
+    } else if (colorClass === 'purple') {
+        bgColor = 'bg-purple-50';
+        textColor = 'text-purple-700';
+        badgeClass = 'bg-purple-100 text-purple-600 border-purple-200';
+    }
 
     return (
         <div className="border-b border-slate-100 last:border-b-0">

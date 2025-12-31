@@ -263,6 +263,10 @@ class QuoteLine(models.Model):
     cost_source = models.CharField(max_length=50, null=True, blank=True)
     cost_source_description = models.CharField(max_length=255, null=True, blank=True)
     is_rate_missing = models.BooleanField(default=False)
+    is_informational = models.BooleanField(
+        default=False,
+        help_text="If True, this is a conditional charge shown as a note, not included in totals."
+    )
 
     def __str__(self):
         name = self.service_component.description if self.service_component else 'Manual Line'
