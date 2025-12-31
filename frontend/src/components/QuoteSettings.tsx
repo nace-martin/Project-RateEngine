@@ -6,13 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import { Settings } from "lucide-react";
 
 interface QuoteSettingsProps {
@@ -21,120 +14,85 @@ interface QuoteSettingsProps {
 
 export default function QuoteSettings({ defaultPaymentTerm = "collect" }: QuoteSettingsProps) {
     const [customerRef, setCustomerRef] = useState("");
-    const [validityPeriod, setValidityPeriod] = useState("14");
-    const [paymentTerm, setPaymentTerm] = useState(defaultPaymentTerm);
     const [specialInstructions, setSpecialInstructions] = useState("");
     const [attachTerms, setAttachTerms] = useState(false);
 
+    // Normalize payment term for display
+    const normalizedTerm = defaultPaymentTerm.toLowerCase();
+    const displayTerm = normalizedTerm === 'credit' ? 'Credit (30 Days)' :
+        normalizedTerm.charAt(0).toUpperCase() + normalizedTerm.slice(1);
+
     return (
-        <Card className="border-slate-200">
-            <CardHeader className="pb-3">
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
+        <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-3 border-b border-slate-50 bg-slate-50/50">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700">
                     <Settings className="w-4 h-4 text-slate-400" />
                     Quote Settings
                 </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-                {/* Customer Reference Number */}
-                <div className="grid grid-cols-2 gap-3">
-                    <div>
-                        <Label htmlFor="customer-ref" className="text-xs font-medium text-slate-500">
-                            Customer Reference Number
+            <CardContent className="space-y-5 pt-5">
+                {/* Customer Reference & Validity Grid */}
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="customer-ref" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                            Customer Ref
                         </Label>
                         <Input
                             id="customer-ref"
                             placeholder="e.g. PO-2023-001"
                             value={customerRef}
                             onChange={(e) => setCustomerRef(e.target.value)}
-                            className="mt-1.5 text-sm"
+                            className="h-9 text-sm focus-visible:ring-blue-500"
                         />
                     </div>
-                    <div>
-                        <Label htmlFor="validity" className="text-xs font-medium text-slate-500">
-                            Validity Period
+                    <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                            Validity
                         </Label>
-                        <Select value={validityPeriod} onValueChange={setValidityPeriod}>
-                            <SelectTrigger id="validity" className="mt-1.5 text-sm">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="7">7 Days</SelectItem>
-                                <SelectItem value="14">14 Days</SelectItem>
-                                <SelectItem value="30">30 Days</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <div className="h-9 flex items-center px-3 rounded-md bg-slate-100 border border-slate-200 text-sm text-slate-500 cursor-not-allowed">
+                            7 Days
+                        </div>
                     </div>
                 </div>
 
-                {/* Payment Terms */}
-                <div>
-                    <Label className="text-xs font-medium text-slate-500">
+                {/* Payment Terms (Read-only) */}
+                <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                         Payment Terms
                     </Label>
-                    <div className="flex gap-4 mt-2">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="payment-term"
-                                value="prepaid"
-                                checked={paymentTerm === "prepaid"}
-                                onChange={(e) => setPaymentTerm(e.target.value)}
-                                className="w-4 h-4 text-blue-600 border-slate-300 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-slate-700">Prepaid</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="payment-term"
-                                value="collect"
-                                checked={paymentTerm === "collect"}
-                                onChange={(e) => setPaymentTerm(e.target.value)}
-                                className="w-4 h-4 text-blue-600 border-slate-300 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-slate-700">Collect</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="radio"
-                                name="payment-term"
-                                value="credit"
-                                checked={paymentTerm === "credit"}
-                                onChange={(e) => setPaymentTerm(e.target.value)}
-                                className="w-4 h-4 text-blue-600 border-slate-300 focus:ring-blue-500"
-                            />
-                            <span className="text-sm text-slate-700">Credit Account (30 Days)</span>
-                        </label>
+                    <div className="p-3 rounded-md bg-slate-50 border border-slate-200 text-sm font-medium text-slate-700 flex items-center justify-between">
+                        <span>{displayTerm}</span>
                     </div>
                 </div>
 
                 {/* Special Instructions */}
-                <div>
-                    <Label htmlFor="special-instructions" className="text-xs font-medium text-blue-600">
-                        Special Instructions / Remarks
+                <div className="space-y-1.5">
+                    <Label htmlFor="special-instructions" className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                        Remarks / Instructions
                     </Label>
                     <Textarea
                         id="special-instructions"
-                        placeholder="Any specific handling instructions or notes for the customer..."
+                        placeholder="Add specific handling instructions..."
                         value={specialInstructions}
                         onChange={(e) => setSpecialInstructions(e.target.value)}
-                        className="mt-1.5 text-sm min-h-[80px]"
+                        className="min-h-[80px] text-sm resize-none focus-visible:ring-blue-500"
                     />
                 </div>
 
                 {/* Attach Terms & Conditions */}
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                     <div>
                         <div className="text-sm font-medium text-slate-700">
-                            Attach Standard Terms & Conditions
+                            Attach Terms & Conditions
                         </div>
-                        <div className="text-xs text-slate-500">
-                            Includes liability and insurance clauses automatically.
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                            Auto-attach liability clauses
                         </div>
                     </div>
                     <Switch
                         checked={attachTerms}
                         onCheckedChange={setAttachTerms}
+                        className="data-[state=checked]:bg-blue-600"
                     />
                 </div>
             </CardContent>

@@ -131,8 +131,8 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         lines={buckets.FREIGHT}
                         displayCurrency={displayCurrency}
                         isPassthrough={isOverallPassthrough}
-                        icon={<Plane className="w-4 h-4 text-purple-600" />}
-                        colorClass="purple"
+                        icon={<Plane className="w-4 h-4 text-blue-600" />}
+                        colorClass="blue"
                     />
                 )}
 
@@ -143,8 +143,8 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         lines={buckets.DESTINATION}
                         displayCurrency={displayCurrency}
                         isPassthrough={isOverallPassthrough}
-                        icon={<MapPin className="w-4 h-4 text-emerald-600" />}
-                        colorClass="emerald"
+                        icon={<MapPin className="w-4 h-4 text-blue-600" />}
+                        colorClass="blue"
                     />
                 )}
 
@@ -199,6 +199,17 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     );
 }
 
+// Helper for section styling - Refined for visual hierarchy & lighter feel
+function getSectionStyle() {
+    return {
+        wrapper: "mb-6 rounded-lg border border-slate-200 overflow-hidden bg-white shadow-sm", // Clean card style
+        header: "bg-white hover:bg-slate-50 border-b border-slate-100 transition-colors", // Lighter header
+        title: "text-slate-900", // Stronger title contrast
+        iconBg: "bg-blue-50 text-blue-600", // Subtler icon background
+        borderLeft: "border-l-[4px] border-l-blue-500" // Consistent accent
+    };
+}
+
 // Bucket Section Component
 function BucketSection({
     title,
@@ -206,100 +217,87 @@ function BucketSection({
     displayCurrency,
     isPassthrough,
     icon,
-    colorClass
+    // colorClass prop is present in parent but ignored here to enforce standardized Blue theme
 }: {
     title: string;
     lines: SellLine[];
     displayCurrency: string;
     isPassthrough: boolean;
     icon: React.ReactNode;
-    colorClass: 'blue' | 'emerald' | 'purple';
+    colorClass?: string;
 }) {
-    const [isExpanded, setIsExpanded] = useState(true);
+    // Default to collapsed for Freight/Dest, maybe Expanded for Origin? 
+    // User requested default collapsed previously.
+    const [isExpanded, setIsExpanded] = useState(false);
+    const styles = getSectionStyle();
 
-    // Calculate bucket subtotal
+    // Calculate subtotal for this bucket
     const bucketTotal = isPassthrough
         ? calculateBucketTotal(lines, 'sell_fcy')
         : calculateBucketTotal(lines, 'sell_pgk');
 
-    let bgColor = 'bg-slate-50';
-    let textColor = 'text-slate-700';
-    let badgeClass = 'bg-slate-100 text-slate-600 border-slate-200';
-
-    if (colorClass === 'blue') {
-        bgColor = 'bg-blue-50';
-        textColor = 'text-blue-700';
-        badgeClass = 'bg-blue-100 text-blue-600 border-blue-200';
-    } else if (colorClass === 'emerald') {
-        bgColor = 'bg-emerald-50';
-        textColor = 'text-emerald-700';
-        badgeClass = 'bg-emerald-100 text-emerald-600 border-emerald-200';
-    } else if (colorClass === 'purple') {
-        bgColor = 'bg-purple-50';
-        textColor = 'text-purple-700';
-        badgeClass = 'bg-purple-100 text-purple-600 border-purple-200';
-    }
-
     return (
-        <div className="border-b border-slate-100 last:border-b-0">
-            {/* Bucket Header */}
+        <div className={styles.wrapper}>
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
-                className={`w-full ${bgColor} px-6 py-3 flex items-center justify-between hover:opacity-90 transition-opacity`}
+                className={`w-full flex items-center justify-between p-5 ${styles.header} ${styles.borderLeft}`}
             >
-                <div className="flex items-center gap-2">
-                    {icon}
-                    <span className={`font-semibold text-sm uppercase tracking-wide ${textColor}`}>
-                        {title}
-                    </span>
-                    <Badge variant="outline" className={`text-[10px] ${badgeClass} ml-2`}>
-                        {lines.length} items
-                    </Badge>
+                <div className="flex items-center gap-4">
+                    <div className={`p-2 rounded-lg ${styles.iconBg}`}>
+                        {icon}
+                    </div>
+                    <div className="text-left">
+                        <div className="flex items-center gap-3">
+                            <h3 className={`text-base font-bold tracking-tight ${styles.title}`}>
+                                {title}
+                            </h3>
+                            {!isExpanded && (
+                                <span className="flex items-center justify-center bg-slate-100 text-slate-500 text-[11px] font-semibold h-6 px-2 rounded-full">
+                                    {lines.length}
+                                </span>
+                            )}
+                        </div>
+                    </div>
                 </div>
-                <div className="flex items-center gap-3">
-                    <span className="text-xs text-slate-500 uppercase">Subtotal</span>
-                    <span className={`font-bold font-mono ${textColor}`}>
-                        {formatAmount(bucketTotal, displayCurrency)}
-                    </span>
+                <div className="flex items-center gap-6">
+                    <div className="text-right">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">Subtotal</p>
+                        <p className="text-base font-bold text-slate-900 mono-font">
+                            {formatAmount(bucketTotal, displayCurrency)}
+                        </p>
+                    </div>
                     {isExpanded ? (
-                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                        <ChevronDown className="w-5 h-5 text-slate-400" />
                     ) : (
-                        <ChevronRight className="w-4 h-4 text-slate-400" />
+                        <ChevronRight className="w-5 h-5 text-slate-400" />
                     )}
                 </div>
             </button>
 
-            {/* Bucket Content */}
             {isExpanded && (
-                <div className="bg-white">
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="border-b border-slate-100 hover:bg-transparent">
-                                <TableHead className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold w-[45%]">
-                                    Description
-                                </TableHead>
-                                <TableHead className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold text-right">
-                                    Sell (Ex GST)
-                                </TableHead>
-                                <TableHead className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold text-right">
-                                    GST
-                                </TableHead>
-                                <TableHead className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold text-right">
-                                    Total
-                                </TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {lines.map((line, index) => (
-                                <ChargeRow
-                                    key={index}
-                                    line={line}
-                                    displayCurrency={displayCurrency}
-                                    isPassthrough={isPassthrough}
-                                />
-                            ))}
-                        </TableBody>
-                    </Table>
+                <div className="p-6 pt-2 bg-slate-50/30">
+                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                        <Table>
+                            <TableHeader className="bg-slate-50/80">
+                                <TableRow className="hover:bg-transparent border-b border-slate-100">
+                                    <TableHead className="w-[50%] h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500 pl-6">Description</TableHead>
+                                    <TableHead className="text-right h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500">Sell (Ex GST)</TableHead>
+                                    <TableHead className="text-center h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500 w-[120px]">GST</TableHead>
+                                    <TableHead className="text-right h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500 pr-6">Total</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {lines.map((line, index) => (
+                                    <ChargeRow
+                                        key={index}
+                                        line={line}
+                                        displayCurrency={displayCurrency}
+                                        isPassthrough={isPassthrough}
+                                    />
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
                 </div>
             )}
         </div>
@@ -317,31 +315,44 @@ function ChargeRow({
     isPassthrough: boolean;
 }) {
     const sellExGst = isPassthrough ? line.sell_fcy : line.sell_pgk;
-    const gstAmount = isPassthrough ? '0' : line.gst_amount;
+    const gstAmountVal = parseFloat((isPassthrough ? '0' : line.gst_amount) || '0');
+
+    // Determine GST display text
+    let gstDisplay: React.ReactNode = '—';
+    if (!isPassthrough) {
+        if (gstAmountVal > 0) {
+            gstDisplay = formatAmount(gstAmountVal, displayCurrency);
+        } else {
+            // Updated to non-interactive muted text
+            gstDisplay = <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Exempt</span>;
+        }
+    }
+
     const total = isPassthrough
         ? line.sell_fcy
         : (line.sell_pgk_incl_gst || line.sell_pgk);
 
     return (
-        <TableRow className="hover:bg-slate-50/50 border-b border-slate-50">
-            <TableCell className="py-3">
-                <div className="font-medium text-slate-800 text-sm">
+        <TableRow className="hover:bg-blue-50/30 border-b border-slate-50 last:border-0 transition-colors">
+            <TableCell className="py-4 pl-6">
+                <div className="font-medium text-slate-700 text-sm">
                     {line.description}
                 </div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">
+                {/* Reduced emphasis on line codes - secondary info */}
+                <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-1 font-mono opacity-80">
                     {line.component || 'MISC'}
                 </div>
             </TableCell>
-            <TableCell className="text-right font-mono text-sm text-slate-600">
+            <TableCell className="text-right font-mono text-sm text-slate-600 py-4">
                 {formatAmount(sellExGst, displayCurrency)}
             </TableCell>
-            <TableCell className="text-right font-mono text-sm text-slate-400">
-                {parseFloat(gstAmount || '0') > 0
-                    ? formatAmount(gstAmount, displayCurrency)
-                    : '—'
-                }
+            <TableCell className="text-center py-4">
+                {/* GST Column centered and clean */}
+                <div className="flex items-center justify-center">
+                    {gstDisplay}
+                </div>
             </TableCell>
-            <TableCell className="text-right font-mono text-sm font-semibold text-slate-800">
+            <TableCell className="text-right font-mono text-sm font-bold text-slate-800 py-4 pr-6">
                 {formatAmount(total, displayCurrency)}
             </TableCell>
         </TableRow>
