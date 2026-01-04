@@ -46,7 +46,7 @@ class Command(BaseCommand):
                         'amount': Decimal(amount),
                         'min_charge': Decimal(min_chg) if min_chg else None,
                         'currency': 'PGK',
-                        'valid_until': date(2025, 12, 31),
+                        'valid_until': date(2026, 12, 31),
                         'is_active': True,
                     }
                 )

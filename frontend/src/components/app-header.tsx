@@ -1,17 +1,26 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Home, FileText, Users, Database } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export default function AppHeader() {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, logout } = useAuth();
-  const { canEditRateCards, role } = usePermissions();
+  const { canEditRateCards, role, isAdmin } = usePermissions();
 
   // Core navigation items (visible to all authenticated users)
   const navItems = [
@@ -70,17 +79,53 @@ export default function AppHeader() {
             );
           })}
         </nav>
+
+        {/* New Quote Action Button */}
+        <Button
+          onClick={() => router.push('/quotes/new')}
+          className="ml-4 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          New Quote
+        </Button>
       </div>
 
       {user && (
         <div className="flex items-center gap-4">
           {getRoleBadge()}
-          <span className="text-sm text-muted-foreground">{user.username}</span>
-          <Button variant="outline" size="sm" onClick={logout}>
-            Logout
-          </Button>
+
+          {/* User Settings Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+                <User className="w-4 h-4" />
+                {user.username}
+                <ChevronDown className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>My Account</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => router.push('/settings/profile')} className="cursor-pointer">
+                <User className="w-4 h-4 mr-2" />
+                Profile
+              </DropdownMenuItem>
+              {isAdmin && (
+                <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer">
+                  <Settings className="w-4 h-4 mr-2" />
+                  Settings
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={logout} className="cursor-pointer text-destructive focus:text-destructive">
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
     </header>
   );
 }
+

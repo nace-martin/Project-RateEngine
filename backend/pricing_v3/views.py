@@ -349,28 +349,33 @@ class QuoteComputeV3View(APIView):
                 # Calculate GST (10%)
                 gst_amount = line.sell_pgk_incl_gst - line.sell_pgk if line.sell_pgk_incl_gst else Decimal('0')
                 
-                # Derive leg from service component code (DEST = DESTINATION, ORIGIN = ORIGIN, else MAIN)
-                leg = 'MAIN'
-                if sc and sc.leg:
-                    leg = sc.leg
-                    # Map 'FREIGHT' legacy to 'MAIN' if needed, or vice versa. 
-                    # DB uses 'MAIN'. Frontend expects 'MAIN' or 'FREIGHT'. 
-                    if leg == 'MAIN': leg = 'MAIN' 
-                elif sc:
-                    if 'DEST' in sc.code or 'CLEAR' in sc.code:
-                        leg = 'DESTINATION'
-                    elif 'ORIGIN' in sc.code or 'PICKUP' in sc.code:
-                        leg = 'ORIGIN'
-                    elif 'FREIGHT' in sc.code or 'AIR' in sc.code:
-                        leg = 'FREIGHT'
-                else:
-                    # Fallback for manual lines
-                    if 'ORIGIN' in (line.cost_source or '').upper():
-                        leg = 'ORIGIN'
-                    elif 'DEST' in (line.cost_source or '').upper():
-                        leg = 'DESTINATION'
+                # Prefer saved leg/bucket if available
+                leg = getattr(line, 'leg', None)
+                bucket = getattr(line, 'bucket', None)
+
+                if not leg:
+                    # Fallback to manual derivation
+                    leg = 'MAIN'
+                    if sc and sc.leg:
+                        leg = sc.leg
+                        # Map 'FREIGHT' legacy to 'MAIN' if needed, or vice versa. 
+                        # DB uses 'MAIN'. Frontend expects 'MAIN' or 'FREIGHT'. 
+                        if leg == 'MAIN': leg = 'MAIN' 
+                    elif sc:
+                        if 'DEST' in sc.code or 'CLEAR' in sc.code:
+                            leg = 'DESTINATION'
+                        elif 'ORIGIN' in sc.code or 'PICKUP' in sc.code:
+                            leg = 'ORIGIN'
+                        elif 'FREIGHT' in sc.code or 'AIR' in sc.code:
+                            leg = 'FREIGHT'
                     else:
-                        leg = 'FREIGHT' # Assume Spot is mostly freight if unknown?
+                        # Fallback for manual lines
+                        if 'ORIGIN' in (line.cost_source or '').upper():
+                            leg = 'ORIGIN'
+                        elif 'DEST' in (line.cost_source or '').upper():
+                            leg = 'DESTINATION'
+                        else:
+                            leg = 'FREIGHT' # Assume Spot is mostly freight if unknown?
                 
                 # Build sell line
                 sell_line = {
@@ -378,6 +383,7 @@ class QuoteComputeV3View(APIView):
                     "component": sc_code,
                     "description": sc_desc,
                     "leg": leg,
+                    "bucket": bucket,
                     "cost_pgk": str(line.cost_pgk),
                     "sell_pgk": str(line.sell_pgk),
                     "sell_pgk_incl_gst": str(line.sell_pgk_incl_gst or line.sell_pgk * Decimal('1.1')),

@@ -206,7 +206,7 @@ Implement complete quote lifecycle management with UI enhancements for daily usa
 | 5.11 | ✅ **AI Rate Intake: PDF Extraction** | pdfplumber primary, pymupdf fallback, OCR warnings; `pdf_extraction.py` | DONE |
 | 5.12 | ✅ **AI Rate Intake: Gemini Integration** | Gemini 2.0 Flash parsing with strict JSON output; `ai_intake_service.py` | DONE |
 | 5.13 | ✅ **AI Rate Intake: API Endpoint** | `POST /api/quotes/{id}/ai-intake/` accepting text or PDF; returns validated lines | DONE |
-| 5.14 | **AI Rate Intake: Frontend UI** | Paste text / Upload PDF interface; Editable preview table; Accept/reject flow | 6h |
+| 5.14 | ✅ **AI Rate Intake: Frontend UI** | Paste text / Upload PDF interface; Editable preview table; Accept/reject flow | DONE |
 
 ### AI-Assisted Rate Intake (Core MVP Feature)
 
@@ -379,8 +379,9 @@ gantt
 1. ✅ Roadmap approved with decisions confirmed
 2. ✅ Architecture Principles documented (`docs/ARCHITECTURE_PRINCIPLES.md`)
 3. ✅ AI Rate Intake backend complete (Pydantic schemas, PDF extraction, Gemini integration, API endpoint)
-4. 🔲 Install AI dependencies: `pip install pdfplumber pymupdf google-generativeai`
-5. 🔲 Set `GEMINI_API_KEY` environment variable
-6. 🔲 Build AI Rate Intake frontend UI (task 5.14)
-7. 🔲 Create Jira/GitHub tickets from task tables
-8. 🔲 Begin Phase A: Design System + RBAC Core in parallel
+4. ✅ AI Rate Intake frontend complete (`AIRateIntakeModal.tsx` with text/PDF input, editable preview, accept/reject flow)
+5. 🔲 Install AI dependencies: `pip install pdfplumber pymupdf google-generativeai`
+6. 🔲 Set `GEMINI_API_KEY` environment variable
+7. 🔲 Begin WS6: PDF Export (tasks 6.1-6.4)
+8. 🔲 Begin WS2: Frontend RBAC (tasks 2.6-2.8)
+9. 🔲 Create Jira/GitHub tickets from task tables

@@ -1,16 +1,21 @@
 "use client";
 
+import { useState } from "react";
 import { V3QuoteComputeResponse } from "@/lib/types";
+import { downloadQuotePDF } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Mail, Download, FileText } from "lucide-react";
+import { Mail, Download, FileText, Loader2 } from "lucide-react";
 
 interface QuoteDocumentPreviewProps {
     quote: V3QuoteComputeResponse;
 }
 
 export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProps) {
+    const [pdfDownloading, setPdfDownloading] = useState(false);
+    const canDownloadPDF = quote.status === "FINALIZED" || quote.status === "SENT";
+
     const customerDetails =
         quote.customer && typeof quote.customer === "object"
             ? quote.customer
@@ -28,6 +33,18 @@ export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProp
         minimumFractionDigits: 2,
     });
 
+    const handleDownloadPDF = async () => {
+        setPdfDownloading(true);
+        try {
+            await downloadQuotePDF(quote.id, quote.quote_number);
+        } catch (err) {
+            console.error("PDF download failed:", err);
+            alert(err instanceof Error ? err.message : "Failed to download PDF");
+        } finally {
+            setPdfDownloading(false);
+        }
+    };
+
     return (
         <Card className="border-slate-200">
             <CardHeader className="pb-3">
@@ -43,7 +60,7 @@ export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProp
                         {/* Mini Document Preview */}
                         <div className="flex justify-between mb-2">
                             <div>
-                                <div className="font-bold text-[10px] text-blue-600">RateEngine</div>
+                                <div className="font-bold text-[10px] text-blue-600">EFM Express</div>
                                 <div className="text-slate-400 mt-1">
                                     <div>Bill To:</div>
                                     <div className="font-medium text-slate-600">{customerDetails?.name || "Customer"}</div>
@@ -93,16 +110,29 @@ export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProp
                         <Mail className="w-4 h-4" />
                         Email Quote PDF
                     </Button>
-                    <Button
-                        variant="outline"
-                        className="w-full justify-center gap-2 border-slate-300"
-                        onClick={() => alert("Download PDF - Coming soon!")}
-                    >
-                        <Download className="w-4 h-4" />
-                        Download PDF
-                    </Button>
+                    {canDownloadPDF && (
+                        <Button
+                            variant="outline"
+                            className="w-full justify-center gap-2 border-slate-300"
+                            disabled={pdfDownloading}
+                            onClick={handleDownloadPDF}
+                        >
+                            {pdfDownloading ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Generating...
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="w-4 h-4" />
+                                    Download PDF
+                                </>
+                            )}
+                        </Button>
+                    )}
                 </div>
             </CardContent>
         </Card>
     );
 }
+

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { apiClient } from '@/lib/api';
+import { usePermissions } from '@/hooks/usePermissions';
 
 interface Address {
   country: string;
@@ -26,6 +27,7 @@ interface Customer {
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const { isAdmin } = usePermissions();
 
   useEffect(() => {
     const getCustomers = async () => {
@@ -52,9 +54,12 @@ export default function CustomersPage() {
               A list of all customers, agents, and partners in the system.
             </CardDescription>
           </div>
-          <Link href="/customers/new">
-            <Button>Add New Customer</Button>
-          </Link>
+          {/* Only Admin can add new customers */}
+          {isAdmin && (
+            <Link href="/customers/new">
+              <Button>Add New Customer</Button>
+            </Link>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -71,9 +76,11 @@ export default function CustomersPage() {
               <th scope="col" className="px-6 py-3">
                 Country
               </th>
-              <th scope="col" className="px-6 py-3">
-                <span className="sr-only">Edit</span>
-              </th>
+              {isAdmin && (
+                <th scope="col" className="px-6 py-3">
+                  <span className="sr-only">Edit</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -90,11 +97,14 @@ export default function CustomersPage() {
                 </th>
                 <td className="px-6 py-4">{customer.contact_person_name}</td>
                 <td className="px-6 py-4">{customer.primary_address?.country}</td>
-                <td className="px-6 py-4 text-right">
-                  <Link href={`/customers/${customer.id}/edit`}>
-                    <Button variant="outline">Edit</Button>
-                  </Link>
-                </td>
+                {/* Only Admin can edit customers */}
+                {isAdmin && (
+                  <td className="px-6 py-4 text-right">
+                    <Link href={`/customers/${customer.id}/edit`}>
+                      <Button variant="outline">Edit</Button>
+                    </Link>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

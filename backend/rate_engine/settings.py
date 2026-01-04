@@ -73,7 +73,7 @@ ROOT_URLCONF = 'rate_engine.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],  # Project-level templates
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -135,6 +135,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/topics/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [BASE_DIR / 'static']  # Project-level static files
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
@@ -150,6 +151,14 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.TokenAuthentication',
     ],
 }
+
+# Public quote share links (customer-facing).
+FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3000')
+_public_quote_ttl = os.environ.get('PUBLIC_QUOTE_LINK_TTL_SECONDS', str(60 * 60 * 24 * 7))
+try:
+    PUBLIC_QUOTE_LINK_TTL_SECONDS = int(_public_quote_ttl)
+except ValueError:
+    PUBLIC_QUOTE_LINK_TTL_SECONDS = 60 * 60 * 24 * 7
 
 # Explicit SPOT coverage overrides for known lanes.
 SPOT_ROUTE_COVERAGE = {

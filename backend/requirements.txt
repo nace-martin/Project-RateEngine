@@ -32,8 +32,8 @@ lxml==5.2.2; python_version < "3.13"
 lxml>=5.4,<6; python_version >= "3.13"
 pydantic>=2.0
 
-
-weasyprint 
+# PDF generation
+xhtml2pdf>=0.2.11
 
 # AI Rate Intake dependencies
 pdfplumber>=0.10.0

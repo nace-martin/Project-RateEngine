@@ -4,6 +4,7 @@ V3 API views for the parties app.
 
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, viewsets
+from rest_framework.permissions import BasePermission
 
 from .models import Company, Contact
 from .serializers import (
@@ -11,15 +12,42 @@ from .serializers import (
     CompanySearchV3Serializer,
     ContactV3Serializer,
 )
+from accounts.models import CustomUser
+
+
+class CustomerAccessPermission(BasePermission):
+    """
+    Custom permission for Customer management:
+    - All authenticated users can READ (list, retrieve)
+    - Only Admin users can CREATE/UPDATE/DELETE
+    
+    This protects data quality by restricting who can modify customer records.
+    """
+    message = "Admin access required to create or edit customers."
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        # All authenticated users can read
+        if request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return True
+        
+        # For write methods, only Admin allowed
+        return request.user.role == CustomUser.ROLE_ADMIN
 
 
 class CustomerV3ViewSet(viewsets.ModelViewSet):
     """
     V3 ViewSet for managing customer companies.
+    
+    Permissions:
+    - GET (list/retrieve): All authenticated users
+    - POST/PUT/PATCH/DELETE: Admin only
     """
 
     serializer_class = CustomerV3Serializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CustomerAccessPermission]
     http_method_names = ["get", "post", "put", "patch"]
 
     def get_queryset(self):

@@ -14,6 +14,8 @@ from .views import (
     AIRateIntakeAPIView,
     QuoteTransitionAPIView,
     QuoteCloneAPIView,
+    QuotePDFAPIView,
+    QuotePublicDetailAPIView,
 )
 from .spot_views import (
     SpotScopeValidateAPIView,
@@ -41,6 +43,8 @@ urlpatterns = [
     path('v3/quotes/<uuid:quote_id>/ai-intake/', AIRateIntakeAPIView.as_view(), name='ai-rate-intake'),
     path('v3/quotes/<uuid:quote_id>/transition/', QuoteTransitionAPIView.as_view(), name='quote-transition'),
     path('v3/quotes/<uuid:quote_id>/clone/', QuoteCloneAPIView.as_view(), name='quote-clone'),
+    path('v3/quotes/<uuid:quote_id>/pdf/', QuotePDFAPIView.as_view(), name='quote-pdf'),
+    path('v3/quotes/public/', QuotePublicDetailAPIView.as_view(), name='quote-public-detail'),
     path('v3/customers/<uuid:customer_id>/', CustomerDetailAPIView.as_view(), name='customer-detail'),
     path('v3/ratecards/', RatecardListAPIView.as_view(), name='ratecard-list'),
     path('v3/ratecards/upload/', RatecardUploadAPIView.as_view(), name='ratecard-upload'),

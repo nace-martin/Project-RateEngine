@@ -259,6 +259,10 @@ class QuoteLine(models.Model):
 
     exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
 
+    # --- V3 Categorization Fields ---
+    leg = models.CharField(max_length=20, null=True, blank=True, help_text="ORIGIN, MAIN, or DESTINATION")
+    bucket = models.CharField(max_length=50, null=True, blank=True, help_text="e.g., origin_charges, airfreight, destination_charges")
+
     # --- V3 Audit Fields (from _save_quote_v3) ---
     cost_source = models.CharField(max_length=50, null=True, blank=True)
     cost_source_description = models.CharField(max_length=255, null=True, blank=True)

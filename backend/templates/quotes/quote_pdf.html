@@ -1,0 +1,116 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style type="text/css">
+@page { size: A4 landscape; margin: 1cm; }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; line-height: 1.2; color: #1F2937; }
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+.bold { font-weight: bold; }
+.uppercase { text-transform: uppercase; }
+.header-table { width: 100%; margin-bottom: 30px; }
+.quote-num { font-size: 24pt; font-weight: bold; color: #0F2A56; }
+.meta-line { font-size: 8pt; color: #6B7280; }
+.status-badge { padding: 3pt 8pt; font-size: 8pt; font-weight: bold; color: #FFFFFF; background-color: #059669; }
+.status-draft { background-color: #D97706; }
+.route-table { width: 100%; background-color: #F1F5F9; border-top: 2pt solid #0F2A56; border-bottom: 2pt solid #0F2A56; margin-bottom: 20pt; }
+.route-table td { padding: 15pt 10pt; vertical-align: middle; }
+.loc-code { font-size: 32pt; font-weight: bold; color: #0F2A56; }
+.loc-name { font-size: 9pt; color: #64748B; }
+.route-info { font-size: 8pt; color: #475569; line-height: 1.5; }
+.details-table { width: 100%; border-collapse: collapse; margin-bottom: 25pt; }
+.details-table td { border: 1pt solid #E2E8F0; padding: 12pt; background-color: #F8FAFB; width: 33.33%; vertical-align: top; }
+.label { font-size: 7pt; color: #64748B; text-transform: uppercase; font-weight: bold; margin-bottom: 4pt; }
+.value { font-size: 11pt; font-weight: bold; color: #1E293B; }
+.section-header { font-size: 10pt; font-weight: bold; color: #1E293B; margin-bottom: 8pt; border-bottom: 2pt solid #0F2A56; padding-bottom: 4pt; }
+.pricing-table { width: 100%; border-collapse: collapse; }
+.pricing-table th { text-align: left; background-color: #F8FAFB; padding: 8pt; font-size: 8pt; font-weight: bold; color: #475569; border-bottom: 1pt solid #CBD5E1; }
+.pricing-table td { padding: 8pt; border-bottom: 1pt solid #E2E8F0; font-size: 10pt; }
+.totals-bar-table { width: 100%; background-color: #0F2A56; color: #FFFFFF; margin-top: 20pt; border-collapse: collapse; }
+.totals-bar-table td { padding: 15pt 25pt; vertical-align: middle; }
+.total-item-label { font-size: 9pt; color: #CBD5E1; text-transform: uppercase; font-weight: bold; }
+.total-item-value { font-size: 11pt; font-weight: bold; text-align: right; color: #FFFFFF; }
+.grand-total-label { font-size: 13pt; font-weight: bold; color: #FFFFFF; }
+.grand-total-value { font-size: 22pt; font-weight: bold; text-align: right; color: #FFFFFF; }
+.equiv-line { font-size: 9pt; color: #94A3B8; text-align: right; font-style: italic; }
+.footer { margin-top: 30pt; font-size: 8pt; color: #64748B; border-top: 1pt solid #E2E8F0; padding-top: 15pt; }
+.terms-title { font-size: 8pt; font-weight: bold; color: #1E293B; text-transform: uppercase; margin-bottom: 5pt; }
+.terms-text { line-height: 1.6; }
+.watermark { position: absolute; top: 400px; left: 200px; font-size: 120pt; color: #F1F5F9; transform: rotate(-30deg); z-index: -100; }
+</style>
+</head>
+<body>
+{% if show_watermark %}<div class="watermark">DRAFT</div>{% endif %}
+<table class="header-table">
+<tr>
+<td style="width: 50%; vertical-align: middle;">
+{% if logo_path %}<img src="{{ logo_path }}" style="height: 60px;">{% else %}
+<div style="font-size: 24pt; font-weight: bold; color: #0F2A56;">EFM</div>
+<div style="font-size: 9pt; color: #D71920; font-weight: bold; text-transform: uppercase;">Express Air Cargo</div>
+{% endif %}
+</td>
+<td style="width: 50%; text-align: right; vertical-align: middle;">
+<div class="quote-num">{{ quote.quote_number }}</div>
+<div class="meta-line">Created {{ quote.created_at|date:"d M Y" }} | Valid until {{ quote.valid_until|date:"d M Y" }}</div>
+<div style="margin-top: 8pt;">
+<span class="status-badge {% if show_watermark %}status-draft{% endif %}">{% if show_watermark %}DRAFT{% else %}FINALIZED{% endif %}</span>
+</div>
+</td>
+</tr>
+</table>
+<table class="route-table">
+<tr>
+<td style="width: 25%;"><div class="loc-code">{{ origin_code }}</div><div class="loc-name">{{ origin_name }}</div></td>
+<td style="width: 10%; text-align: center;"><div style="font-size: 30pt; color: #D71920;">-&gt;</div></td>
+<td style="width: 25%;"><div class="loc-code">{{ destination_code }}</div><div class="loc-name">{{ destination_name }}</div></td>
+<td style="width: 40%; text-align: right;" class="route-info">
+MODE: <span class="bold">{{ quote.mode }}</span> | DIR: <span class="bold">{{ quote.shipment_type }}</span><br>
+PAYMENT: <span class="bold">{{ quote.payment_term }}</span>
+{% if quote.incoterm %} | INCOTERM: <span class="bold">{{ quote.incoterm }}</span>{% endif %}
+</td>
+</tr>
+</table>
+<table class="details-table">
+<tr>
+<td><div class="label">Customer</div><div class="value">{{ quote.customer.name }}</div>{% if quote.contact %}<div class="meta-line" style="margin-top: 4pt;">Attn: {{ quote.contact.name }}</div>{% endif %}</td>
+<td><div class="label">Version</div><div class="value">Quote v{{ version.version_number }}</div></td>
+<td><div class="label">Cargo Details</div><div class="value">{% if cargo_details.gross_weight %}GW: {{ cargo_details.gross_weight }}kg{% endif %} {% if cargo_details.chargeable_weight %} | CW: {{ cargo_details.chargeable_weight }}kg{% endif %} {% if cargo_details.pieces %} | {{ cargo_details.pieces }} Pcs{% endif %}</div></td>
+</tr>
+</table>
+<div class="section-header uppercase">Pricing Summary</div>
+<table class="pricing-table">
+<thead>
+<tr><th style="width: 70%;">Charge Category</th><th style="width: 30%; text-align: right;">Subtotal ({{ currency }})</th></tr>
+</thead>
+<tbody>
+{% for bucket in charge_buckets %}
+<tr><td class="bold">{{ bucket.name }}</td><td class="text-right bold">{{ bucket.subtotal|floatformat:2 }}</td></tr>
+{% empty %}
+<tr><td colspan="2" style="color: #9CA3AF; font-style: italic; padding: 20pt; text-align: center;">No charges available</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<table class="totals-bar-table">
+<tr>
+<td style="width: 60%;">
+<div class="total-item-label">Total (Excluding GST)</div>
+<div style="font-size: 14pt; font-weight: bold; margin-top: 4pt;">{{ currency }} {{ totals.sell_excl_gst|floatformat:2 }}</div>
+<div class="total-item-label" style="margin-top: 10pt;">GST (10%)</div>
+<div style="font-size: 14pt; font-weight: bold; margin-top: 4pt;">{{ currency }} {{ totals.gst|floatformat:2 }}</div>
+</td>
+<td style="width: 40%; text-align: right; border-left: 1pt solid #1E3A5F;">
+<div class="grand-total-label uppercase">Grand Total</div>
+<div class="grand-total-value">{{ currency }} {{ totals.sell_incl_gst|floatformat:2 }}</div>
+{% if totals.fcy and totals.fcy_currency != currency %}<div class="equiv-line">Equivalent: {{ totals.fcy_currency }} {{ totals.fcy_amount|floatformat:2 }}</div>{% endif %}
+</td>
+</tr>
+</table>
+<div class="footer">
+{% if public_quote_url %}<div style="margin-bottom: 12pt;">Detailed breakdown available online: <a href="{{ public_quote_url }}" style="color: #0F2A56; text-decoration: underline; font-weight: bold;">{{ public_quote_url }}</a></div>{% endif %}
+<div class="terms-title">Terms & Conditions</div>
+<div class="terms-text">Valid until {{ quote.valid_until|date:"d M Y" }}. space subject to availability at time of booking. Rates based on estimated cargo weight/dimensions; final charges calculated on actual or volumetric weight, whichever is greater. Quotes exclude duties/taxes unless specified. Claims within 7 days of delivery.</div>
+<div style="margin-top: 15pt; text-align: center; font-size: 7pt; color: #94A3B8;">Generated by RateEngine v{{ version.version_number }} | {{ generated_at|date:"d M Y H:i" }} | EFM Express Air Cargo</div>
+</div>
+</body>
+</html>

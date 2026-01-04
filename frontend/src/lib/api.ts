@@ -897,6 +897,65 @@ export async function cloneQuote(quoteId: string): Promise<CloneQuoteResponse> {
   return response.json();
 }
 
+// --- Quote PDF Export ---
+
+type QuotePDFOptions = {
+  summaryOnly?: boolean;
+};
+
+/**
+ * Download a quote as PDF.
+ * Fetches the PDF from the backend and triggers a browser download.
+ */
+export async function downloadQuotePDF(
+  quoteId: string,
+  quoteNumber?: string,
+  options?: QuotePDFOptions,
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (options?.summaryOnly) {
+    params.set('summary', '1');
+  }
+  const query = params.toString();
+  const url = API_BASE_URL + `/api/v3/quotes/${quoteId}/pdf/` + (query ? `?${query}` : '');
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+  });
+
+  if (!response.ok) {
+    // Try to get error details from JSON response
+    let errorMessage = `HTTP ${response.status}: `;
+    try {
+      const data = await response.json();
+      errorMessage += data.detail || data.message || JSON.stringify(data);
+    } catch {
+      errorMessage += response.statusText || 'Failed to download PDF';
+    }
+    throw new Error(errorMessage);
+  }
+
+  // Get the blob from response
+  const blob = await response.blob();
+
+  // Create download link
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = downloadUrl;
+  const suffix = options?.summaryOnly ? '-summary' : '';
+  link.download = quoteNumber ? `${quoteNumber}${suffix}.pdf` : `quote${suffix}.pdf`;
+
+  // Trigger download
+  document.body.appendChild(link);
+  link.click();
+
+  // Cleanup
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(downloadUrl);
+}
+
 // =============================================================================
 // SPOT MODE APIs
 // =============================================================================

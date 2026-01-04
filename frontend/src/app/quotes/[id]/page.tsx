@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/context/auth-context";
-import { createQuoteVersion, getQuoteV3, getQuoteCompute } from "@/lib/api";
+import { createQuoteVersion, getQuoteV3, getQuoteCompute, downloadQuotePDF } from "@/lib/api";
 import {
   QuoteVersionCreatePayload,
   V3ManualOverride,
@@ -57,6 +57,7 @@ export default function QuoteDetailPage() {
   const [recalculateLoading, setRecalculateLoading] = useState(false);
   const [recalculateSuccess, setRecalculateSuccess] = useState(false);
   const [hasSpotCharges, setHasSpotCharges] = useState(false);
+  const [pdfDownloading, setPdfDownloading] = useState(false);
 
   useEffect(() => {
     if (id && user) {
@@ -213,6 +214,7 @@ export default function QuoteDetailPage() {
 
   // For finalized view, use the new two-column layout
   const showFinalizedLayout = !isIncomplete;
+  const canDownloadPDF = quote.status === "FINALIZED" || quote.status === "SENT";
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -338,19 +340,49 @@ export default function QuoteDetailPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="outline" className="hidden sm:flex" onClick={() => window.print()}>
-              Download PDF
-            </Button>
-            <Button
-              size="lg"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-200"
-              onClick={() => {
-                // Finalize logic or navigate
-                router.push(`/quotes/${id}/finalize`); // Assuming this route or logic exists
-              }}
-            >
-              Finalize Quote <CheckCircle className="ml-2 h-4 w-4" />
-            </Button>
+            {canDownloadPDF && (
+              <Button
+                variant="outline"
+                className="hidden sm:flex"
+                disabled={pdfDownloading}
+                onClick={async () => {
+                  setPdfDownloading(true);
+                  try {
+                    await downloadQuotePDF(quote.id, quote.quote_number);
+                  } catch (err) {
+                    console.error("PDF download failed:", err);
+                    alert(err instanceof Error ? err.message : "Failed to download PDF");
+                  } finally {
+                    setPdfDownloading(false);
+                  }
+                }}
+              >
+                {pdfDownloading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  "Download PDF"
+                )}
+              </Button>
+            )}
+            {/* Only show finalize button for DRAFT quotes, handled by QuoteStatusActions above */}
+            {quote.status === "FINALIZED" || quote.status === "SENT" ? (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+                <span>Quote {quote.status.toLowerCase()}</span>
+              </div>
+            ) : quote.status === "DRAFT" ? (
+              <QuoteStatusActions
+                quoteId={quote.id}
+                status={quote.status}
+                hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+                onStatusChange={() => {
+                  getQuoteV3(id).then((data) => setQuote(data));
+                }}
+              />
+            ) : null}
           </div>
         </div>
       </div>

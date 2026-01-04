@@ -103,7 +103,7 @@ class Command(BaseCommand):
                 'max_charge': Decimal(max_charge) if max_charge else None,
                 'weight_breaks': weight_breaks,
                 'percent_rate': Decimal(percent_rate) if percent_rate else None,
-                'valid_until': date(2025, 12, 31)
+                'valid_until': date(2026, 12, 31)
             }
         )
         self.stdout.write(f"  - Seeded COGS {code} {org}->{dest} ({curr})")

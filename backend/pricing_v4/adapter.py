@@ -179,14 +179,21 @@ class PricingServiceV4Adapter:
         for line in import_or_export_lines:
             code = line.product_code
             # Map V4 category to V3 bucket
+            # Use the leg from the V4 engine if available
+            leg = getattr(line, 'leg', 'MAIN')
+            
+            # Map V4 category/leg to V3 bucket
             v4_category = getattr(line, 'category', 'HANDLING')
             bucket = 'origin_charges'
-            if v4_category == 'FREIGHT':
+            if v4_category == 'FREIGHT' or leg == 'FREIGHT':
                 bucket = 'airfreight'
-            elif 'DEST' in code.upper() or 'DEST' in getattr(line, 'description', '').upper():
+                leg = 'MAIN'
+            elif leg == 'DESTINATION' or 'DEST' in code.upper() or 'DEST' in getattr(line, 'description', '').upper():
                 bucket = 'destination_charges'
-            elif v4_category in ['HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'CARTAGE', 'SURCHARGE']:
+                leg = 'DESTINATION'
+            elif leg == 'ORIGIN' or v4_category in ['HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'CARTAGE', 'SURCHARGE']:
                 bucket = 'origin_charges'
+                leg = 'ORIGIN'
 
             sell_currency = getattr(line, 'sell_currency', 'PGK')
             cost_currency = getattr(line, 'cost_currency', sell_currency)
@@ -199,6 +206,7 @@ class PricingServiceV4Adapter:
                     'gst_amount': Decimal('0'),
                     'is_rate_missing': getattr(line, 'is_rate_missing', False),
                     'bucket': bucket,
+                    'leg': leg,
                     'sell_currency': sell_currency,
                     'cost_currency': cost_currency,
                 }
@@ -276,7 +284,7 @@ class PricingServiceV4Adapter:
                     service_component_id=sc_id,
                     service_component_code=code,
                     service_component_desc=data['description'] or sc_desc,
-                    leg='MAIN',
+                    leg=data.get('leg', 'MAIN'),
                     cost_pgk=cost_pgk,
                     sell_pgk=sell_pgk,
                     sell_pgk_incl_gst=sell_pgk_incl_gst,
@@ -299,7 +307,7 @@ class PricingServiceV4Adapter:
                     service_component_id=sc_id,
                     service_component_code=code,
                     service_component_desc=data['description'] or sc_desc,
-                    leg='MAIN',
+                    leg=data.get('leg', 'MAIN'),
                     cost_pgk=cost_pgk,
                     sell_pgk=data['sell_amount'],
                     sell_pgk_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
