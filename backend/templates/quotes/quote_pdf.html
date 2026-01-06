@@ -1,116 +1,446 @@
 ﻿<!DOCTYPE html>
-<html>
+<html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<style type="text/css">
-@page { size: A4 landscape; margin: 1cm; }
-body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; line-height: 1.2; color: #1F2937; }
-.text-right { text-align: right; }
-.text-center { text-align: center; }
-.bold { font-weight: bold; }
-.uppercase { text-transform: uppercase; }
-.header-table { width: 100%; margin-bottom: 30px; }
-.quote-num { font-size: 24pt; font-weight: bold; color: #0F2A56; }
-.meta-line { font-size: 8pt; color: #6B7280; }
-.status-badge { padding: 3pt 8pt; font-size: 8pt; font-weight: bold; color: #FFFFFF; background-color: #059669; }
-.status-draft { background-color: #D97706; }
-.route-table { width: 100%; background-color: #F1F5F9; border-top: 2pt solid #0F2A56; border-bottom: 2pt solid #0F2A56; margin-bottom: 20pt; }
-.route-table td { padding: 15pt 10pt; vertical-align: middle; }
-.loc-code { font-size: 32pt; font-weight: bold; color: #0F2A56; }
-.loc-name { font-size: 9pt; color: #64748B; }
-.route-info { font-size: 8pt; color: #475569; line-height: 1.5; }
-.details-table { width: 100%; border-collapse: collapse; margin-bottom: 25pt; }
-.details-table td { border: 1pt solid #E2E8F0; padding: 12pt; background-color: #F8FAFB; width: 33.33%; vertical-align: top; }
-.label { font-size: 7pt; color: #64748B; text-transform: uppercase; font-weight: bold; margin-bottom: 4pt; }
-.value { font-size: 11pt; font-weight: bold; color: #1E293B; }
-.section-header { font-size: 10pt; font-weight: bold; color: #1E293B; margin-bottom: 8pt; border-bottom: 2pt solid #0F2A56; padding-bottom: 4pt; }
-.pricing-table { width: 100%; border-collapse: collapse; }
-.pricing-table th { text-align: left; background-color: #F8FAFB; padding: 8pt; font-size: 8pt; font-weight: bold; color: #475569; border-bottom: 1pt solid #CBD5E1; }
-.pricing-table td { padding: 8pt; border-bottom: 1pt solid #E2E8F0; font-size: 10pt; }
-.totals-bar-table { width: 100%; background-color: #0F2A56; color: #FFFFFF; margin-top: 20pt; border-collapse: collapse; }
-.totals-bar-table td { padding: 15pt 25pt; vertical-align: middle; }
-.total-item-label { font-size: 9pt; color: #CBD5E1; text-transform: uppercase; font-weight: bold; }
-.total-item-value { font-size: 11pt; font-weight: bold; text-align: right; color: #FFFFFF; }
-.grand-total-label { font-size: 13pt; font-weight: bold; color: #FFFFFF; }
-.grand-total-value { font-size: 22pt; font-weight: bold; text-align: right; color: #FFFFFF; }
-.equiv-line { font-size: 9pt; color: #94A3B8; text-align: right; font-style: italic; }
-.footer { margin-top: 30pt; font-size: 8pt; color: #64748B; border-top: 1pt solid #E2E8F0; padding-top: 15pt; }
-.terms-title { font-size: 8pt; font-weight: bold; color: #1E293B; text-transform: uppercase; margin-bottom: 5pt; }
-.terms-text { line-height: 1.6; }
-.watermark { position: absolute; top: 400px; left: 200px; font-size: 120pt; color: #F1F5F9; transform: rotate(-30deg); z-index: -100; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quote {{ quote.quote_number }}</title>
+    <style>
+        /* WeasyPrint CSS for A4 Landscape PDF */
+        @page {
+            size: A4 landscape;
+            margin: 12mm 15mm;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+            color: #1E293B;
+        }
+
+        .container {
+            width: 100%;
+        }
+
+        /* Logo at Top */
+        .logo-top {
+            margin-bottom: 10px;
+        }
+
+        .logo {
+            max-width: 180px;
+            height: auto;
+        }
+
+        /* Header Section */
+        .header {
+            display: flex;
+            justify-content: flex-end;
+            align-items: flex-start;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+        }
+
+        .quote-meta {
+            flex: 0 0 55%;
+            text-align: right;
+        }
+
+        .quote-number {
+            font-size: 28pt;
+            font-weight: bold;
+            color: #0F2A56;
+            margin-bottom: 5px;
+        }
+
+        .quote-dates {
+            font-size: 10pt;
+            color: #475569;
+            margin-bottom: 3px;
+        }
+
+        .quote-status {
+            font-size: 10pt;
+            font-weight: bold;
+        }
+
+        .status-finalized {
+            color: #059669;
+        }
+
+        .status-draft {
+            color: #D97706;
+        }
+
+        .status-incomplete {
+            color: #DC2626;
+        }
+
+        /* Route Section */
+        .route-section {
+            background: #F1F5F9;
+            border-top: 3px solid #0F2A56;
+            border-bottom: 3px solid #0F2A56;
+            padding: 12px 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .route-display {
+            display: flex;
+            align-items: center;
+            flex: 0 0 60%;
+        }
+
+        .route-point {
+            text-align: center;
+            min-width: 120px;
+        }
+
+        .route-code {
+            font-size: 28pt;
+            font-weight: bold;
+            color: #0F2A56;
+            line-height: 1.1;
+        }
+
+        .route-name {
+            font-size: 9pt;
+            color: #475569;
+        }
+
+        .route-arrow {
+            font-size: 28pt;
+            color: #D71920;
+            font-weight: bold;
+            margin: 0 25px;
+        }
+
+        .route-meta {
+            flex: 0 0 35%;
+            text-align: right;
+            font-size: 10pt;
+            color: #1E293B;
+            line-height: 1.5;
+        }
+
+        .route-meta strong {
+            font-weight: bold;
+        }
+
+        /* Details Grid */
+        .details-grid {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .detail-box {
+            flex: 1;
+            background: #F8FAFC;
+            border: 1.5px solid #CBD5E1;
+            padding: 12px;
+        }
+
+        .detail-label {
+            font-size: 8pt;
+            font-weight: bold;
+            color: #475569;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .detail-value {
+            font-size: 11pt;
+            font-weight: bold;
+            color: #0F172A;
+        }
+
+        .detail-subvalue {
+            font-size: 9pt;
+            color: #475569;
+            margin-top: 2px;
+        }
+
+        /* Pricing Section */
+        .pricing-section {
+            margin-bottom: 12px;
+        }
+
+        .section-header {
+            font-size: 11pt;
+            font-weight: bold;
+            color: #0F172A;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #0F2A56;
+            margin-bottom: 8px;
+        }
+
+        .pricing-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .pricing-table thead th {
+            background: #F1F5F9;
+            color: #475569;
+            font-weight: bold;
+            font-size: 10pt;
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 1.5px solid #94A3B8;
+        }
+
+        .pricing-table thead th:last-child {
+            text-align: right;
+        }
+
+        .pricing-table tbody td {
+            padding: 8px 10px;
+            font-size: 11pt;
+            border-bottom: 0.5px solid #E2E8F0;
+        }
+
+        .pricing-table tbody td:first-child {
+            font-weight: bold;
+        }
+
+        .pricing-table tbody td:last-child {
+            text-align: right;
+        }
+
+        /* Totals Bar */
+        .totals-bar {
+            background: #0F2A56;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .totals-left {
+            color: white;
+        }
+
+        .total-label {
+            font-size: 9pt;
+            color: #CBD5E1;
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .total-amount {
+            font-size: 12pt;
+            color: white;
+            font-weight: bold;
+        }
+
+        .totals-divider {
+            width: 1px;
+            height: 60px;
+            background: #1E3A5F;
+            margin: 0 30px;
+        }
+
+        .totals-right {
+            text-align: right;
+        }
+
+        .grand-total-label {
+            font-size: 11pt;
+            color: #CBD5E1;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+
+        .grand-total-amount {
+            font-size: 22pt;
+            color: white;
+            font-weight: bold;
+        }
+
+        /* Footer */
+        .footer {
+            border-top: 1.5px solid #CBD5E1;
+            padding-top: 10px;
+            font-size: 8pt;
+            color: #475569;
+            line-height: 1.5;
+        }
+
+        .footer-link {
+            margin-bottom: 8px;
+        }
+
+        .footer-terms-title {
+            font-weight: bold;
+            color: #0F172A;
+            margin-bottom: 3px;
+        }
+
+        .footer-terms {
+            margin-bottom: 8px;
+        }
+
+        .footer-generated {
+            font-style: italic;
+            color: #64748B;
+        }
+
+        /* Draft Watermark */
+        .watermark {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-45deg);
+            font-size: 100pt;
+            font-weight: bold;
+            color: rgba(0, 0, 0, 0.05);
+            z-index: -1;
+            pointer-events: none;
+        }
+    </style>
 </head>
+
 <body>
-{% if show_watermark %}<div class="watermark">DRAFT</div>{% endif %}
-<table class="header-table">
-<tr>
-<td style="width: 50%; vertical-align: middle;">
-{% if logo_path %}<img src="{{ logo_path }}" style="height: 60px;">{% else %}
-<div style="font-size: 24pt; font-weight: bold; color: #0F2A56;">EFM</div>
-<div style="font-size: 9pt; color: #D71920; font-weight: bold; text-transform: uppercase;">Express Air Cargo</div>
-{% endif %}
-</td>
-<td style="width: 50%; text-align: right; vertical-align: middle;">
-<div class="quote-num">{{ quote.quote_number }}</div>
-<div class="meta-line">Created {{ quote.created_at|date:"d M Y" }} | Valid until {{ quote.valid_until|date:"d M Y" }}</div>
-<div style="margin-top: 8pt;">
-<span class="status-badge {% if show_watermark %}status-draft{% endif %}">{% if show_watermark %}DRAFT{% else %}FINALIZED{% endif %}</span>
-</div>
-</td>
-</tr>
-</table>
-<table class="route-table">
-<tr>
-<td style="width: 25%;"><div class="loc-code">{{ origin_code }}</div><div class="loc-name">{{ origin_name }}</div></td>
-<td style="width: 10%; text-align: center;"><div style="font-size: 30pt; color: #D71920;">-&gt;</div></td>
-<td style="width: 25%;"><div class="loc-code">{{ destination_code }}</div><div class="loc-name">{{ destination_name }}</div></td>
-<td style="width: 40%; text-align: right;" class="route-info">
-MODE: <span class="bold">{{ quote.mode }}</span> | DIR: <span class="bold">{{ quote.shipment_type }}</span><br>
-PAYMENT: <span class="bold">{{ quote.payment_term }}</span>
-{% if quote.incoterm %} | INCOTERM: <span class="bold">{{ quote.incoterm }}</span>{% endif %}
-</td>
-</tr>
-</table>
-<table class="details-table">
-<tr>
-<td><div class="label">Customer</div><div class="value">{{ quote.customer.name }}</div>{% if quote.contact %}<div class="meta-line" style="margin-top: 4pt;">Attn: {{ quote.contact.name }}</div>{% endif %}</td>
-<td><div class="label">Version</div><div class="value">Quote v{{ version.version_number }}</div></td>
-<td><div class="label">Cargo Details</div><div class="value">{% if cargo_details.gross_weight %}GW: {{ cargo_details.gross_weight }}kg{% endif %} {% if cargo_details.chargeable_weight %} | CW: {{ cargo_details.chargeable_weight }}kg{% endif %} {% if cargo_details.pieces %} | {{ cargo_details.pieces }} Pcs{% endif %}</div></td>
-</tr>
-</table>
-<div class="section-header uppercase">Pricing Summary</div>
-<table class="pricing-table">
-<thead>
-<tr><th style="width: 70%;">Charge Category</th><th style="width: 30%; text-align: right;">Subtotal ({{ currency }})</th></tr>
-</thead>
-<tbody>
-{% for bucket in charge_buckets %}
-<tr><td class="bold">{{ bucket.name }}</td><td class="text-right bold">{{ bucket.subtotal|floatformat:2 }}</td></tr>
-{% empty %}
-<tr><td colspan="2" style="color: #9CA3AF; font-style: italic; padding: 20pt; text-align: center;">No charges available</td></tr>
-{% endfor %}
-</tbody>
-</table>
-<table class="totals-bar-table">
-<tr>
-<td style="width: 60%;">
-<div class="total-item-label">Total (Excluding GST)</div>
-<div style="font-size: 14pt; font-weight: bold; margin-top: 4pt;">{{ currency }} {{ totals.sell_excl_gst|floatformat:2 }}</div>
-<div class="total-item-label" style="margin-top: 10pt;">GST (10%)</div>
-<div style="font-size: 14pt; font-weight: bold; margin-top: 4pt;">{{ currency }} {{ totals.gst|floatformat:2 }}</div>
-</td>
-<td style="width: 40%; text-align: right; border-left: 1pt solid #1E3A5F;">
-<div class="grand-total-label uppercase">Grand Total</div>
-<div class="grand-total-value">{{ currency }} {{ totals.sell_incl_gst|floatformat:2 }}</div>
-{% if totals.fcy and totals.fcy_currency != currency %}<div class="equiv-line">Equivalent: {{ totals.fcy_currency }} {{ totals.fcy_amount|floatformat:2 }}</div>{% endif %}
-</td>
-</tr>
-</table>
-<div class="footer">
-{% if public_quote_url %}<div style="margin-bottom: 12pt;">Detailed breakdown available online: <a href="{{ public_quote_url }}" style="color: #0F2A56; text-decoration: underline; font-weight: bold;">{{ public_quote_url }}</a></div>{% endif %}
-<div class="terms-title">Terms & Conditions</div>
-<div class="terms-text">Valid until {{ quote.valid_until|date:"d M Y" }}. space subject to availability at time of booking. Rates based on estimated cargo weight/dimensions; final charges calculated on actual or volumetric weight, whichever is greater. Quotes exclude duties/taxes unless specified. Claims within 7 days of delivery.</div>
-<div style="margin-top: 15pt; text-align: center; font-size: 7pt; color: #94A3B8;">Generated by RateEngine v{{ version.version_number }} | {{ generated_at|date:"d M Y H:i" }} | EFM Express Air Cargo</div>
-</div>
+    {% if show_watermark %}
+    <div class="watermark">DRAFT</div>
+    {% endif %}
+
+    <div class="container">
+        <!-- Logo at Top -->
+        <div class="logo-top">
+            {% if logo_base64 %}
+            <img src="data:image/png;base64,{{ logo_base64 }}" alt="EFM Express Air Cargo" class="logo">
+            {% else %}
+            <div style="font-size: 24pt; font-weight: bold; color: #0F2A56;">EFM</div>
+            <div style="font-size: 10pt; color: #D71920; font-weight: bold;">EXPRESS AIR CARGO</div>
+            {% endif %}
+        </div>
+
+        <!-- Header (Quote Meta Only) -->
+        <div class="header">
+            <div class="quote-meta" style="flex: 1; text-align: right;">
+                <div class="quote-number">{{ quote.quote_number }}</div>
+                <div class="quote-dates">Created {{ quote.created_at|date:"d M Y" }} | Valid until {{
+                    quote.valid_until|date:"d M Y" }}</div>
+                <div class="quote-status status-{{ quote.status|lower }}">{{ quote.status }}</div>
+            </div>
+        </div>
+
+        <!-- Details Grid (Customer & Shipment Details) -->
+        <div class="details-grid">
+            <div class="detail-box">
+                <div class="detail-label">Customer</div>
+                <div class="detail-value">{{ quote.customer.name }}</div>
+                {% if quote.contact %}
+                <div class="detail-subvalue">Attn: {{ quote.contact.first_name }} {{ quote.contact.last_name }}</div>
+                {% endif %}
+            </div>
+            <div class="detail-box">
+                <div class="detail-label">Shipment Details</div>
+                <div class="detail-value">
+                    Mode: <strong>{{ quote.mode }}</strong>
+                    <span style="margin-left: 20px;">Service: <strong>{{ quote.shipment_type }}</strong></span>
+                </div>
+                <div class="detail-subvalue">
+                    Payment: <strong>{{ quote.payment_term }}</strong>
+                    {% if quote.incoterm %}<span style="margin-left: 20px;">Incoterm: <strong>{{ quote.incoterm
+                            }}</strong></span>{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Route Section (Shipment Bar) - Moved Below Details -->
+        <div class="route-section">
+            <div class="route-display">
+                <div class="route-point">
+                    <div class="route-code">{{ origin_code }}</div>
+                    <div class="route-name">{{ origin_name }}</div>
+                </div>
+                <div class="route-arrow">→</div>
+                <div class="route-point">
+                    <div class="route-code">{{ destination_code }}</div>
+                    <div class="route-name">{{ destination_name }}</div>
+                </div>
+            </div>
+            <div class="route-meta">
+                <strong>Cargo:</strong> {{ cargo_details.cargo_type|default:"General Cargo" }}<br>
+                <strong>Chargeable:</strong> {{ cargo_details.chargeable_weight|default:"0.0" }} kg
+            </div>
+        </div>
+
+        <!-- Pricing Summary -->
+        <div class="pricing-section">
+            <div class="section-header">PRICING SUMMARY</div>
+            <table class="pricing-table">
+                <thead>
+                    <tr>
+                        <th>Charge Category</th>
+                        <th>Subtotal ({{ quote.output_currency }})</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for bucket in charge_buckets %}
+                    <tr>
+                        <td>{{ bucket.name }}</td>
+                        <td>{{ bucket.subtotal|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="2">No charges available</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Totals Bar -->
+        <div class="totals-bar">
+            <div class="totals-left">
+                <div class="total-label">TOTAL (EXCL. GST)</div>
+                <div class="total-amount">{{ quote.output_currency }} {{ totals.sell_excl_gst|floatformat:2 }}</div>
+                <div style="margin-top: 10px;">
+                    <div class="total-label">GST (10%)</div>
+                    <div class="total-amount">{{ quote.output_currency }} {{ totals.gst|floatformat:2 }}</div>
+                </div>
+            </div>
+            <div class="totals-divider"></div>
+            <div class="totals-right">
+                <div class="grand-total-label">GRAND TOTAL</div>
+                <div class="grand-total-amount">{{ quote.output_currency }} {{ totals.sell_incl_gst|floatformat:2 }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-link">
+                <strong>Detailed breakdown available online:</strong> {{ public_url }}
+            </div>
+            <div class="footer-terms-title">TERMS & CONDITIONS</div>
+            <div class="footer-terms">
+                Valid until {{ quote.valid_until|date:"d M Y" }}. Space subject to availability at time of booking.
+                Rates based on estimated cargo weight/dimensions; final charges calculated on actual or volumetric
+                weight,
+                whichever is greater. Quotes exclude duties/taxes unless specified. Claims within 7 days of delivery.
+            </div>
+            <div class="footer-generated">
+                Generated by RateEngine v{{ version.version_number }} | {{ generated_at|date:"d M Y H:i" }} | EFM
+                Express Air Cargo
+            </div>
+        </div>
+    </div>
 </body>
+
 </html>

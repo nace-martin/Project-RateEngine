@@ -28,7 +28,16 @@ def get_public_quote_id_from_token(token: str) -> str | None:
         return None
 
 
-def build_public_quote_url(quote_id: str) -> str:
+def build_public_quote_url(
+    quote_id: str,
+    version_number: int | None = None,
+    summary_only: bool = False,
+) -> str:
     base_url = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
     token = build_public_quote_token(quote_id)
-    return f"{base_url}/public/quote?token={urlquote(token)}"
+    query_parts = [f"token={urlquote(token)}"]
+    if version_number is not None:
+        query_parts.append(f"version={version_number}")
+    if summary_only:
+        query_parts.append("summary=1")
+    return f"{base_url}/public/quote?{'&'.join(query_parts)}"

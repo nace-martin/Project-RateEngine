@@ -63,19 +63,33 @@ const formatMoney = (currency: string, value: string | number | null) => {
 type PublicQuotePageProps = {
   searchParams?: {
     token?: string | string[];
+    version?: string | string[];
+    summary?: string | string[];
   };
 };
 
 export default async function PublicQuotePage({ searchParams }: PublicQuotePageProps) {
   const tokenParam = searchParams?.token;
   const token = Array.isArray(tokenParam) ? tokenParam[0] : tokenParam;
+  const versionParam = searchParams?.version;
+  const version = Array.isArray(versionParam) ? versionParam[0] : versionParam;
+  const summaryParam = searchParams?.summary;
+  const summaryValue = Array.isArray(summaryParam) ? summaryParam[0] : summaryParam;
+  const summaryOnly = summaryValue ? ["1", "true", "yes"].includes(summaryValue.toLowerCase()) : false;
   if (!token) {
     notFound();
   }
 
   const rawApiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
   const apiBase = rawApiBase.toLowerCase().endsWith('/api') ? rawApiBase.slice(0, -4) : rawApiBase;
-  const response = await fetch(`${apiBase}/api/v3/quotes/public/?token=${encodeURIComponent(token)}`, {
+  const params = new URLSearchParams({ token });
+  if (version) {
+    params.set("version", version);
+  }
+  if (summaryOnly) {
+    params.set("summary", "1");
+  }
+  const response = await fetch(`${apiBase}/api/v3/quotes/public/?${params.toString()}`, {
     cache: "no-store",
   });
 
@@ -192,7 +206,9 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Charge Breakdown</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+              {summaryOnly ? "Pricing Summary" : "Charge Breakdown"}
+            </p>
             <p className="text-xs text-slate-400">Link valid for 7 days</p>
           </div>
           <div className="mt-4 space-y-4">
@@ -204,24 +220,26 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
                     {formatMoney(data.currency, bucket.subtotal)}
                   </span>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm text-slate-600">
-                    <thead className="text-xs uppercase tracking-wide text-slate-400">
-                      <tr>
-                        <th className="pb-2">Description</th>
-                        <th className="pb-2 text-right">Amount ({data.currency})</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bucket.lines.map((line, index) => (
-                        <tr key={`${bucket.name}-${index}`} className={line.is_informational ? "text-slate-400" : ""}>
-                          <td className="py-2 pr-4">{line.description}</td>
-                          <td className="py-2 text-right">{formatMoney(data.currency, line.sell)}</td>
+                {!summaryOnly && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-slate-600">
+                      <thead className="text-xs uppercase tracking-wide text-slate-400">
+                        <tr>
+                          <th className="pb-2">Description</th>
+                          <th className="pb-2 text-right">Amount ({data.currency})</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {bucket.lines.map((line, index) => (
+                          <tr key={`${bucket.name}-${index}`} className={line.is_informational ? "text-slate-400" : ""}>
+                            <td className="py-2 pr-4">{line.description}</td>
+                            <td className="py-2 text-right">{formatMoney(data.currency, line.sell)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ))}
             {data.charge_buckets.length === 0 && (

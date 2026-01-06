@@ -1209,12 +1209,17 @@ class QuotePDFAPIView(APIView):
                         {'detail': 'Invalid version number'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
+                if not quote.versions.filter(version_number=version_number).exists():
+                    return Response(
+                        {'detail': 'Quote version not found.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
             summary_param = request.query_params.get('summary', '')
             summary_only = str(summary_param).lower() in ['1', 'true', 'yes']
 
             # Generate PDF
-            pdf_bytes = generate_quote_pdf(quote_id, version_number, summary_only=summary_only)
+            pdf_bytes = generate_quote_pdf(str(quote_id), version_number, summary_only=summary_only)
             
             # Build filename
             suffix = "-summary" if summary_only else ""
@@ -1382,7 +1387,18 @@ class QuotePublicDetailAPIView(APIView):
         if quote.status not in [Quote.Status.FINALIZED, Quote.Status.SENT]:
             return Response({'detail': 'Quote is not available for sharing.'}, status=status.HTTP_403_FORBIDDEN)
 
-        version = quote.versions.order_by('-version_number').first()
+        version_param = request.query_params.get('version')
+        if version_param:
+            try:
+                version_number = int(version_param)
+            except ValueError:
+                return Response({'detail': 'Invalid version number'}, status=status.HTTP_400_BAD_REQUEST)
+
+            version = quote.versions.filter(version_number=version_number).first()
+            if not version:
+                return Response({'detail': 'Quote version not found.'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            version = quote.versions.order_by('-version_number').first()
         if not version:
             return Response({'detail': 'Quote has no versions.'}, status=status.HTTP_404_NOT_FOUND)
 
