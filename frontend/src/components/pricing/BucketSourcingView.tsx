@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { BucketChargeSection } from "@/components/pricing/BucketChargeSection";
-import { FreeformLineEditor, getDefaultCurrencyForCountry } from "@/components/pricing/FreeformLineEditor";
+import { FreeformLineEditor } from "@/components/pricing/FreeformLineEditor";
 import { AIRateIntakeModal } from "@/components/AIRateIntakeModal";
 import {
     getSpotChargesForQuote,
@@ -263,8 +263,6 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
     const visibleBuckets = useMemo(() => getVisibleBuckets(quote), [quote]);
     const bucketSubtotals = useMemo(() => getBucketSubtotals(quote), [quote]);
     const destinationCountryCode = useMemo(() => getDestinationCountryCode(quote), [quote]);
-    const isPassthroughQuote = useMemo(() => isA2DDAPQuote(quote), [quote]);
-
     // Build bucket config with visibility rules
     const bucketConfigs: BucketConfig[] = useMemo(() => {
         const allBuckets: BucketConfig[] = [

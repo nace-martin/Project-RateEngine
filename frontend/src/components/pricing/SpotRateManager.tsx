@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     Card,
     CardContent,
@@ -51,7 +51,7 @@ export function SpotRateManager({
     const [selectedSpotRateId, setSelectedSpotRateId] = useState<string | null>(null);
     const [selectedCharge, setSelectedCharge] = useState<SpotCharge | null>(null);
 
-    const fetchSpotRates = async () => {
+    const fetchSpotRates = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
@@ -64,11 +64,11 @@ export function SpotRateManager({
         } finally {
             setLoading(false);
         }
-    };
+    }, [quoteId]);
 
     useEffect(() => {
         fetchSpotRates();
-    }, [quoteId]);
+    }, [fetchSpotRates]);
 
     const handleCreateSpotRate = (newSpotRate: SpotRate) => {
         setSpotRates((prev) => [...prev, newSpotRate]);

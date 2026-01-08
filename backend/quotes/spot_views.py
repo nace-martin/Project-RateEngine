@@ -66,6 +66,30 @@ def _user_can_access_spe(user, spe_db: SpotPricingEnvelopeDB) -> bool:
     return spe_db.created_by_id == user.id
 
 
+def _get_missing_mandatory_fields(spe_db: SpotPricingEnvelopeDB) -> list:
+    """
+    Compute missing mandatory fields for SPE.
+    Required: rate (at least one charge with amount), currency
+    """
+    missing = []
+    charges = list(spe_db.charge_lines.all())
+    
+    # Check if we have at least one rate charge
+    has_rate = any(
+        cl.amount is not None and float(cl.amount) > 0 
+        for cl in charges
+    )
+    if not has_rate:
+        missing.append('rate')
+    
+    # Check if all charges have currency
+    has_currency = all(cl.currency for cl in charges) if charges else False
+    if not has_currency:
+        missing.append('currency')
+    
+    return missing
+
+
 def _get_spe_or_404(user, envelope_id, queryset=None):
     spe_db = get_object_or_404(queryset or SpotPricingEnvelopeDB, id=envelope_id)
     if not _user_can_access_spe(user, spe_db):
@@ -425,6 +449,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def _serialize_spe(self, spe_db):
         """Serialize SPE DB to JSON."""
+        missing_fields = _get_missing_mandatory_fields(spe_db)
         return {
             'id': str(spe_db.id),
             'status': spe_db.status,
@@ -436,12 +461,8 @@ class SpotEnvelopeListCreateAPIView(APIView):
             'expires_at': spe_db.expires_at.isoformat(),
             'is_expired': spe_db.is_expired,
             'has_acknowledgement': hasattr(spe_db, 'acknowledgement'),
-            'has_manager_approval': hasattr(spe_db, 'manager_approval'),
-            'requires_manager_approval': SpotApprovalPolicy.requires_manager_approval(
-                commodity=spe_db.shipment_context_json.get('commodity', 'GCR'),
-                margin_percent=None,
-                is_multi_leg=spe_db.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING,
-            ),
+            'missing_mandatory_fields': missing_fields,
+            'can_proceed': len(missing_fields) == 0,
             'charges': [
                 {
                     'id': str(cl.id),
@@ -618,11 +639,8 @@ class SpotEnvelopeDetailAPIView(APIView):
             'context_integrity_valid': spe_db.verify_context_integrity(),
             'acknowledgement': ack,
             'manager_approval': approval,
-            'requires_manager_approval': SpotApprovalPolicy.requires_manager_approval(
-                commodity=spe_db.shipment_context_json.get('commodity', 'GCR'),
-                margin_percent=None,
-                is_multi_leg=spe_db.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING,
-            ),
+            'missing_mandatory_fields': _get_missing_mandatory_fields(spe_db),
+            'can_proceed': len(_get_missing_mandatory_fields(spe_db)) == 0,
             'charges': [
                 {
                     'id': str(cl.id),
@@ -633,7 +651,6 @@ class SpotEnvelopeDetailAPIView(APIView):
                     'unit': cl.unit,
                     'bucket': cl.bucket,
                     'is_primary_cost': cl.is_primary_cost,
-                    'conditional': cl.conditional,
                     'conditional': cl.conditional,
                     'min_charge': str(cl.min_charge) if cl.min_charge is not None else None,
                     'note': cl.note,
@@ -669,12 +686,6 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        requires_approval = SpotApprovalPolicy.requires_manager_approval(
-            commodity=spe_db.shipment_context_json.get('commodity', 'GCR'),
-            margin_percent=None,
-            is_multi_leg=spe_db.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING,
-        )
-        
         temp_ack = SPEAcknowledgement(
             acknowledged_by_user_id=str(request.user.id),
             acknowledged_at=timezone.now(),
@@ -700,13 +711,13 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if not requires_approval:
-            is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
-            if not is_valid:
-                return Response(
-                    {'error': error},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        # Always validate for pricing (no manager approval required)
+        is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
+        if not is_valid:
+            return Response(
+                {'error': error},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Create acknowledgement
         SPEAcknowledgementDB.objects.create(
@@ -716,9 +727,9 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
             statement=temp_ack.statement,
         )
 
-        if not requires_approval:
-            spe_db.status = 'ready'
-            spe_db.save()
+        # Always transition to ready - no manager approval required
+        spe_db.status = 'ready'
+        spe_db.save()
         
         spe_db.refresh_from_db()
         
@@ -727,7 +738,6 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
         return Response({
             'success': True,
             'status': spe_db.status,
-            'requires_manager_approval': requires_approval,
         })
 
 
@@ -918,10 +928,28 @@ class SpotEnvelopeComputeAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Get FX rate info for display
+        fx_info = None
+        if adapter.fx_snapshot:
+            # Find the charge currency from SPE charges (usually the first one)
+            spe_charges = list(spe_db.charge_lines.all())
+            if spe_charges:
+                charge_currency = spe_charges[0].currency
+                if charge_currency != 'PGK':
+                    fx_rates_dict = adapter._get_fx_rates_dict()
+                    fx_buy_rate = adapter._get_fx_buy_rate(charge_currency, fx_rates_dict)
+                    fx_info = {
+                        'source_currency': charge_currency,
+                        'target_currency': 'PGK',
+                        'rate': str(fx_buy_rate),
+                        'as_of': adapter.fx_snapshot.as_of_timestamp.isoformat() if adapter.fx_snapshot.as_of_timestamp else None,
+                    }
+        
         return Response({
             'is_complete': True,
             'pricing_mode': adapter.get_pricing_mode(),
             'spe_id': str(spe_db.id),
+            'fx_info': fx_info,
             'lines': [
                 {
                     'code': line.service_component_code,

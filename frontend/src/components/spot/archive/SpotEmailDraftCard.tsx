@@ -11,15 +11,15 @@
  */
 
 import { useState, useMemo, useEffect } from "react";
-import { Copy, Check, Mail, AlertTriangle, Search, User } from "lucide-react";
+import { Copy, Check, Mail, AlertTriangle, Search } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { searchCompanies, getContactsForCompany } from "@/lib/api";
-import type { CompanySearchResult, Contact } from "@/lib/types";
+import { searchCompanies } from "@/lib/api";
+import type { CompanySearchResult } from "@/lib/types";
 import type { SPECommodity } from "@/lib/spot-types";
 
 interface SpotEmailDraftCardProps {
@@ -65,7 +65,6 @@ export function SpotEmailDraftCard({
     triggerCode,
     userName = "",
     serviceScope,
-    shipmentType,
 }: SpotEmailDraftCardProps) {
     const [recipientName, setRecipientName] = useState("");
     const [pickupAddress, setPickupAddress] = useState("");
@@ -173,7 +172,7 @@ ${sender}`;
         return { subject: subject.trim(), body: body.trim() };
     }, [
         originCode, destinationCode, commodity, weightKg, pieces, dimensions,
-        triggerCode, userName, recipientName, serviceScope, shipmentType,
+        triggerCode, userName, recipientName, serviceScope,
         pickupAddress, deliveryAddress
     ]);
 

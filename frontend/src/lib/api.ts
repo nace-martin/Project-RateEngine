@@ -1093,7 +1093,7 @@ export async function getSpotEnvelope(id: string): Promise<SpotPricingEnvelope> 
  */
 export async function acknowledgeSpotEnvelope(
   id: string
-): Promise<{ success: boolean; status: string; requires_manager_approval: boolean }> {
+): Promise<{ success: boolean; status: string }> {
   const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/acknowledge/`;
   const response = await fetch(url, {
     method: 'POST',
@@ -1220,5 +1220,30 @@ export async function createSpotQuote(
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to create quote: ${detail}`);
   }
+  return response.json();
+}
+
+/**
+ * List user's SPOT Pricing Envelopes.
+ * Optionally filter by status (e.g., 'draft' for in-progress quotes).
+ */
+export async function listSpotEnvelopes(
+  status?: 'draft' | 'ready' | 'expired' | 'rejected'
+): Promise<SpotPricingEnvelope[]> {
+  let url = API_BASE_URL + '/api/v3/spot/envelopes/';
+  if (status) {
+    url += `?status=${status}`;
+  }
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to list SPEs: ${detail}`);
+  }
+
   return response.json();
 }

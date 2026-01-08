@@ -1072,6 +1072,7 @@ class ReplyAnalysisService:
         )
 
         genai = get_gemini_client()
+        ai_unavailable = genai is None
         ai_assertions = []
         ai_result = None
         
@@ -1128,8 +1129,29 @@ class ReplyAnalysisService:
         # Build summary
         summary = cls._build_summary(all_assertions, availability=availability)
         
+        # FALLBACK: If no currency was detected from AI or assertions, try to infer from raw text
+        if not summary.has_currency:
+            from quotes.ai_intake_service import _infer_quote_currency_from_text
+            inferred_currency = _infer_quote_currency_from_text(raw_text)
+            if inferred_currency:
+                # Add a currency assertion based on text inference
+                all_assertions.append(ExtractedAssertion(
+                    text=f"Currency inferred from text: {inferred_currency}",
+                    category=AssertionCategory.CURRENCY,
+                    status=AssertionStatus.IMPLICIT,  # Mark as implicit since it wasn't explicitly from AI
+                    confidence=0.8,
+                    rate_currency=inferred_currency,
+                ))
+                # Update summary to reflect the discovered currency
+                summary.has_currency = True
+        
         # Generate warnings
         warnings = cls._generate_warnings(summary, all_assertions)
+        if ai_unavailable:
+            warnings.append(
+                "AI analysis unavailable: Gemini client not configured. "
+                "Install google-generativeai and set GEMINI_API_KEY."
+            )
         
         # Add AI warnings to our warnings list
         if genai and ai_result:

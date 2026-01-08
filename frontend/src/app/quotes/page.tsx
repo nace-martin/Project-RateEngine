@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
-import { getQuotesV3 } from "@/lib/api";
+import { getQuotesV3, listSpotEnvelopes } from "@/lib/api";
 import { V3QuoteComputeResponse } from "@/lib/types";
+import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -47,22 +48,40 @@ const formatRoute = (location: string): string => {
   return location;
 };
 
+// Helper to format date
+const formatDate = (dateStr: string): string => {
+  try {
+    return new Date(dateStr).toLocaleDateString('en-AU', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+};
+
 export default function QuotesPage() {
   const { user } = useAuth();
   const { canEditQuotes, isFinance } = usePermissions();
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
+  const [spotDrafts, setSpotDrafts] = useState<SpotPricingEnvelope[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
-      const fetchQuotes = async () => {
+      const fetchData = async () => {
         setLoading(true);
         setError(null);
         try {
-          // Use the new V3 API function
-          const data = await getQuotesV3();
-          setQuotes(data.results);
+          // Fetch both quotes and SPOT drafts in parallel
+          const [quotesData, draftsData] = await Promise.all([
+            getQuotesV3(),
+            listSpotEnvelopes('draft').catch(() => []), // Silently fail if no drafts
+          ]);
+          setQuotes(quotesData.results);
+          setSpotDrafts(draftsData);
         } catch (err: unknown) {
           const message =
             err instanceof Error ? err.message : "An unexpected error occurred.";
@@ -71,9 +90,64 @@ export default function QuotesPage() {
           setLoading(false);
         }
       };
-      fetchQuotes();
+      fetchData();
     }
   }, [user]);
+
+  const renderSpotDrafts = () => {
+    if (spotDrafts.length === 0) return null;
+
+    return (
+      <Card className="mb-6 border-amber-200 bg-amber-50/50">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg text-amber-800">In-Progress SPOT Quotes</CardTitle>
+          <CardDescription className="text-amber-700">
+            These quotes are saved as drafts. Click &quot;Resume&quot; to continue.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {spotDrafts.map((draft) => {
+              const ctx = draft.shipment;
+              if (!ctx) return null; // Skip if no shipment context
+              return (
+                <div
+                  key={draft.id}
+                  className="flex items-center justify-between rounded-lg border border-amber-200 bg-white p-3"
+                >
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <span className="font-medium text-slate-900">
+                        {ctx.origin_code} → {ctx.destination_code}
+                      </span>
+                      <span className="ml-2 text-sm text-slate-500">
+                        ({ctx.commodity || 'GCR'})
+                      </span>
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      {ctx.total_weight_kg?.toFixed(0) || '0'} kg
+                      {ctx.pieces && ctx.pieces > 1 ? ` × ${ctx.pieces} pcs` : ''}
+                    </div>
+                    <div className="text-sm text-slate-400">
+                      Saved {formatDate(draft.created_at)}
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-amber-400 text-amber-700 hover:bg-amber-100"
+                    onClick={() => window.location.href = `/quotes/spot/${draft.id}`}
+                  >
+                    Resume
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   const renderContent = () => {
     if (loading) {
@@ -167,6 +241,9 @@ export default function QuotesPage() {
           </Button>
         )}
       </div>
+
+      {/* SPOT Drafts Section */}
+      {renderSpotDrafts()}
 
       <Card>
         <CardHeader>

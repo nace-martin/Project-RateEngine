@@ -11,9 +11,7 @@ import type {
   V3QuoteComputeRequest,
 } from "@/lib/types";
 import { getContactsForCompany, computeQuoteV3, validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api";
-import { useSpotMode } from "@/hooks/use-spot-mode";
-import { SpotModeBanner, OutOfScopeBanner } from "@/components/spot";
-import type { SPECommodity, TriggerResult } from "@/lib/spot-types";
+import type { SPECommodity } from "@/lib/spot-types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   quoteFormSchemaV3,
@@ -132,7 +130,7 @@ export default function NewQuotePage() {
   const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(null);
 
   // Spot Rate State
-  const [spotRates, setSpotRates] = useState({
+  const [spotRates] = useState({
     carrierSpotRatePgk: "",
     agentDestChargesFcy: "",
     agentCurrency: "USD",
@@ -144,10 +142,7 @@ export default function NewQuotePage() {
   });
   const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
   const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null);
-  const [pendingFormData, setPendingFormData] = useState<QuoteFormSchemaV3 | null>(null);
-
-  // SPOT Mode State
-  const { state: spotState, actions: spotActions } = useSpotMode();
+  const [, setPendingFormData] = useState<QuoteFormSchemaV3 | null>(null);
 
   const form = useForm<QuoteFormSchemaV3>({
     resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -329,61 +324,6 @@ export default function NewQuotePage() {
       package_type: "Box",
     });
   }
-
-  // Handler for modal spot rate submission
-  const handleMissingRatesSubmit = async (newSpotRates: {
-    carrierSpotRatePgk: string;
-    agentDestChargesFcy: string;
-    agentCurrency: string;
-    isAllIn: boolean;
-  }) => {
-    if (!pendingFormData || !user) return;
-
-    setIsSubmitting(true);
-    setSpotRates(newSpotRates);
-    setShowMissingRatesModal(false);
-    setApiError(null);
-
-    try {
-      const payload = buildQuoteComputePayload(pendingFormData, newSpotRates, pendingQuoteId);
-      console.log('Recalculating with spot rates:', JSON.stringify(payload.spot_rates, null, 2));
-
-      const response = await computeQuoteV3(payload);
-      console.log('Recalculate response:', response.id, 'has_missing_rates:', response.latest_version.totals.has_missing_rates);
-
-      // Check if still missing rates
-      if (response.latest_version.totals.has_missing_rates) {
-        // Update pending quote ID in case it changed
-        setPendingQuoteId(response.id);
-
-        // Recheck which rates are still missing
-        const lines = response.latest_version.lines;
-        const stillMissingCarrier = lines.some(l => l.service_component.code === 'FRT_AIR_EXP' && l.is_rate_missing);
-        const destComponents = ['DST-DELIV-STD', 'DST-CLEAR-CUS', 'DST-HANDL-STD', 'DST-DOC-IMP', 'DST_CHARGES'];
-        const stillMissingAgent = lines.some(l => destComponents.includes(l.service_component.code) && l.is_rate_missing);
-
-        setMissingRates({ carrier: stillMissingCarrier, agent: stillMissingAgent });
-        setShowMissingRatesModal(true);
-        setApiError("Some rates are still missing. Please verify your entries.");
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Success! Clean up and redirect
-      setPendingQuoteId(null);
-      setPendingFormData(null);
-      setMissingRates({ carrier: false, agent: false });
-      router.push(`/quotes/${response.id}`);
-    } catch (error: unknown) {
-      console.error("API Error during recalculation:", error);
-      const message = error instanceof Error ? error.message : "An unexpected error occurred.";
-      setApiError(message);
-      // Reopen modal so user can try again
-      setShowMissingRatesModal(true);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   // Map frontend cargo type to SPE commodity code
   const mapCargoToSPECommodity = (cargoType: string): SPECommodity => {

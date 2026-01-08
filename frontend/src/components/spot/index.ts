@@ -23,3 +23,6 @@ export * from "./archive/SpotEmailDraftCard";
 export { ReplyPasteCard } from './ReplyPasteCard';
 
 export { AssertionReviewCard } from './AssertionReviewCard';
+
+export { QuoteVerificationPanel } from './QuoteVerificationPanel';
+

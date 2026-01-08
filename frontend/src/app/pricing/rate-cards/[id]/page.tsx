@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { getRateCardV3, RateCard } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,7 +32,7 @@ export default function RateCardDetailPage() {
     const [selectedLine, setSelectedLine] = useState<RateLine | null>(null);
     const [isImportOpen, setIsImportOpen] = useState(false);
 
-    async function fetchCard() {
+    const fetchCard = useCallback(async () => {
         try {
             setLoading(true);
             const data = await getRateCardV3(id);
@@ -43,11 +43,11 @@ export default function RateCardDetailPage() {
         } finally {
             setLoading(false);
         }
-    }
+    }, [id]);
 
     useEffect(() => {
         fetchCard();
-    }, [id]);
+    }, [fetchCard]);
 
     const handleAddLine = () => {
         setSelectedLine(null);

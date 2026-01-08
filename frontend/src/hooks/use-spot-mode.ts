@@ -10,7 +10,6 @@ import { useState, useCallback, useMemo } from 'react';
 import type {
     SpotFlowState,
     SpotModeState,
-    TriggerResult,
     TriggerEvaluateRequest,
     CreateSPERequest,
     SpotPricingEnvelope,
@@ -36,6 +35,22 @@ const initialState: SpotModeState = {
     error: null,
     isLoading: false,
     quoteResult: null,
+};
+
+const resolveSpotFlowState = (spe: SpotPricingEnvelope): SpotFlowState => {
+    if (spe.is_expired || spe.status === 'expired') {
+        return 'EXPIRED';
+    }
+    if (spe.status === 'rejected') {
+        return 'REVIEW';
+    }
+    if (spe.status === 'ready' || spe.acknowledgement) {
+        return 'READY';
+    }
+    if (spe.charges.length > 0 || spe.missing_mandatory_fields.length > 0) {
+        return 'REVIEW';
+    }
+    return 'INTAKE';
 };
 
 /**
@@ -144,7 +159,7 @@ export function useSpotMode() {
         try {
             const spe = await createSpotEnvelope(request);
             updateState({
-                flowState: 'RATE_ENTRY',
+                flowState: resolveSpotFlowState(spe),
                 spe,
                 isLoading: false,
             });
@@ -170,7 +185,7 @@ export function useSpotMode() {
         try {
             const spe = await updateSpotEnvelope(id, data);
             updateState({
-                flowState: 'RATE_ENTRY',
+                flowState: resolveSpotFlowState(spe),
                 spe,
                 isLoading: false,
             });
@@ -196,20 +211,7 @@ export function useSpotMode() {
             const spe = await getSpotEnvelope(id);
 
             // Determine flow state from SPE status
-            let flowState: SpotFlowState;
-            if (spe.is_expired) {
-                flowState = 'EXPIRED';
-            } else if (spe.status === 'rejected') {
-                flowState = 'REJECTED';
-            } else if (spe.status === 'ready') {
-                flowState = 'READY';
-            } else if (spe.acknowledgement && spe.requires_manager_approval && !spe.manager_approval) {
-                flowState = 'AWAITING_MANAGER';
-            } else if (!spe.acknowledgement) {
-                flowState = 'AWAITING_ACK';
-            } else {
-                flowState = 'RATE_ENTRY';
-            }
+            const flowState = resolveSpotFlowState(spe);
 
             updateState({
                 flowState,
@@ -246,14 +248,7 @@ export function useSpotMode() {
 
             // Reload SPE to get updated state
             await loadSPE(state.spe.id);
-
-            if (result.requires_manager_approval) {
-                updateState({ flowState: 'AWAITING_MANAGER', isLoading: false });
-            } else if (result.status === 'ready') {
-                updateState({ flowState: 'READY', isLoading: false });
-            }
-
-            return true;
+            return result.success;
         } catch (err) {
             updateState({
                 error: err instanceof Error ? err.message : 'Acknowledgement failed',
@@ -282,12 +277,6 @@ export function useSpotMode() {
 
             // Reload SPE to get updated state
             await loadSPE(state.spe.id);
-
-            if (result.approved) {
-                updateState({ flowState: 'READY', isLoading: false });
-            } else {
-                updateState({ flowState: 'REJECTED', isLoading: false });
-            }
 
             return result.approved;
         } catch (err) {
@@ -374,25 +363,25 @@ export function useSpotMode() {
     // Derived state
     // ==========================================================================
     const canProceedToPricing =
-        state.flowState === 'READY' &&
         state.spe !== null &&
+        state.spe.status === 'ready' &&
+        state.spe.can_proceed &&
         !state.spe.is_expired;
 
     const blockedReason = (() => {
-        switch (state.flowState) {
-            case 'OUT_OF_SCOPE':
-                return state.error || 'Shipment is out of scope';
-            case 'EXPIRED':
-                return 'SPE has expired - please create a new one';
-            case 'REJECTED':
-                return state.spe?.manager_approval?.comment || 'Manager rejected this quote';
-            case 'AWAITING_ACK':
-                return 'Acknowledgement required';
-            case 'AWAITING_MANAGER':
-                return 'Awaiting manager approval';
-            default:
-                return null;
+        if (state.flowState === 'OUT_OF_SCOPE') {
+            return state.error || 'Shipment is out of scope';
         }
+        if (state.flowState === 'EXPIRED') {
+            return 'SPE has expired - please create a new one';
+        }
+        if (state.spe?.status === 'rejected') {
+            return state.spe.manager_approval?.comment || 'Manager rejected this quote';
+        }
+        if (state.flowState === 'REVIEW' && state.spe && !state.spe.acknowledgement) {
+            return 'Acknowledgement required';
+        }
+        return null;
     })();
 
     const actions = useMemo(() => ({
@@ -412,6 +401,7 @@ export function useSpotMode() {
         createSPE,
         updateSPE,
         loadSPE,
+        submitAcknowledgement,
         submitManagerApproval,
         computeQuote,
         createQuote,

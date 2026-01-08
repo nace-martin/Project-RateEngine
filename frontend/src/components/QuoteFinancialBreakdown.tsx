@@ -17,20 +17,11 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane } from "lucide-react";
 
 interface QuoteFinancialBreakdownProps {
     result: QuoteComputeResult;
 }
-
-const formatCurrency = (amountStr: string | number | undefined, currency: string) => {
-    const amount = typeof amountStr === 'number' ? amountStr : parseFloat(amountStr || "0");
-    return new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: currency,
-    }).format(amount);
-};
 
 // Simplified currency display without symbol (for cleaner table display)
 const formatAmount = (amountStr: string | number | undefined, currency: string) => {
@@ -67,8 +58,7 @@ function isFCYPassthrough(lines: SellLine[]): boolean {
 }
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
-    const { sell_lines, totals } = result;
-    const sellCurrency = totals.currency;
+    const { sell_lines } = result;
 
     // Detect if this is an FCY passthrough quote
     const isOverallPassthrough = isFCYPassthrough(sell_lines);

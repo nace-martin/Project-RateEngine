@@ -47,7 +47,7 @@ interface ChargeLineInput {
 const CHARGE_BUCKETS: { id: SPEChargeBucket; label: string; color: string }[] = [
     { id: "airfreight", label: "Airfreight", color: "bg-blue-50 border-blue-200" },
     { id: "origin_charges", label: "Origin Charges", color: "bg-emerald-50 border-emerald-200" },
-    { id: "destination_charges", label: "Destination Charges", color: "bg-amber-50 border-amber-200" },
+    { id: "destination_charges", label: "Agent Quoted Charges", color: "bg-amber-50 border-amber-200" },
 ];
 
 const CHARGE_UNITS: { value: SPEChargeUnit | "min_or_per_kg"; label: string }[] = [
@@ -265,7 +265,8 @@ export function SpotRateEntryForm({
             return {
                 code: l.code || l.description.toUpperCase().replace(/\s+/g, "_").slice(0, 20),
                 description: l.description,
-                amount: l.amount,
+                // For percentage, use '0' as amount placeholder if empty (actual % stored separately)
+                amount: l.unit === "percentage" ? (l.amount || "0") : l.amount,
                 currency: l.currency,
                 unit: isWeightBased ? "per_kg" : (l.unit as SPEChargeUnit),
                 min_charge: isWeightBased && l.min_amount ? parseFloat(l.min_amount) : undefined,
@@ -279,9 +280,11 @@ export function SpotRateEntryForm({
         await onSubmit(charges);
     };
 
-    // Group lines by bucket
+    // Group lines by bucket (conditionals sorted to bottom)
     const getLinesByBucket = (bucket: SPEChargeBucket) =>
-        lines.filter(l => l.bucket === bucket);
+        lines
+            .filter(l => l.bucket === bucket)
+            .sort((a, b) => (a.conditional === b.conditional ? 0 : a.conditional ? 1 : -1));
 
     return (
         <div className="space-y-6">
@@ -301,7 +304,7 @@ export function SpotRateEntryForm({
                         </CardTitle>
                         <CardDescription>
                             {bucket.id === "airfreight" && "Primary cost line required"}
-                            {bucket.id === "destination_charges" && "From agent reply analysis"}
+                            {bucket.id === "destination_charges" && "Charges from agent reply"}
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -454,7 +457,7 @@ export function SpotRateEntryForm({
                             className="w-full"
                         >
                             <Plus className="h-4 w-4 mr-2" />
-                            Add {bucket.label.slice(0, -1)}
+                            Add Charge
                         </Button>
                     </CardContent>
                 </Card>
@@ -467,7 +470,7 @@ export function SpotRateEntryForm({
                 size="lg"
                 className="w-full bg-amber-600 hover:bg-amber-700"
             >
-                {isLoading ? "Creating..." : "Create SPOT Envelope"}
+                {isLoading ? "Saving..." : "Save & Proceed"}
             </Button>
         </div>
     );

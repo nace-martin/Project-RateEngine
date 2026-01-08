@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Noto_Sans } from "next/font/google";
 import "./globals.css";
 import AppHeader from "@/components/app-header";
 import { Providers } from "./providers";
 
-const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
+const notoSans = Noto_Sans({
+  variable: "--font-noto",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"]
+});
 
 export const metadata: Metadata = {
   title: "RateEngine",
@@ -18,7 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} antialiased bg-background text-foreground`}>
+      <body className={`${notoSans.variable} font-sans antialiased bg-background text-foreground`}>
         <Providers>
           <div className="flex flex-col h-screen overflow-hidden">
             <AppHeader />

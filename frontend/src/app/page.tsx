@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign, AlertTriangle, TrendingUp, RefreshCw, Clock, Activity, BarChart3, Shield } from "lucide-react";
+import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign } from "lucide-react";
 import ProtectedRoute from "@/components/protected-route";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -25,7 +25,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 
@@ -52,7 +51,6 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fxStatus, setFxStatus] = useState<FxStatusData | null>(null);
-  const [fxLoading, setFxLoading] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -80,7 +78,6 @@ export default function HomePage() {
     if (!user || !isFinance) return;
 
     const fetchFxStatus = async () => {
-      setFxLoading(true);
       try {
         const token = localStorage.getItem('authToken');
         const response = await fetch(`${API_BASE_URL}/api/v4/fx/status/`, {
@@ -95,8 +92,6 @@ export default function HomePage() {
         }
       } catch (err) {
         console.error('Failed to fetch FX status:', err);
-      } finally {
-        setFxLoading(false);
       }
     };
     fetchFxStatus();

@@ -12,17 +12,16 @@
 /** SPE lifecycle status */
 export type SPEStatus = 'draft' | 'ready' | 'expired' | 'rejected';
 
-/** SPOT Mode UI flow states (state machine) */
+/** SPOT Mode UI flow states (state machine) - simplified 3-step flow */
 export type SpotFlowState =
     | 'NORMAL'           // Not SPOT, use normal quote flow
     | 'OUT_OF_SCOPE'     // Hard reject (non-PNG lane)
     | 'SPOT_REQUIRED'    // Banner displayed, starting SPE
-    | 'RATE_ENTRY'       // Entering charges
-    | 'AWAITING_ACK'     // Acknowledgement modal
-    | 'AWAITING_MANAGER' // Manager approval pending
+    | 'INTAKE'           // Step 1: Paste reply, AI analysis
+    | 'REVIEW'           // Step 2: Review assertions, fill missing, acknowledge
+    | 'GENERATE'         // Step 3: Finalize quote, generate PDF
     | 'READY'            // Can call pricing
-    | 'EXPIRED'          // SPE expired
-    | 'REJECTED';        // Manager rejected
+    | 'EXPIRED';         // SPE expired
 
 /** Charge buckets */
 export type SPEChargeBucket = 'airfreight' | 'origin_charges' | 'destination_charges';
@@ -172,7 +171,8 @@ export interface SpotPricingEnvelope {
     context_integrity_valid?: boolean;
     acknowledgement: SPEAcknowledgement | null;
     manager_approval: SPEManagerApproval | null;
-    requires_manager_approval: boolean;
+    missing_mandatory_fields: string[];  // 'rate', 'currency' if missing
+    can_proceed: boolean;  // True if no missing mandatory fields
     charges: SPEChargeLine[];
 }
 
@@ -204,6 +204,12 @@ export interface SPEComputeResponse {
     reason?: string;
     pricing_mode?: 'SPOT' | 'NORMAL';
     spe_id?: string;
+    fx_info?: {
+        source_currency: string;
+        target_currency: string;
+        rate: string;
+        as_of?: string;
+    };
     lines?: SPEComputeResultLine[];
     totals?: {
         total_cost_pgk: string;
@@ -260,6 +266,7 @@ export interface AnalysisSummary {
     has_routing: boolean;
     has_acceptance: boolean;
     can_proceed: boolean;
+    mandatory_missing: string[];  // List of missing required field names
 }
 
 /** Full analysis of an agent reply */

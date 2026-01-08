@@ -10,8 +10,7 @@
  * - Summary of assertion counts
  */
 
-import { useState } from "react";
-import { Plus, Trash2, AlertTriangle, CheckCircle2, AlertCircle, HelpCircle, XCircle } from "lucide-react";
+import { Plus, Trash2, CheckCircle2, AlertCircle, HelpCircle, XCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,9 +81,8 @@ export function AssertionReviewCard({
         ));
     };
 
-    // Separate warnings by severity
-    const blockingWarnings = warnings.filter(w => w.includes('⛔'));
-    const infoWarnings = warnings.filter(w => w.includes('⚠️'));
+    // Separate warnings by severity (all are now informational for SPOT mode)
+    const infoWarnings = warnings.filter(w => w.includes('⚠️') || w.includes('⛔'));
 
     return (
         <Card>
@@ -124,28 +122,14 @@ export function AssertionReviewCard({
             </CardHeader>
 
             <CardContent className="space-y-4">
-                {/* Blocking warnings */}
-                {blockingWarnings.length > 0 && (
-                    <Alert variant="destructive">
-                        <AlertTriangle className="h-4 w-4" />
-                        <AlertDescription>
-                            <ul className="list-disc list-inside">
-                                {blockingWarnings.map((w, i) => (
-                                    <li key={i}>{w.replace('⛔ ', '')}</li>
-                                ))}
-                            </ul>
-                        </AlertDescription>
-                    </Alert>
-                )}
-
-                {/* Info warnings */}
+                {/* Info warnings - all warnings are informational for SPOT mode */}
                 {infoWarnings.length > 0 && (
                     <Alert className="bg-amber-50 border-amber-200">
                         <AlertCircle className="h-4 w-4 text-amber-600" />
                         <AlertDescription className="text-amber-700">
                             <ul className="list-disc list-inside">
                                 {infoWarnings.map((w, i) => (
-                                    <li key={i}>{w.replace('⚠️ ', '')}</li>
+                                    <li key={i}>{w.replace('⚠️ ', '').replace('⛔ ', '')}</li>
                                 ))}
                             </ul>
                         </AlertDescription>
@@ -332,23 +316,13 @@ export function AssertionReviewCard({
                     </Button>
                     <Button
                         onClick={() => onConfirm(result)}
-                        disabled={isLoading || !summary.can_proceed}
+                        disabled={isLoading}
                         className="w-2/3"
                         size="lg"
                     >
-                        {!summary.can_proceed ? (
-                            "Required Fields Missing"
-                        ) : (
-                            "Proceed to Rate Entry"
-                        )}
+                        Proceed to Rate Entry
                     </Button>
                 </div>
-
-                {!summary.can_proceed && (
-                    <p className="text-center text-sm text-muted-foreground mt-2 italic">
-                        Missing or unconfirmed mandatory information
-                    </p>
-                )}
             </CardContent>
         </Card>
     );
