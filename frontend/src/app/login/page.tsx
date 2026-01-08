@@ -24,7 +24,7 @@ export default function LoginPage() {
       const resolvedRole = user?.role ?? 'sales';
       const resolvedUsername = user?.username ?? username;
       login(token, resolvedRole, resolvedUsername);
-      router.push('/quotes');
+      router.push('/');
     } catch (err: unknown) {
       console.error('Login failed:', err);
       const message =

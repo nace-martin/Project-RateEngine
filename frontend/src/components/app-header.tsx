@@ -20,18 +20,27 @@ export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { canEditRateCards, role, isAdmin } = usePermissions();
+  const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance } = usePermissions();
 
-  // Core navigation items (visible to all authenticated users)
+  // Core navigation items - Dashboard and Quotes for everyone
   const navItems = [
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/quotes', label: 'Quotes', icon: FileText },
-    { href: '/customers', label: 'Customers', icon: Users },
   ];
 
-  // Conditional navigation items based on role
+  // Customers - only for non-Finance roles (Sales, Manager, Admin)
+  if (!isFinance) {
+    navItems.push({ href: '/customers', label: 'Customers', icon: Users });
+  }
+
+  // Rate Cards - only for users who can edit rate cards
   if (canEditRateCards) {
     navItems.push({ href: '/rate-cards', label: 'Rate Cards', icon: Database });
+  }
+
+  // Finance and Admin see Settings in navbar
+  if (canEditFXRates) {
+    navItems.push({ href: '/settings', label: 'Settings', icon: Settings });
   }
 
   // Role badge styling
@@ -80,14 +89,16 @@ export default function AppHeader() {
           })}
         </nav>
 
-        {/* New Quote Action Button */}
-        <Button
-          onClick={() => router.push('/quotes/new')}
-          className="ml-4 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          New Quote
-        </Button>
+        {/* New Quote Action Button - Hide for Finance (they can't edit quotes) */}
+        {canEditQuotes && (
+          <Button
+            onClick={() => router.push('/quotes/new')}
+            className="ml-4 bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Quote
+          </Button>
+        )}
       </div>
 
       {user && (
@@ -110,7 +121,7 @@ export default function AppHeader() {
                 <User className="w-4 h-4 mr-2" />
                 Profile
               </DropdownMenuItem>
-              {isAdmin && (
+              {(isAdmin || isFinance) && (
                 <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer">
                   <Settings className="w-4 h-4 mr-2" />
                   Settings

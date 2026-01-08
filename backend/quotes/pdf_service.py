@@ -106,6 +106,7 @@ def generate_quote_pdf(
         
         # Build PDF sections
         _build_header(pdf, quote)
+        _build_divider_bar(pdf)  # Dark blue horizontal divider
         _build_customer_section(pdf, quote)
         _build_shipment_bar(pdf, quote, cargo_type, origin_code, origin_name, 
                            destination_code, destination_name, chargeable_weight)
@@ -176,8 +177,24 @@ def _build_header(pdf: QuotePDF, quote):
     pdf.cell(0, 5, quote.status.upper(), align='R')
     
     # Set Y position below the header for next section
-    # Logo ends at ~25mm (10 + 15), add gap before customer section
-    pdf.set_y(logo_y + logo_height + 5)
+    # Add more space before the divider and customer section
+    pdf.set_y(logo_y + logo_height + 10)
+
+
+def _build_divider_bar(pdf: QuotePDF):
+    """Build a dark blue horizontal divider bar."""
+    start_y = pdf.get_y()
+    
+    # Draw a dark blue horizontal bar matching the shipment bar
+    # Width matches shipment bar: 65+65+65+72 = 267mm
+    # Height matches the CARGO TYPE header row: 7mm
+    bar_width = 267
+    bar_height = 7  # Same height as CARGO TYPE header row
+    pdf.set_fill_color(*pdf.dark_blue)
+    pdf.rect(x=15, y=start_y, w=bar_width, h=bar_height, style='F')
+    
+    # Add some spacing after the divider
+    pdf.set_y(start_y + bar_height + 3)
 
 
 def _build_shipment_bar(pdf: QuotePDF, quote, cargo_type, origin_code, origin_name, 
@@ -545,20 +562,76 @@ def _get_cargo_type(quote, version) -> str:
 
 
 def _get_chargeable_weight(quote, version) -> str:
-    """Get chargeable weight from quote data."""
-    # Try quote_input
-    quote_input = getattr(quote, 'quote_input', None) or {}
-    if isinstance(quote_input, dict):
-        cw = quote_input.get('chargeable_weight')
-        if cw:
-            return str(cw)
+    """Get chargeable weight from quote data.
     
-    # Try cargo_data
-    cargo_data = getattr(version, 'cargo_data', None) or {}
-    if isinstance(cargo_data, dict):
-        cw = cargo_data.get('chargeable_weight')
-        if cw:
-            return str(cw)
+    Chargeable weight is the maximum of:
+    - Gross weight (sum of all packages)
+    - Volumetric weight (L * W * H / 6000 for each package, summed)
+    """
+    try:
+        # Try request_details_json first
+        request_details = getattr(quote, 'request_details_json', None) or {}
+        if isinstance(request_details, dict):
+            dimensions = request_details.get('dimensions', [])
+            if dimensions and isinstance(dimensions, list):
+                total_gross = 0.0
+                total_volumetric = 0.0
+                
+                for dim in dimensions:
+                    if not isinstance(dim, dict):
+                        continue
+                    
+                    # Get gross weight
+                    gross = dim.get('gross_weight_kg')
+                    if gross:
+                        try:
+                            total_gross += float(gross)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Calculate volumetric weight (L * W * H / 6000)
+                    try:
+                        length = float(dim.get('length_cm', 0))
+                        width = float(dim.get('width_cm', 0))
+                        height = float(dim.get('height_cm', 0))
+                        pieces = int(dim.get('pieces', 1))
+                        vol_weight = (length * width * height / 6000) * pieces
+                        total_volumetric += vol_weight
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Chargeable weight is the maximum of gross and volumetric
+                chargeable = max(total_gross, total_volumetric)
+                if chargeable > 0:
+                    return f"{chargeable:.1f}"
+        
+        # Try payload_json on version
+        payload = getattr(version, 'payload_json', None) or {}
+        if isinstance(payload, dict):
+            dimensions = payload.get('dimensions', [])
+            if dimensions and isinstance(dimensions, list):
+                total_gross = sum(
+                    float(d.get('gross_weight_kg', 0)) 
+                    for d in dimensions if isinstance(d, dict)
+                )
+                if total_gross > 0:
+                    return f"{total_gross:.1f}"
+        
+        # Fallback: check quote_input and cargo_data
+        quote_input = getattr(quote, 'quote_input', None) or {}
+        if isinstance(quote_input, dict):
+            cw = quote_input.get('chargeable_weight')
+            if cw:
+                return str(cw)
+        
+        cargo_data = getattr(version, 'cargo_data', None) or {}
+        if isinstance(cargo_data, dict):
+            cw = cargo_data.get('chargeable_weight')
+            if cw:
+                return str(cw)
+    
+    except Exception as e:
+        logger.warning(f"Error calculating chargeable weight: {e}")
     
     return '0.0'
 

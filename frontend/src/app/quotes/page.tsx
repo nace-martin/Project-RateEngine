@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/auth-context";
-import { getQuotesV3 } from "@/lib/api"; // Updated import
-import { V3QuoteComputeResponse } from "@/lib/types"; // Updated import
+import { usePermissions } from "@/hooks/usePermissions";
+import { getQuotesV3 } from "@/lib/api";
+import { V3QuoteComputeResponse } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,8 +35,21 @@ const formatCurrency = (amountStr: string, currency: string) => {
   }).format(amount);
 };
 
+// Helper to format route as "City (CODE)"
+const formatRoute = (location: string): string => {
+  if (!location) return '';
+  const match = location.match(/^([A-Z]{3})\s*-\s*(.+)$/);
+  if (match) {
+    const [, code, fullName] = match;
+    const cityName = fullName.replace(/\s+(Airport|Intl|International|Jacksons|Terminal|Apt).*$/i, '').trim();
+    return `${cityName} (${code})`;
+  }
+  return location;
+};
+
 export default function QuotesPage() {
   const { user } = useAuth();
+  const { canEditQuotes, isFinance } = usePermissions();
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,14 +98,16 @@ export default function QuotesPage() {
       return (
         <div className="text-center">
           <p className="mb-4 text-lg text-muted-foreground">
-            You haven&apos;t created any quotes yet.
+            {isFinance ? "No quotes available for review." : "You haven't created any quotes yet."}
           </p>
-          <Button variant="secondary" asChild>
-            <Link href="/quotes/new">
-              <PlusCircle className="mr-2 h-4 w-4" />
-              Create New Quote
-            </Link>
-          </Button>
+          {canEditQuotes && (
+            <Button variant="secondary" asChild>
+              <Link href="/quotes/new">
+                <PlusCircle className="mr-2 h-4 w-4" />
+                Create New Quote
+              </Link>
+            </Button>
+          )}
         </div>
       );
     }
@@ -109,14 +125,18 @@ export default function QuotesPage() {
         </TableHeader>
         <TableBody>
           {quotes.map((quote) => (
-            <TableRow key={quote.id}>
+            <TableRow
+              key={quote.id}
+              className="cursor-pointer hover:bg-muted/50"
+              onClick={() => window.location.href = `/quotes/${quote.id}`}
+            >
               <TableCell>
-                <Button variant="link" asChild>
-                  <Link href={`/quotes/${quote.id}`}>{quote.quote_number}</Link>
-                </Button>
+                <span className="text-primary font-medium">
+                  {quote.quote_number}
+                </span>
               </TableCell>
-              <TableCell>{quote.origin_location}</TableCell>
-              <TableCell>{quote.destination_location}</TableCell>
+              <TableCell>{formatRoute(quote.origin_location)}</TableCell>
+              <TableCell>{formatRoute(quote.destination_location)}</TableCell>
               <TableCell>
                 <QuoteStatusBadge status={quote.status} />
               </TableCell>
@@ -136,13 +156,16 @@ export default function QuotesPage() {
   return (
     <div className="container mx-auto p-4">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Quotes Dashboard</h1>
-        <Button variant="secondary" asChild>
-          <Link href="/quotes/new">
-            <PlusCircle className="mr-2 h-4 w-4" />
-            New Quote
-          </Link>
-        </Button>
+        <h1 className="text-3xl font-bold">
+          {isFinance ? "Quotes Register" : "Quotes Dashboard"}
+        </h1>
+        {canEditQuotes && (
+          <Button variant="secondary" asChild>
+            <Link href="/quotes/new">
+              New Quote
+            </Link>
+          </Button>
+        )}
       </div>
 
       <Card>

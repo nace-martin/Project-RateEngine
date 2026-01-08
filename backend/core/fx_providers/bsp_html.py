@@ -94,13 +94,17 @@ class BspHtmlProvider:
                 if raw_sell != Decimal("0.0000"):
                     out.append(RateRow(as_of, base, quote, self._round4(raw_sell), "SELL", "bsp_html"))
             elif quote == "PGK" and base in table:
-                # Invert
+                # Invert rates and SWAP labels:
+                # BSP TT_BUY = rate when bank buys FCY from you (you SELL FCY) → becomes our SELL
+                # BSP TT_SELL = rate when bank sells FCY to you (you BUY FCY) → becomes our BUY
                 buy_raw = table[base]["TT_BUY"]
                 sell_raw = table[base]["TT_SELL"]
-                if buy_raw and buy_raw != Decimal("0.0000"):
-                    inv_buy = self._round4(Decimal(1) / buy_raw)
-                    out.append(RateRow(as_of, base, quote, inv_buy, "BUY", "bsp_html"))
                 if sell_raw and sell_raw != Decimal("0.0000"):
-                    inv_sell = self._round4(Decimal(1) / sell_raw)
+                    # Customer BUY rate = inverted BSP TT_SELL
+                    inv_buy = self._round4(Decimal(1) / sell_raw)
+                    out.append(RateRow(as_of, base, quote, inv_buy, "BUY", "bsp_html"))
+                if buy_raw and buy_raw != Decimal("0.0000"):
+                    # Customer SELL rate = inverted BSP TT_BUY
+                    inv_sell = self._round4(Decimal(1) / buy_raw)
                     out.append(RateRow(as_of, base, quote, inv_sell, "SELL", "bsp_html"))
         return out

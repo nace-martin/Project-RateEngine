@@ -14,6 +14,7 @@ from .models import (
     ImportSellRate,
     DomesticCOGS,
     DomesticSellRate,
+    CustomerDiscount,
 )
 
 
@@ -35,8 +36,8 @@ class AgentAdmin(admin.ModelAdmin):
 
 @admin.register(ProductCode)
 class ProductCodeAdmin(admin.ModelAdmin):
-    list_display = ['id', 'code', 'description', 'domain', 'category', 'default_unit', 'is_gst_applicable']
-    list_filter = ['domain', 'category', 'default_unit', 'is_gst_applicable']
+    list_display = ['id', 'code', 'description', 'domain', 'category', 'default_unit', 'is_gst_applicable', 'gst_treatment']
+    list_filter = ['domain', 'category', 'default_unit', 'is_gst_applicable', 'gst_treatment']
     search_fields = ['id', 'code', 'description']
     ordering = ['id']
     
@@ -45,7 +46,7 @@ class ProductCodeAdmin(admin.ModelAdmin):
             'fields': ('id', 'code', 'description', 'domain', 'category')
         }),
         ('Tax Configuration', {
-            'fields': ('is_gst_applicable', 'gst_rate')
+            'fields': ('is_gst_applicable', 'gst_rate', 'gst_treatment')
         }),
         ('Accounting', {
             'fields': ('gl_revenue_code', 'gl_cost_code')
@@ -110,3 +111,38 @@ class DomesticSellRateAdmin(admin.ModelAdmin):
     list_filter = ['origin_zone', 'destination_zone']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_zone', 'destination_zone']
+
+
+@admin.register(CustomerDiscount)
+class CustomerDiscountAdmin(admin.ModelAdmin):
+    list_display = ['customer', 'product_code', 'discount_type', 'discount_value', 'currency', 'valid_until', 'created_at']
+    list_filter = ['discount_type', 'valid_until', 'product_code__domain', 'currency']
+    search_fields = ['customer__name', 'product_code__code', 'product_code__description', 'notes']
+    autocomplete_fields = ['customer', 'product_code']
+    ordering = ['customer', 'product_code']
+    
+    fieldsets = (
+        ('Customer & Product', {
+            'fields': ('customer', 'product_code')
+        }),
+        ('Discount Configuration', {
+            'fields': ('discount_type', 'discount_value', 'currency'),
+            'description': 'For PERCENTAGE: value is percent (e.g., 5.00 = 5%). '
+                          'For FLAT_AMOUNT: value is amount to subtract. '
+                          'For RATE_REDUCTION: value is new rate per kg. '
+                          'For FIXED_CHARGE: value is total fixed charge.'
+        }),
+        ('Validity', {
+            'fields': ('valid_from', 'valid_until')
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+            'classes': ('collapse',)
+        }),
+        ('Audit', {
+            'fields': ('created_at', 'updated_at', 'created_by'),
+            'classes': ('collapse',)
+        }),
+    )
+    readonly_fields = ['created_at', 'updated_at']
+

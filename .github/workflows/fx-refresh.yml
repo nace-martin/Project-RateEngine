@@ -15,7 +15,7 @@ jobs:
           FX_REFRESH_URL: ${{ secrets.FX_REFRESH_URL }}
           FX_REFRESH_TOKEN: ${{ secrets.FX_REFRESH_TOKEN }}
         run: |
-          BODY='{"pairs":["USD:PGK","PGK:USD","AUD:PGK","PGK:AUD"],"provider":"bsp_html"}'
+          BODY='{"pairs":["USD:PGK","AUD:PGK","CNY:PGK","SGD:PGK","NZD:PGK","PHP:PGK","FJD:PGK","SBD:PGK","VUV:PGK","EUR:PGK","GBP:PGK","JPY:PGK"],"provider":"bsp_html"}'
           HTTP_STATUS=$(curl -sS -o resp.json -w "%{http_code}" \
             -X POST "$FX_REFRESH_URL" \
             -H "Authorization: Bearer $FX_REFRESH_TOKEN" \

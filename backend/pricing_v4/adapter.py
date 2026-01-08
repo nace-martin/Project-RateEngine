@@ -1,18 +1,20 @@
 import uuid
 import json
 import logging
+from datetime import date
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from core.models import FxSnapshot, Policy
+from django.db import models
 from pricing_v2.dataclasses_v3 import (
     QuoteInput, QuoteCharges, CalculatedChargeLine, CalculatedTotals
 )
 from pricing_v4.engine.export_engine import ExportPricingEngine
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
-from pricing_v4.models import ProductCode
+from pricing_v4.models import ProductCode, CustomerDiscount
 from services.models import ServiceComponent
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,133 @@ class PricingServiceV4Adapter:
     def get_pricing_mode(self) -> str:
         """Return the pricing mode used (NORMAL or SPOT)."""
         return self.pricing_mode
+    
+    # =========================================================================
+    # CUSTOMER DISCOUNT METHODS
+    # =========================================================================
+    
+    def _get_customer_discounts(self) -> Dict[int, 'CustomerDiscount']:
+        """
+        Load active customer discounts for all ProductCodes.
+        
+        Returns:
+            Dict mapping ProductCode ID to CustomerDiscount instance
+        """
+        customer_id = self.quote_input.customer_id
+        quote_date = self.quote_input.quote_date or date.today()
+        
+        try:
+            discounts = CustomerDiscount.objects.filter(
+                customer_id=customer_id,
+                valid_until__gte=quote_date
+            ).filter(
+                # valid_from is null OR valid_from <= quote_date
+                models.Q(valid_from__isnull=True) | models.Q(valid_from__lte=quote_date)
+            ).select_related('product_code')
+            
+            return {d.product_code_id: d for d in discounts}
+        except Exception as e:
+            logger.warning(f"Failed to load customer discounts: {e}")
+            return {}
+    
+    def _apply_customer_discounts(self, lines: List[CalculatedChargeLine]) -> List[CalculatedChargeLine]:
+        """
+        Apply customer-specific discounts to sell prices.
+        
+        Supports multiple discount types:
+        - PERCENTAGE: Reduce by X%
+        - FLAT_AMOUNT: Reduce by fixed amount
+        - RATE_REDUCTION: Not applied here (needs weight context at engine level)
+        - FIXED_CHARGE: Replace sell price entirely
+        
+        Discounts are applied before GST is recalculated.
+        """
+        discounts = self._get_customer_discounts()
+        if not discounts:
+            return lines
+        
+        # Build a mapping from ServiceComponent code to ProductCode ID
+        sc_codes = [l.service_component_code for l in lines]
+        pc_map = {}
+        try:
+            for pc in ProductCode.objects.filter(code__in=sc_codes):
+                pc_map[pc.code] = pc.id
+        except Exception as e:
+            logger.warning(f"Failed to map ServiceComponent to ProductCode: {e}")
+            return lines
+        
+        for line in lines:
+            pc_id = pc_map.get(line.service_component_code)
+            if pc_id and pc_id in discounts:
+                discount = discounts[pc_id]
+                original_sell = line.sell_pgk
+                discounted_sell = original_sell
+                
+                # Apply discount based on type
+                if discount.discount_type == CustomerDiscount.TYPE_PERCENTAGE:
+                    discount_pct = discount.discount_value / Decimal('100')
+                    discounted_sell = original_sell * (Decimal('1') - discount_pct)
+                    
+                elif discount.discount_type == CustomerDiscount.TYPE_FLAT_AMOUNT:
+                    # TODO: Handle currency conversion if discount.currency != 'PGK'
+                    discounted_sell = max(Decimal('0'), original_sell - discount.discount_value)
+                    
+                elif discount.discount_type == CustomerDiscount.TYPE_FIXED_CHARGE:
+                    # Replace the entire sell price with fixed charge
+                    discounted_sell = discount.discount_value
+                    
+                elif discount.discount_type == CustomerDiscount.TYPE_RATE_REDUCTION:
+                    # Rate reduction requires weight context - log warning and skip
+                    logger.warning(
+                        f"RATE_REDUCTION discount for {line.service_component_code} "
+                        "cannot be applied at this stage (requires weight context)"
+                    )
+                    continue
+                    
+                elif discount.discount_type == CustomerDiscount.TYPE_MARGIN_OVERRIDE:
+                    # Recalculate sell from cost using custom margin rate
+                    # discount_value is the margin % (e.g., 15.00 for 15%)
+                    custom_margin = discount.discount_value / Decimal('100')
+                    cost = line.cost_pgk
+                    if cost > 0:
+                        discounted_sell = cost * (Decimal('1') + custom_margin)
+                    else:
+                        # No cost info - can't apply margin override
+                        logger.warning(
+                            f"MARGIN_OVERRIDE for {line.service_component_code} "
+                            "cannot be applied (no cost data)"
+                        )
+                        continue
+                
+                if discounted_sell == original_sell:
+                    continue  # No change
+                
+                # Recalculate GST on discounted amount
+                gst_amount = line.sell_pgk_incl_gst - line.sell_pgk
+                gst_rate = gst_amount / original_sell if original_sell > 0 else Decimal('0')
+                new_gst = discounted_sell * gst_rate
+                
+                try:
+                    line.sell_pgk = discounted_sell
+                    line.sell_pgk_incl_gst = discounted_sell + new_gst
+                    
+                    # Update FCY if applicable
+                    if line.sell_fcy_currency != 'PGK' and original_sell > 0:
+                        ratio = discounted_sell / original_sell
+                        line.sell_fcy = line.sell_fcy * ratio
+                        line.sell_fcy_incl_gst = line.sell_fcy_incl_gst * ratio
+                    else:
+                        line.sell_fcy = discounted_sell
+                        line.sell_fcy_incl_gst = discounted_sell + new_gst
+                        
+                    logger.debug(
+                        f"Applied {discount.discount_type} discount to {line.service_component_code}: "
+                        f"{original_sell} -> {discounted_sell}"
+                    )
+                except AttributeError:
+                    logger.warning(f"Cannot apply discount to frozen line: {line.service_component_code}")
+        
+        return lines
 
     def calculate_charges(self) -> QuoteCharges:
         shipment = self.quote_input.shipment
@@ -85,7 +214,10 @@ class PricingServiceV4Adapter:
         # Using bucket-level override logic
         final_lines = self._merge_charge_lines(standard_lines, spot_lines)
         
-        # 4. Calculate Final Totals (Unified Pass)
+        # 4. Apply Customer Discounts (before GST recalculation)
+        final_lines = self._apply_customer_discounts(final_lines)
+        
+        # 5. Calculate Final Totals (Unified Pass)
         return self._calculate_totals(final_lines)
 
     def _calculate_standard_lines(self) -> List[CalculatedChargeLine]:

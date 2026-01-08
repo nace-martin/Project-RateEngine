@@ -251,7 +251,8 @@ export default function QuoteDetailPage() {
             variant="outline"
             onClick={() => {
               // Check if this is a spot quote derived from an envelope
-              const speId = quote.latest_version?.payload_json?.spot_envelope_id;
+              const payloadJson = quote.latest_version?.payload_json;
+              const speId = payloadJson ? (payloadJson as unknown as { spot_envelope_id?: string }).spot_envelope_id : undefined;
               if (speId) {
                 router.push(`/quotes/spot/${speId}`);
               } else {
@@ -325,7 +326,7 @@ export default function QuoteDetailPage() {
             <div>
               <p className="text-xs text-slate-500 uppercase font-semibold">Total Estimated Cost</p>
               <p className="text-2xl font-bold text-slate-900">
-                {quote.latest_version?.totals?.currency || 'PGK'} {quote.latest_version?.totals?.total_sell_incl_gst?.toLocaleString()}
+                {quote.latest_version?.totals?.currency || 'PGK'} {parseFloat(quote.latest_version?.totals?.total_sell_fcy_incl_gst || quote.latest_version?.totals?.total_sell_pgk_incl_gst || "0").toLocaleString()}
               </p>
               <p className="text-[10px] text-slate-400">
                 Inc. GST

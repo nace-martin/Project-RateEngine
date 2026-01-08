@@ -18,6 +18,7 @@ Amendment: Carrier vs Agent distinction
 """
 
 from decimal import Decimal
+from django.conf import settings
 from django.db import models
 from django.core.exceptions import ValidationError
 
@@ -157,6 +158,25 @@ class ProductCode(models.Model):
     # Tax configuration - explicit booleans, no magic
     is_gst_applicable = models.BooleanField()
     gst_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.10'))
+    
+    # GST Treatment Classification
+    GST_TREATMENT_STANDARD = 'STANDARD'      # Normal 10% GST (tracked in BAS)
+    GST_TREATMENT_ZERO_RATED = 'ZERO_RATED'  # Export - 0% but included in BAS return
+    GST_TREATMENT_EXEMPT = 'EXEMPT'          # Disbursements - excluded from BAS entirely
+    
+    GST_TREATMENT_CHOICES = [
+        (GST_TREATMENT_STANDARD, 'Standard (10% GST)'),
+        (GST_TREATMENT_ZERO_RATED, 'Zero-Rated (Export)'),
+        (GST_TREATMENT_EXEMPT, 'Exempt (Disbursement)'),
+    ]
+    
+    gst_treatment = models.CharField(
+        max_length=15,
+        choices=GST_TREATMENT_CHOICES,
+        default=GST_TREATMENT_STANDARD,
+        db_index=True,
+        help_text='STANDARD=10%, ZERO_RATED=0% (tracked), EXEMPT=0% (not tracked)'
+    )
     
     # Accounting codes - explicit strings
     gl_revenue_code = models.CharField(max_length=20)
@@ -763,3 +783,139 @@ class Surcharge(models.Model):
     
     def __str__(self):
         return f"{self.product_code.code} ({self.service_type}): {self.amount} {self.rate_type}"
+
+
+# =============================================================================
+# CUSTOMER DISCOUNTS
+# =============================================================================
+
+class CustomerDiscount(models.Model):
+    """
+    Customer-specific pricing adjustments per ProductCode.
+    
+    Supports multiple discount types:
+    - PERCENTAGE: Reduce sell price by X% (e.g., 5% off airfreight)
+    - FLAT_AMOUNT: Reduce sell price by fixed amount (e.g., K50 off per shipment)
+    - RATE_REDUCTION: Override per-kg rate (e.g., K0.50/kg instead of K0.75/kg)
+    - FIXED_CHARGE: Fixed total charge regardless of weight (e.g., K200 flat for docs)
+    - MARGIN_OVERRIDE: Apply a specific margin % instead of standard (e.g., 15% margin instead of 20%)
+    
+    Business Rules:
+    - Applied during pricing before GST calculation
+    - Multiple discounts for same customer/product not allowed (unique_together)
+    - Discount expires after valid_until date
+    """
+    
+    # Discount type choices
+    TYPE_PERCENTAGE = 'PERCENTAGE'
+    TYPE_FLAT_AMOUNT = 'FLAT_AMOUNT'
+    TYPE_RATE_REDUCTION = 'RATE_REDUCTION'
+    TYPE_FIXED_CHARGE = 'FIXED_CHARGE'
+    TYPE_MARGIN_OVERRIDE = 'MARGIN_OVERRIDE'
+    
+    DISCOUNT_TYPE_CHOICES = [
+        (TYPE_PERCENTAGE, 'Percentage Discount (e.g., 5% off)'),
+        (TYPE_FLAT_AMOUNT, 'Flat Amount Reduction (e.g., K50 off)'),
+        (TYPE_RATE_REDUCTION, 'Rate Reduction (e.g., K0.50/kg instead of standard)'),
+        (TYPE_FIXED_CHARGE, 'Fixed Charge (e.g., K200 flat regardless of weight)'),
+        (TYPE_MARGIN_OVERRIDE, 'Margin Override (e.g., 15% margin instead of 20%)'),
+    ]
+    
+    customer = models.ForeignKey(
+        'parties.Company',
+        on_delete=models.CASCADE,
+        related_name='discounts',
+        limit_choices_to={'company_type': 'CUSTOMER'},
+        help_text='Customer company receiving the discount'
+    )
+    
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.CASCADE,
+        related_name='customer_discounts',
+        help_text='ProductCode this discount applies to'
+    )
+    
+    discount_type = models.CharField(
+        max_length=20,
+        choices=DISCOUNT_TYPE_CHOICES,
+        default=TYPE_PERCENTAGE,
+        help_text='Type of discount to apply'
+    )
+    
+    # The meaning of this value depends on discount_type:
+    # - PERCENTAGE: percentage value (e.g., 5.00 = 5%)
+    # - FLAT_AMOUNT: currency amount to subtract (e.g., 50.00 = K50)
+    # - RATE_REDUCTION: new rate per kg (e.g., 0.50 = K0.50/kg)
+    # - FIXED_CHARGE: total charge amount (e.g., 200.00 = K200 flat)
+    discount_value = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text='Discount value (meaning depends on discount_type)'
+    )
+    
+    # Currency for FLAT_AMOUNT and FIXED_CHARGE types
+    currency = models.CharField(
+        max_length=3,
+        default='PGK',
+        help_text='Currency for FLAT_AMOUNT/FIXED_CHARGE types'
+    )
+    
+    valid_from = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Discount starts from this date (null = immediately effective)'
+    )
+    
+    valid_until = models.DateField(
+        help_text='Discount expires after this date (inclusive)'
+    )
+    
+    # Optional notes for commercial context
+    notes = models.TextField(
+        blank=True,
+        help_text='Internal notes (e.g., "Negotiated Q1 2026 contract")'
+    )
+    
+    # Audit trail
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+        help_text='User who created this discount'
+    )
+    
+    class Meta:
+        db_table = 'customer_discounts'
+        unique_together = ['customer', 'product_code']
+        ordering = ['customer', 'product_code']
+        verbose_name = 'Customer Discount'
+        verbose_name_plural = 'Customer Discounts'
+    
+    def __str__(self):
+        if self.discount_type == self.TYPE_PERCENTAGE:
+            return f"{self.customer.name}: {self.discount_value}% off {self.product_code.code}"
+        elif self.discount_type == self.TYPE_FLAT_AMOUNT:
+            return f"{self.customer.name}: {self.currency}{self.discount_value} off {self.product_code.code}"
+        elif self.discount_type == self.TYPE_RATE_REDUCTION:
+            return f"{self.customer.name}: {self.currency}{self.discount_value}/kg for {self.product_code.code}"
+        elif self.discount_type == self.TYPE_FIXED_CHARGE:
+            return f"{self.customer.name}: Fixed {self.currency}{self.discount_value} for {self.product_code.code}"
+        return f"{self.customer.name}: {self.product_code.code}"
+    
+    def clean(self):
+        """Validate discount value based on type."""
+        if self.discount_value is None:
+            raise ValidationError("Discount value is required.")
+            
+        if self.discount_type == self.TYPE_PERCENTAGE:
+            if self.discount_value < 0 or self.discount_value > 100:
+                raise ValidationError("Percentage discount must be between 0 and 100.")
+        else:
+            if self.discount_value < 0:
+                raise ValidationError("Discount value cannot be negative.")
+
