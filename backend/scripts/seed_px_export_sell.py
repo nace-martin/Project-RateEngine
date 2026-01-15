@@ -21,7 +21,7 @@ def run():
     # 1. Create Internal Supplier for Sell Rates (Project Rate Engine)
     sell_supplier, _ = Company.objects.get_or_create(
         name="Rate Engine Sell Rates",
-        defaults={'company_type': 'SUPPLIER'}
+        defaults={'is_agent': True}
     )
 
     # 2. Get Service Components (Ensure they exist - reusing previous)

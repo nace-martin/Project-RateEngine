@@ -61,11 +61,15 @@ class QuoteStateMachine:
     @property
     def is_editable(self) -> bool:
         """Check if quote can be edited (not locked)."""
+        if getattr(self.quote, 'is_archived', False):
+            return False
         return self.quote.status not in LOCKED_STATES
     
     @property
     def available_transitions(self) -> list:
         """Return list of valid next states from current state."""
+        if getattr(self.quote, 'is_archived', False):
+            return []
         return VALID_TRANSITIONS.get(self.quote.status, [])
     
     def can_transition_to(self, target_status: str) -> bool:
@@ -133,6 +137,8 @@ class QuoteStateMachine:
 
 def is_quote_editable(quote: Quote) -> bool:
     """Utility function to check if quote is editable."""
+    if getattr(quote, 'is_archived', False):
+        return False
     return quote.status not in LOCKED_STATES
 
 

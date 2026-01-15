@@ -218,9 +218,21 @@ export async function searchLocations(
 
 // --- Quotes V3 ---
 
-export async function getQuotesV3(): Promise<PaginatedResponse<V3QuoteComputeResponse>> {
-  const url = API_BASE_URL + '/api/v3/quotes/';
-  const response = await fetch(url, {
+export async function getQuotesV3(params?: {
+  mode?: string;
+  status?: string;
+  created_by?: string;
+  is_archived?: boolean;
+}): Promise<PaginatedResponse<V3QuoteComputeResponse>> {
+  const url = new URL(API_BASE_URL + '/api/v3/quotes/');
+  if (params) {
+    if (params.mode) url.searchParams.append('mode', params.mode);
+    if (params.status) url.searchParams.append('status', params.status);
+    if (params.created_by) url.searchParams.append('created_by', params.created_by);
+    if (params.is_archived !== undefined) url.searchParams.append('is_archived', String(params.is_archived));
+  }
+
+  const response = await fetch(url.toString(), {
     headers: {
       Authorization: `Token ${resolveAuthToken()}`,
     },
@@ -1245,5 +1257,45 @@ export async function listSpotEnvelopes(
     throw new Error(`Failed to list SPEs: ${detail}`);
   }
 
+  return response.json();
+}
+
+// --- Reporting ---
+
+export interface DashboardReportData {
+  total_revenue: number;
+  volume_by_mode: Array<{ mode: string; count: number; revenue: number }>;
+  conversion: {
+    total: number;
+    drafts: number;
+    finalized: number;
+    lost: number;
+  };
+}
+
+export async function getDashboardReports(): Promise<DashboardReportData> {
+  const url = API_BASE_URL + '/api/v3/reports/dashboard/';
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch dashboard reports');
+  return response.json();
+}
+
+export interface SalesPerformanceData {
+  created_by__username: string;
+  created_by__first_name: string;
+  created_by__last_name: string;
+  total_quotes: number;
+  total_revenue: number | null;
+  converted_quotes: number;
+}
+
+export async function getSalesPerformanceReports(): Promise<SalesPerformanceData[]> {
+  const url = API_BASE_URL + '/api/v3/reports/sales_performance/';
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch sales performance');
   return response.json();
 }

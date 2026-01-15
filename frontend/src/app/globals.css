@@ -38,6 +38,8 @@
   --color-sidebar-border: hsl(var(--sidebar-border));
   --color-sidebar-ring: hsl(var(--sidebar-ring));
 
+  --font-sans: var(--font-noto);
+
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
@@ -68,11 +70,11 @@
 
 @layer base {
   :root {
-    /* Premium Palette - Deep Indigo & Slate */
+    /* Premium Palette - ERP Grade */
     --background: 210 40% 98%;
-    /* Soft blue-grey tint #F0F4F8 */
+    /* #f8fafc */
     --foreground: 222 47% 11%;
-    /* Deep navy #0F172A */
+    /* #0f172a (Slate 900) */
 
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -80,20 +82,22 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
-    /* Primary - EFM Blue */
-    --primary: 221 70% 40%;
-    /* #1E40AF */
+    /* Master Business Blue (Primary) - Trust, Stability */
+    /* Deep Royal Blue #0F52BA approx or slightly darker */
+    --primary: 217 91% 32%;
+    /* #0747A6 - Strong Enterprise Blue */
     --primary-foreground: 210 40% 98%;
 
     /* Secondary - Slate/Grey for subtle actions */
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222 47% 11.2%;
 
-    /* Muted - For backgrounds and borders */
+    /* Muted */
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
 
-    /* Accent - EFM Orange */
+    /* Master Business Green (Success/Growth) - Replaces 'Accent' for key actions if needed, or strictly Success */
+    /* We keep Accent as Orange for special highlights, but defined Green for Success */
     --accent: 25 95% 53%;
     /* #F97316 */
     --accent-foreground: 210 40% 98%;
@@ -102,26 +106,21 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    /* Success - Green */
-    --success: 142 76% 36%;
+    /* Success - Enterprise Green */
+    --success: 158 64% 32%;
+    /* #1D8554 - Professional Green */
     --success-foreground: 355.7 100% 97.3%;
 
     /* Warning - Amber */
     --warning: 38 92% 50%;
-    --warning-foreground: 48 96% 89%;
+    --warning-foreground: 48 96% 15%;
 
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 221 70% 40%;
 
-    --radius: 0.75rem;
-
-    /* Chart Colors */
-    --chart-1: 221 83% 53%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+    /* Slightly tighter radius for professional feel */
 
     /* Sidebar */
     --sidebar-background: 0 0% 100%;

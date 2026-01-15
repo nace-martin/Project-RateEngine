@@ -57,11 +57,18 @@ from quotes.models import (
 logger = logging.getLogger(__name__)
 
 
+def _user_is_manager_or_admin(user) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, "is_manager", False) or getattr(user, "is_admin", False):
+        return True
+    return getattr(user, "role", None) in ("manager", "admin")
+
+
 def _user_can_access_spe(user, spe_db: SpotPricingEnvelopeDB) -> bool:
     if not user or not user.is_authenticated:
         return False
-    user_role = getattr(user, 'role', '')
-    if user_role in ['manager', 'admin']:
+    if _user_is_manager_or_admin(user):
         return True
     return spe_db.created_by_id == user.id
 
@@ -360,7 +367,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
     def get(self, request):
         """List SPEs created by user."""
         spe_qs = SpotPricingEnvelopeDB.objects.all()
-        if getattr(request.user, 'role', '') not in ['manager', 'admin']:
+        if not _user_is_manager_or_admin(request.user):
             spe_qs = spe_qs.filter(created_by=request.user)
 
         spes = spe_qs.order_by('-created_at')[:20]
@@ -450,7 +457,12 @@ class SpotEnvelopeListCreateAPIView(APIView):
     def _serialize_spe(self, spe_db):
         """Serialize SPE DB to JSON."""
         missing_fields = _get_missing_mandatory_fields(spe_db)
+        customer_name = None
+        if spe_db.quote and spe_db.quote.customer:
+            customer_name = spe_db.quote.customer.company_name or spe_db.quote.customer.name
+
         return {
+            'customer_name': customer_name,
             'id': str(spe_db.id),
             'status': spe_db.status,
             'shipment': spe_db.shipment_context_json,
@@ -756,8 +768,8 @@ class SpotEnvelopeApproveAPIView(APIView):
         spe_db = _get_spe_or_404(request.user, envelope_id)
         
         # Check user has manager role
-        user_role = getattr(request.user, 'role', 'sales')
-        if user_role not in ['manager', 'admin', 'owner']:
+        # Check user has manager role
+        if not _user_is_manager_or_admin(request.user):
             return Response(
                 {'error': 'Only managers can approve SPEs'},
                 status=status.HTTP_403_FORBIDDEN

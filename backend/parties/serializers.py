@@ -11,18 +11,20 @@ class CustomerV3Serializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
-            "company_type",
+            "is_customer",
+            "is_agent",
+            "is_carrier",
             "tax_id",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    def validate_company_type(self, value: str) -> str:
-        """Ensure v3 customers always persist with the CUSTOMER company_type."""
-        if value != "CUSTOMER":
-            raise serializers.ValidationError("V3 customers must use company_type='CUSTOMER'.")
-        return value
+    def validate(self, data):
+        """Ensure consistency if needed."""
+        # Example validation: Must be at least ONE of the roles?
+        # For now, lax validation is fine.
+        return data
 
 
 class CompanySearchV3Serializer(serializers.ModelSerializer):

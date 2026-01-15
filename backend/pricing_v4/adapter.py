@@ -323,7 +323,7 @@ class PricingServiceV4Adapter:
             elif leg == 'DESTINATION' or 'DEST' in code.upper() or 'DEST' in getattr(line, 'description', '').upper():
                 bucket = 'destination_charges'
                 leg = 'DESTINATION'
-            elif leg == 'ORIGIN' or v4_category in ['HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'CARTAGE', 'SURCHARGE']:
+            elif leg == 'ORIGIN' or v4_category in ['HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'CARTAGE', 'SURCHARGE', 'CLEARANCE']:
                 bucket = 'origin_charges'
                 leg = 'ORIGIN'
 
@@ -341,6 +341,7 @@ class PricingServiceV4Adapter:
                     'leg': leg,
                     'sell_currency': sell_currency,
                     'cost_currency': cost_currency,
+                    'agent_name': getattr(line, 'agent_name', None),  # NEW
                 }
             
             # Sum up (though typically one per code)
@@ -360,13 +361,13 @@ class PricingServiceV4Adapter:
             for item in result.cogs_breakdown:
                 code = item.product_code
                 if code not in consolidated:
-                    consolidated[code] = {'description': item.description.replace(' (Cost)', ''), 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges'} # Domestic simplified
+                    consolidated[code] = {'description': item.description.replace(' (Cost)', ''), 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges', 'agent_name': getattr(item, 'agent_name', None)} # Domestic simplified
                 consolidated[code]['cost_amount'] += item.amount
 
             for item in result.sell_breakdown:
                 code = item.product_code
                 if code not in consolidated:
-                    consolidated[code] = {'description': item.description, 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges'}
+                    consolidated[code] = {'description': item.description, 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges', 'agent_name': None}
                 consolidated[code]['sell_amount'] += item.amount
                 
                 # Domestic GST Logic (10%)
@@ -426,7 +427,8 @@ class PricingServiceV4Adapter:
                     cost_fcy=cost_fcy,
                     cost_fcy_currency=cost_currency,
                     bucket=data.get('bucket', 'origin_charges'),
-                    cost_source='V4 Engine',
+
+                    cost_source=data.get('agent_name') or 'V4 Engine',  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
                 ))
             else:
@@ -447,7 +449,7 @@ class PricingServiceV4Adapter:
                     sell_fcy_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
                     sell_fcy_currency='PGK',
                     bucket=data.get('bucket', 'origin_charges'),
-                    cost_source='V4 Engine',
+                    cost_source=data.get('agent_name') or 'V4 Engine',  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
                 ))
 
@@ -828,7 +830,7 @@ class PricingServiceV4Adapter:
                 sell_pgk_incl_gst=sell_incl_gst,
                 sell_fcy=sell_fcy,
                 sell_fcy_incl_gst=sell_fcy_incl_gst,
-                cost_source='SPOT Envelope',
+                cost_source=charge.source_reference or 'SPOT Envelope',  # NEW: Map Source Ref
                 cost_source_description=charge.description, # Ensure desc is passed
                 cost_fcy=cost_fcy,
                 cost_fcy_currency=charge.currency,

@@ -35,6 +35,7 @@ class CompanyAdmin(admin.ModelAdmin):
     """Admin configuration for the Company model."""
     list_display = ('name', 'tax_id', 'created_at')
     search_fields = ('name', 'tax_id')
+    exclude = ('company_type',)
     # Add the new inline
     inlines = [CustomerCommercialProfileInline, AddressInline, ContactInline] 
 

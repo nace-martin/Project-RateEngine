@@ -17,6 +17,7 @@ from .views import (
     QuotePDFAPIView,
     QuotePublicDetailAPIView,
 )
+from .reporting_views import ReportsViewSet
 from .spot_views import (
     SpotScopeValidateAPIView,
     SpotTriggerEvaluateAPIView,
@@ -35,6 +36,7 @@ app_name = 'quotes'
 # --- V3 Router ---
 router_v3 = DefaultRouter()
 router_v3.register(r'quotes', QuoteV3ViewSet, basename='quote-v3')
+router_v3.register(r'reports', ReportsViewSet, basename='reports')
 
 
 urlpatterns = [
@@ -63,4 +65,3 @@ urlpatterns = [
     path('v3/spot/analyze-reply/', SpotReplyAnalysisAPIView.as_view(), name='spot-analyze-reply'),
     path('v3/spot/envelopes/<uuid:envelope_id>/create-quote/', SpotEnvelopeCreateQuoteAPIView.as_view(), name='spot-envelope-create-quote'),
 ]
-

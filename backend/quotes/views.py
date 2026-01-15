@@ -8,7 +8,7 @@ from decimal import Decimal
 from dataclasses import replace
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum, Count
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -18,6 +18,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import LimitOffsetPagination
+from rest_framework.decorators import action
 
 class QuoteLimitOffsetPagination(LimitOffsetPagination):
     default_limit = 20
@@ -29,6 +30,8 @@ from accounts.permissions import (
     CanFinalizeQuotes,
     CanUseAIIntake,
     CanEditQuotes,
+    IsManagerOrAdmin,
+    IsFinanceOrAdmin,
 )
 
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
@@ -445,10 +448,59 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         return QuoteModelSerializerV3
 
     def get_queryset(self):
+        user = self.request.user
         # Prefetch related data to optimize query
         qs = Quote.objects.all().select_related(
             'customer', 'contact', 'origin_location', 'destination_location'
         ).order_by('-created_at')
+
+        # 1. Role-Based Visibility
+        # Managers, Admins, and Finance can view all quotes.
+        # Sales users can ONLY view quotes they created.
+        if user.is_authenticated:
+            # Check permissions based on CustomUser properties
+            role = getattr(user, 'role', None)
+            is_privileged_role = role in {
+                getattr(user, 'ROLE_MANAGER', 'manager'),
+                getattr(user, 'ROLE_ADMIN', 'admin'),
+                getattr(user, 'ROLE_FINANCE', 'finance'),
+            }
+            is_privileged = (
+                getattr(user, 'is_manager', False)
+                or getattr(user, 'is_admin', False)
+                or getattr(user, 'is_finance', False)
+                or is_privileged_role
+            )
+            
+            if not is_privileged:
+                qs = qs.filter(created_by=user)
+
+        # 2. Filtering (Manual implementation since django-filter is not installed)
+        mode = self.request.query_params.get('mode')
+        if mode:
+            qs = qs.filter(mode=mode.upper())
+
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            qs = qs.filter(status=status_param.upper())
+            
+        # Filter by creator (Manager/Admin only)
+        creator_id = self.request.query_params.get('created_by')
+        if creator_id:
+            # Ideally verify permission again, but filtering by any creator is harmless 
+            # if the base queryset is already restricted for Sales.
+            qs = qs.filter(created_by_id=creator_id)
+
+        # 3. Archival Filtering (Optional but good practice)
+        # By default, exclude archived unless specifically requested? 
+        # For now, we show all, but UI might filter. 
+        # Or if "is_archived" param is passed.
+        # Let's support filtering by is_archived if needed.
+        is_archived_param = self.request.query_params.get('is_archived')        
+        if is_archived_param is not None:
+            is_archived = is_archived_param.lower() in ['true', '1', 'yes']
+            qs = qs.filter(is_archived=is_archived)
+
 
         if self.action == 'list':
             # List view only needs totals for the latest version

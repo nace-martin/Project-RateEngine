@@ -635,7 +635,7 @@ class Command(BaseCommand):
     def _ensure_parties(self, png_country, default_currency):
         customer, _ = Company.objects.get_or_create(
             name="Seed Customer Pty Ltd",
-            defaults={"company_type": "CUSTOMER"},
+            defaults={"is_customer": True},
         )
         contact, _ = Contact.objects.get_or_create(
             company=customer,
@@ -653,7 +653,7 @@ class Command(BaseCommand):
 
         supplier, _ = Company.objects.get_or_create(
             name="Seed Carrier Ltd",
-            defaults={"company_type": "SUPPLIER"},
+            defaults={"is_agent": True, "is_carrier": True},
         )
 
         return customer, contact, supplier
@@ -661,7 +661,7 @@ class Command(BaseCommand):
     def _ensure_self_supplier(self):
         supplier, _ = Company.objects.get_or_create(
             name="Self",
-            defaults={"company_type": "SUPPLIER"},
+            defaults={"is_agent": True},
         )
         return supplier
 

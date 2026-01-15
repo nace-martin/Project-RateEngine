@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { Copy, Mail } from 'lucide-react';
+import { DataTable } from '@/components/ui/data-table-wrapper';
+import { cn } from '@/lib/utils';;
 
 interface ExportSpotManagerProps {
     showCarrierSpot: boolean;
@@ -114,121 +115,147 @@ Best regards,`;
         setTimeout(() => setIsCopied(false), 2000);
     };
 
+    const dimensionColumns = [
+        { header: "Qty", accessorKey: "pieces" as const },
+        { header: "Type", accessorKey: "package_type" as const },
+        {
+            header: "Dimensions (cm)",
+            cell: (item: any) => `${item.length_cm} x ${item.width_cm} x ${item.height_cm}`
+        },
+        { header: "Weight (kg)", accessorKey: "gross_weight_kg" as const },
+    ];
+
     return (
-        <Card className="mb-6 border-blue-200 bg-blue-50/30 shadow-sm">
-            <CardHeader className="pb-3 border-b border-blue-100 bg-blue-50/50">
-                <CardTitle className="text-lg font-semibold text-blue-900 flex items-center gap-2">
-                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-200 text-blue-800 text-xs font-bold">2</span>
-                    Provide Missing Rates
+        <Card className="mb-6 border-border shadow-sm">
+            <CardHeader className="pb-4 border-b border-border bg-muted/20">
+                <CardTitle className="text-lg font-semibold text-primary flex items-center justify-between">
+                    <span>Provide Missing Rates</span>
+                    <span className="text-sm font-normal text-muted-foreground bg-secondary px-3 py-1 rounded-full">
+                        Action Required
+                    </span>
                 </CardTitle>
-                <p className="text-sm text-blue-700">
-                    We calculated what we could, but some rates are missing. Please provide spot rates below to complete the quote.
+                <p className="text-sm text-muted-foreground mt-1">
+                    Some rates could not be calculated automatically. Please enter spot rates below.
                 </p>
             </CardHeader>
 
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Carrier Spot Rate (A2A) */}
-                {showCarrierSpot && (
-                    <div className="space-y-2">
-                        <Label htmlFor="carrier-spot">Carrier Spot Rate (PGK)</Label>
-                        <div className="relative">
-                            <span className="absolute left-3 top-2.5 text-gray-500 text-sm">PGK</span>
-                            <Input
-                                id="carrier-spot"
-                                type="number"
-                                className="pl-12"
-                                placeholder="0.00"
-                                value={spotRates.carrierSpotRatePgk}
-                                onChange={(e) => onUpdate('carrierSpotRatePgk', e.target.value)}
-                            />
-                        </div>
-                        <p className="text-xs text-gray-500">Overrides standard freight rate</p>
-                        <div className="flex items-center space-x-2 mt-2">
-                            <Switch
-                                id="all-in-rate"
-                                checked={spotRates.isAllIn}
-                                onCheckedChange={(checked) => onUpdate('isAllIn', checked)}
-                            />
-                            <Label htmlFor="all-in-rate" className="text-xs text-gray-600">
-                                All-In Rate (Includes Surcharges)
-                            </Label>
-                        </div>
+            <CardContent className="pt-6 space-y-6">
+                {/* Dimensions Table (if strictly needed context) */}
+                {shipmentDetails?.dimensions && shipmentDetails.dimensions.length > 0 && (
+                    <div className="space-y-2 mb-4">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Shipment Dimensions</Label>
+                        <DataTable
+                            data={shipmentDetails.dimensions}
+                            columns={dimensionColumns}
+                            keyExtractor={(_, i) => `dim-${i}`}
+                            className="bg-background"
+                        />
                     </div>
                 )}
 
-                {/* Agent Destination Charges */}
-                {showAgentCharges && (
-                    <>
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                                <Label htmlFor="agent-charges">Agent Dest. Charges (FCY)</Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Carrier Spot Rate (A2A) */}
+                    {showCarrierSpot && (
+                        <div className="space-y-4 p-4 rounded-lg bg-muted/10 border border-border">
+                            <h3 className="font-semibold text-foreground border-b pb-2">Carrier Spot Rate</h3>
+                            <div className="space-y-3">
+                                <Label htmlFor="carrier-spot">Rate Amount (PGK)</Label>
+                                <div className="space-y-1">
+                                    <Input
+                                        id="carrier-spot"
+                                        type="number"
+                                        placeholder="0.00"
+                                        value={spotRates.carrierSpotRatePgk}
+                                        onChange={(e) => onUpdate('carrierSpotRatePgk', e.target.value)}
+                                        className="font-medium"
+                                    />
+                                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Overrides generic freight</p>
+                                </div>
+                                <div className="flex items-center space-x-2 pt-2">
+                                    <Switch
+                                        id="all-in-rate"
+                                        checked={spotRates.isAllIn}
+                                        onCheckedChange={(checked) => onUpdate('isAllIn', checked)}
+                                    />
+                                    <Label htmlFor="all-in-rate" className="text-sm text-foreground">
+                                        All-In Rate (Includes Surcharges)
+                                    </Label>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Agent Destination Charges */}
+                    {showAgentCharges && (
+                        <div className="space-y-4 p-4 rounded-lg bg-muted/10 border border-border">
+                            <div className="flex justify-between items-center border-b pb-2">
+                                <h3 className="font-semibold text-foreground">Agent Charges</h3>
                                 <Dialog onOpenChange={(open) => {
                                     if (open) setEmailScript(generateEmailScript());
                                 }}>
                                     <DialogTrigger asChild>
-                                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-blue-600 hover:text-blue-800">
-                                            <Mail className="w-3 h-3 mr-1" />
+                                        <Button variant="ghost" size="sm" className="h-8 px-2 text-xs font-medium text-primary hover:text-primary/80 hover:bg-primary/10">
                                             Draft Email
                                         </Button>
                                     </DialogTrigger>
-                                    <DialogContent className="sm:max-w-[500px]">
+                                    <DialogContent className="sm:max-w-[600px]">
                                         <DialogHeader>
-                                            <DialogTitle>Request Destination Charges</DialogTitle>
+                                            <DialogTitle>Request Agent Quote</DialogTitle>
                                             <DialogDescription>
-                                                Copy this script to request a quote from your destination agent.
+                                                Use this script to request a quote from your destination agent.
                                             </DialogDescription>
                                         </DialogHeader>
                                         <div className="space-y-4 py-4">
                                             <Textarea
                                                 value={emailScript}
                                                 onChange={(e) => setEmailScript(e.target.value)}
-                                                className="h-[300px] font-mono text-sm"
+                                                className="h-[300px] font-mono text-sm bg-muted/50"
                                             />
-                                            <Button onClick={handleCopy} className="w-full">
-                                                {isCopied ? (
-                                                    <>Copied!</>
-                                                ) : (
-                                                    <>
-                                                        <Copy className="w-4 h-4 mr-2" />
-                                                        Copy to Clipboard
-                                                    </>
-                                                )}
-                                            </Button>
                                         </div>
+                                        <DialogFooter>
+                                            <Button onClick={handleCopy} className={cn("w-full sm:w-auto", isCopied ? "bg-success hover:bg-success/90" : "")}>
+                                                {isCopied ? "Copied!" : "Copy to Clipboard"}
+                                            </Button>
+                                        </DialogFooter>
                                     </DialogContent>
                                 </Dialog>
                             </div>
-                            <Input
-                                id="agent-charges"
-                                type="number"
-                                placeholder="0.00"
-                                value={spotRates.agentDestChargesFcy}
-                                onChange={(e) => onUpdate('agentDestChargesFcy', e.target.value)}
-                            />
-                            <p className="text-xs text-gray-500">Clearance & Delivery</p>
-                        </div>
 
-                        {/* Agent Currency */}
-                        <div className="space-y-2">
-                            <Label htmlFor="agent-currency">Agent Currency</Label>
-                            <Select
-                                value={spotRates.agentCurrency}
-                                onValueChange={(val) => onUpdate('agentCurrency', val)}
-                            >
-                                <SelectTrigger id="agent-currency">
-                                    <SelectValue placeholder="Select Currency" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {currencies.map((curr) => (
-                                        <SelectItem key={curr} value={curr}>
-                                            {curr}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2 col-span-2">
+                                    <Label htmlFor="agent-charges">Total Charges (FCY)</Label>
+                                    <Input
+                                        id="agent-charges"
+                                        type="number"
+                                        placeholder="0.00"
+                                        value={spotRates.agentDestChargesFcy}
+                                        onChange={(e) => onUpdate('agentDestChargesFcy', e.target.value)}
+                                        className="font-medium"
+                                    />
+                                </div>
+
+                                <div className="space-y-2 col-span-2">
+                                    <Label htmlFor="agent-currency">Agent Currency</Label>
+                                    <Select
+                                        value={spotRates.agentCurrency}
+                                        onValueChange={(val) => onUpdate('agentCurrency', val)}
+                                    >
+                                        <SelectTrigger id="agent-currency" className="bg-background">
+                                            <SelectValue placeholder="Select Currency" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {currencies.map((curr) => (
+                                                <SelectItem key={curr} value={curr}>
+                                                    {curr}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
                         </div>
-                    </>
-                )}
+                    )}
+                </div>
             </CardContent>
         </Card>
     );

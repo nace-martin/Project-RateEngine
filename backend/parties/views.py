@@ -52,16 +52,16 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            Company.objects.filter(company_type="CUSTOMER")
+            Company.objects.filter(is_customer=True)
             .order_by("name")
             .prefetch_related("contacts")
         )
 
     def perform_create(self, serializer):
-        serializer.save(company_type="CUSTOMER")
+        serializer.save(is_customer=True)
 
     def perform_update(self, serializer):
-        serializer.save(company_type="CUSTOMER")
+        serializer.save(is_customer=True)
 
 
 class CompanyV3SearchView(generics.ListAPIView):
@@ -76,7 +76,7 @@ class CompanyV3SearchView(generics.ListAPIView):
         query = self.request.query_params.get("q", "").strip()
         if len(query) < 2:
             return Company.objects.none()
-        return Company.objects.filter(name__icontains=query, company_type="CUSTOMER").order_by("name")[:20]
+        return Company.objects.filter(name__icontains=query, is_customer=True).order_by("name")[:20]
 
 
 class CompanyContactListV3View(generics.ListAPIView):

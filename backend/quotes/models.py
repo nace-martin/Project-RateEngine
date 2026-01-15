@@ -140,6 +140,14 @@ class Quote(models.Model):
         null=True, blank=True, related_name='finalized_quotes',
         help_text="User who finalized the quote."
     )
+    
+    # --- Archiving ---
+    is_archived = models.BooleanField(
+        default=False, 
+        db_index=True,
+        help_text="True if soft-deleted/archived (e.g. > 3 months old)."
+    )
+    
     sent_at = models.DateTimeField(
         null=True, blank=True,
         help_text="Timestamp when quote was sent to customer."

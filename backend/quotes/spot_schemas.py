@@ -20,7 +20,7 @@ Hard Guardrails (model-level):
 - Shipment context hash for integrity verification
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional, Literal
@@ -205,6 +205,7 @@ class SPEShipmentContext(BaseModel):
     commodity: Literal["GCR", "SCR", "DG", "AVI", "PER", "HVC", "HUM", "OOG", "VUL", "TTS", "OTHER"]
     
     total_weight_kg: float = Field(default=0, description="Total Weight in KG")
+    volume_cbm: Optional[float] = Field(default=None, description="Total Volume in CBM")
     pieces: int = Field(default=1, description="Number of pieces")
     service_scope: Literal['p2p', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
     
@@ -362,7 +363,19 @@ class SpotPricingEnvelope(BaseModel):
     spot_trigger_reason_text: str = Field(
         description="Human-readable trigger reason for UI display"
     )
+
+    # Added to support dashboard display
+    customer_name: Optional[str] = Field(
+        default=None,
+        description="Name of the customer associated with the parent quote (if any)"
+    )
     
+    # Added to support dashboard display
+    customer_name: Optional[str] = Field(
+        default=None,
+        description="Name of the customer associated with the parent quote (if any)"
+    )
+
     created_by_user_id: str
     created_at: datetime
     
@@ -432,6 +445,7 @@ class SpotPricingEnvelope(BaseModel):
     @property
     def is_expired(self) -> bool:
         """Check if SPE has expired."""
+        from datetime import timezone
         return datetime.now(timezone.utc) >= self.expires_at
     
     @property

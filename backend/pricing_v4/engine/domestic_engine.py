@@ -10,6 +10,7 @@ class BillableCharge:
     amount: Decimal
     product_code: str = ''
     is_gst_applicable: bool = True
+    agent_name: Optional[str] = None  # NEW
 
 @dataclass
 class QuoteResult:
@@ -81,13 +82,15 @@ class DomesticPricingEngine:
                 valid_from__lte=self.quote_date,
                 valid_until__gte=self.quote_date,
             )
+            .select_related('agent')
             .order_by('-valid_from')
             .first()
         )
         if cogs:
             cost = self._calc_weight_based_amount(cogs.rate_per_kg, cogs.weight_breaks, cogs.min_charge)
             if cost > 0:
-                result.cogs_breakdown.append(BillableCharge("Air Freight (Cost)", cost, product_code='DOM-FRT-AIR'))
+                agent_name = cogs.agent.name if cogs.agent else None
+                result.cogs_breakdown.append(BillableCharge("Air Freight (Cost)", cost, product_code='DOM-FRT-AIR', agent_name=agent_name))
             
         # SELL
         sell = (

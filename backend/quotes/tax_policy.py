@@ -182,13 +182,22 @@ def apply_gst_policy(version, charge) -> None:
     
     Mutates `charge.is_taxable` and `charge.gst_percentage` in place.
 
-    Rules (MVP):
-      - AIR (international linehaul): 0% GST
-      - PNG (PG)
-        * IMPORT/DOMESTIC: ORIGIN/DESTINATION services in PG → 10%
-        * EXPORT: ORIGIN services in PG → 0% if export_evidence=True else 10%
-      - Outside PG (e.g., AU): 0% (out-of-scope for MVP)
-      - Disbursements (duty/import GST/etc.): 0%
+    Priority:
+    1. Engine-First: If charge has a linked ProductCode, use its tax settings.
+    2. Legacy: Use JurisdictionBasedTaxEngine for ad-hoc charges or legacy data.
     """
+    # 1. Engine-First Check
+    # Check if the charge object has a service component and product code
+    sc = getattr(charge, 'service_component', None)
+    if sc and sc.product_code:
+        # Use the V4 engine logic defined above
+        is_taxable, gst_decimal_rate = get_gst_from_product_code(sc.product_code)
+        
+        charge.is_taxable = is_taxable
+        # Convert Decimal('0.10') to percentage '10' for compatibility with legacy consumers
+        charge.gst_percentage = gst_decimal_rate * 100
+        return
+
+    # 2. Legacy Fallback (SPOT / Ad-Hoc / No Product Code)
     _tax_engine.apply_gst_policy(version, charge)
 

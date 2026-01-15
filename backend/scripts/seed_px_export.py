@@ -21,7 +21,7 @@ def run():
     # 1. Get/Create Supplier (Air Niugini)
     px_supplier, _ = Company.objects.get_or_create(
         name="Air Niugini Cargo",
-        defaults={'company_type': 'PARTNER'}
+        defaults={'is_agent': True, 'is_carrier': True}
     )
 
     # 2. Define Service Components

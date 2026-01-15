@@ -1,7 +1,10 @@
 # backend/quotes/admin.py
 
 from django.contrib import admin
-from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
+from .models import (
+    Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote,
+    SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB, SPEManagerApprovalDB
+)
 
 class QuoteLineInline(admin.TabularInline):
     model = QuoteLine
@@ -62,9 +65,57 @@ class QuoteAdmin(admin.ModelAdmin):
         'incoterm', 'payment_term', 'output_currency', 
         'origin_location', 'destination_location',
         'policy', 'fx_snapshot', 'is_dangerous_goods', 'status', 
-        'request_details_json', 'created_at', 'created_by', 'updated_at'
+        'request_details_json', 'created_at', 'created_by', 'updated_at',
+        'finalized_at', 'finalized_by', 'sent_at', 'sent_by'
+    )
+
+# --- SPOT Mode Admin Configuration ---
+
+class SPEChargeLineInline(admin.TabularInline):
+    model = SPEChargeLineDB
+    extra = 0
+    can_delete = False
+    readonly_fields = ('code', 'description', 'amount', 'currency', 'unit', 'bucket', 'is_primary_cost', 'source_reference', 'entered_by', 'entered_at')
+
+class SPEAcknowledgementInline(admin.StackedInline):
+    model = SPEAcknowledgementDB
+    extra = 0
+    can_delete = False
+    readonly_fields = ('acknowledged_by', 'acknowledged_at', 'statement')
+
+class SPEManagerApprovalInline(admin.StackedInline):
+    model = SPEManagerApprovalDB
+    extra = 0
+    can_delete = False
+    readonly_fields = ('approved', 'manager', 'decision_at', 'comment')
+
+class SpotPricingEnvelopeAdmin(admin.ModelAdmin):
+    model = SpotPricingEnvelopeDB
+    list_display = ('__str__', 'status', 'spot_trigger_reason_code', 'created_by', 'created_at', 'expires_at')
+    list_filter = ('status', 'spot_trigger_reason_code', 'created_at')
+    search_fields = ('id', 'created_by__username', 'spot_trigger_reason_code')
+    
+    inlines = [SPEChargeLineInline, SPEAcknowledgementInline, SPEManagerApprovalInline]
+    
+    readonly_fields = (
+        'id', 'status', 'shipment_context_json', 'shipment_context_hash',
+        'conditions_json', 'spot_trigger_reason_code', 'spot_trigger_reason_text',
+        'created_at', 'created_by', 'expires_at', 'quote'
+    )
+    
+    fieldsets = (
+        ('Lifecycle', {
+            'fields': ('id', 'status', 'created_at', 'created_by', 'expires_at', 'quote')
+        }),
+        ('Trigger Context', {
+            'fields': ('spot_trigger_reason_code', 'spot_trigger_reason_text', 'shipment_context_json', 'shipment_context_hash')
+        }),
+        ('Conditions', {
+            'fields': ('conditions_json',)
+        }),
     )
 
 # Register your models
 admin.site.register(Quote, QuoteAdmin)
 admin.site.register(QuoteVersion, QuoteVersionAdmin)
+admin.site.register(SpotPricingEnvelopeDB, SpotPricingEnvelopeAdmin)

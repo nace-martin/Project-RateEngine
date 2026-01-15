@@ -73,7 +73,8 @@ class Command(BaseCommand):
         efm, _ = Company.objects.get_or_create(
             name='EFM AU',
             defaults={
-                'company_type': 'PARTNER',
+                'is_agent': True,
+                'is_carrier': True,
                 'is_active': True
             }
         )

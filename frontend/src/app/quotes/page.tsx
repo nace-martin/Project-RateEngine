@@ -1,91 +1,53 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getQuotesV3, listSpotEnvelopes } from "@/lib/api";
 import { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, PlusCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Search, Plus, Filter, Loader2 } from "lucide-react";
+import { StandardPageContainer, PageHeader } from "@/components/layout/standard-page";
+import { DataTable } from "@/components/ui/data-table-wrapper";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 
-// Helper to format currency
-const formatCurrency = (amountStr: string, currency: string) => {
-  const amount = parseFloat(amountStr || "0");
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency,
-  }).format(amount);
-};
+import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName } from "@/lib/quote-helpers";
 
-// Helper to format route as "City (CODE)"
-const formatRoute = (location: string): string => {
-  if (!location) return '';
-  const match = location.match(/^([A-Z]{3})\s*-\s*(.+)$/);
-  if (match) {
-    const [, code, fullName] = match;
-    const cityName = fullName.replace(/\s+(Airport|Intl|International|Jacksons|Terminal|Apt).*$/i, '').trim();
-    return `${cityName} (${code})`;
-  }
-  return location;
-};
+// --- Helpers -> Removed (imported from lib/quote-helpers)
 
-// Helper to format date
-const formatDate = (dateStr: string): string => {
-  try {
-    return new Date(dateStr).toLocaleDateString('en-AU', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
-  } catch {
-    return dateStr;
-  }
-};
+
+// --- Main Component ---
 
 export default function QuotesPage() {
   const { user } = useAuth();
   const { canEditQuotes, isFinance } = usePermissions();
+  const router = useRouter();
+
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Raw Data
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [spotDrafts, setSpotDrafts] = useState<SpotPricingEnvelope[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
       const fetchData = async () => {
         setLoading(true);
-        setError(null);
         try {
-          // Fetch both quotes and SPOT drafts in parallel
           const [quotesData, draftsData] = await Promise.all([
-            getQuotesV3(),
-            listSpotEnvelopes('draft').catch(() => []), // Silently fail if no drafts
+            getQuotesV3({}), // Fetch all, handle filtering client-side for now for unified search
+            listSpotEnvelopes('draft').catch(() => []),
           ]);
           setQuotes(quotesData.results);
           setSpotDrafts(draftsData);
-        } catch (err: unknown) {
-          const message =
-            err instanceof Error ? err.message : "An unexpected error occurred.";
-          setError(message);
+        } catch (err) {
+          console.error("Failed to fetch quotes", err);
         } finally {
           setLoading(false);
         }
@@ -94,166 +56,166 @@ export default function QuotesPage() {
     }
   }, [user]);
 
-  const renderSpotDrafts = () => {
-    if (spotDrafts.length === 0) return null;
-
-    return (
-      <Card className="mb-6 border-amber-200 bg-amber-50/50">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg text-amber-800">In-Progress SPOT Quotes</CardTitle>
-          <CardDescription className="text-amber-700">
-            These quotes are saved as drafts. Click &quot;Resume&quot; to continue.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {spotDrafts.map((draft) => {
-              const ctx = draft.shipment;
-              if (!ctx) return null; // Skip if no shipment context
-              return (
-                <div
-                  key={draft.id}
-                  className="flex items-center justify-between rounded-lg border border-amber-200 bg-white p-3"
-                >
-                  <div className="flex items-center gap-6">
-                    <div>
-                      <span className="font-medium text-slate-900">
-                        {ctx.origin_code} → {ctx.destination_code}
-                      </span>
-                      <span className="ml-2 text-sm text-slate-500">
-                        ({ctx.commodity || 'GCR'})
-                      </span>
-                    </div>
-                    <div className="text-sm text-slate-600">
-                      {ctx.total_weight_kg?.toFixed(0) || '0'} kg
-                      {ctx.pieces && ctx.pieces > 1 ? ` × ${ctx.pieces} pcs` : ''}
-                    </div>
-                    <div className="text-sm text-slate-400">
-                      Saved {formatDate(draft.created_at)}
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-amber-400 text-amber-700 hover:bg-amber-100"
-                    onClick={() => window.location.href = `/quotes/spot/${draft.id}`}
-                  >
-                    Resume
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-    );
+  // specific status badges for spot drafts
+  const getStatusBadge = (item: UnifiedQuote) => {
+    if (item.type === "SPOT_DRAFT") {
+      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100">Draft (SPOT)</Badge>;
+    }
+    return <QuoteStatusBadge status={item.rawStatus} />;
   };
 
-  const renderContent = () => {
-    if (loading) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <Loader2 className="mr-2 h-8 w-8 animate-spin" />
-          <span>Loading quotes...</span>
-        </div>
-      );
-    }
+  // Unified Data
+  const tableData = useMemo<UnifiedQuote[]>(() => {
+    const unified: UnifiedQuote[] = [];
 
-    if (error) {
-      return (
-        <Alert variant="destructive">
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      );
-    }
+    // 1. Map Standard Quotes
+    quotes.forEach(q => {
+      const totalAmt = q.latest_version?.totals?.total_sell_fcy_incl_gst;
+      const currency = q.latest_version?.totals?.total_sell_fcy_currency;
 
-    if (quotes.length === 0) {
-      return (
-        <div className="text-center">
-          <p className="mb-4 text-lg text-muted-foreground">
-            {isFinance ? "No quotes available for review." : "You haven't created any quotes yet."}
-          </p>
-          {canEditQuotes && (
-            <Button variant="secondary" asChild>
-              <Link href="/quotes/new">
-                <PlusCircle className="mr-2 h-4 w-4" />
-                Create New Quote
-              </Link>
-            </Button>
-          )}
-        </div>
-      );
-    }
+      unified.push({
+        id: q.id,
+        type: "STANDARD",
+        number: q.quote_number,
+        customer: getCustomerName(q.customer),
+        route: `${formatRoute(q.origin_location)} → ${formatRoute(q.destination_location)}`,
+        date: q.created_at,
+        weight: getWeight(q),
+        status: q.status,
+        rawStatus: q.status,
+        total: formatCurrency(totalAmt, currency),
+        actionLink: `/quotes/${q.id}`,
+      });
+    });
 
-    return (
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Quote #</TableHead>
-            <TableHead>From</TableHead>
-            <TableHead>To</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Total (Inc. GST)</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {quotes.map((quote) => (
-            <TableRow
-              key={quote.id}
-              className="cursor-pointer hover:bg-muted/50"
-              onClick={() => window.location.href = `/quotes/${quote.id}`}
-            >
-              <TableCell>
-                <span className="text-primary font-medium">
-                  {quote.quote_number}
-                </span>
-              </TableCell>
-              <TableCell>{formatRoute(quote.origin_location)}</TableCell>
-              <TableCell>{formatRoute(quote.destination_location)}</TableCell>
-              <TableCell>
-                <QuoteStatusBadge status={quote.status} />
-              </TableCell>
-              <TableCell className="text-right font-medium">
-                {formatCurrency(
-                  quote.latest_version.totals.total_sell_fcy_incl_gst,
-                  quote.latest_version.totals.total_sell_fcy_currency,
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    // 2. Map Spot Drafts
+    spotDrafts.forEach(d => {
+      unified.push({
+        id: d.id,
+        type: "SPOT_DRAFT",
+        number: "SPOT Draft", // Or generate a placeholder like "DRAFT-..."
+        customer: "-", // Spot drafts dont have customer attached in the envelope usually
+        route: `${d.shipment.origin_code} → ${d.shipment.destination_code}`,
+        date: d.created_at,
+        weight: `${d.shipment.total_weight_kg} kg`,
+        status: "Draft",
+        rawStatus: "DRAFT",
+        total: "-",
+        actionLink: `/quotes/spot/${d.id}`,
+      });
+    });
+
+    // 3. Filter
+    const query = searchQuery.toLowerCase();
+    const filtered = unified.filter(item =>
+      item.number.toLowerCase().includes(query) ||
+      item.customer.toLowerCase().includes(query) ||
+      item.route.toLowerCase().includes(query)
     );
-  };
+
+    // 4. Sort (Date Descending)
+    return filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  }, [quotes, spotDrafts, searchQuery]);
+
+  const columns = [
+    {
+      header: "Quote #",
+      accessorKey: "number" as keyof UnifiedQuote,
+      className: "font-medium text-primary",
+    },
+    {
+      header: "Date",
+      cell: (item: UnifiedQuote) => formatDate(item.date),
+      className: "text-muted-foreground text-sm",
+    },
+    {
+      header: "Customer",
+      accessorKey: "customer" as keyof UnifiedQuote,
+      className: "max-w-[200px] truncate",
+    },
+    {
+      header: "Route",
+      accessorKey: "route" as keyof UnifiedQuote,
+    },
+    {
+      header: "Weight",
+      accessorKey: "weight" as keyof UnifiedQuote,
+      className: "text-right font-mono text-xs",
+    },
+    {
+      header: "Status",
+      cell: (item: UnifiedQuote) => getStatusBadge(item),
+    },
+    {
+      header: "Total (Inc. GST)",
+      accessorKey: "total" as keyof UnifiedQuote,
+      className: "text-right font-medium",
+    },
+    {
+      header: "",
+      cell: (item: UnifiedQuote) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          asChild
+          className={item.type === "SPOT_DRAFT" ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50" : ""}
+        >
+          <Link href={item.actionLink}>
+            {item.type === "SPOT_DRAFT" ? "Resume" : "View"}
+          </Link>
+        </Button>
+      ),
+      className: "text-right w-[100px]",
+    }
+  ];
+
+  if (!user) return null;
 
   return (
-    <div className="container mx-auto p-4">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-3xl font-bold">
-          {isFinance ? "Quotes Register" : "Quotes Dashboard"}
-        </h1>
-        {canEditQuotes && (
-          <Button variant="secondary" asChild>
-            <Link href="/quotes/new">
-              New Quote
-            </Link>
-          </Button>
-        )}
+    <StandardPageContainer>
+      <PageHeader
+        title={isFinance ? "Quotes Register" : "Quotes Dashboard"}
+        description="Manage and track all logistics quotes."
+        actions={
+          canEditQuotes && (
+            <Button asChild className="bg-primary hover:bg-primary/90">
+              <Link href="/quotes/new">
+                <Plus className="h-4 w-4 mr-2" />
+                New Quote
+              </Link>
+            </Button>
+          )
+        }
+      />
+
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search quotes..."
+            className="pl-9 bg-background"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        {/* Future: Add more detailed filters here if needed */}
       </div>
 
-      {/* SPOT Drafts Section */}
-      {renderSpotDrafts()}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Quotes</CardTitle>
-          <CardDescription>
-            Here is a list of your most recent quotes.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>{renderContent()}</CardContent>
-      </Card>
-    </div>
+      {loading ? (
+        <div className="flex items-center justify-center p-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      ) : (
+        <DataTable
+          data={tableData}
+          columns={columns}
+          keyExtractor={(item) => item.id}
+          emptyMessage="No quotes found matching your search."
+          onRowClick={(item) => router.push(item.actionLink)}
+        />
+      )}
+    </StandardPageContainer>
   );
 }

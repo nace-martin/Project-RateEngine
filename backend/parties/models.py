@@ -9,7 +9,14 @@ from decimal import Decimal # Import Decimal
 class Company(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255, unique=True)
-    company_type = models.CharField(max_length=20, choices=[('CUSTOMER', 'Customer'), ('SUPPLIER', 'Supplier')], default='CUSTOMER')
+    
+    # New flags replacing company_type
+    is_customer = models.BooleanField(default=False)
+    is_agent = models.BooleanField(default=False) 
+    is_carrier = models.BooleanField(default=False)
+    
+    # Deprecated - to be removed after data migration
+    company_type = models.CharField(max_length=20, choices=[('CUSTOMER', 'Customer'), ('SUPPLIER', 'Supplier')], default='CUSTOMER', null=True, blank=True)
     tax_id = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

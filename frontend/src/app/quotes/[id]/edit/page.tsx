@@ -1,0 +1,309 @@
+"use client";
+
+import { useEffect, useState, use } from "react";
+import { useAuth } from "@/context/auth-context";
+import { useRouter } from "next/navigation";
+import { getQuoteV3, computeQuoteV3, getContactsForCompany } from "@/lib/api";
+import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES } from "@/lib/schemas/quoteSchema";
+import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Contact } from "@/lib/types";
+import QuoteForm from "@/components/forms/QuoteForm";
+import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
+import { Loader2 } from "lucide-react";
+
+// Reusing the payload builder - ideally this should be a shared utility
+const buildQuoteComputePayload = (
+    data: QuoteFormSchemaV3,
+    spotRates?: {
+        carrierSpotRatePgk: string;
+        agentDestChargesFcy: string;
+        agentCurrency: string;
+        isAllIn?: boolean;
+    },
+    existingQuoteId?: string | null
+): V3QuoteComputeRequest => {
+    const payload: V3QuoteComputeRequest = {
+        quote_id: existingQuoteId || undefined,
+        customer_id: data.customer_id,
+        contact_id: data.contact_id,
+        mode: data.mode,
+        incoterm: data.incoterm,
+        payment_term: data.payment_term,
+        service_scope: data.service_scope,
+        origin_location_id: data.origin_location_id,
+        destination_location_id: data.destination_location_id,
+        dimensions: data.dimensions.map((dimension) => ({
+            pieces: dimension.pieces,
+            length_cm: dimension.length_cm,
+            width_cm: dimension.width_cm,
+            height_cm: dimension.height_cm,
+            gross_weight_kg: dimension.gross_weight_kg,
+        })),
+        overrides: data.overrides?.map((override) => ({
+            service_component_id: override.service_component_id,
+            cost_fcy: override.cost_fcy,
+            currency: override.currency,
+            unit: override.unit,
+            min_charge_fcy: override.min_charge_fcy,
+        })),
+        is_dangerous_goods: data.cargo_type === 'Dangerous Goods',
+        output_currency: data.output_currency || undefined,
+    };
+
+    if (spotRates) {
+        const spots: Record<string, unknown> = {};
+        if (spotRates.carrierSpotRatePgk) {
+            spots['FRT_AIR_EXP'] = {
+                amount: spotRates.carrierSpotRatePgk,
+                currency: 'PGK',
+                is_all_in: spotRates.isAllIn
+            };
+        }
+        if (spotRates.agentDestChargesFcy) {
+            spots['DST_CHARGES'] = {
+                amount: spotRates.agentDestChargesFcy,
+                currency: spotRates.agentCurrency || 'USD'
+            };
+        }
+        if (Object.keys(spots).length > 0) {
+            payload.spot_rates = spots;
+        }
+    }
+
+    return payload;
+};
+
+export default function EditQuotePage({ params }: { params: Promise<{ id: string }> }) {
+    const { id } = use(params);
+    const { user } = useAuth();
+    const router = useRouter();
+
+    const [isLoading, setIsLoading] = useState(true);
+    const [initialData, setInitialData] = useState<Partial<QuoteFormSchemaV3> | null>(null);
+
+    // Hydrated State for Form UI
+    const [initialCustomer, setInitialCustomer] = useState<CompanySearchResult | undefined>(undefined);
+    const [initialContacts, setInitialContacts] = useState<Contact[]>([]);
+    const [initialOrigin, setInitialOrigin] = useState<LocationSearchResult | undefined>(undefined);
+    const [initialDestination, setInitialDestination] = useState<LocationSearchResult | undefined>(undefined);
+
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [apiError, setApiError] = useState<string | null>(null);
+
+    // Missing Rates State
+    const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
+    const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
+    const [pendingFormData, setPendingFormData] = useState<QuoteFormSchemaV3 | null>(null);
+
+    useEffect(() => {
+        const loadQuote = async () => {
+            try {
+                const quote = await getQuoteV3(id);
+                const payload = quote.latest_version?.payload_json;
+                if (!payload) throw new Error("No payload found checks quote");
+
+                const qAny = quote as any;
+
+                // 1. Prepare Initial Form Data
+                let dimensions = [{
+                    pieces: 1,
+                    length_cm: "",
+                    width_cm: "",
+                    height_cm: "",
+                    gross_weight_kg: "",
+                    package_type: "Box",
+                }];
+
+                if (payload.dimensions && payload.dimensions.length > 0) {
+                    dimensions = payload.dimensions.map((d: any) => ({
+                        pieces: d.pieces,
+                        length_cm: String(d.length_cm),
+                        width_cm: String(d.width_cm),
+                        height_cm: String(d.height_cm),
+                        gross_weight_kg: String(d.gross_weight_kg),
+                        package_type: "Box",
+                    }));
+                }
+
+                const formData: Partial<QuoteFormSchemaV3> = {
+                    quote_id: quote.id, // Important for tracking updates
+                    customer_id: payload.customer_id,
+                    contact_id: payload.contact_id || (quote.contact as any)?.id || "",
+                    mode: (payload.mode as any) || "AIR",
+                    incoterm: (payload.incoterm as any) || "EXW",
+                    payment_term: (payload.payment_term as any) || "PREPAID",
+                    service_scope: (payload.service_scope as any) || "A2A",
+                    origin_airport: qAny.origin_code || "",
+                    destination_airport: qAny.destination_code || "",
+                    origin_location_id: payload.origin_location_id || "",
+                    destination_location_id: payload.destination_location_id || "",
+                    origin_location_type: V3_LOCATION_TYPES.AIRPORT,
+                    destination_location_type: V3_LOCATION_TYPES.AIRPORT,
+                    cargo_type: (payload.is_dangerous_goods) ? V3_CARGO_TYPES.DANGEROUS_GOODS : V3_CARGO_TYPES.GENERAL,
+                    dimensions: dimensions,
+                };
+
+                setInitialData(formData);
+
+                // 2. Hydrate UI State (Customer, Contacts, Locations)
+
+                // Customer
+                if (payload.customer_id) {
+                    const custRef = quote.customer as any;
+                    if (custRef && typeof custRef === 'object') {
+                        setInitialCustomer({
+                            id: custRef.id || payload.customer_id,
+                            name: custRef.company_name || custRef.name || "Customer",
+                        } as CompanySearchResult);
+                    }
+                    // Fetch contacts!
+                    try {
+                        const contacts = await getContactsForCompany(payload.customer_id);
+                        setInitialContacts(contacts);
+                    } catch (e) {
+                        console.error("Failed to fetch contacts", e);
+                    }
+                }
+
+                // Locations
+                if (payload.origin_location_id) {
+                    setInitialOrigin({
+                        id: payload.origin_location_id,
+                        display_name: quote.origin_location || qAny.origin_city || payload.origin_location_id,
+                        code: qAny.origin_code || "ORG",
+                        type: 'AIRPORT',
+                        country_code: 'PG'
+                    } as LocationSearchResult);
+                }
+
+                if (payload.destination_location_id) {
+                    setInitialDestination({
+                        id: payload.destination_location_id,
+                        display_name: quote.destination_location || qAny.destination_city || payload.destination_location_id,
+                        code: qAny.destination_code || "DEST",
+                        type: 'AIRPORT',
+                        country_code: 'AU'
+                    } as LocationSearchResult);
+                }
+
+            } catch (err) {
+                console.error("Error loading quote:", err);
+                setApiError("Failed to load quote details.");
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        if (user && id) {
+            loadQuote();
+        }
+    }, [id, user]);
+
+
+    const handleQuoteSubmit = async (data: QuoteFormSchemaV3) => {
+        setIsSubmitting(true);
+        setApiError(null);
+        setMissingRates({ carrier: false, agent: false });
+
+        try {
+            // Pass the existing quote ID to update it (or create new version)
+            const payload = buildQuoteComputePayload(data, undefined, id);
+            const response = await computeQuoteV3(payload);
+
+            // Check for missing rates
+            const hasMissingRates = response.latest_version?.totals?.has_missing_rates ?? false;
+            if (hasMissingRates) {
+                const lines = response.latest_version?.lines ?? [];
+                let missingCarrier = false;
+                let missingAgent = false;
+
+                // Check for missing carrier rates (FRT_AIR_EXP)
+                if (lines.some(l => l.service_component?.code === 'FRT_AIR_EXP' && l.is_rate_missing)) {
+                    missingCarrier = true;
+                }
+
+                // Check for missing agent rates
+                const destComponents = ['DST-DELIV-STD', 'DST-CLEAR-CUS', 'DST-HANDL-STD', 'DST-DOC-IMP', 'DST_CHARGES'];
+                if (lines.some(l => destComponents.includes(l.service_component?.code || '') && l.is_rate_missing)) {
+                    missingAgent = true;
+                }
+
+                if (missingCarrier || missingAgent) {
+                    setMissingRates({ carrier: missingCarrier, agent: missingAgent });
+                    setPendingFormData(data);
+                    setShowMissingRatesModal(true);
+                    setIsSubmitting(false);
+                    return;
+                }
+            }
+
+            router.push(`/quotes/${response.id}`);
+        } catch (error: unknown) {
+            console.error("API Error:", error);
+            const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+            setApiError(message);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleMissingRatesDone = () => {
+        setShowMissingRatesModal(false);
+        if (id) {
+            router.push(`/quotes/${id}`);
+        }
+    };
+
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center p-20">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span className="ml-2">Loading quote...</span>
+            </div>
+        );
+    }
+
+    if (apiError && !initialData) {
+        return (
+            <div className="container mx-auto p-8">
+                <div className="text-red-500 font-bold mb-4">Error</div>
+                <p>{apiError}</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="container mx-auto max-w-5xl p-4 pb-32">
+            {initialData && (
+                <QuoteForm
+                    defaultValues={initialData}
+                    initialCustomer={initialCustomer}
+                    initialContacts={initialContacts}
+                    initialOrigin={initialOrigin}
+                    initialDestination={initialDestination}
+                    onSubmit={handleQuoteSubmit}
+                    isSubmitting={isSubmitting}
+                    serverError={apiError}
+                />
+            )}
+
+            {showMissingRatesModal && (
+                <MissingRatesModal
+                    isOpen={showMissingRatesModal}
+                    onClose={() => setShowMissingRatesModal(false)}
+                    onSubmit={handleMissingRatesDone}
+                    missingRates={{ carrier: missingRates.carrier, agent: missingRates.agent }}
+                    quoteId={id}
+                    shipmentDetails={{
+                        origin: "Quote Origin",
+                        destination: "Quote Destination",
+                        mode: "AIR",
+                        pieces: 1,
+                        weight: 1,
+                        chargeableWeight: 1,
+                        serviceScope: "A2A"
+                    }}
+                />
+            )}
+        </div>
+    );
+}

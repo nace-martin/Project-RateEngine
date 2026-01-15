@@ -32,6 +32,7 @@ class ChargeLineResult:
     cost_amount: Decimal
     cost_currency: str
     cost_source: str  # 'COGS' or 'N/A' if no cost
+    agent_name: Optional[str]  # NEW: Rate Provider (e.g., EFM AU)
     
     # Sell values (what EFM charges)
     sell_amount: Decimal
@@ -227,7 +228,7 @@ class ExportPricingEngine:
             destination_airport=self.destination,
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
-        )
+        ).select_related('agent')  # OPTIMIZATION: Fetch Agent to display provider name
         for rate in cogs_qs:
             self._cogs_rate_cache[rate.product_code_id] = rate
             
@@ -328,9 +329,12 @@ class ExportPricingEngine:
             )
         
         # 4. Calculate COGS amount
+        agent_name = None
         if cogs:
             cost_amount = self._calculate_amount(cogs)
             cost_source = 'COGS'
+            if cogs.agent:
+                agent_name = cogs.agent.name
         else:
             cost_amount = Decimal('0')
             cost_source = 'N/A (Sell Only)'
@@ -360,6 +364,7 @@ class ExportPricingEngine:
             cost_amount=cost_amount,
             cost_currency=cogs.currency if cogs else 'PGK',
             cost_source=cost_source,
+            agent_name=agent_name,  # NEW
             sell_amount=sell_amount,
             sell_currency=sell_rate.currency,
             margin_amount=margin_amount,
@@ -400,6 +405,7 @@ class ExportPricingEngine:
                 sell_incl_gst=Decimal('0'),
                 is_rate_missing=True,
                 notes=f"No base product code for percentage calculation",
+                agent_name=None,
             )
         
         # 3. Get sell rate for percentage
@@ -421,6 +427,7 @@ class ExportPricingEngine:
                 sell_incl_gst=Decimal('0'),
                 is_rate_missing=True,
                 notes=f"No percent_rate found for {pc.code}",
+                agent_name=None,
             )
         
         # 4. Get base amount from cache
@@ -462,6 +469,7 @@ class ExportPricingEngine:
             sell_incl_gst=sell_incl_gst,
             is_rate_missing=False,
             notes=f'Based on {base_pc.code}: K{base_sell}',
+            agent_name=None,
         )
     
     def _calculate_amount(self, rate) -> Decimal:

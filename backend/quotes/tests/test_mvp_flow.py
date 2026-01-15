@@ -30,7 +30,7 @@ def _mk_airport(iata, city_name, country_code):
 
 
 def _mk_customer(name="Test Customer"):
-    obj, _ = Company.objects.get_or_create(name=name, defaults={'company_type': 'CUSTOMER'})
+    obj, _ = Company.objects.get_or_create(name=name, defaults={'is_customer': True})
     return obj
 
 

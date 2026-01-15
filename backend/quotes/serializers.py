@@ -140,9 +140,40 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     customer = CustomerV3Serializer(read_only=True)
     contact = ContactV3Serializer(read_only=True)
     
-    # Use StringRelatedField to return the IATA code (e.g., "BNE")
     origin_location = serializers.StringRelatedField()
     destination_location = serializers.StringRelatedField()
+    
+    # Expose the creator as the "Agent"
+    created_by = serializers.SerializerMethodField()
+    rate_provider = serializers.SerializerMethodField()
+    
+    def get_created_by(self, obj):
+        if not obj.created_by:
+            return None
+        user = obj.created_by
+        full_name = f"{user.first_name} {user.last_name}".strip()
+        return full_name if full_name else user.username
+
+    def get_rate_provider(self, obj):
+        """
+        Aggregate unique rate providers (Agents) from line items.
+        """
+        if not hasattr(obj, 'latest_version') or not obj.latest_version:
+            return None
+            
+        # Optimization: This relies on lines being prefetched in the viewset query
+        lines = obj.latest_version.lines.all()
+        providers = set()
+        ignored_sources = {'V4 Engine', 'SPOT Envelope', 'N/A (Sell Only)', 'COGS', 'N/A', None, ''}
+        
+        for line in lines:
+            if line.cost_source and line.cost_source not in ignored_sources:
+                providers.add(line.cost_source)
+        
+        if not providers:
+            return "Internal"
+            
+        return ", ".join(sorted(providers))
 
     class Meta:
         model = Quote
@@ -150,7 +181,8 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version'
+            'status', 'valid_until', 'created_at', 'latest_version',
+            'created_by', 'rate_provider'
         )
 
 class QuoteListSerializerV3(serializers.ModelSerializer):

@@ -18,8 +18,9 @@ import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDi
 import { getSpotChargesForQuote } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, ChevronRight, ArrowLeft, CheckCircle } from "lucide-react";
+import { Loader2, ChevronRight, ArrowLeft, CheckCircle, CheckCircle2 } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
+import { getCustomerName } from "@/lib/quote-helpers";
 
 export default function QuoteDetailPage() {
   const { user } = useAuth();
@@ -109,10 +110,24 @@ export default function QuoteDetailPage() {
   }
 
   const isIncomplete = quote.status === "INCOMPLETE";
-  const canDownloadPDF = quote.status === "FINALIZED" || quote.status === "SENT";
+  const isArchived = quote.is_archived;
+  const canDownloadPDF = (quote.status === "FINALIZED" || quote.status === "SENT");
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
+      {/* Archival Warning */}
+      {isArchived && (
+        <Alert variant="destructive" className="bg-amber-50 border-amber-200 text-amber-900">
+          <AlertTitle className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            Archived Quote
+          </AlertTitle>
+          <AlertDescription>
+            This quote has been archived and is read-only. RESTORATION is required to edit.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Breadcrumb Navigation */}
       <nav className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/quotes" className="hover:text-slate-700 transition-colors">
@@ -132,6 +147,7 @@ export default function QuoteDetailPage() {
               {quote.quote_number}
             </h1>
             <QuoteStatusBadge status={quote.status} size="default" />
+            {isArchived && <span className="px-2 py-1 text-xs font-semibold bg-gray-100 text-gray-600 rounded">ARCHIVED</span>}
           </div>
           <p className="text-sm text-slate-500">
             Created on {new Date(quote.created_at).toLocaleDateString('en-US', {
@@ -142,23 +158,29 @@ export default function QuoteDetailPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            onClick={() => {
-              // Check if this is a spot quote derived from an envelope
-              const payloadJson = quote.latest_version?.payload_json;
-              const speId = payloadJson ? (payloadJson as unknown as { spot_envelope_id?: string }).spot_envelope_id : undefined;
-              if (speId) {
-                router.push(`/quotes/spot/${speId}`);
-              } else {
-                router.push(`/quotes/new?edit=${quote.id}`);
-              }
-            }}
-            className="gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Edit
-          </Button>
+          {/* Only show Back to Edit for editable quotes */}
+          {(!isArchived && (quote.status === "DRAFT" || quote.status === "INCOMPLETE")) && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (quote.shipment_type === "SPOT_NEGOTIATION" && quote.spot_negotiation) {
+                  // For spot, we might still want to go to spot details
+                  // But if it's a standard quote stored in our system, we should support edit
+                  // Assuming we map spot ID somewhere?
+                  // The original code: router.push(`/quotes/spot/${speId}`);
+                  // We need to keep that logic if possible
+                  const speId = quote.spot_negotiation.id;
+                  router.push(`/quotes/spot/${speId}`);
+                } else {
+                  router.push(`/quotes/${quote.id}/edit`);
+                }
+              }}
+              className="gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Edit
+            </Button>
+          )}
           <QuoteStatusActions
             quoteId={quote.id}
             status={quote.status}
@@ -174,6 +196,55 @@ export default function QuoteDetailPage() {
       <div className="pb-32 space-y-6">
         {/* Summary Bar - Condensed/Hidden on Scroll if we wanted, but let's keep it simply or remove if redundant */}
         {/* QuoteSummaryBar quote={quote}  <-- REMOVED since we have sticky footer now */}
+
+        {/* --- INTERNAL USE ONLY: AGENT & WEIGHT VISIBILITY --- */}
+        <div className="md:col-span-1">
+          <Alert className="bg-slate-50 border-slate-200 shadow-sm relative overflow-hidden">
+            {/* "Internal Only" Badge */}
+            <div className="absolute top-0 right-0 bg-slate-200 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-bl">
+              INTERNAL USE ONLY
+            </div>
+
+            <AlertDescription className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm mt-1">
+              {/* Customer */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Customer</p>
+                <p className="font-medium text-slate-900 truncate" title={getCustomerName(quote.customer)}>
+                  {getCustomerName(quote.customer)}
+                </p>
+              </div>
+
+              {/* Sales Rep */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Sales Rep</p>
+                <p className="font-medium text-slate-900">
+                  {quote.created_by || <span className="text-slate-400 italic">Unassigned</span>}
+                </p>
+              </div>
+
+              {/* Rate Provider */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Rate Provider</p>
+                <p className="font-medium text-slate-900 truncate" title={quote.rate_provider || "Internal"}>
+                  {quote.rate_provider || <span className="text-slate-400 italic">Internal</span>}
+                </p>
+              </div>
+
+              {/* Chargeable Weight */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Total Weight</p>
+                <p className="font-medium text-slate-900">
+                  {/* Calculate Gross Weight from payload */}
+                  {(() => {
+                    const dims = quote.latest_version?.payload_json?.dimensions || [];
+                    const totalKg = dims.reduce((sum: number, d: any) => sum + parseFloat(d.gross_weight_kg || 0), 0);
+                    return totalKg > 0 ? `${totalKg.toLocaleString()} kg` : "0 kg";
+                  })()}
+                </p>
+              </div>
+            </AlertDescription>
+          </Alert>
+        </div>
 
         {/* Display routing warning if VIA routing is required */}
         {computeResult?.routing && (

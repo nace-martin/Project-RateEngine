@@ -96,7 +96,7 @@ def setup_basic_data():
     # Customer
     customer, _ = Company.objects.get_or_create(
         name='Test Customer',
-        defaults={'company_type': 'CUSTOMER'}
+        defaults={'is_customer': True}
     )
     contact, _ = Contact.objects.get_or_create(
         company=customer,

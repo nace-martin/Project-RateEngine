@@ -99,6 +99,7 @@ export interface SPEShipmentContext {
     commodity: SPECommodity;
     total_weight_kg: number;
     pieces: number;
+    volume_cbm?: number;
     service_scope?: string;
 }
 

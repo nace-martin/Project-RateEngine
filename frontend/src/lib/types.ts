@@ -38,7 +38,9 @@ export interface QuoteContactRef {
 export interface Company {
   id: string; // UUID
   name: string;
-  company_type: 'CUSTOMER' | 'SUPPLIER';
+  is_customer: boolean;
+  is_agent: boolean;
+  is_carrier: boolean;
 }
 
 export interface Contact {
@@ -207,6 +209,7 @@ export interface V3QuoteComputeResponse {
   contact: string | QuoteContactRef;
   mode: string;
   shipment_type: string; // The backend calculates and returns this
+  spot_negotiation?: { id: string } | null;
   incoterm: string;
   payment_term: string;
   service_scope: string;
@@ -216,8 +219,11 @@ export interface V3QuoteComputeResponse {
   destination_location: string;
 
   status: string;
+  is_archived?: boolean;
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
+  created_by?: string | null; // Assigned Agent (Sales Rep)
+  rate_provider?: string | null; // Agent who provided rates
   latest_version: V3QuoteVersion;
 }
 

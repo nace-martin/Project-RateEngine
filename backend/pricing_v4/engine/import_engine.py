@@ -48,6 +48,7 @@ class ChargeLine:
     # Cost in original currency
     cost_amount: Decimal
     cost_currency: str
+    agent_name: Optional[str]  # NEW: Rate Provider
     
     # Sell in quote currency
     sell_amount: Decimal
@@ -353,7 +354,7 @@ class ImportPricingEngine:
             destination_airport=self.destination,
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
-        ).first()
+        ).select_related('agent').first()
         
         # Get explicit Sell (for destination)
         sell_rate = ImportSellRate.objects.filter(
@@ -444,6 +445,7 @@ class ImportPricingEngine:
             leg=leg,
             cost_amount=cost_amount,
             cost_currency=cost_currency,
+            agent_name=cogs.agent.name if cogs and cogs.agent else None,  # NEW
             sell_amount=sell_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
             sell_currency=sell_currency,
             margin_amount=margin_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),

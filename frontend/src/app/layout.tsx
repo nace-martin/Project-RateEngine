@@ -7,7 +7,6 @@ import { Providers } from "./providers";
 const notoSans = Noto_Sans({
   variable: "--font-noto",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"]
 });
 
 export const metadata: Metadata = {

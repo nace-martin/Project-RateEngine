@@ -25,7 +25,7 @@ class Command(BaseCommand):
         from parties.models import Company
         supplier, _ = Company.objects.get_or_create(
             name="Express Freight Management",
-            defaults={"company_type": "SUPPLIER"}
+            defaults={"is_agent": True}
         )
 
         # 2. Get/Create Rate Card
