@@ -125,9 +125,22 @@ class V3QuoteVersionSerializer(serializers.ModelSerializer):
 
 class V3QuoteVersionSummarySerializer(serializers.ModelSerializer):
     totals = V3QuoteTotalSerializer()
+    total_weight_kg = serializers.SerializerMethodField()
+
     class Meta:
         model = QuoteVersion
-        exclude = ('quote', 'payload_json') # Also exclude payload_json for list view
+        exclude = ('quote',) # Include payload_json for frontend weight calculation fallback
+
+    def get_total_weight_kg(self, obj):
+        try:
+            if not obj.payload_json or 'dimensions' not in obj.payload_json:
+                return 0
+            
+            dims = obj.payload_json.get('dimensions', [])
+            total = sum(float(d.get('gross_weight_kg', 0) or 0) for d in dims)
+            return round(total)
+        except (ValueError, TypeError, AttributeError):
+            return 0
 
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """

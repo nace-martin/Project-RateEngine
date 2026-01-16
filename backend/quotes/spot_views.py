@@ -370,6 +370,11 @@ class SpotEnvelopeListCreateAPIView(APIView):
         if not _user_is_manager_or_admin(request.user):
             spe_qs = spe_qs.filter(created_by=request.user)
 
+        # Filter by status if provided
+        status_param = request.query_params.get('status')
+        if status_param:
+            spe_qs = spe_qs.filter(status=status_param)
+
         spes = spe_qs.order_by('-created_at')[:20]
         
         return Response([
@@ -459,7 +464,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
         missing_fields = _get_missing_mandatory_fields(spe_db)
         customer_name = None
         if spe_db.quote and spe_db.quote.customer:
-            customer_name = spe_db.quote.customer.company_name or spe_db.quote.customer.name
+            customer_name = spe_db.quote.customer.name
 
         return {
             'customer_name': customer_name,

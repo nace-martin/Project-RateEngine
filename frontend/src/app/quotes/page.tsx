@@ -11,12 +11,13 @@ import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, Plus, Filter, Loader2 } from "lucide-react";
+import { Search, Plus, Filter, Loader2, FileText } from "lucide-react";
 import { StandardPageContainer, PageHeader } from "@/components/layout/standard-page";
 import { DataTable } from "@/components/ui/data-table-wrapper";
+import { EmptyState } from "@/components/ui/empty-state";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 
-import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName } from "@/lib/quote-helpers";
+import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal } from "@/lib/quote-helpers";
 
 // --- Helpers -> Removed (imported from lib/quote-helpers)
 
@@ -30,6 +31,7 @@ export default function QuotesPage() {
 
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [modeFilter, setModeFilter] = useState<string>("all");
 
   // Raw Data
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
@@ -80,89 +82,125 @@ export default function QuotesPage() {
         customer: getCustomerName(q.customer),
         route: `${formatRoute(q.origin_location)} → ${formatRoute(q.destination_location)}`,
         date: q.created_at,
+        expiry: q.valid_until, // Standard quotes have valid_until field
         weight: getWeight(q),
         status: q.status,
         rawStatus: q.status,
         total: formatCurrency(totalAmt, currency),
         actionLink: `/quotes/${q.id}`,
+        mode: q.mode || "AIR"
       });
     });
 
     // 2. Map Spot Drafts
     spotDrafts.forEach(d => {
+      // Create a prettier ID display - use "SQ-" (Spot Quote) + first 6 chars for consistency with QT-
+      const shortId = d.id.substring(0, 6).toUpperCase();
+
       unified.push({
         id: d.id,
         type: "SPOT_DRAFT",
-        number: "SPOT Draft", // Or generate a placeholder like "DRAFT-..."
-        customer: "-", // Spot drafts dont have customer attached in the envelope usually
-        route: `${d.shipment.origin_code} → ${d.shipment.destination_code}`,
+        number: `SQ-${shortId}`,
+        customer: d.customer_name || "Spot Request",
+        route: `${formatRoute(d.shipment.origin_code)} → ${formatRoute(d.shipment.destination_code)}`,
         date: d.created_at,
+        expiry: d.expires_at,
         weight: `${d.shipment.total_weight_kg} kg`,
         status: "Draft",
         rawStatus: "DRAFT",
-        total: "-",
+        total: calculateSpotTotal(d),
         actionLink: `/quotes/spot/${d.id}`,
+        mode: "AIR" // Implicitly AIR
       });
     });
 
-    // 3. Filter
+    // 3. Filter by search query and mode
     const query = searchQuery.toLowerCase();
-    const filtered = unified.filter(item =>
-      item.number.toLowerCase().includes(query) ||
-      item.customer.toLowerCase().includes(query) ||
-      item.route.toLowerCase().includes(query)
-    );
+    const filtered = unified.filter(item => {
+      const matchesSearch = item.number.toLowerCase().includes(query) ||
+        item.customer.toLowerCase().includes(query) ||
+        item.route.toLowerCase().includes(query);
+
+      const matchesMode = modeFilter === "all" || item.mode === modeFilter;
+
+      return matchesSearch && matchesMode;
+    });
 
     // 4. Sort (Date Descending)
     return filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  }, [quotes, spotDrafts, searchQuery]);
+  }, [quotes, spotDrafts, searchQuery, modeFilter]);
 
   const columns = [
     {
       header: "Quote #",
       accessorKey: "number" as keyof UnifiedQuote,
-      className: "font-medium text-primary",
+      className: "font-medium text-primary w-[140px]",
     },
     {
       header: "Date",
-      cell: (item: UnifiedQuote) => formatDate(item.date),
+      cell: (item: UnifiedQuote) => {
+        // Only show expiry if within 48 hours
+        const showExpiry = item.expiry &&
+          (new Date(item.expiry).getTime() - Date.now()) < (48 * 60 * 60 * 1000);
+
+        return (
+          <div className="flex flex-col">
+            <span>{formatDate(item.date)}</span>
+            {showExpiry && (
+              <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></span>
+                EXP: {formatDate(item.expiry)}
+              </span>
+            )}
+          </div>
+        );
+      },
       className: "text-muted-foreground text-sm",
     },
     {
       header: "Customer",
       accessorKey: "customer" as keyof UnifiedQuote,
-      className: "max-w-[200px] truncate",
+      className: "max-w-[200px] truncate font-medium",
     },
     {
       header: "Route",
       accessorKey: "route" as keyof UnifiedQuote,
+      className: "min-w-[150px]",
+    },
+    {
+      header: "Mode",
+      accessorKey: "mode" as keyof UnifiedQuote,
+      className: "w-[80px] text-sm font-medium text-slate-600",
     },
     {
       header: "Weight",
       accessorKey: "weight" as keyof UnifiedQuote,
-      className: "text-right font-mono text-xs",
+      className: "text-right w-[100px]",
+      headerClassName: "text-right",
     },
     {
       header: "Status",
       cell: (item: UnifiedQuote) => getStatusBadge(item),
+      className: "w-[120px]",
     },
     {
-      header: "Total (Inc. GST)",
+      header: "Total",
       accessorKey: "total" as keyof UnifiedQuote,
-      className: "text-right font-medium",
+      className: "text-right font-medium tabular-nums min-w-[120px]",
+      headerClassName: "text-right",
     },
     {
       header: "",
       cell: (item: UnifiedQuote) => (
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
           asChild
-          className={item.type === "SPOT_DRAFT" ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50" : ""}
+          className="w-20 border-slate-200 hover:bg-slate-50 text-slate-700 h-8"
         >
           <Link href={item.actionLink}>
-            {item.type === "SPOT_DRAFT" ? "Resume" : "View"}
+            {["DRAFT", "draft"].includes(item.rawStatus) ? "Resume" : "View"}
           </Link>
         </Button>
       ),
@@ -177,30 +215,36 @@ export default function QuotesPage() {
       <PageHeader
         title={isFinance ? "Quotes Register" : "Quotes Dashboard"}
         description="Manage and track all logistics quotes."
-        actions={
-          canEditQuotes && (
-            <Button asChild className="bg-primary hover:bg-primary/90">
-              <Link href="/quotes/new">
-                <Plus className="h-4 w-4 mr-2" />
-                New Quote
-              </Link>
-            </Button>
-          )
-        }
       />
 
       <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Search quotes..."
+            placeholder="Search by quote #, customer, or route..."
             className="pl-9 bg-background"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        {/* Future: Add more detailed filters here if needed */}
+        <div className="flex items-center gap-2">
+          <Filter className="h-4 w-4 text-muted-foreground" />
+          <select
+            value={modeFilter}
+            onChange={(e) => setModeFilter(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <option value="all">All Modes</option>
+            <option value="AIR">Air Freight</option>
+            <option value="SEA">Sea Freight</option>
+            <option value="ROAD">Road/Inland</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="text-sm text-muted-foreground">
+        Showing {tableData.length} of {quotes.length + spotDrafts.length} quotes
       </div>
 
       {loading ? (
@@ -212,7 +256,16 @@ export default function QuotesPage() {
           data={tableData}
           columns={columns}
           keyExtractor={(item) => item.id}
-          emptyMessage="No quotes found matching your search."
+          emptyState={
+            <EmptyState
+              title="No quotes found"
+              description={searchQuery ? "No quotes match your search criteria." : "You haven't created any quotes yet."}
+              icon={FileText}
+              actionLabel={searchQuery ? "Clear Search" : "Create New Quote"}
+              onAction={searchQuery ? () => setSearchQuery("") : () => router.push("/quotes/new")}
+              className="py-12 border-none"
+            />
+          }
           onRowClick={(item) => router.push(item.actionLink)}
         />
       )}

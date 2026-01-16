@@ -16,6 +16,7 @@ import {
   CardFooter
 } from '@/components/ui/card';
 import { useAuth } from '@/context/auth-context';
+import { useToast } from '@/context/toast-context';
 import { login as apiLogin } from '@/lib/api';
 import { Mail, Lock, Eye, EyeOff, Box } from 'lucide-react';
 
@@ -28,6 +29,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const { login } = useAuth();
+  const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -39,6 +41,13 @@ export default function LoginPage() {
       const resolvedRole = user?.role ?? 'sales';
       const resolvedUsername = user?.username ?? username;
       login(token, resolvedRole, resolvedUsername);
+
+      toast({
+        title: "Welcome back!",
+        description: "You have successfully signed in.",
+        variant: "success",
+      });
+
       router.push('/dashboard');
     } catch (err: unknown) {
       console.error('Login failed:', err);
@@ -55,6 +64,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4 font-sans text-gray-600">
       <Card className="w-full max-w-[440px] shadow-xl border-gray-100 bg-white">
+        {/* ... existing header ... */}
         <CardHeader className="space-y-6 pt-12 pb-8 text-center">
           <div className="flex justify-center items-center gap-2 mb-2">
             <div className="bg-blue-50 p-2 rounded-lg">
@@ -84,7 +94,7 @@ export default function LoginPage() {
                   <Input
                     id="username"
                     name="username"
-                    type="text" // Assuming username might be email, keeping text for flexibility but designed as email
+                    type="text"
                     placeholder="sales@rateengine.com"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
@@ -138,7 +148,7 @@ export default function LoginPage() {
                 </Label>
               </div>
               <Link
-                href="#"
+                href="mailto:support@rateengine.com?subject=Password Reset Request"
                 className="text-sm font-medium text-blue-600 hover:text-blue-500"
               >
                 Forgot password?
@@ -171,7 +181,7 @@ export default function LoginPage() {
 
           <div className="mt-6 text-center text-sm">
             <p className="text-gray-500 mb-1">Contact your administrator to create an account.</p>
-            <Link href="#" className="font-medium text-gray-900 hover:text-gray-700 text-xs font-semibold">
+            <Link href="mailto:support@rateengine.com" className="font-medium text-gray-900 hover:text-gray-700 text-xs font-semibold">
               Support Center
             </Link>
           </div>

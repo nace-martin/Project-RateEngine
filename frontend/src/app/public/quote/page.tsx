@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { API_BASE_URL } from "@/lib/config";
 
 type PublicQuoteLine = {
   description: string;
@@ -80,8 +81,7 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
     notFound();
   }
 
-  const rawApiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-  const apiBase = rawApiBase.toLowerCase().endsWith('/api') ? rawApiBase.slice(0, -4) : rawApiBase;
+  const apiBase = API_BASE_URL;
   const params = new URLSearchParams({ token });
   if (version) {
     params.set("version", version);

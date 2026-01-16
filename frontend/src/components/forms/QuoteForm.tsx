@@ -52,6 +52,10 @@ import CompanySearchCombobox from "@/components/CompanySearchCombobox";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
+import { CustomerSection } from "./sections/CustomerSection";
+import { RoutingSection } from "./sections/RoutingSection";
+import { ShipmentTermsSection } from "./sections/ShipmentTermsSection";
+import { CargoDetailsSection } from "./sections/CargoDetailsSection";
 
 export interface QuoteFormProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
@@ -394,6 +398,13 @@ export default function QuoteForm({
         }
     };
 
+
+
+    // ... (keep existing imports up to Card/Select/Input etc which might be unused now but acceptable to leave or remove if unused)
+    // Ideally I should clean up unused imports too, but let's focus on the replacement first.
+
+    // ... inside component
+
     return (
         <Form {...form}>
             <form onSubmit={form.handleSubmit(handleFormSubmit, onInvalid)} className="space-y-6">
@@ -411,360 +422,53 @@ export default function QuoteForm({
                 )}
 
                 {/* 1. Customer */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Customer</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <FormField
-                            control={form.control}
-                            name="customer_id"
-                            render={({ field }) => (
-                                <FormItem className="flex flex-col">
-                                    <FormLabel>Customer</FormLabel>
-                                    <CompanySearchCombobox
-                                        value={selectedCustomer}
-                                        onSelect={(company) => {
-                                            setSelectedCustomer(company);
-                                            const companyId = company?.id ?? null;
-                                            field.onChange(companyId ?? "");
-                                            setSelectedCustomerId(companyId);
-                                            setContacts([]);
-                                            // Only clear contact if customer actually changed
-                                            if (companyId !== defaultValues?.customer_id) {
-                                                form.setValue("contact_id", "");
-                                            }
-                                        }}
-                                    />
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-                        <FormField
-                            control={form.control}
-                            name="contact_id"
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Contact</FormLabel>
-                                    <Select
-                                        onValueChange={field.onChange}
-                                        value={field.value || ""}
-                                        disabled={!selectedCustomerId || isLoadingContacts}
-                                    >
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue
-                                                    placeholder={
-                                                        isLoadingContacts
-                                                            ? "Loading contacts..."
-                                                            : !selectedCustomerId
-                                                                ? "Select customer first"
-                                                                : "Select a contact"
-                                                    }
-                                                />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            {isLoadingContacts ? (
-                                                <SelectItem value="loading" disabled>Loading...</SelectItem>
-                                            ) : contacts.length > 0 ? (
-                                                contacts.map((contact) => (
-                                                    <SelectItem key={contact.id} value={contact.id}>
-                                                        {contact.first_name} {contact.last_name} ({contact.email})
-                                                    </SelectItem>
-                                                ))
-                                            ) : (
-                                                <SelectItem value="no-contacts" disabled>
-                                                    {selectedCustomerId ? "No contacts found" : "Select customer first"}
-                                                </SelectItem>
-                                            )}
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-                    </CardContent>
-                </Card>
+                <CustomerSection
+                    form={form}
+                    contacts={contacts}
+                    isLoadingContacts={isLoadingContacts}
+                    selectedCustomerId={selectedCustomerId}
+                    selectedCustomer={selectedCustomer}
+                    onCustomerSelect={(company) => {
+                        setSelectedCustomer(company);
+                        const companyId = company?.id ?? null;
+                        form.setValue("customer_id", companyId ?? "", { shouldDirty: true, shouldValidate: true });
+                        setSelectedCustomerId(companyId);
+                        setContacts([]);
+                        if (companyId !== defaultValues?.customer_id) {
+                            form.setValue("contact_id", "", { shouldValidate: true });
+                        }
+                    }}
+                />
 
                 {/* 2. Routing */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Routing</CardTitle>
-                        <CardDescription>
-                            Shipment type (import/export/domestic) is detected automatically.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                        <FormField
-                            control={form.control}
-                            name="origin_location_id"
-                            render={({ field }) => (
-                                <FormItem className="flex flex-col">
-                                    <FormLabel>Origin Location</FormLabel>
-                                    <LocationSearchCombobox
-                                        value={field.value || null}
-                                        selectedLabel={originLocation?.display_name ?? null}
-                                        onSelect={(selection) => {
-                                            setOriginLocation(selection);
-                                            setLocationFields("origin", selection, field.onChange);
-                                        }}
-                                    />
-                                    <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-
-                        <FormField
-                            control={form.control}
-                            name="destination_location_id"
-                            render={({ field }) => (
-                                <FormItem className="flex flex-col">
-                                    <FormLabel>Destination Location</FormLabel>
-                                    <LocationSearchCombobox
-                                        value={field.value || null}
-                                        selectedLabel={destinationLocation?.display_name ?? null}
-                                        onSelect={(selection) => {
-                                            setDestinationLocation(selection);
-                                            setLocationFields("destination", selection, field.onChange);
-                                        }}
-                                    />
-                                    <FormDescription>Select any supported location (airport, port, city, or address).</FormDescription>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-                    </CardContent>
-                </Card>
+                <RoutingSection
+                    form={form}
+                    originLocation={originLocation}
+                    destinationLocation={destinationLocation}
+                    onOriginSelect={(selection) => {
+                        setOriginLocation(selection);
+                        setLocationFields("origin", selection, (value) => form.setValue("origin_location_id", value, { shouldDirty: true, shouldValidate: true }));
+                    }}
+                    onDestinationSelect={(selection) => {
+                        setDestinationLocation(selection);
+                        setLocationFields("destination", selection, (value) => form.setValue("destination_location_id", value, { shouldDirty: true, shouldValidate: true }));
+                    }}
+                />
 
                 {/* 3. Shipment & Terms */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Shipment & Terms</CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-1 gap-6 md:grid-cols-3">
-                        <FormField
-                            control={form.control}
-                            name="service_scope"
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Service Scope</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value}>
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Select Scope" />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            {Object.entries(V3_SERVICE_SCOPES).map(([key, val]) => (
-                                                <SelectItem key={key} value={val}>
-                                                    {val}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-
-                        <FormField
-                            control={form.control}
-                            name="payment_term"
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Payment Term</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value}>
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Select Payment Term" />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            <SelectItem value="PREPAID">Prepaid</SelectItem>
-                                            <SelectItem value="COLLECT">Collect</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-
-                        <FormField
-                            control={form.control}
-                            name="incoterm"
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Incoterm</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value} disabled={validIncoterms.length <= 1}>
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Select Incoterm" />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            {validIncoterms.map((term) => (
-                                                <SelectItem key={term} value={term}>{term}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-                    </CardContent>
-                </Card>
+                <ShipmentTermsSection
+                    form={form}
+                    validIncoterms={validIncoterms}
+                />
 
                 {/* 4. Cargo Details */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Cargo Details</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <FormField
-                            control={form.control}
-                            name="cargo_type"
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Cargo Type</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value}>
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Select Cargo Type" />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            {Object.values(V3_CARGO_TYPES).map((type) => (
-                                                <SelectItem key={type} value={type}>
-                                                    {type}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
-
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-sm font-medium">Dimensions</h3>
-                                <Button type="button" variant="outline" size="sm" onClick={addPieceLine}>
-                                    Add Line
-                                </Button>
-                            </div>
-
-                            {fields.map((field, index) => (
-                                <div key={field.id} className="grid grid-cols-12 gap-2 items-end">
-                                    <div className="col-span-2">
-                                        <FormField
-                                            control={form.control}
-                                            name={`dimensions.${index}.pieces`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormLabel className="text-xs">Pieces</FormLabel>
-                                                    <FormControl>
-                                                        <Input type="number" {...field} />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <FormField
-                                            control={form.control}
-                                            name={`dimensions.${index}.length_cm`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormLabel className="text-xs">L (cm)</FormLabel>
-                                                    <FormControl>
-                                                        <Input type="number" {...field} />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <FormField
-                                            control={form.control}
-                                            name={`dimensions.${index}.width_cm`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormLabel className="text-xs">W (cm)</FormLabel>
-                                                    <FormControl>
-                                                        <Input type="number" {...field} />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <FormField
-                                            control={form.control}
-                                            name={`dimensions.${index}.height_cm`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormLabel className="text-xs">H (cm)</FormLabel>
-                                                    <FormControl>
-                                                        <Input type="number" {...field} />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <FormField
-                                            control={form.control}
-                                            name={`dimensions.${index}.gross_weight_kg`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormLabel className="text-xs">Weight (kg)</FormLabel>
-                                                    <FormControl>
-                                                        <Input type="number" {...field} />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                    </div>
-                                    <div className="col-span-2 flex justify-end">
-                                        {fields.length > 1 && (
-                                            <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}>
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-
-                            {/* Metrics Summary */}
-                            <div className="bg-muted p-3 rounded-md grid grid-cols-4 gap-4 text-sm">
-                                <div>
-                                    <span className="block text-muted-foreground text-xs">Total Pieces</span>
-                                    <span className="font-semibold">{cargoMetrics.pieces}</span>
-                                </div>
-                                <div>
-                                    <span className="block text-muted-foreground text-xs">Actual Weight</span>
-                                    <span className="font-semibold">{cargoMetrics.actualWeight} kg</span>
-                                </div>
-                                <div>
-                                    <span className="block text-muted-foreground text-xs">Volumetric Weight</span>
-                                    <span className="font-semibold">{cargoMetrics.volumetricWeight} kg</span>
-                                </div>
-                                <div>
-                                    <span className="block text-muted-foreground text-xs">Chargeable Weight</span>
-                                    <span className="font-semibold text-primary">{cargoMetrics.chargeableWeight} kg</span>
-                                </div>
-                            </div>
-
-                        </div>
-                    </CardContent>
-                </Card>
+                <CargoDetailsSection
+                    form={form}
+                    fields={fields}
+                    append={append}
+                    remove={remove}
+                    cargoMetrics={cargoMetrics}
+                />
 
                 <div className="flex justify-end gap-4 pb-20">
                     <Button type="button" variant="outline" onClick={() => router.back()}>

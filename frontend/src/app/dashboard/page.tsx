@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import ProtectedRoute from "@/components/protected-route";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -10,7 +12,7 @@ import { getQuotesV3, listSpotEnvelopes } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
 import type { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
-import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName } from "@/lib/quote-helpers";
+import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal } from "@/lib/quote-helpers";
 import { Button } from "@/components/ui/button";
 import {
     Card,
@@ -159,6 +161,7 @@ export default function DashboardPage() {
                 rawStatus: q.status,
                 total: formatCurrency(totalAmt, currency),
                 actionLink: `/quotes/${q.id}`,
+                mode: q.mode
             });
         });
 
@@ -167,15 +170,16 @@ export default function DashboardPage() {
             unified.push({
                 id: d.id,
                 type: "SPOT_DRAFT",
-                number: `SPOT-${d.id.substring(0, 6).toUpperCase()}`,
-                customer: d.customer_name || "-",
+                number: `SQ-${d.id.substring(0, 6).toUpperCase()}`,
+                customer: d.customer_name || "Spot Request",
                 route: `${formatRoute(d.shipment.origin_code)} → ${formatRoute(d.shipment.destination_code)}`,
                 date: d.created_at,
                 weight: `${d.shipment.total_weight_kg} kg`,
                 status: "Draft",
                 rawStatus: "DRAFT",
-                total: "-",
+                total: calculateSpotTotal(d),
                 actionLink: `/quotes/spot/${d.id}`,
+                mode: "AIR" // SPOT is implicitly AIR for now
             });
         });
 
@@ -186,9 +190,22 @@ export default function DashboardPage() {
     const renderRecentQuotes = () => {
         if (loading) {
             return (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    <span className="text-sm">Loading quotes...</span>
+                <div className="space-y-4 p-6">
+                    <div className="space-y-2">
+                        <Skeleton className="h-4 w-[250px]" />
+                        <Skeleton className="h-4 w-[200px]" />
+                    </div>
+                    <div className="space-y-2 pt-4">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} className="flex items-center space-x-4">
+                                <Skeleton className="h-12 w-12 rounded-full" />
+                                <div className="space-y-2">
+                                    <Skeleton className="h-4 w-[250px]" />
+                                    <Skeleton className="h-4 w-[200px]" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             );
         }
@@ -204,10 +221,14 @@ export default function DashboardPage() {
 
         if (recentQuotes.length === 0) {
             return (
-                <div className="flex flex-col items-center justify-center gap-3 py-12 text-center text-muted-foreground">
-                    <FileText className="h-12 w-12 opacity-30" />
-                    <p className="text-sm">No quotes available.</p>
-                </div>
+                <EmptyState
+                    title="No quotes available"
+                    description="You haven't created any quotes yet. Get started by creating your first quote."
+                    icon={FileText}
+                    actionLabel="Create New Quote"
+                    onAction={() => window.location.href = "/quotes/new"}
+                    className="py-12 border-none"
+                />
             );
         }
 
@@ -223,6 +244,7 @@ export default function DashboardPage() {
                             <TableHead className="font-semibold text-right">Weight</TableHead>
                             <TableHead className="font-semibold">Status</TableHead>
                             <TableHead className="text-right font-semibold">Total (inc. GST)</TableHead>
+                            <TableHead className="text-right">Action</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -246,7 +268,7 @@ export default function DashboardPage() {
                                 <TableCell className="text-muted-foreground">
                                     {quote.route}
                                 </TableCell>
-                                <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                                <TableCell className="text-right text-muted-foreground">
                                     {quote.weight}
                                 </TableCell>
                                 <TableCell>
@@ -260,6 +282,19 @@ export default function DashboardPage() {
                                 </TableCell>
                                 <TableCell className="text-right font-semibold tabular-nums">
                                     {quote.total}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        asChild
+                                        className="h-8 border-slate-200 hover:bg-slate-50 text-slate-700"
+                                        onClick={(e) => e.stopPropagation()}
+                                    >
+                                        <Link href={quote.actionLink}>
+                                            {["DRAFT", "draft"].includes(quote.rawStatus) ? "Resume" : "View"}
+                                        </Link>
+                                    </Button>
                                 </TableCell>
                             </TableRow>
                         ))}
@@ -357,12 +392,21 @@ export default function DashboardPage() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <div className="text-2xl font-bold text-slate-900">
-                                    PGK {finalizedRevenuePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    {finalizedThisMonth.length} finalized quotes
-                                </p>
+                                {loading ? (
+                                    <div className="space-y-2">
+                                        <Skeleton className="h-8 w-32" />
+                                        <Skeleton className="h-3 w-24" />
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="text-2xl font-bold text-slate-900">
+                                            PGK {finalizedRevenuePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                            {finalizedThisMonth.length} finalized quotes
+                                        </p>
+                                    </>
+                                )}
                             </CardContent>
                         </Card>
 
@@ -374,12 +418,21 @@ export default function DashboardPage() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <div className="text-2xl font-bold text-slate-900">
-                                    PGK {pipelinePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    {draftQuotes.length} draft quotes in market
-                                </p>
+                                {loading ? (
+                                    <div className="space-y-2">
+                                        <Skeleton className="h-8 w-32" />
+                                        <Skeleton className="h-3 w-24" />
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="text-2xl font-bold text-slate-900">
+                                            PGK {pipelinePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                            {draftQuotes.length} draft quotes in market
+                                        </p>
+                                    </>
+                                )}
                             </CardContent>
                         </Card>
 
@@ -415,7 +468,11 @@ export default function DashboardPage() {
                                         </div>
                                     </div>
                                 ) : (
-                                    <p className="text-sm text-muted-foreground">Loading rates...</p>
+                                    <div className="space-y-2">
+                                        <Skeleton className="h-4 w-full" />
+                                        <Skeleton className="h-4 w-full" />
+                                        <Skeleton className="h-4 w-3/4" />
+                                    </div>
                                 )}
                             </CardContent>
                         </Card>
@@ -442,9 +499,12 @@ export default function DashboardPage() {
                             ) : error ? (
                                 <div className="p-4 text-red-600">{error}</div>
                             ) : recentQuotes.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center gap-3 py-12 text-center text-muted-foreground">
-                                    <p className="text-sm">No quotes available.</p>
-                                </div>
+                                <EmptyState
+                                    title="No quotes available"
+                                    description="There are no recent quotes to display."
+                                    icon={FileText}
+                                    className="py-12 border-none"
+                                />
                             ) : (
                                 <div className="overflow-x-auto">
                                     <Table>
@@ -462,20 +522,29 @@ export default function DashboardPage() {
                                         <TableBody>
                                             {recentQuotes.map((quote) => (
                                                 <TableRow key={quote.id}>
-                                                    <TableCell className="font-medium">{quote.quote_number}</TableCell>
-                                                    <TableCell>{getCustomerName(quote.customer)}</TableCell>
+                                                    <TableCell className="font-medium">{quote.number}</TableCell>
+                                                    <TableCell>{quote.customer}</TableCell>
                                                     <TableCell className="text-muted-foreground">
-                                                        {formatRoute(quote.origin_location)} → {formatRoute(quote.destination_location)}
+                                                        {quote.route}
                                                     </TableCell>
-                                                    <TableCell>{formatMode(quote.mode)}</TableCell>
+                                                    <TableCell>{quote.mode}</TableCell>
                                                     <TableCell className="text-right font-medium tabular-nums">
-                                                        PGK {parseFloat(quote.latest_version.totals.total_sell_pgk_incl_gst || quote.latest_version.totals.total_sell_fcy_incl_gst || "0").toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                                        {quote.total}
                                                     </TableCell>
-                                                    <TableCell>{formatStatus(quote.status)}</TableCell>
                                                     <TableCell>
-                                                        <Link href={`/quotes/${quote.id}`} className="text-primary hover:underline text-sm">
-                                                            View Quote
-                                                        </Link>
+                                                        <QuoteStatusBadge status={quote.rawStatus} size="sm" />
+                                                    </TableCell>
+                                                    <TableCell className="text-right">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            asChild
+                                                            className="h-8 text-primary hover:text-primary/80 hover:bg-primary/5"
+                                                        >
+                                                            <Link href={quote.actionLink}>
+                                                                {["DRAFT", "draft"].includes(quote.rawStatus) ? "Resume" : "View"}
+                                                            </Link>
+                                                        </Button>
                                                     </TableCell>
                                                 </TableRow>
                                             ))}
@@ -564,8 +633,17 @@ export default function DashboardPage() {
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-3xl font-bold tracking-tight text-slate-900">{metrics.draftCount}</div>
-                            <p className="text-sm text-muted-foreground mt-1">Quotes in progress</p>
+                            {loading ? (
+                                <div className="space-y-2">
+                                    <Skeleton className="h-8 w-16" />
+                                    <Skeleton className="h-3 w-24" />
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="text-3xl font-bold tracking-tight text-slate-900">{metrics.draftCount}</div>
+                                    <p className="text-sm text-muted-foreground mt-1">Quotes in progress</p>
+                                </>
+                            )}
                         </CardContent>
                     </Card>
 
@@ -577,8 +655,17 @@ export default function DashboardPage() {
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-3xl font-bold text-emerald-700 tracking-tight">{metrics.finalizedCount}</div>
-                            <p className="text-sm text-emerald-600/80 mt-1">Fully rated by engine</p>
+                            {loading ? (
+                                <div className="space-y-2">
+                                    <Skeleton className="h-8 w-16" />
+                                    <Skeleton className="h-3 w-24" />
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="text-3xl font-bold text-emerald-700 tracking-tight">{metrics.finalizedCount}</div>
+                                    <p className="text-sm text-emerald-600/80 mt-1">Fully rated by engine</p>
+                                </>
+                            )}
                         </CardContent>
                     </Card>
 
@@ -590,10 +677,19 @@ export default function DashboardPage() {
                             </div>
                         </CardHeader>
                         <CardContent>
-                            <div className="text-3xl font-bold text-primary tracking-tight">
-                                {formatCurrency(metrics.pipelineValue, metrics.currency)}
-                            </div>
-                            <p className="text-sm text-primary/70 mt-1">Total value (inc. GST)</p>
+                            {loading ? (
+                                <div className="space-y-2">
+                                    <Skeleton className="h-8 w-32" />
+                                    <Skeleton className="h-3 w-24" />
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="text-3xl font-bold text-primary tracking-tight">
+                                        {formatCurrency(String(metrics.pipelineValue), metrics.currency)}
+                                    </div>
+                                    <p className="text-sm text-primary/70 mt-1">Total value (inc. GST)</p>
+                                </>
+                            )}
                         </CardContent>
                     </Card>
                 </section>

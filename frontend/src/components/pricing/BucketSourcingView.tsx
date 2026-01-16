@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { BucketChargeSection } from "@/components/pricing/BucketChargeSection";
 import { FreeformLineEditor } from "@/components/pricing/FreeformLineEditor";
 import { AIRateIntakeModal } from "@/components/AIRateIntakeModal";
+import { API_BASE_URL } from "@/lib/config";
 import {
     getSpotChargesForQuote,
     saveSpotChargesForQuote,
@@ -392,7 +393,7 @@ export function BucketSourcingView({ quote, onFinalizeSuccess }: BucketSourcingV
                 // Update status from INCOMPLETE to DRAFT
                 // (the quote is complete, just needs to be marked as such)
                 const updateResponse = await fetch(
-                    `${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/quotes/v3/quotes/${quote.id}/`,
+                    `${API_BASE_URL}/api/quotes/v3/quotes/${quote.id}/`,
                     {
                         method: "PATCH",
                         headers: {

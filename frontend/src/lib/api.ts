@@ -236,6 +236,7 @@ export async function getQuotesV3(params?: {
     headers: {
       Authorization: `Token ${resolveAuthToken()}`,
     },
+    cache: 'no-store', // Ensure we always get fresh data
   });
 
   if (!response.ok) {
@@ -1250,6 +1251,7 @@ export async function listSpotEnvelopes(
     headers: {
       Authorization: `Token ${resolveAuthToken()}`,
     },
+    cache: 'no-store',
   });
 
   if (!response.ok) {

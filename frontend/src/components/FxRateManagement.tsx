@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, RefreshCw, AlertTriangle } from 'lucide-react';
+import { API_BASE_URL } from '@/lib/config';
 
 interface CurrencyRate {
     currency: string;
@@ -30,8 +31,6 @@ interface RateInput {
 interface Props {
     canEditFxRates?: boolean;
 }
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export default function FxRateManagement({ canEditFxRates = false }: Props) {
     const [status, setStatus] = useState<FxStatus | null>(null);

@@ -24,6 +24,14 @@ import {
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
 import type { ReplyAnalysisResult } from "@/lib/spot-types";
+import {
+    Breadcrumb,
+    BreadcrumbItem,
+    BreadcrumbLink,
+    BreadcrumbList,
+    BreadcrumbPage,
+    BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 
 // Streamlined 3-step workflow
 type Step = "intake" | "review" | "generate";
@@ -228,14 +236,24 @@ export default function SpotRateEntryPage() {
             )}
 
             {/* Header - Clean and minimal */}
-            <div className="flex items-center gap-4 mb-6">
-                <button
-                    onClick={() => router.push('/quotes')}
-                    className="text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                    ← Back
-                </button>
-                <div className="ml-4">
+            <div className="mb-6 space-y-4">
+                <Breadcrumb>
+                    <BreadcrumbList>
+                        <BreadcrumbItem>
+                            <BreadcrumbLink href="/dashboard">Dashboard</BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                            <BreadcrumbLink href="/quotes">Quotes</BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                            <BreadcrumbPage>{isNew ? "New SPOT" : "SPOT Quote"}</BreadcrumbPage>
+                        </BreadcrumbItem>
+                    </BreadcrumbList>
+                </Breadcrumb>
+
+                <div className="ml-1">
                     <h1 className="text-2xl font-bold text-slate-900">
                         {isNew ? "New SPOT Quote" : "SPOT Quote"}
                     </h1>

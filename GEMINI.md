@@ -69,3 +69,16 @@ This is a full-stack web application designed to streamline and automate the air
 *   **Documentation:**
     *   The `docs` directory contains important project documentation, including the product roadmap and architecture plans.
 
+## Maintenance
+
+### Cleanup Tasks
+
+*   **Cleanup Stale Drafts:**
+    A management command is available to delete draft quotes (Standard and Spot) that are older than 7 days.
+    
+    ```bash
+    cd backend
+    python manage.py cleanup_stale_drafts
+    ```
+    This can be scheduled via Cron (Linux) or Task Scheduler (Windows) to run daily.
+

@@ -27,7 +27,7 @@ export type SpotFlowState =
 export type SPEChargeBucket = 'airfreight' | 'origin_charges' | 'destination_charges';
 
 /** Charge units */
-export type SPEChargeUnit = 'per_kg' | 'flat' | 'per_awb' | 'per_shipment' | 'min_or_per_kg' | 'percentage';
+export type SPEChargeUnit = 'per_kg' | 'flat' | 'per_awb' | 'per_shipment' | 'min_or_per_kg' | 'percentage' | 'per_trip' | 'per_set' | 'per_man';
 
 /** Commodity types */
 export type SPECommodity =
@@ -175,6 +175,7 @@ export interface SpotPricingEnvelope {
     missing_mandatory_fields: string[];  // 'rate', 'currency' if missing
     can_proceed: boolean;  // True if no missing mandatory fields
     charges: SPEChargeLine[];
+    customer_name?: string; // from backend/quotes/spot_schemas.py
 }
 
 /** SPE compute request */

@@ -9,6 +9,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { apiClient } from '@/lib/api';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -45,10 +53,10 @@ export default function CustomersPage() {
   }, []);
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex justify-between items-center">
-          <div>
+    <div className="container mx-auto py-8 max-w-7xl">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-6">
+          <div className="space-y-1.5">
             <CardTitle>Customers</CardTitle>
             <CardDescription>
               A list of all customers, agents, and partners in the system.
@@ -60,56 +68,53 @@ export default function CustomersPage() {
               <Button>Add New Customer</Button>
             </Link>
           )}
-        </div>
-      </CardHeader>
-      <CardContent>
-        {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
-        <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
-          <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
-            <tr>
-              <th scope="col" className="px-6 py-3">
-                Company Name
-              </th>
-              <th scope="col" className="px-6 py-3">
-                Contact Person
-              </th>
-              <th scope="col" className="px-6 py-3">
-                Country
-              </th>
-              {isAdmin && (
-                <th scope="col" className="px-6 py-3">
-                  <span className="sr-only">Edit</span>
-                </th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {customers.map((customer) => (
-              <tr
-                key={customer.id}
-                className="bg-white border-b dark:bg-gray-800 dark:border-gray-700"
-              >
-                <th
-                  scope="row"
-                  className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap dark:text-white"
-                >
-                  {customer.company_name}
-                </th>
-                <td className="px-6 py-4">{customer.contact_person_name}</td>
-                <td className="px-6 py-4">{customer.primary_address?.country}</td>
-                {/* Only Admin can edit customers */}
-                {isAdmin && (
-                  <td className="px-6 py-4 text-right">
-                    <Link href={`/customers/${customer.id}/edit`}>
-                      <Button variant="outline">Edit</Button>
-                    </Link>
-                  </td>
+        </CardHeader>
+        <CardContent>
+          {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+
+          <div className="rounded-md border border-slate-200">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[300px]">Company Name</TableHead>
+                  <TableHead>Contact Person</TableHead>
+                  <TableHead>Country</TableHead>
+                  {isAdmin && <TableHead className="text-right">Actions</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {customers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={isAdmin ? 4 : 3} className="h-24 text-center text-muted-foreground">
+                      No customers found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  customers.map((customer) => (
+                    <TableRow key={customer.id}>
+                      <TableCell className="font-medium">
+                        {customer.company_name}
+                      </TableCell>
+                      <TableCell>{customer.contact_person_name}</TableCell>
+                      <TableCell>{customer.primary_address?.country || '—'}</TableCell>
+                      {/* Only Admin can edit customers */}
+                      {isAdmin && (
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/customers/${customer.id}/edit`}>
+                              Edit
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))
                 )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </CardContent>
-    </Card>
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

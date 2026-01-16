@@ -200,6 +200,7 @@ export interface V3QuoteVersion {
   payload_json?: V3QuoteComputeRequest;
   lines: V3QuoteLine[];
   totals: V3QuoteTotal;
+  total_weight_kg?: number; // Added via serializer
 }
 
 export interface V3QuoteComputeResponse {

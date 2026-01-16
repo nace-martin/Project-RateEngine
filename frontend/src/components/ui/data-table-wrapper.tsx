@@ -21,6 +21,7 @@ interface DataTableProps<T> {
     columns: Column<T>[];
     keyExtractor: (item: T, index: number) => string;
     emptyMessage?: string;
+    emptyState?: React.ReactNode;
     className?: string;
     onRowClick?: (item: T) => void;
 }
@@ -30,6 +31,7 @@ export function DataTable<T>({
     columns,
     keyExtractor,
     emptyMessage = "No records found.",
+    emptyState,
     className,
     onRowClick,
 }: DataTableProps<T>) {
@@ -50,14 +52,22 @@ export function DataTable<T>({
                 </TableHeader>
                 <TableBody>
                     {data.length === 0 ? (
-                        <TableRow>
-                            <TableCell
-                                colSpan={columns.length}
-                                className="h-24 text-center text-muted-foreground"
-                            >
-                                {emptyMessage}
-                            </TableCell>
-                        </TableRow>
+                        emptyState ? (
+                            <TableRow>
+                                <TableCell colSpan={columns.length} className="p-0">
+                                    {emptyState}
+                                </TableCell>
+                            </TableRow>
+                        ) : (
+                            <TableRow>
+                                <TableCell
+                                    colSpan={columns.length}
+                                    className="h-24 text-center text-muted-foreground"
+                                >
+                                    {emptyMessage}
+                                </TableCell>
+                            </TableRow>
+                        )
                     ) : (
                         data.map((item, index) => (
                             <TableRow

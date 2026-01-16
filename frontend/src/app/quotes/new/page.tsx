@@ -4,10 +4,19 @@ import { useState } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
 import { computeQuoteV3 } from "@/lib/api";
+import { useToast } from "@/context/toast-context";
 import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import { V3QuoteComputeRequest } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 
 const buildQuoteComputePayload = (
   data: QuoteFormSchemaV3,
@@ -73,6 +82,7 @@ const buildQuoteComputePayload = (
 export default function NewQuotePage() {
   const { user } = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -119,6 +129,12 @@ export default function NewQuotePage() {
         }
       }
 
+      toast({
+        title: "Quote Calculated",
+        description: "Quote successfully created.",
+        variant: "success",
+      });
+
       router.push(`/quotes/${response.id}`);
     } catch (error: unknown) {
       console.error("API Error:", error);
@@ -141,6 +157,22 @@ export default function NewQuotePage() {
 
   return (
     <div className="container mx-auto max-w-5xl p-4 pb-32">
+      <Breadcrumb className="mb-6">
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/dashboard">Dashboard</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/quotes">Quotes</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>New Quote</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+
       <QuoteForm
         onSubmit={handleQuoteSubmit}
         isSubmitting={isSubmitting}

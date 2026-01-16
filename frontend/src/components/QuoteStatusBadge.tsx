@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, Lock, Send, CheckCircle, Copy } from "lucide-react";
 import { cloneQuote } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/config";
+import { useToast } from "@/context/toast-context";
 
 // Status color configuration
 const STATUS_CONFIG: Record<string, {
@@ -26,9 +28,9 @@ const STATUS_CONFIG: Record<string, {
 }> = {
     DRAFT: {
         label: "Draft",
-        bgColor: "bg-blue-100",
-        textColor: "text-blue-700",
-        borderColor: "border-blue-200",
+        bgColor: "bg-slate-100",
+        textColor: "text-slate-700",
+        borderColor: "border-slate-200",
     },
     INCOMPLETE: {
         label: "Incomplete",
@@ -104,7 +106,7 @@ export function QuoteStatusBadge({ status, size = "default" }: QuoteStatusBadgeP
 async function transitionQuoteStatus(quoteId: string, action: "finalize" | "send"): Promise<{ success: boolean; error?: string }> {
     try {
         const token = localStorage.getItem("authToken");
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/v3/quotes/${quoteId}/transition/`, {
+        const response = await fetch(`${API_BASE_URL}/api/v3/quotes/${quoteId}/transition/`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -144,6 +146,8 @@ export function QuoteStatusActions({
     const [dialogOpen, setDialogOpen] = useState(false);
     const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 
+    const { toast } = useToast();
+
     const handleTransition = async (action: "finalize" | "send") => {
         setLoading(true);
         setError(null);
@@ -153,6 +157,11 @@ export function QuoteStatusActions({
         if (result.success) {
             setDialogOpen(false);
             onStatusChange?.();
+            toast({
+                title: action === 'finalize' ? 'Quote Finalized' : 'Quote Sent',
+                description: action === 'finalize' ? 'Quote has been locked.' : 'Quote marked as sent.',
+                variant: 'success'
+            });
         } else {
             setError(result.error || "Failed to update status");
         }
@@ -167,6 +176,13 @@ export function QuoteStatusActions({
         try {
             const result = await cloneQuote(quoteId);
             setCloneDialogOpen(false);
+
+            toast({
+                title: 'Quote Cloned',
+                description: 'New draft created successfully.',
+                variant: 'success'
+            });
+
             // Navigate to the new cloned quote
             router.push(`/quotes/${result.id}`);
         } catch (err) {

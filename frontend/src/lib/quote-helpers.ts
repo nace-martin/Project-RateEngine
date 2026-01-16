@@ -1,4 +1,62 @@
 import { V3QuoteComputeResponse } from "@/lib/types";
+import { SpotPricingEnvelope } from "./spot-types";
+
+// ... (UnifiedQuote interface)
+
+export const calculateSpotTotal = (draft: SpotPricingEnvelope): string => {
+    if (!draft.charges || draft.charges.length === 0) return "-";
+
+    const charges = draft.charges;
+    // Check if all charges are in the same currency
+    const currency = charges[0].currency;
+    const allSameCurrency = charges.every(c => c.currency === currency);
+
+    if (!allSameCurrency) {
+        return "Mixed";
+    }
+
+    let total = 0;
+    const weight = draft.shipment.total_weight_kg || 0;
+
+    for (const c of charges) {
+        let lineTotal = 0;
+        // Handle potential string numbers with commas
+        const amountStr = String(c.amount).replace(/,/g, '');
+        const rate = parseFloat(amountStr) || 0;
+        const minChargeStr = String(c.min_charge ?? 0).replace(/,/g, '');
+        const minCharge = parseFloat(minChargeStr) || 0;
+
+        switch (c.unit) {
+            case 'per_kg':
+            case 'min_or_per_kg': // Simplified for list view
+                lineTotal = Math.max(rate * weight, minCharge);
+                break;
+            case 'flat':
+            case 'per_shipment':
+            case 'per_awb':
+            case 'per_trip':
+            case 'per_set':
+            case 'per_man':
+                lineTotal = rate;
+                break;
+            case 'percentage':
+                // Percentage is complex to sum without context (e.g. % of what?)
+                // For dashboard, we might skip or assume 0, or if it's a known basis?
+                // Let's assume 0 for now to avoid incorrect large numbers
+                lineTotal = 0;
+                break;
+            default:
+                lineTotal = 0;
+        }
+        total += lineTotal;
+    }
+
+    // If total is 0, show 0.00 instead of -
+    if (total === 0 && charges.length > 0) return formatCurrency("0", currency);
+
+    return formatCurrency(total.toString(), currency);
+};
+
 
 export interface UnifiedQuote {
     id: string;
@@ -7,11 +65,13 @@ export interface UnifiedQuote {
     customer: string;
     route: string;
     date: string; // ISO string
+    expiry?: string | null; // ISO string
     weight: string;
     status: string;
     total: string; // Formatted currency string or "-"
     actionLink: string;
     rawStatus: string; // For filtering
+    mode: string;
 }
 
 export const formatCurrency = (amountStr: string | undefined, currency: string | undefined) => {
@@ -23,14 +83,37 @@ export const formatCurrency = (amountStr: string | undefined, currency: string |
     }).format(amount);
 };
 
+// Simple map for common regional ports to enable "City (Code)" format from just a code
+const AIRPORT_CITY_MAP: Record<string, string> = {
+    'POM': 'Port Moresby',
+    'LAE': 'Lae',
+    'BNE': 'Brisbane',
+    'HKG': 'Hong Kong',
+    'SIN': 'Singapore',
+    'SYD': 'Sydney',
+    'MEL': 'Melbourne',
+    'NAN': 'Nadi',
+    'AKL': 'Auckland',
+    'HGU': 'Mount Hagen',
+    'WWK': 'Wewak',
+    'RAB': 'Rabaul',
+};
+
 export const formatRoute = (location: string): string => {
     if (!location) return '';
+
+    // Handle "CODE - Name" format from backend standard quotes
     const match = location.match(/^([A-Z]{3})\s*-\s*(.+)$/);
     if (match) {
-        const [, code, fullName] = match;
-        const cityName = fullName.replace(/\s+(Airport|Intl|International|Jacksons|Terminal|Apt).*$/i, '').trim();
-        return `${cityName} (${code})`;
+        // Return JUST the code as requested by user ("IATA codes instead of City names")
+        return match[1];
     }
+
+    // Handle raw codes (e.g. "POM") - if it's already a code, just return it
+    if (location.length === 3 && /^[A-Z]{3}$/.test(location)) {
+        return location;
+    }
+
     return location;
 };
 
@@ -47,6 +130,14 @@ export const formatDate = (dateStr: string): string => {
 };
 
 export const getWeight = (quote: V3QuoteComputeResponse): string => {
+    // 1. Check for backend computed weight (added to serializer)
+    if (quote.latest_version?.total_weight_kg !== undefined && quote.latest_version?.total_weight_kg !== null) {
+        if (quote.latest_version.total_weight_kg > 0) {
+            return `${quote.latest_version.total_weight_kg} kg`;
+        }
+    }
+
+    // 2. Fallback to calculating from payload if present (detailed view)
     try {
         const dims = quote.latest_version?.payload_json?.dimensions;
         if (dims && Array.isArray(dims)) {

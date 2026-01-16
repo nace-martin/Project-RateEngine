@@ -9,6 +9,14 @@ import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Conta
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 import { Loader2 } from "lucide-react";
+import {
+    Breadcrumb,
+    BreadcrumbItem,
+    BreadcrumbLink,
+    BreadcrumbList,
+    BreadcrumbPage,
+    BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 
 // Reusing the payload builder - ideally this should be a shared utility
 const buildQuoteComputePayload = (
@@ -273,6 +281,25 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
     return (
         <div className="container mx-auto max-w-5xl p-4 pb-32">
+            <Breadcrumb className="mb-6">
+                <BreadcrumbList>
+                    <BreadcrumbItem>
+                        <BreadcrumbLink href="/dashboard">Dashboard</BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                        <BreadcrumbLink href="/quotes">Quotes</BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                        <BreadcrumbLink href={`/quotes/${id}`}>{id.split('-')[0]}...</BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                        <BreadcrumbPage>Edit</BreadcrumbPage>
+                    </BreadcrumbItem>
+                </BreadcrumbList>
+            </Breadcrumb>
             {initialData && (
                 <QuoteForm
                     defaultValues={initialData}

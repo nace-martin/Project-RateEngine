@@ -21,6 +21,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ChevronRight, ArrowLeft, CheckCircle, CheckCircle2 } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
 import { getCustomerName } from "@/lib/quote-helpers";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 
 export default function QuoteDetailPage() {
   const { user } = useAuth();
@@ -129,15 +137,21 @@ export default function QuoteDetailPage() {
       )}
 
       {/* Breadcrumb Navigation */}
-      <nav className="flex items-center gap-2 text-sm text-slate-500">
-        <Link href="/quotes" className="hover:text-slate-700 transition-colors">
-          Quotes
-        </Link>
-        <ChevronRight className="w-4 h-4" />
-        <span className="text-slate-400">New Quote</span>
-        <ChevronRight className="w-4 h-4" />
-        <span className="font-medium text-slate-700">Finalize</span>
-      </nav>
+      <Breadcrumb>
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/dashboard">Dashboard</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/quotes">Quotes</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>{quote.quote_number}</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
 
       {/* Page Header */}
       <div className="flex items-start justify-between">

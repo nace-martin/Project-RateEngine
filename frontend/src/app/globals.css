@@ -143,4 +143,59 @@
     background-color: var(--background);
     color: var(--foreground);
   }
+
+  @media print {
+    body {
+      background-color: white;
+      color: black;
+    }
+
+    /* Hide UI elements */
+    header,
+    nav,
+    button,
+    .no-print {
+      display: none !important;
+    }
+
+    /* Ensure containers are full width */
+    .container {
+      max-width: 100% !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      width: 100% !important;
+    }
+
+    /* Remove shadows and borders */
+    .shadow-sm,
+    .shadow-md,
+    .shadow-lg,
+    .shadow-xl,
+    .border {
+      box-shadow: none !important;
+      border: none !important;
+    }
+
+    /* Ensure proper font sizing for print */
+    h1 {
+      font-size: 18pt !important;
+    }
+
+    h2 {
+      font-size: 16pt !important;
+    }
+
+    p,
+    td,
+    th {
+      font-size: 10pt !important;
+    }
+
+    /* Force background colors for important elements if browser allows */
+    .bg-slate-100,
+    .bg-muted {
+      background-color: #f1f5f9 !important;
+      -webkit-print-color-adjust: exact;
+    }
+  }
 }

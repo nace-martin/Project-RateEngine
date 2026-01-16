@@ -28,6 +28,7 @@ class QuotePDFGenerationError(Exception):
     pass
 
 
+
 def format_currency(amount) -> str:
     """Format currency amount with thousand separators."""
     if amount is None:
@@ -36,6 +37,21 @@ def format_currency(amount) -> str:
         return f"{float(amount):,.2f}"
     except (ValueError, TypeError):
         return "0.00"
+
+
+def _clean_text(text) -> str:
+    """
+    Sanitize text for standard PDF fonts (Latin-1).
+    Replaces unsupported characters (e.g. emojis) with '?'.
+    Safely handles non-string inputs.
+    """
+    if text is None:
+        return ""
+    # Ensure it's a string
+    text_str = str(text)
+    # Encode to latin-1, replacing errors with '?', then decode back to str
+    return text_str.encode('latin-1', 'replace').decode('latin-1')
+
 
 
 class QuotePDF(FPDF):
@@ -115,8 +131,11 @@ def generate_quote_pdf(
         _build_footer(pdf, quote, version)
         
         # Generate bytes
-        pdf_output = pdf.output()
-        pdf_bytes = bytes(pdf_output)
+        pdf_output = pdf.output(dest="S")
+        if isinstance(pdf_output, (bytes, bytearray)):
+            pdf_bytes = bytes(pdf_output)
+        else:
+            pdf_bytes = pdf_output.encode('latin-1')
         
         logger.info(f"Generated PDF for quote {quote.quote_number} ({len(pdf_bytes)} bytes)")
         return pdf_bytes
@@ -158,14 +177,14 @@ def _build_header(pdf: QuotePDF, quote):
     pdf.set_font('Helvetica', 'B', 22)
     pdf.set_text_color(*pdf.dark_blue)
     pdf.set_xy(200, logo_y)
-    pdf.cell(0, 10, quote.quote_number, align='R')
+    pdf.cell(0, 10, _clean_text(quote.quote_number), align='R')
     
     # Dates
     pdf.set_font('Helvetica', '', 9)
     pdf.set_text_color(*pdf.gray)
     pdf.set_xy(200, logo_y + 10)
-    date_text = f"Created {quote.created_at.strftime('%d %b %Y')} | Valid until {quote.valid_until.strftime('%d %b %Y')}"
-    pdf.cell(0, 5, date_text, align='R')
+    date_text = f"Created {quote.created_at.strftime('%d %b %Y')} | Valid until {(quote.valid_until or quote.created_at).strftime('%d %b %Y')}"
+    pdf.cell(0, 5, _clean_text(date_text), align='R')
     
     # Status
     pdf.set_font('Helvetica', 'B', 9)
@@ -230,19 +249,19 @@ def _build_shipment_bar(pdf: QuotePDF, quote, cargo_type, origin_code, origin_na
     data_y = start_y + 7
     x = 15
     pdf.set_xy(x, data_y)
-    pdf.cell(col_widths[0], 8, cargo_type, border=0, fill=True)
+    pdf.cell(col_widths[0], 8, _clean_text(cargo_type), border=0, fill=True)
     x += col_widths[0]
     
     # Origin with country code
     origin_display = f"{_extract_city_name(origin_name)}, AU"
     pdf.set_xy(x, data_y)
-    pdf.cell(col_widths[1], 8, origin_display, border=0, fill=True)
+    pdf.cell(col_widths[1], 8, _clean_text(origin_display), border=0, fill=True)
     x += col_widths[1]
     
     # Destination with country code
     dest_display = f"{_extract_city_name(dest_name)}, PG"
     pdf.set_xy(x, data_y)
-    pdf.cell(col_widths[2], 8, dest_display, border=0, fill=True)
+    pdf.cell(col_widths[2], 8, _clean_text(dest_display), border=0, fill=True)
     x += col_widths[2]
     
     pdf.set_xy(x, data_y)
@@ -269,13 +288,13 @@ def _build_customer_section(pdf: QuotePDF, quote):
     pdf.set_font('Helvetica', 'B', 10)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(18, start_y + 7)
-    pdf.cell(0, 5, quote.customer.name[:40])
+    pdf.cell(0, 5, _clean_text(quote.customer.name[:40]))
     
     if quote.contact:
         pdf.set_font('Helvetica', '', 8)
         pdf.set_text_color(*pdf.gray)
         pdf.set_xy(18, start_y + 12)
-        pdf.cell(0, 4, f"Attn: {quote.contact.first_name} {quote.contact.last_name}"[:45])
+        pdf.cell(0, 4, _clean_text(f"Attn: {quote.contact.first_name} {quote.contact.last_name}"[:45]))
     
     # Shipment details box
     pdf.rect(150, start_y, 132, 18, 'DF')
@@ -288,14 +307,14 @@ def _build_customer_section(pdf: QuotePDF, quote):
     pdf.set_font('Helvetica', '', 9)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(153, start_y + 7)
-    pdf.cell(60, 4, f"Mode: {quote.mode}")
+    pdf.cell(60, 4, _clean_text(f"Mode: {quote.mode}"))
     pdf.set_xy(213, start_y + 7)
-    pdf.cell(60, 4, f"Service: {quote.shipment_type}")
+    pdf.cell(60, 4, _clean_text(f"Service: {quote.shipment_type}"))
     pdf.set_xy(153, start_y + 12)
-    pdf.cell(60, 4, f"Payment: {quote.payment_term}")
+    pdf.cell(60, 4, _clean_text(f"Payment: {quote.payment_term}"))
     pdf.set_xy(213, start_y + 12)
     incoterm = quote.incoterm if quote.incoterm else "N/A"
-    pdf.cell(60, 4, f"Incoterm: {incoterm}")
+    pdf.cell(60, 4, _clean_text(f"Incoterm: {incoterm}"))
     
     pdf.set_y(start_y + 22)
 
@@ -333,7 +352,7 @@ def _build_pricing_section(pdf: QuotePDF, quote, charge_buckets):
             pdf.set_font('Helvetica', 'B', 10)
             pdf.set_text_color(15, 23, 42)
             pdf.set_xy(15, row_y)
-            pdf.cell(200, 6, bucket['name'])
+            pdf.cell(200, 6, _clean_text(bucket['name']))
             pdf.set_font('Helvetica', '', 10)
             pdf.cell(67, 6, format_currency(bucket['subtotal']), align='R')
             pdf.line(15, row_y + 6, 282, row_y + 6)
@@ -426,15 +445,16 @@ def _build_footer(pdf: QuotePDF, quote, version):
     
     pdf.set_font('Helvetica', '', 6)
     pdf.set_text_color(*pdf.gray)
+    valid_until_str = (quote.valid_until or quote.created_at).strftime('%d %b %Y')
     terms = [
-        f"Valid until {quote.valid_until.strftime('%d %b %Y')}",
+        f"Valid until {valid_until_str}",
         "Space subject to availability",
         "Final charges based on actual/volumetric weight",
     ]
     terms_y = start_y + 7
     for term in terms:
         pdf.set_xy(140, terms_y)
-        pdf.cell(0, 3, f"- {term}")
+        pdf.cell(0, 3, _clean_text(f"- {term}"))
         terms_y += 3
     
     # Generated timestamp
