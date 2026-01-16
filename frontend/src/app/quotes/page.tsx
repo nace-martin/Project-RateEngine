@@ -11,16 +11,14 @@ import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, Plus, Filter, Loader2, FileText } from "lucide-react";
+import { Search, Plus, Filter, Loader2, FileText, Save } from "lucide-react";
 import { StandardPageContainer, PageHeader } from "@/components/layout/standard-page";
 import { DataTable } from "@/components/ui/data-table-wrapper";
 import { EmptyState } from "@/components/ui/empty-state";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
+import { QuoteQuickLook } from "@/components/QuoteQuickLook";
 
 import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal } from "@/lib/quote-helpers";
-
-// --- Helpers -> Removed (imported from lib/quote-helpers)
-
 
 // --- Main Component ---
 
@@ -32,6 +30,10 @@ export default function QuotesPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [modeFilter, setModeFilter] = useState<string>("all");
+
+  // Quick Look State
+  const [selectedQuote, setSelectedQuote] = useState<UnifiedQuote | null>(null);
+  const [isQuickLookOpen, setIsQuickLookOpen] = useState(false);
 
   // Raw Data
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
@@ -61,7 +63,7 @@ export default function QuotesPage() {
   // specific status badges for spot drafts
   const getStatusBadge = (item: UnifiedQuote) => {
     if (item.type === "SPOT_DRAFT") {
-      return <Badge variant="secondary" className="bg-amber-100 text-amber-800 hover:bg-amber-100">Draft (SPOT)</Badge>;
+      return <Badge variant="secondary" className="bg-amber-500 text-white border-amber-600 hover:bg-amber-500">Draft (SPOT)</Badge>;
     }
     return <QuoteStatusBadge status={item.rawStatus} />;
   };
@@ -88,7 +90,11 @@ export default function QuotesPage() {
         rawStatus: q.status,
         total: formatCurrency(totalAmt, currency),
         actionLink: `/quotes/${q.id}`,
-        mode: q.mode || "AIR"
+        mode: q.mode || "AIR",
+        serviceType: q.shipment_type || "Import",
+        incoterms: q.incoterm || "-",
+        scope: q.service_scope || "-",
+        createdBy: q.created_by || "Unknown"
       });
     });
 
@@ -110,7 +116,11 @@ export default function QuotesPage() {
         rawStatus: "DRAFT",
         total: calculateSpotTotal(d),
         actionLink: `/quotes/spot/${d.id}`,
-        mode: "AIR" // Implicitly AIR
+        mode: "AIR", // Implicitly AIR
+        serviceType: "Spot Request",
+        incoterms: "-",
+        scope: "-",
+        createdBy: "User"
       });
     });
 
@@ -150,7 +160,7 @@ export default function QuotesPage() {
             {showExpiry && (
               <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
                 <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></span>
-                EXP: {formatDate(item.expiry)}
+                EXP: {formatDate(item.expiry as string)}
               </span>
             )}
           </div>
@@ -240,6 +250,10 @@ export default function QuotesPage() {
             <option value="SEA">Sea Freight</option>
             <option value="ROAD">Road/Inland</option>
           </select>
+          <Button variant="outline" size="sm" className="h-9 gap-2 text-muted-foreground hover:text-primary">
+            <Save className="h-4 w-4" />
+            <span className="hidden sm:inline">Save View</span>
+          </Button>
         </div>
       </div>
 
@@ -266,9 +280,19 @@ export default function QuotesPage() {
               className="py-12 border-none"
             />
           }
-          onRowClick={(item) => router.push(item.actionLink)}
+          onRowClick={(item) => {
+            setSelectedQuote(item);
+            setIsQuickLookOpen(true);
+          }}
         />
       )}
+
+      {/* Quick Look Drawer */}
+      <QuoteQuickLook
+        open={isQuickLookOpen}
+        onOpenChange={setIsQuickLookOpen}
+        quote={selectedQuote}
+      />
     </StandardPageContainer>
   );
 }

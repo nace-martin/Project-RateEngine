@@ -72,6 +72,10 @@ export interface UnifiedQuote {
     actionLink: string;
     rawStatus: string; // For filtering
     mode: string;
+    serviceType?: string;
+    incoterms?: string;
+    scope?: string;
+    createdBy?: string;
 }
 
 export const formatCurrency = (amountStr: string | undefined, currency: string | undefined) => {

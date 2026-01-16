@@ -28,43 +28,46 @@ const STATUS_CONFIG: Record<string, {
 }> = {
     DRAFT: {
         label: "Draft",
-        bgColor: "bg-slate-100",
-        textColor: "text-slate-700",
-        borderColor: "border-slate-200",
+        bgColor: "bg-amber-500",
+        textColor: "text-white",
+        borderColor: "border-amber-600",
     },
     INCOMPLETE: {
         label: "Incomplete",
-        bgColor: "bg-red-100",
+        bgColor: "bg-red-50",
         textColor: "text-red-700",
         borderColor: "border-red-200",
     },
     FINALIZED: {
         label: "Finalized",
-        bgColor: "bg-green-100",
-        textColor: "text-green-700",
-        borderColor: "border-green-200",
+        bgColor: "bg-emerald-600",
+        textColor: "text-white",
+        borderColor: "border-emerald-700",
     },
     SENT: {
         label: "Sent",
-        bgColor: "bg-orange-600",
+        bgColor: "bg-blue-600",
         textColor: "text-white",
-        borderColor: "border-orange-700",
+        borderColor: "border-blue-700",
     },
     // Post-MVP states (kept for future)
     ACCEPTED: {
         label: "Accepted",
-        bgColor: "bg-emerald-100",
-        textColor: "text-emerald-700",
+        bgColor: "bg-emerald-700",
+        textColor: "text-white",
+        borderColor: "border-emerald-800",
     },
     LOST: {
         label: "Lost",
-        bgColor: "bg-gray-100",
-        textColor: "text-gray-600",
+        bgColor: "bg-gray-200",
+        textColor: "text-gray-700",
+        borderColor: "border-gray-300",
     },
     EXPIRED: {
         label: "Expired",
-        bgColor: "bg-amber-100",
-        textColor: "text-amber-700",
+        bgColor: "bg-rose-600",
+        textColor: "text-white",
+        borderColor: "border-rose-700",
     },
 };
 

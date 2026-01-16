@@ -125,7 +125,7 @@ export default function AppHeader() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${isActive
+                className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${isActive
                   ? 'bg-primary/10 text-primary font-medium'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   }`}

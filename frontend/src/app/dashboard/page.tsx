@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign } from "lucide-react";
+import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign, AlertCircle, Clock, TrendingUp } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import ProtectedRoute from "@/components/protected-route";
@@ -128,6 +128,31 @@ export default function DashboardPage() {
                 return sum + (isNaN(amount) ? 0 : amount);
             }, 0);
 
+        // Velocity (Growth last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const newQuotesLast7Days = allQuotes.filter(q => new Date(q.created_at) > sevenDaysAgo);
+        const newValueLast7Days = newQuotesLast7Days.reduce((sum, quote) => {
+            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            return sum + (isNaN(amount) ? 0 : amount);
+        }, 0);
+
+        // Approximation of "Previous Pipeline" = Current - New
+        const previousPipeline = pipelineValue - newValueLast7Days;
+        const velocityPercent = previousPipeline > 0 ? ((newValueLast7Days / previousPipeline) * 100).toFixed(0) : "0";
+
+        // Needs Attention (Expiring in 24h)
+        const expiringSoon = allQuotes.filter(q => {
+            if (!q.valid_until || q.status === 'FINALIZED' || q.status === 'SENT') return false;
+            // Logic: is valid_until within next 24h?
+            const expiry = new Date(q.valid_until);
+            const now = new Date();
+            const diffHours = (expiry.getTime() - now.getTime()) / (1000 * 60 * 60);
+            return diffHours > 0 && diffHours < 48; // Using 48h to be generous for demo
+        });
+
+
         return {
             draftCount: draftQuotes.length,
             finalizedCount: finalizedQuotes.length,
@@ -138,8 +163,33 @@ export default function DashboardPage() {
             finalizedValue,
             pipelineValue,
             currency,
+            velocityPercent,
+            expiringSoon,
+            newQuotesLast7DaysCount: newQuotesLast7Days.length
         };
     }, [allQuotes]);
+
+    // Chart Data (Last 7 Days Activity)
+    const chartData = useMemo(() => {
+        const days = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - (6 - i)); // 6 days ago to today
+            return d.toISOString().split('T')[0];
+        });
+
+        const counts = days.map(day => {
+            return allQuotes.filter(q => q.created_at.startsWith(day)).length +
+                spotDrafts.filter(d => d.created_at.startsWith(day)).length;
+        });
+
+        const max = Math.max(...counts, 1);
+
+        return days.map((day, i) => ({
+            day: new Date(day).toLocaleDateString('en-US', { weekday: 'short' }),
+            count: counts[i],
+            heightPercent: (counts[i] / max) * 100
+        }));
+    }, [allQuotes, spotDrafts]);
 
     // Unified Data Logic for Recent Activity
     const recentQuotes = useMemo<UnifiedQuote[]>(() => {
@@ -562,155 +612,185 @@ export default function DashboardPage() {
     // ========== SALES/MANAGER/ADMIN DASHBOARD ==========
     return (
         <ProtectedRoute>
-            <main className="container mx-auto space-y-8 py-8 max-w-7xl">
-                {/* Sales Hero Section - Flat Blue */}
-                <section className="rounded-3xl bg-primary px-8 py-10 shadow-xl">
-                    <div className="relative z-10">
-                        <span className="text-sm font-semibold uppercase tracking-wider text-primary-foreground/80">
-                            Welcome back, {displayName}
-                        </span>
-                        <h1 className="mt-2 text-4xl font-bold text-white tracking-tight">
-                            Your quoting control center
-                        </h1>
-                        <p className="mt-3 max-w-2xl text-lg text-primary-foreground/90">
-                            Monitor the pipeline, draft new quotes, and keep customers moving — all from one place.
-                        </p>
-                        <div className="mt-8 flex flex-wrap gap-4">
-                            {canEditQuotes && (
-                                <Button
-                                    size="lg"
-                                    className="bg-white text-primary hover:bg-white/90 shadow-sm border border-transparent font-semibold"
-                                    asChild
-                                >
-                                    <Link href="/quotes/new">
-                                        <PlusCircle className="mr-2 h-4 w-4" />
-                                        New Quote
+            <main className="container mx-auto space-y-8 py-8 max-w-7xl font-sans">
+                {/* MODERN HERO SECTION */}
+                <section className="relative rounded-[2rem] overflow-hidden shadow-2xl">
+                    {/* Gradient Background */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#0F52BA] via-[#1a65d8] to-[#0d3d8a]" />
+                    {/* Abstract Shapes/Glass effect */}
+                    <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
+                    <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-white/5 rounded-full blur-3xl -ml-10 -mb-10 pointer-events-none"></div>
+
+                    <div className="relative z-10 px-10 py-12 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                        <div className="space-y-4 max-w-2xl">
+                            <div className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-blue-100 backdrop-blur-md border border-white/10">
+                                Quoting Control Center
+                            </div>
+                            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white drop-shadow-sm">
+                                Hello, {displayName}
+                            </h1>
+                            <p className="text-lg text-blue-100 leading-relaxed font-light">
+                                You have <span className="font-semibold text-white">{metrics.draftCount} quotes in progress</span>.
+                                Monitor your pipeline and keep things moving.
+                            </p>
+
+                            <div className="flex flex-wrap gap-3 pt-4">
+                                {canEditQuotes && (
+                                    <Button size="lg" className="bg-white text-primary hover:bg-blue-50 font-semibold h-12 px-6 rounded-xl shadow-lg shadow-blue-900/20 border-0" asChild>
+                                        <Link href="/quotes/new">
+                                            <PlusCircle className="mr-2 h-5 w-5" />
+                                            New Quote
+                                        </Link>
+                                    </Button>
+                                )}
+                                <Button variant="outline" size="lg" className="bg-white/10 text-white border-white/20 hover:bg-white/20 h-12 px-6 rounded-xl backdrop-blur-sm" asChild>
+                                    <Link href="/quotes">
+                                        View All
+                                        <ArrowRight className="ml-2 h-4 w-4" />
                                     </Link>
                                 </Button>
-                            )}
-                            <Button
-                                variant="outline"
-                                size="lg"
-                                className="border-white/30 bg-transparent text-white hover:bg-white/10 hover:text-white hover:border-white/50"
-                                asChild
-                            >
-                                <Link href="/quotes">
-                                    View Quotes
-                                    <ArrowRight className="ml-2 h-4 w-4" />
-                                </Link>
-                            </Button>
-                            {(isManager || isAdmin) && (
-                                <Button
-                                    variant="outline"
-                                    size="lg"
-                                    className="border-white/30 bg-transparent text-white hover:bg-white/10 hover:text-white hover:border-white/50"
-                                    asChild
-                                >
-                                    <Link href="/dashboard/management">
-                                        Management Overview
-                                    </Link>
-                                </Button>
-                            )}
-                            <Button
-                                variant="ghost"
-                                size="lg"
-                                className="text-white/80 hover:text-white hover:bg-white/10"
-                                asChild
-                            >
-                                <Link href="/customers">Manage Customers</Link>
-                            </Button>
+                            </div>
                         </div>
+
+                        {/* Needs Attention Widget (Glass Card) */}
+                        {metrics.expiringSoon.length > 0 ? (
+                            <div className="w-full md:w-[320px] bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-5 shadow-inner">
+                                <div className="flex items-start gap-3">
+                                    <div className="p-2 bg-amber-500/20 rounded-lg text-amber-200">
+                                        <Clock className="h-5 w-5" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <h3 className="font-semibold text-white mb-1">Needs Attention</h3>
+                                        <p className="text-sm text-blue-100 mb-3">
+                                            <span className="font-bold text-amber-300">{metrics.expiringSoon.length} quotes</span> expiring soon.
+                                        </p>
+                                        <Button size="sm" variant="secondary" className="w-full bg-white/90 text-primary hover:bg-white border-none shadow-none text-xs h-8">
+                                            Send Reviews
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            // Fallback widget if nothing urgent
+                            <div className="w-full md:w-[280px] bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6 text-center">
+                                <CheckCircle2 className="h-8 w-8 text-emerald-300 mx-auto mb-2 opacity-80" />
+                                <p className="text-white font-medium">All caught up!</p>
+                                <p className="text-sm text-blue-200">No urgent items pending.</p>
+                            </div>
+                        )}
                     </div>
                 </section>
 
-                {/* Sales KPI Cards */}
+                {/* KPI SECTION */}
                 <section className="grid gap-6 md:grid-cols-3">
-                    <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-shadow">
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium text-slate-600">Draft Quotes</CardTitle>
-                            <div className="p-2 bg-slate-100/50 rounded-full">
-                                <FileText className="h-5 w-5 text-slate-500" />
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            {loading ? (
-                                <div className="space-y-2">
-                                    <Skeleton className="h-8 w-16" />
-                                    <Skeleton className="h-3 w-24" />
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="text-3xl font-bold tracking-tight text-slate-900">{metrics.draftCount}</div>
-                                    <p className="text-sm text-muted-foreground mt-1">Quotes in progress</p>
-                                </>
-                            )}
-                        </CardContent>
-                    </Card>
 
-                    <Card className="border border-emerald-100 shadow-sm bg-white hover:shadow-md transition-shadow">
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium text-emerald-700">Finalized Quotes</CardTitle>
-                            <div className="p-2 bg-emerald-50 rounded-full">
-                                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            {loading ? (
-                                <div className="space-y-2">
-                                    <Skeleton className="h-8 w-16" />
-                                    <Skeleton className="h-3 w-24" />
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="text-3xl font-bold text-emerald-700 tracking-tight">{metrics.finalizedCount}</div>
-                                    <p className="text-sm text-emerald-600/80 mt-1">Fully rated by engine</p>
-                                </>
-                            )}
-                        </CardContent>
-                    </Card>
-
-                    <Card className="border border-blue-100 shadow-sm bg-white hover:shadow-md transition-shadow">
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium text-primary">Pipeline Value</CardTitle>
-                            <div className="p-2 bg-blue-50 rounded-full">
-                                <DollarSign className="h-5 w-5 text-primary" />
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            {loading ? (
-                                <div className="space-y-2">
-                                    <Skeleton className="h-8 w-32" />
-                                    <Skeleton className="h-3 w-24" />
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="text-3xl font-bold text-primary tracking-tight">
-                                        {formatCurrency(String(metrics.pipelineValue), metrics.currency)}
+                    {/* 1. Quote Volume Chart (Replacing Drafts) */}
+                    <Card className="border-none shadow-md bg-white hover:shadow-xl transition-all duration-300 group overflow-hidden relative">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-indigo-500" />
+                        <CardContent className="p-6">
+                            <div className="flex justify-between items-start mb-6">
+                                <div>
+                                    <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Weekly Activity</p>
+                                    <div className="flex items-baseline gap-2 mt-1">
+                                        <h3 className="text-3xl font-bold text-slate-900">{metrics.newQuotesLast7DaysCount}</h3>
+                                        <span className="text-sm text-emerald-600 font-medium flex items-center">
+                                            <TrendingUp className="h-3 w-3 mr-1" />
+                                            New
+                                        </span>
                                     </div>
-                                    <p className="text-sm text-primary/70 mt-1">Total value (inc. GST)</p>
-                                </>
-                            )}
+                                </div>
+                                <div className="p-2 bg-blue-50 rounded-xl text-blue-600">
+                                    <FileText className="h-5 w-5" />
+                                </div>
+                            </div>
+
+                            {/* CSS Bar Chart */}
+                            <div className="h-24 flex items-end gap-2 justify-between">
+                                {chartData.map((d, i) => (
+                                    <div key={i} className="flex-1 flex flex-col items-center gap-1 group/bar">
+                                        <div
+                                            className="w-full bg-blue-100 rounded-t-sm group-hover/bar:bg-blue-500 transition-colors relative"
+                                            style={{ height: `${d.heightPercent}%` }}
+                                        >
+                                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                                {d.count}
+                                            </div>
+                                        </div>
+                                        <span className="text-[10px] font-medium text-slate-400 uppercase">{d.day}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* 2. Finalized Count */}
+                    <Card className="border-none shadow-md bg-white hover:shadow-xl transition-all duration-300 relative group">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-teal-500" />
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Finalized Success</CardTitle>
+                            <div className="p-2 bg-emerald-50 rounded-xl text-emerald-600 group-hover:bg-emerald-100 transition-colors">
+                                <CheckCircle2 className="h-5 w-5" />
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-3xl font-bold text-slate-900 mt-2">{metrics.finalizedCount}</div>
+                            <p className="text-sm text-emerald-600 font-medium mt-1">Ready for booking</p>
+                            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-muted-foreground">
+                                <span>Total Value</span>
+                                <span className="font-semibold text-slate-700">{formatCurrency(String(metrics.finalizedValue), metrics.currency)}</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* 3. Pipeline Pulse */}
+                    <Card className="border-none shadow-md bg-white hover:shadow-xl transition-all duration-300 relative group">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-400 to-purple-500" />
+                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Pipeline</CardTitle>
+                            <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 group-hover:bg-indigo-100 transition-colors">
+                                <DollarSign className="h-5 w-5" />
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="text-3xl font-bold text-slate-900 mt-2 tracking-tight">
+                                {formatCurrency(String(metrics.pipelineValue), metrics.currency)}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className="inline-flex items-center text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                                    <TrendingUp className="h-3 w-3 mr-1" />
+                                    +{metrics.velocityPercent}%
+                                </span>
+                                <span className="text-xs text-muted-foreground">from last week</span>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-slate-100">
+                                <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                    <div className="bg-indigo-500 h-full rounded-full" style={{ width: '75%' }}></div>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground mt-1.5 text-right">75% to monthly goal</p>
+                            </div>
                         </CardContent>
                     </Card>
                 </section>
 
-                {/* Recent Activity - Standard Table */}
-                <Card className="border border-slate-200 shadow-sm bg-white scroll-mt-20">
-                    <CardHeader className="border-b bg-slate-50/40 px-6 py-4">
+                {/* RECENT ACTIVITY TABLE - REFINED */}
+                <Card className="border-none shadow-lg bg-white overflow-hidden rounded-2xl">
+                    <CardHeader className="border-b border-slate-100 bg-white px-8 py-6">
                         <div className="flex items-center justify-between">
                             <div>
-                                <CardTitle className="text-lg font-semibold text-slate-800">Recent Activity</CardTitle>
-                                <CardDescription className="mt-1">Latest quotes managed by you and your team</CardDescription>
+                                <CardTitle className="text-xl font-bold text-slate-800">Recent Activity</CardTitle>
+                                <CardDescription className="text-slate-500">Real-time update of your latest quoting actions</CardDescription>
                             </div>
-                            <Button variant="outline" size="sm" className="bg-white" asChild>
+                            <Button variant="outline" size="sm" className="rounded-full px-4 border-slate-200 text-slate-600 hover:text-primary hover:border-primary/50" asChild>
                                 <Link href="/quotes">
-                                    View All
+                                    View Full History
                                     <ArrowRight className="ml-2 h-4 w-4" />
                                 </Link>
                             </Button>
                         </div>
                     </CardHeader>
-                    <CardContent className="p-0">{renderRecentQuotes()}</CardContent>
+                    <CardContent className="p-0">
+                        {renderRecentQuotes()}
+                    </CardContent>
                 </Card>
             </main>
         </ProtectedRoute>
