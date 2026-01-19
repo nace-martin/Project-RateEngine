@@ -25,12 +25,11 @@ User = get_user_model()
 VALID_TRANSITIONS = {
     Quote.Status.DRAFT: [Quote.Status.FINALIZED],
     Quote.Status.INCOMPLETE: [Quote.Status.DRAFT],  # Must complete before finalizing
-    Quote.Status.FINALIZED: [Quote.Status.SENT],
-    Quote.Status.SENT: [],  # Terminal state
-    # Post-MVP states (not used in MVP, but defined for future)
-    Quote.Status.ACCEPTED: [],
-    Quote.Status.LOST: [],
-    Quote.Status.EXPIRED: [],
+    Quote.Status.FINALIZED: [Quote.Status.SENT, Quote.Status.EXPIRED],
+    Quote.Status.SENT: [Quote.Status.ACCEPTED, Quote.Status.LOST, Quote.Status.EXPIRED],  # Outcome tracking
+    Quote.Status.ACCEPTED: [],  # Terminal state (won)
+    Quote.Status.LOST: [],      # Terminal state (lost)
+    Quote.Status.EXPIRED: [],   # Terminal state
 }
 
 # States that block quote editing
@@ -133,6 +132,31 @@ class QuoteStateMachine:
     def mark_sent(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
         """Convenience method to mark quote as sent."""
         return self.transition_to(Quote.Status.SENT, user)
+    
+    def mark_won(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
+        """Mark quote as accepted/won."""
+        return self.transition_to(Quote.Status.ACCEPTED, user)
+    
+    def mark_lost(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
+        """Mark quote as lost."""
+        return self.transition_to(Quote.Status.LOST, user)
+    
+    def mark_expired(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
+        """Mark quote as expired."""
+        return self.transition_to(Quote.Status.EXPIRED, user)
+    
+    def cancel(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
+        """
+        Cancel/archive a draft quote.
+        This is a soft-delete (sets is_archived=True) rather than a state transition.
+        """
+        if self.quote.status != Quote.Status.DRAFT:
+            return False, f"Cannot cancel quote with status {self.quote.status}. Only DRAFT quotes can be cancelled."
+        
+        self.quote.is_archived = True
+        self.quote.save(update_fields=['is_archived'])
+        logger.info(f"Quote {self.quote.quote_number} cancelled/archived by {user}")
+        return True, None
 
 
 def is_quote_editable(quote: Quote) -> bool:

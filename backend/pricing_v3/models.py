@@ -205,4 +205,5 @@ class ComponentMargin(models.Model):
     
     def __str__(self):
         segment = f" ({self.customer_segment})" if self.customer_segment else ""
-        return f"{self.component.code}: {self.margin_percent * 100}%{segment}"
+        percent = (self.margin_percent * 100).quantize(Decimal('0.1'))
+        return f"{self.component.code}: {percent}%{segment}"

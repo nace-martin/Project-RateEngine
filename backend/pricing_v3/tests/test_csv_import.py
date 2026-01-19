@@ -13,7 +13,11 @@ User = get_user_model()
 class RateCardCSVImportTest(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.user = User.objects.create_user(username='testuser', password='testpassword')
+        self.user = User.objects.create_user(
+            username='testuser',
+            password='testpassword',
+            role=User.ROLE_MANAGER
+        )
         self.client.force_authenticate(user=self.user)
         
         self.origin = Zone.objects.create(code='BNE', name='Brisbane')

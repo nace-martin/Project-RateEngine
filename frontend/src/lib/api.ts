@@ -1301,3 +1301,132 @@ export async function getSalesPerformanceReports(): Promise<SalesPerformanceData
   if (!response.ok) throw new Error('Failed to fetch sales performance');
   return response.json();
 }
+
+// =============================================================================
+// Customer Discounts API
+// =============================================================================
+
+export type DiscountType = 'PERCENTAGE' | 'FLAT_AMOUNT' | 'RATE_REDUCTION' | 'FIXED_CHARGE' | 'MARGIN_OVERRIDE';
+
+export interface CustomerDiscount {
+  id: string;
+  customer: string;
+  customer_name: string;
+  product_code: string;
+  product_code_code?: string;
+  product_code_description?: string;
+  product_code_domain?: string;
+  product_code_display?: string;
+  discount_type: DiscountType;
+  discount_type_display?: string;
+  discount_value: string;
+  currency: string;
+  min_charge?: string | null;
+  max_charge?: string | null;
+  valid_from: string | null;
+  valid_until: string | null;
+  is_active?: boolean;
+  notes: string | null;
+  created_at: string;
+  created_by?: string | null;
+}
+
+export interface ProductCodeOption {
+  id: number | string;
+  code: string;
+  description: string;
+  domain: string;
+  category: string;
+  default_unit?: string;
+}
+
+export async function getCustomerDiscounts(params?: {
+  customer?: string;
+  product_code?: string;
+  discount_type?: DiscountType;
+  search?: string;
+}): Promise<CustomerDiscount[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/discounts/');
+  if (params) {
+    if (params.customer) url.searchParams.append('customer', params.customer);
+    if (params.product_code) url.searchParams.append('product_code', params.product_code);
+    if (params.discount_type) url.searchParams.append('discount_type', params.discount_type);
+    if (params.search) url.searchParams.append('search', params.search);
+  }
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch customer discounts');
+  return response.json();
+}
+
+export async function getCustomerDiscount(id: string): Promise<CustomerDiscount> {
+  const url = API_BASE_URL + `/api/v4/discounts/${id}/`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch discount details');
+  return response.json();
+}
+
+export async function createCustomerDiscount(data: Partial<CustomerDiscount>): Promise<CustomerDiscount> {
+  const url = API_BASE_URL + '/api/v4/discounts/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create discount: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function updateCustomerDiscount(id: string, data: Partial<CustomerDiscount>): Promise<CustomerDiscount> {
+  const url = API_BASE_URL + `/api/v4/discounts/${id}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update discount: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function deleteCustomerDiscount(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v4/discounts/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete discount: ${detail}`);
+  }
+}
+
+export async function getProductCodes(params?: {
+  domain?: string;
+  search?: string;
+}): Promise<ProductCodeOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/product-codes/');
+  if (params) {
+    if (params.domain) url.searchParams.append('domain', params.domain);
+    if (params.search) url.searchParams.append('search', params.search);
+  }
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch product codes');
+  return response.json();
+}

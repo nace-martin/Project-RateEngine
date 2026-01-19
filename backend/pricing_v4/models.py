@@ -524,7 +524,7 @@ class ImportSellRate(models.Model):
     
     class Meta:
         db_table = 'import_sell_rates'
-        unique_together = ['product_code', 'origin_airport', 'destination_airport', 'valid_from']
+        unique_together = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'valid_from']
         ordering = ['product_code', 'origin_airport', 'destination_airport']
         verbose_name = 'Import Sell Rate'
         verbose_name_plural = 'Import Sell Rates'
@@ -786,6 +786,92 @@ class Surcharge(models.Model):
 
 
 # =============================================================================
+# COMPONENT MARGINS
+# =============================================================================
+
+class ComponentMargin(models.Model):
+    """
+    Standard margins applied to COGS to determine Sell Rate.
+    
+    Principles:
+    - Margins are defined per Service Type (e.g. DOMESTIC_AIR) or specific ProductCode
+    - Margins can be percentage-based or fixed amounts
+    - Specific rules override general rules (Specific Product > Service Type)
+    """
+    
+    SERVICE_TYPE_CHOICES = [
+        ('DOMESTIC_AIR', 'Domestic Air'),
+        ('EXPORT_AIR', 'Export Air'),
+        ('IMPORT_AIR', 'Import Air'),
+        ('EXPORT_ORIGIN', 'Export Origin Services'),
+        ('EXPORT_DEST', 'Export Destination Services'),
+        ('IMPORT_ORIGIN', 'Import Origin Services'),
+        ('IMPORT_DEST', 'Import Destination Services'),
+    ]
+    
+    MARGIN_TYPE_CHOICES = [
+        ('PERCENT', 'Percentage Markup'),
+        ('FIXED', 'Fixed Amount Markup'),
+    ]
+    
+    # Scope: Either a specific ProductCode OR a whole Service Type
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='component_margins',
+        help_text='Specific product margin (overrides service type margin)'
+    )
+    
+    service_type = models.CharField(
+        max_length=20,
+        choices=SERVICE_TYPE_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Apply to all products in this service group'
+    )
+    
+    # Margin definition
+    margin_type = models.CharField(max_length=10, choices=MARGIN_TYPE_CHOICES, default='PERCENT')
+    margin_value = models.DecimalField(max_digits=10, decimal_places=4, help_text='Percentage (e.g. 20.0 for 20%) or Fixed Amount')
+    
+    min_margin_amount = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text='Minimum margin amount in currency (e.g. maintain at least K10 profit)'
+    )
+    
+    # Validity
+    valid_from = models.DateField()
+    valid_until = models.DateField()
+    is_active = models.BooleanField(default=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'component_margins'
+        ordering = ['service_type', 'product_code']
+        verbose_name = 'Component Margin'
+        verbose_name_plural = 'Component Margins'
+    
+    def clean(self):
+        if not self.product_code and not self.service_type:
+            raise ValidationError("Must specify either Product Code or Service Type.")
+        if self.product_code and self.service_type:
+            raise ValidationError("Cannot specify both. Choose specific Product or general Service Type.")
+            
+    def __str__(self):
+        scope = self.product_code.code if self.product_code else self.service_type
+        return f"Margin: {scope} ({self.margin_value} {self.margin_type})"
+
+
+# =============================================================================
 # CUSTOMER DISCOUNTS
 # =============================================================================
 
@@ -861,6 +947,23 @@ class CustomerDiscount(models.Model):
         help_text='Currency for FLAT_AMOUNT/FIXED_CHARGE types'
     )
     
+    # Min/Max charges for RATE_REDUCTION type
+    min_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Minimum charge for RATE_REDUCTION (e.g., 50.00 = K50 min)'
+    )
+    
+    max_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Maximum charge cap for RATE_REDUCTION (e.g., 500.00 = K500 max)'
+    )
+    
     valid_from = models.DateField(
         null=True,
         blank=True,
@@ -868,7 +971,9 @@ class CustomerDiscount(models.Model):
     )
     
     valid_until = models.DateField(
-        help_text='Discount expires after this date (inclusive)'
+        null=True,
+        blank=True,
+        help_text='Discount expires after this date (inclusive, null = no expiry)'
     )
     
     # Optional notes for commercial context

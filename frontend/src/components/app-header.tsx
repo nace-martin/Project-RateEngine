@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu } from 'lucide-react';
+import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu, Percent } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
@@ -28,7 +28,7 @@ export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance } = usePermissions();
+  const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
   const [open, setOpen] = useState(false);
 
   // Core navigation items - Dashboard and Quotes for everyone
@@ -44,7 +44,12 @@ export default function AppHeader() {
 
   // Rate Cards - only for users who can edit rate cards
   if (canEditRateCards) {
-    navItems.push({ href: '/rate-cards', label: 'Rate Cards', icon: Database });
+    navItems.push({ href: '/pricing/rate-cards', label: 'Rate Cards', icon: Database });
+  }
+
+  // Discounts - for Manager and Admin
+  if (isManager || isAdmin) {
+    navItems.push({ href: '/pricing/discounts', label: 'Discounts', icon: Percent });
   }
 
   // Finance and Admin see Settings in navbar

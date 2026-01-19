@@ -46,7 +46,7 @@ from quotes.spot_schemas import (
     SpotPricingEnvelope,
     SPEStatus,
 )
-from quotes.models import (
+from quotes.spot_models import (
     SpotPricingEnvelopeDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,

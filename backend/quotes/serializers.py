@@ -88,7 +88,12 @@ class V3ServiceComponentSerializer(serializers.ModelSerializer):
         fields = ('id', 'code', 'description', 'category', 'unit', 'leg')
 
 class V3QuoteLineSerializer(serializers.ModelSerializer):
+    """
+    Serializer for QuoteLine with RBAC-based field masking.
+    SALES role users cannot see cost/COGS fields.
+    """
     service_component = V3ServiceComponentSerializer()
+    
     class Meta:
         model = QuoteLine
         fields = (
@@ -97,8 +102,26 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
             'sell_fcy_currency', 'exchange_rate', 'cost_source',
             'cost_source_description', 'is_rate_missing', 'leg', 'bucket'
         )
+    
+    def to_representation(self, instance):
+        """Mask cost fields if user cannot view COGS."""
+        data = super().to_representation(instance)
+        
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            if not getattr(request.user, 'can_view_cogs', True):
+                # Mask cost/COGS fields for SALES users
+                data['cost_pgk'] = None
+                data['cost_fcy'] = None
+                data['cost_fcy_currency'] = None
+        
+        return data
 
 class V3QuoteTotalSerializer(serializers.ModelSerializer):
+    """
+    Serializer for QuoteTotal with RBAC-based field masking.
+    SALES role users cannot see cost totals.
+    """
     # Alias for frontend compatibility - maps total_sell_fcy_currency to 'currency'
     currency = serializers.CharField(source='total_sell_fcy_currency', read_only=True)
     
@@ -111,6 +134,18 @@ class V3QuoteTotalSerializer(serializers.ModelSerializer):
             'total_sell_fcy', 'total_sell_fcy_incl_gst', 'total_sell_fcy_currency',
             'has_missing_rates', 'notes',
         )
+    
+    def to_representation(self, instance):
+        """Mask cost totals if user cannot view COGS."""
+        data = super().to_representation(instance)
+        
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            if not getattr(request.user, 'can_view_cogs', True):
+                # Mask cost totals for SALES users
+                data['total_cost_pgk'] = None
+        
+        return data
 
 class V3QuoteVersionSerializer(serializers.ModelSerializer):
     lines = V3QuoteLineSerializer(many=True)
@@ -129,7 +164,7 @@ class V3QuoteVersionSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = QuoteVersion
-        exclude = ('quote',) # Include payload_json for frontend weight calculation fallback
+        exclude = ('quote', 'payload_json') # Include payload_json for frontend weight calculation fallback
 
     def get_total_weight_kg(self, obj):
         try:
@@ -208,6 +243,14 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
     contact = ContactV3Serializer(read_only=True)
     origin_location = serializers.StringRelatedField()
     destination_location = serializers.StringRelatedField()
+    created_by = serializers.SerializerMethodField()
+
+    def get_created_by(self, obj):
+        if not obj.created_by:
+            return None
+        user = obj.created_by
+        full_name = f"{user.first_name} {user.last_name}".strip()
+        return full_name if full_name else user.username
 
     class Meta:
         model = Quote
@@ -215,5 +258,5 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version'
+            'status', 'valid_until', 'created_at', 'latest_version', 'created_by'
         )

@@ -2,7 +2,9 @@
 
 from django.contrib import admin
 from .models import (
-    Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote,
+    Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
+)
+from .spot_models import (
     SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB, SPEManagerApprovalDB
 )
 

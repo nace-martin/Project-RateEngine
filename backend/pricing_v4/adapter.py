@@ -1,7 +1,7 @@
 import uuid
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 from uuid import UUID
@@ -73,7 +73,9 @@ class PricingServiceV4Adapter:
         Returns:
             Dict mapping ProductCode ID to CustomerDiscount instance
         """
-        customer_id = self.quote_input.customer_id
+        customer_id = getattr(self.quote_input, 'customer_id', None)
+        if not customer_id:
+            return {}
         quote_date = self.quote_input.quote_date or date.today()
         
         try:
@@ -392,6 +394,13 @@ class PricingServiceV4Adapter:
             # [FIX P1] Handle non-PGK currency from Standard Engine (e.g. Import Prepaid)
             currency = data.get('sell_currency', 'PGK')
             cost_currency = data.get('cost_currency', currency)
+            agent_name = data.get('agent_name')
+            if isinstance(agent_name, str) and agent_name:
+                cost_source = agent_name
+            elif agent_name:
+                cost_source = str(agent_name)
+            else:
+                cost_source = 'V4 Engine'
             
             if currency != 'PGK':
                 sell_fcy = Decimal(str(data['sell_amount']))
@@ -428,7 +437,7 @@ class PricingServiceV4Adapter:
                     cost_fcy_currency=cost_currency,
                     bucket=data.get('bucket', 'origin_charges'),
 
-                    cost_source=data.get('agent_name') or 'V4 Engine',  # NEW: Use agent name if available
+                    cost_source=cost_source,  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
                 ))
             else:
@@ -449,7 +458,7 @@ class PricingServiceV4Adapter:
                     sell_fcy_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
                     sell_fcy_currency='PGK',
                     bucket=data.get('bucket', 'origin_charges'),
-                    cost_source=data.get('agent_name') or 'V4 Engine',  # NEW: Use agent name if available
+                    cost_source=cost_source,  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
                 ))
 
@@ -564,7 +573,8 @@ class PricingServiceV4Adapter:
         Calculate charges using SPOT Pricing Envelope.
         Returns list of CalculatedChargeLine (no totals).
         """
-        from quotes.models import SpotPricingEnvelopeDB
+        # from quotes.models import SpotPricingEnvelopeDB
+        from quotes.spot_models import SpotPricingEnvelopeDB
         from quotes.spot_services import SpotEnvelopeService
         from quotes.spot_schemas import (
             SpotPricingEnvelope,
@@ -648,12 +658,35 @@ class PricingServiceV4Adapter:
             conditional_charges_present=cond_json.get('conditional_charges_present', False),
             notes=cond_json.get('notes'),
         )
-        
+
+        validation_charges = list(charges)
+        if validation_charges:
+            has_airfreight = any(c.bucket == 'airfreight' for c in validation_charges)
+            if not has_airfreight:
+                primary_count = sum(
+                    1 for c in validation_charges
+                    if c.is_primary_cost or c.code == "AIRFREIGHT_SPOT"
+                )
+                placeholder_code = "AIRFREIGHT_SPOT" if primary_count == 0 else "AIRFREIGHT_PLACEHOLDER"
+                validation_charges.append(SPEChargeLine(
+                    code=placeholder_code,
+                    description="Airfreight placeholder",
+                    amount=1.0,
+                    currency="PGK",
+                    unit="flat",
+                    bucket="airfreight",
+                    is_primary_cost=(primary_count == 0),
+                    conditional=True,
+                    source_reference="system",
+                    entered_by_user_id="system",
+                    entered_at=datetime.now(),
+                ))
+
         spe = SpotPricingEnvelope(
             id=str(spe_db.id),
             status=SPEStatus(spe_db.status),
             shipment=ctx,
-            charges=charges,
+            charges=validation_charges,
             conditions=conditions,
             acknowledgement=ack,
             manager_approval=mgr,

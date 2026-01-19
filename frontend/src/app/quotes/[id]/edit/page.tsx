@@ -109,8 +109,6 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 const payload = quote.latest_version?.payload_json;
                 if (!payload) throw new Error("No payload found checks quote");
 
-                const qAny = quote as any;
-
                 // 1. Prepare Initial Form Data
                 let dimensions = [{
                     pieces: 1,
@@ -132,6 +130,21 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     }));
                 }
 
+                // Helper to extract airport code from location string (format: "CODE - Name")
+                const extractAirportCode = (locationStr: string | undefined | null): string => {
+                    if (!locationStr) return "";
+                    // Try to extract code from "CODE - Name" format
+                    const match = locationStr.match(/^([A-Z]{3})\s*-/);
+                    if (match) return match[1];
+                    // Fallback: if it's already just a 3-letter code
+                    if (/^[A-Z]{3}$/.test(locationStr.trim())) return locationStr.trim();
+                    return "";
+                };
+
+                // Extract airport codes from API response
+                const originAirportCode = extractAirportCode(quote.origin_location as string);
+                const destinationAirportCode = extractAirportCode(quote.destination_location as string);
+
                 const formData: Partial<QuoteFormSchemaV3> = {
                     quote_id: quote.id, // Important for tracking updates
                     customer_id: payload.customer_id,
@@ -140,8 +153,8 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     incoterm: (payload.incoterm as any) || "EXW",
                     payment_term: (payload.payment_term as any) || "PREPAID",
                     service_scope: (payload.service_scope as any) || "A2A",
-                    origin_airport: qAny.origin_code || "",
-                    destination_airport: qAny.destination_code || "",
+                    origin_airport: originAirportCode,
+                    destination_airport: destinationAirportCode,
                     origin_location_id: payload.origin_location_id || "",
                     destination_location_id: payload.destination_location_id || "",
                     origin_location_type: V3_LOCATION_TYPES.AIRPORT,
@@ -176,8 +189,8 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 if (payload.origin_location_id) {
                     setInitialOrigin({
                         id: payload.origin_location_id,
-                        display_name: quote.origin_location || qAny.origin_city || payload.origin_location_id,
-                        code: qAny.origin_code || "ORG",
+                        display_name: quote.origin_location as string || payload.origin_location_id,
+                        code: originAirportCode || "ORG",
                         type: 'AIRPORT',
                         country_code: 'PG'
                     } as LocationSearchResult);
@@ -186,8 +199,8 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 if (payload.destination_location_id) {
                     setInitialDestination({
                         id: payload.destination_location_id,
-                        display_name: quote.destination_location || qAny.destination_city || payload.destination_location_id,
-                        code: qAny.destination_code || "DEST",
+                        display_name: quote.destination_location as string || payload.destination_location_id,
+                        code: destinationAirportCode || "DST",
                         type: 'AIRPORT',
                         country_code: 'AU'
                     } as LocationSearchResult);
@@ -302,6 +315,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
             </Breadcrumb>
             {initialData && (
                 <QuoteForm
+                    user={user}
                     defaultValues={initialData}
                     initialCustomer={initialCustomer}
                     initialContacts={initialContacts}
@@ -310,6 +324,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     onSubmit={handleQuoteSubmit}
                     isSubmitting={isSubmitting}
                     serverError={apiError}
+                    isEditMode={true}
                 />
             )}
 

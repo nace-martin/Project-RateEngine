@@ -14,7 +14,7 @@ import {
     DialogTrigger,
     DialogClose,
 } from "@/components/ui/dialog";
-import { Loader2, Lock, Send, CheckCircle, Copy } from "lucide-react";
+import { Loader2, Lock, Send, CheckCircle, Copy, XCircle, Trophy, Ban, Clock } from "lucide-react";
 import { cloneQuote } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
 import { useToast } from "@/context/toast-context";
@@ -106,7 +106,7 @@ export function QuoteStatusBadge({ status, size = "default" }: QuoteStatusBadgeP
 }
 
 // API function to transition quote status
-async function transitionQuoteStatus(quoteId: string, action: "finalize" | "send"): Promise<{ success: boolean; error?: string }> {
+async function transitionQuoteStatus(quoteId: string, action: "finalize" | "send" | "cancel" | "mark_won" | "mark_lost" | "mark_expired"): Promise<{ success: boolean; error?: string }> {
     try {
         const token = localStorage.getItem("authToken");
         const response = await fetch(`${API_BASE_URL}/api/v3/quotes/${quoteId}/transition/`, {
@@ -148,10 +148,13 @@ export function QuoteStatusActions({
     const [error, setError] = useState<string | null>(null);
     const [dialogOpen, setDialogOpen] = useState(false);
     const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
+    const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+    const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
+    const [pendingOutcome, setPendingOutcome] = useState<"mark_won" | "mark_lost" | "mark_expired" | null>(null);
 
     const { toast } = useToast();
 
-    const handleTransition = async (action: "finalize" | "send") => {
+    const handleTransition = async (action: "finalize" | "send" | "cancel" | "mark_won" | "mark_lost" | "mark_expired") => {
         setLoading(true);
         setError(null);
 
@@ -159,11 +162,23 @@ export function QuoteStatusActions({
 
         if (result.success) {
             setDialogOpen(false);
+            setCancelDialogOpen(false);
+            setOutcomeDialogOpen(false);
             onStatusChange?.();
+
+            const messages: Record<string, { title: string; description: string }> = {
+                finalize: { title: 'Quote Finalized', description: 'Quote has been locked.' },
+                send: { title: 'Quote Sent', description: 'Quote marked as sent.' },
+                cancel: { title: 'Quote Cancelled', description: 'Quote has been archived.' },
+                mark_won: { title: 'Quote Won!', description: 'Quote marked as accepted.' },
+                mark_lost: { title: 'Quote Lost', description: 'Quote marked as lost.' },
+                mark_expired: { title: 'Quote Expired', description: 'Quote marked as expired.' },
+            };
+
             toast({
-                title: action === 'finalize' ? 'Quote Finalized' : 'Quote Sent',
-                description: action === 'finalize' ? 'Quote has been locked.' : 'Quote marked as sent.',
-                variant: 'success'
+                title: messages[action]?.title || 'Status Updated',
+                description: messages[action]?.description || 'Quote status updated.',
+                variant: action === 'mark_won' ? 'success' : (action === 'cancel' || action === 'mark_lost' || action === 'mark_expired' ? 'default' : 'success')
             });
         } else {
             setError(result.error || "Failed to update status");
@@ -267,51 +282,91 @@ export function QuoteStatusActions({
                 <span className="text-sm text-red-400">{error}</span>
             )}
 
-            {/* DRAFT → FINALIZED */}
+            {/* DRAFT → FINALIZED + Cancel */}
             {status === "DRAFT" && (
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                    <DialogTrigger asChild>
-                        <Button
-                            variant="default"
-                            size="sm"
-                            disabled={loading || hasMissingRates}
-                            className="bg-green-600 hover:bg-green-700"
-                        >
-                            {loading ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                                <CheckCircle className="mr-2 h-4 w-4" />
-                            )}
-                            Finalize Quote
-                        </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                        <DialogHeader>
-                            <DialogTitle>Finalize this quote?</DialogTitle>
-                            <DialogDescription>
-                                Once finalized, the quote will be locked and cannot be edited.
-                                You can still mark it as sent to the customer.
-                            </DialogDescription>
-                        </DialogHeader>
-                        <DialogFooter>
-                            <DialogClose asChild>
-                                <Button variant="outline">Cancel</Button>
-                            </DialogClose>
+                <>
+                    {/* Cancel Quote Button */}
+                    <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+                        <DialogTrigger asChild>
                             <Button
-                                onClick={() => handleTransition("finalize")}
+                                variant="outline"
+                                size="sm"
                                 disabled={loading}
+                                className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                            >
+                                <XCircle className="mr-2 h-4 w-4" />
+                                Cancel
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogHeader>
+                                <DialogTitle>Cancel this quote?</DialogTitle>
+                                <DialogDescription>
+                                    This will archive the quote and remove it from your active list.
+                                    You can restore it later if needed.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <DialogFooter>
+                                <DialogClose asChild>
+                                    <Button variant="outline">Back</Button>
+                                </DialogClose>
+                                <Button
+                                    onClick={() => handleTransition("cancel")}
+                                    disabled={loading}
+                                    variant="destructive"
+                                >
+                                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    Cancel Quote
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Finalize Quote Button */}
+                    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button
+                                variant="default"
+                                size="sm"
+                                disabled={loading || hasMissingRates}
                                 className="bg-green-600 hover:bg-green-700"
                             >
-                                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                {loading ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                )}
                                 Finalize Quote
                             </Button>
-                        </DialogFooter>
-                    </DialogContent>
-                </Dialog>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogHeader>
+                                <DialogTitle>Finalize this quote?</DialogTitle>
+                                <DialogDescription>
+                                    Once finalized, the quote will be locked and cannot be edited.
+                                    You can still mark it as sent to the customer.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <DialogFooter>
+                                <DialogClose asChild>
+                                    <Button variant="outline">Cancel</Button>
+                                </DialogClose>
+                                <Button
+                                    onClick={() => handleTransition("finalize")}
+                                    disabled={loading}
+                                    className="bg-green-600 hover:bg-green-700"
+                                >
+                                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    Finalize Quote
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+                </>
             )}
 
-            {/* FINALIZED → SENT + Clone */}
-            {status === "FINALIZED" && (
+            {/* SENT → Won/Lost/Expired */}
+            {status === "SENT" && (
                 <>
                     {/* Clone Button */}
                     <Dialog open={cloneDialogOpen} onOpenChange={setCloneDialogOpen}>
@@ -326,7 +381,7 @@ export function QuoteStatusActions({
                                 ) : (
                                     <Copy className="mr-2 h-4 w-4" />
                                 )}
-                                Clone Quote
+                                Clone
                             </Button>
                         </DialogTrigger>
                         <DialogContent>
@@ -334,7 +389,6 @@ export function QuoteStatusActions({
                                 <DialogTitle>Clone this quote?</DialogTitle>
                                 <DialogDescription>
                                     This will create a new DRAFT quote with the same details and charges.
-                                    You can then edit and recalculate the new quote.
                                 </DialogDescription>
                             </DialogHeader>
                             <DialogFooter>
@@ -352,29 +406,63 @@ export function QuoteStatusActions({
                         </DialogContent>
                     </Dialog>
 
-                    {/* Mark as Sent Button */}
-                    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                    {/* Outcome Actions */}
+                    <Dialog open={outcomeDialogOpen} onOpenChange={setOutcomeDialogOpen}>
                         <DialogTrigger asChild>
-                            <Button
-                                variant="default"
-                                size="sm"
-                                disabled={loading}
-                                className="bg-orange-600 hover:bg-orange-700"
-                            >
-                                {loading ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Send className="mr-2 h-4 w-4" />
-                                )}
-                                Mark as Sent
-                            </Button>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={loading}
+                                    className="text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 border-emerald-200"
+                                    onClick={() => {
+                                        setPendingOutcome("mark_won");
+                                        setOutcomeDialogOpen(true);
+                                    }}
+                                >
+                                    <Trophy className="mr-2 h-4 w-4" />
+                                    Won
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={loading}
+                                    className="text-slate-600 hover:text-slate-700 hover:bg-slate-50"
+                                    onClick={() => {
+                                        setPendingOutcome("mark_lost");
+                                        setOutcomeDialogOpen(true);
+                                    }}
+                                >
+                                    <Ban className="mr-2 h-4 w-4" />
+                                    Lost
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={loading}
+                                    className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                                    onClick={() => {
+                                        setPendingOutcome("mark_expired");
+                                        setOutcomeDialogOpen(true);
+                                    }}
+                                >
+                                    <Clock className="mr-2 h-4 w-4" />
+                                    Expired
+                                </Button>
+                            </div>
                         </DialogTrigger>
                         <DialogContent>
                             <DialogHeader>
-                                <DialogTitle>Mark quote as sent?</DialogTitle>
+                                <DialogTitle>
+                                    Mark quote as {pendingOutcome === 'mark_won' ? 'Won' : (pendingOutcome === 'mark_lost' ? 'Lost' : 'Expired')}?
+                                </DialogTitle>
                                 <DialogDescription>
-                                    This indicates the quote has been delivered to the customer.
-                                    This action cannot be undone.
+                                    {pendingOutcome === 'mark_won'
+                                        ? "Great! Marking this quote as ACCEPTED. This will be recorded in your win count."
+                                        : (pendingOutcome === 'mark_lost'
+                                            ? "Marking this quote as LOST. You can still clone it later if the customer returns."
+                                            : "Marking this quote as EXPIRED. This indicates the validity period has passed.")
+                                    }
                                 </DialogDescription>
                             </DialogHeader>
                             <DialogFooter>
@@ -382,12 +470,12 @@ export function QuoteStatusActions({
                                     <Button variant="outline">Cancel</Button>
                                 </DialogClose>
                                 <Button
-                                    onClick={() => handleTransition("send")}
+                                    onClick={() => pendingOutcome && handleTransition(pendingOutcome)}
                                     disabled={loading}
-                                    className="bg-orange-600 hover:bg-orange-700"
+                                    className={pendingOutcome === 'mark_won' ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-600 hover:bg-slate-700"}
                                 >
                                     {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    Mark as Sent
+                                    Confirm
                                 </Button>
                             </DialogFooter>
                         </DialogContent>

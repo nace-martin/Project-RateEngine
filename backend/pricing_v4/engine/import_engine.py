@@ -357,13 +357,18 @@ class ImportPricingEngine:
         ).select_related('agent').first()
         
         # Get explicit Sell (for destination)
-        sell_rate = ImportSellRate.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).first()
+        # Prefer quote currency but allow fallback for conversion.
+        if leg == 'DESTINATION':
+            sell_rate = self._get_destination_sell_rate(pc)
+        else:
+            sell_rate = ImportSellRate.objects.filter(
+                product_code=pc,
+                origin_airport=self.origin,
+                destination_airport=self.destination,
+                currency=self.quote_currency,
+                valid_from__lte=self.quote_date,
+                valid_until__gte=self.quote_date
+            ).first()
         
         # Skip if no rates found
         if not cogs and not sell_rate:
@@ -396,11 +401,20 @@ class ImportPricingEngine:
             else:
                 sell_amount = self._calculate_sell_amount(sell_rate)
             
-            # Convert if needed (PREPAID = FCY quote, dest charges in PGK)
-            if self.payment_term == PaymentTerm.PREPAID and sell_rate.currency == 'PGK':
-                sell_amount = self._convert_pgk_to_fcy(sell_amount)
-                fx_applied = True
-                caf_applied = True
+            # Currency handling for destination charges
+            # Prefer quote currency, but if we fell back to a non-matching currency,
+            # apply conversion to align with quote currency.
+            if sell_rate.currency != self.quote_currency:
+                if self.payment_term == PaymentTerm.PREPAID and sell_rate.currency == 'PGK':
+                    # Fallback: Prepaid using PGK rate -> convert to FCY
+                    sell_amount = self._convert_pgk_to_fcy(sell_amount)
+                    fx_applied = True
+                    caf_applied = True
+                elif self.payment_term == PaymentTerm.COLLECT and sell_rate.currency != 'PGK':
+                    # Fallback: Collect using FCY rate -> convert to PGK
+                    sell_amount = self._convert_fcy_to_pgk(sell_amount)
+                    fx_applied = True
+                    caf_applied = True
             
             sell_currency = self.quote_currency
             
@@ -483,14 +497,33 @@ class ImportPricingEngine:
     
     def _get_dest_sell_amount(self, pc: ProductCode) -> Decimal:
         """Get destination sell amount for FSC base calculation."""
-        sell_rate = ImportSellRate.objects.filter(
+        sell_rate = self._get_destination_sell_rate(pc)
+        
+        if sell_rate:
+            sell_amount = self._calculate_sell_amount(sell_rate)
+            if sell_rate.currency != self.quote_currency:
+                if self.payment_term == PaymentTerm.PREPAID and sell_rate.currency == 'PGK':
+                    sell_amount = self._convert_pgk_to_fcy(sell_amount)
+                elif self.payment_term == PaymentTerm.COLLECT and sell_rate.currency != 'PGK':
+                    sell_amount = self._convert_fcy_to_pgk(sell_amount)
+            return sell_amount
+        return Decimal('0')
+
+    def _get_destination_sell_rate(self, pc: ProductCode) -> Optional[ImportSellRate]:
+        """Prefer quote currency rates but allow fallback for destination conversion."""
+        base_qs = ImportSellRate.objects.filter(
             product_code=pc,
             origin_airport=self.origin,
             destination_airport=self.destination,
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
-        ).first()
-        
+        ).order_by('id')
+
+        sell_rate = base_qs.filter(currency=self.quote_currency).first()
         if sell_rate:
-            return self._calculate_sell_amount(sell_rate)
-        return Decimal('0')
+            return sell_rate
+        if self.payment_term == PaymentTerm.PREPAID:
+            return base_qs.filter(currency='PGK').first()
+        if self.payment_term == PaymentTerm.COLLECT:
+            return base_qs.exclude(currency='PGK').first()
+        return None

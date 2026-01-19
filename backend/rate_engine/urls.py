@@ -13,6 +13,7 @@ urlpatterns = [
     path('api/auth/', include('accounts.urls')),
     path('api/v3/', include('pricing_v3.urls')),
     path('api/v3/', include('services.urls')), # Expose services under v3 for consistency or just api/
+    path('api/v4/', include('pricing_v4.urls')),
 
     
     # Include DRF's login URLs for the Browsable API

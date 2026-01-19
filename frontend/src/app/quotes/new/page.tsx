@@ -174,6 +174,7 @@ export default function NewQuotePage() {
       </Breadcrumb>
 
       <QuoteForm
+        user={user}
         onSubmit={handleQuoteSubmit}
         isSubmitting={isSubmitting}
         serverError={apiError}

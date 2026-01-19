@@ -33,7 +33,9 @@ const formatAmount = (amountStr: string | number | undefined, currency: string) 
     return `${currency} ${formatted}`;
 };
 
+
 type BucketType = 'ORIGIN' | 'FREIGHT' | 'DESTINATION';
+
 // Get bucket for a line
 function getBucket(line: SellLine): BucketType {
     if (line.leg === 'MAIN' || line.leg === 'FREIGHT') return 'FREIGHT';
@@ -49,20 +51,16 @@ function calculateBucketTotal(lines: SellLine[], field: 'sell_pgk_incl_gst' | 's
     }, 0);
 }
 
-// Determine if lines are FCY passthrough
-function isFCYPassthrough(lines: SellLine[]): boolean {
-    if (lines.length === 0) return false;
-    const totalPgk = calculateBucketTotal(lines, 'sell_pgk');
-    const totalFcy = calculateBucketTotal(lines, 'sell_fcy');
-    return totalPgk === 0 && totalFcy > 0;
-}
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
     const { sell_lines } = result;
 
-    // Detect if this is an FCY passthrough quote
-    const isOverallPassthrough = isFCYPassthrough(sell_lines);
-    const displayCurrency = isOverallPassthrough ? (sell_lines[0]?.sell_currency || 'PGK') : 'PGK';
+    // Detect display currency from the sell_currency field
+    // For Prepaid Import, sell_currency will be 'AUD' (or other FCY)
+    // For Collect Import or Domestic, sell_currency will be 'PGK'
+    const firstLineCurrency = sell_lines[0]?.sell_currency || 'PGK';
+    const displayCurrency = firstLineCurrency;
+    const isOverallPassthrough = displayCurrency !== 'PGK';
 
     // Separate informational (conditional) charges from priced lines
     const pricedLines = sell_lines.filter((line: SellLine) => !line.is_informational);

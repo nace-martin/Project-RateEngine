@@ -211,7 +211,8 @@ export default function DashboardPage() {
                 rawStatus: q.status,
                 total: formatCurrency(totalAmt, currency),
                 actionLink: `/quotes/${q.id}`,
-                mode: q.mode
+                mode: q.mode,
+                createdBy: q.created_by || "Unknown"
             });
         });
 
@@ -229,7 +230,8 @@ export default function DashboardPage() {
                 rawStatus: "DRAFT",
                 total: calculateSpotTotal(d),
                 actionLink: `/quotes/spot/${d.id}`,
-                mode: "AIR" // SPOT is implicitly AIR for now
+                mode: "AIR", // SPOT is implicitly AIR for now
+                createdBy: "User" // SPOT drafts don't have explicit creator stored yet
             });
         });
 
@@ -293,6 +295,7 @@ export default function DashboardPage() {
                             <TableHead className="font-semibold">Route</TableHead>
                             <TableHead className="font-semibold text-right">Weight</TableHead>
                             <TableHead className="font-semibold">Status</TableHead>
+                            <TableHead className="font-semibold">User</TableHead>
                             <TableHead className="text-right font-semibold">Total (inc. GST)</TableHead>
                             <TableHead className="text-right">Action</TableHead>
                         </TableRow>
@@ -329,6 +332,9 @@ export default function DashboardPage() {
                                     ) : (
                                         <QuoteStatusBadge status={quote.rawStatus} />
                                     )}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground text-sm">
+                                    {quote.createdBy}
                                 </TableCell>
                                 <TableCell className="text-right font-semibold tabular-nums">
                                     {quote.total}
@@ -564,6 +570,7 @@ export default function DashboardPage() {
                                                 <TableHead>Customer</TableHead>
                                                 <TableHead>Route</TableHead>
                                                 <TableHead>Mode</TableHead>
+                                                <TableHead>User</TableHead>
                                                 <TableHead className="text-right">Total (Inc. GST)</TableHead>
                                                 <TableHead>Status</TableHead>
                                                 <TableHead>Action</TableHead>
@@ -578,6 +585,7 @@ export default function DashboardPage() {
                                                         {quote.route}
                                                     </TableCell>
                                                     <TableCell>{quote.mode}</TableCell>
+                                                    <TableCell className="text-muted-foreground text-sm">{quote.createdBy}</TableCell>
                                                     <TableCell className="text-right font-medium tabular-nums">
                                                         {quote.total}
                                                     </TableCell>

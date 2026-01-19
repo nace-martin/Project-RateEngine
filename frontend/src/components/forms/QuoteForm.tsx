@@ -1,492 +1,531 @@
-"use client";
-
-import { useState, useEffect, useMemo } from "react";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, useFieldArray, useWatch, type Resolver, type FieldErrors, type UseFormReturn } from "react-hook-form";
-import { Trash2, Loader2 } from "lucide-react";
-import type {
-    Contact,
-    CompanySearchResult,
-    LocationSearchResult,
-} from "@/lib/types";
-import { getContactsForCompany, validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api";
-import type { SPECommodity } from "@/lib/spot-types";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useEffect } from "react";
+import { useQuoteLogic } from "@/hooks/useQuoteLogic";
+import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import {
-    quoteFormSchemaV3,
-    type QuoteFormSchemaV3,
-    V3_INCOTERMS,
     V3_SERVICE_SCOPES,
     V3_LOCATION_TYPES,
     V3_CARGO_TYPES,
-    getValidIncoterms,
-    getDefaultIncoterm,
+    V3_INCOTERMS,
+    V3_PAYMENT_TERMS
 } from "@/lib/schemas/quoteSchema";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-    Form,
-    FormControl,
-    FormDescription,
-    FormField,
-    FormItem,
-    FormLabel,
-    FormMessage,
+    Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage
 } from "@/components/ui/form";
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
-import LocationSearchCombobox from "@/components/LocationSearchCombobox";
-import CompanySearchCombobox from "@/components/CompanySearchCombobox";
-import { useAuth } from "@/context/auth-context";
-import { useRouter } from "next/navigation";
-import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
-import { CustomerSection } from "./sections/CustomerSection";
-import { RoutingSection } from "./sections/RoutingSection";
-import { ShipmentTermsSection } from "./sections/ShipmentTermsSection";
-import { CargoDetailsSection } from "./sections/CargoDetailsSection";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Loader2, Plus, Trash2, AlertTriangle, Plane, Ship, Package } from "lucide-react";
+import CompanySearch from "@/components/CompanySearchCombobox";
+import LocationSearch from "@/components/LocationSearchCombobox";
+import { Contact } from "@/lib/types";
 
-export interface QuoteFormProps {
+interface QuoteFormProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
-    // Additional initial state for UI components that aren't strictly part of the form schema but needed for display
-    initialCustomer?: CompanySearchResult;
+    initialCustomer?: any;
     initialContacts?: Contact[];
-    initialOrigin?: LocationSearchResult;
-    initialDestination?: LocationSearchResult;
+    initialOrigin?: any;
+    initialDestination?: any;
+    user?: any;
     onSubmit: (data: QuoteFormSchemaV3) => Promise<void>;
     isSubmitting?: boolean;
     serverError?: string | null;
+    isEditMode?: boolean;
 }
 
-export default function QuoteForm({
+export function QuoteForm({
     defaultValues,
     initialCustomer,
-    initialContacts = [],
+    initialContacts,
     initialOrigin,
     initialDestination,
+    user,
     onSubmit,
     isSubmitting = false,
-    serverError = null,
+    serverError,
+    isEditMode = false,
 }: QuoteFormProps) {
-    const { user } = useAuth();
-    const router = useRouter();
-
-    // Local UI State
-    const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(defaultValues?.customer_id || null);
-    const [selectedCustomer, setSelectedCustomer] = useState<CompanySearchResult | null>(initialCustomer || null);
-    const [contacts, setContacts] = useState<Contact[]>(initialContacts);
-    const [isLoadingContacts, setIsLoadingContacts] = useState(false);
-    const [internalError, setInternalError] = useState<string | null>(null);
-
-    // Combine internal and external errors
-    const apiError = serverError || internalError;
-
-    const [originLocation, setOriginLocation] = useState<LocationSearchResult | null>(initialOrigin || null);
-    const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(initialDestination || null);
-
-    // Spot/Missing Rates State
-    // Note: These might be better lifted up if the parent needs to know, 
-    // but for now they are tightly coupled to the form submission flow.
-    const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
-    // MissingRatesModal is handled by the parent in the original code, but effectively it's part of the "Submit" flow.
-    // We will keep it here or lift it? The original code had it in the page. 
-    // For `QuoteForm`, let's try to keep self-contained, BUT `MissingRatesModal` needs to re-trigger submission.
-    // Actually, `MissingRatesModal` creates a task/linkage. It might be easier if `onSubmit` handles the flow, 
-    // OR we expose a way to trigger the modal.
-    // For simplicity: We will assume the PARENT handles the "Missing Rates" logic if it catches that specific response? 
-    // No, the original logic had `onSubmit` doing the API call and THEN showing the modal.
-    // To keep `QuoteForm` pure, `onSubmit` should just return the data. 
-    // BUT the "Spot Trigger" logic redirects the router.
-
-    // Refactor Decision: `QuoteForm` handles the UI and validation. 
-    // The `onSubmit` prop should handle the API call. 
-    // However, the "Spot Trigger" logic is pre-submission validation. We should keep that here.
-
-    const form = useForm<QuoteFormSchemaV3>({
-        resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
-        mode: "onChange",
-        reValidateMode: "onChange",
-        defaultValues: {
-            customer_id: "",
-            contact_id: "",
-            mode: "AIR",
-            incoterm: "EXW",
-            payment_term: "PREPAID",
-            service_scope: V3_SERVICE_SCOPES.A2A,
-            origin_airport: "",
-            destination_airport: "",
-            origin_location_type: V3_LOCATION_TYPES.AIRPORT,
-            origin_location_id: "",
-            destination_location_type: V3_LOCATION_TYPES.AIRPORT,
-            destination_location_id: "",
-            cargo_type: V3_CARGO_TYPES.GENERAL,
-            dimensions: [{
-                pieces: 1,
-                length_cm: "",
-                width_cm: "",
-                height_cm: "",
-                gross_weight_kg: "",
-                package_type: "Box",
-            }],
-            ...defaultValues,
-        },
+    const {
+        form,
+        fields,
+        append,
+        remove,
+        cargoMetrics,
+        internalError,
+        contacts,
+        isLoadingContacts,
+        selectedCustomer,
+        setSelectedCustomer,
+        selectedCustomerId,
+        setSelectedCustomerId,
+        originLocation,
+        setOriginLocation,
+        destinationLocation,
+        setDestinationLocation,
+        handleFormSubmit,
+        setLocationFields,
+        validIncoterms,
+    } = useQuoteLogic({
+        defaultValues,
+        initialCustomer,
+        initialContacts,
+        initialOrigin,
+        initialDestination,
+        user,
+        onSubmit,
+        isEditMode,
     });
-
-    const { isValid, isDirty } = form.formState;
-
-    const { fields, append, remove } = useFieldArray({
-        control: form.control,
-        name: "dimensions",
-    });
-
-    // Live Cargo Metrics
-    const watchedDimensions = useWatch({
-        control: form.control,
-        name: "dimensions",
-    });
-
-    const cargoMetrics = useMemo(() => {
-        if (!watchedDimensions || watchedDimensions.length === 0) {
-            return { pieces: 0, actualWeight: 0, volumetricWeight: 0, chargeableWeight: 0 };
-        }
-
-        let totalPieces = 0;
-        let totalActual = 0;
-        let totalVolumetric = 0;
-
-        for (const dim of watchedDimensions) {
-            const pcs = parseInt(String(dim.pieces), 10) || 0;
-            const l = parseFloat(String(dim.length_cm)) || 0;
-            const w = parseFloat(String(dim.width_cm)) || 0;
-            const h = parseFloat(String(dim.height_cm)) || 0;
-            const kg = parseFloat(String(dim.gross_weight_kg)) || 0;
-
-            totalPieces += pcs;
-            totalActual += kg;
-            totalVolumetric += (l * w * h / 6000) * pcs;
-        }
-
-        const chargeableRaw = Math.max(totalActual, totalVolumetric);
-        const chargeableRounded = chargeableRaw > 0 ? Math.ceil(chargeableRaw) : 0;
-
-        return {
-            pieces: totalPieces,
-            actualWeight: Math.round(totalActual * 10) / 10,
-            volumetricWeight: Math.round(totalVolumetric * 10) / 10,
-            chargeableWeight: chargeableRounded,
-        };
-    }, [watchedDimensions]);
-
-    const originLocationId = form.watch("origin_location_id");
-    const destinationLocationId = form.watch("destination_location_id");
-
-    useEffect(() => {
-        if (!originLocationId) setOriginLocation(null);
-    }, [originLocationId]);
-
-    useEffect(() => {
-        if (!destinationLocationId) setDestinationLocation(null);
-    }, [destinationLocationId]);
-
-    const setLocationFields = (
-        kind: "origin" | "destination",
-        location: LocationSearchResult | null,
-        onLocationIdChange: (value: string) => void,
-    ) => {
-        const locationId = location?.id ?? "";
-        const airportCode = (location?.code ?? "").toUpperCase();
-
-        onLocationIdChange(locationId);
-
-        if (kind === "origin") {
-            form.setValue("origin_location_type", V3_LOCATION_TYPES.AIRPORT, { shouldDirty: true, shouldValidate: true });
-            form.setValue("origin_airport", airportCode, { shouldDirty: true, shouldValidate: true });
-        } else {
-            form.setValue("destination_location_type", V3_LOCATION_TYPES.AIRPORT, { shouldDirty: true, shouldValidate: true });
-            form.setValue("destination_airport", airportCode, { shouldDirty: true, shouldValidate: true });
-        }
-    };
 
     const isImport = destinationLocation?.country_code === 'PG';
-    const serviceScope = form.watch('service_scope');
-    const paymentTerm = form.watch('payment_term');
-    const currentIncoterm = form.watch('incoterm');
 
-    const validIncoterms = useMemo(() => {
-        return getValidIncoterms(isImport, serviceScope, paymentTerm);
-    }, [isImport, serviceScope, paymentTerm]);
-
-    useEffect(() => {
-        if (!validIncoterms.includes(currentIncoterm)) {
-            const defaultIncoterm = getDefaultIncoterm(isImport, serviceScope, paymentTerm);
-            form.setValue('incoterm', defaultIncoterm as keyof typeof V3_INCOTERMS, { shouldValidate: true });
-        }
-    }, [validIncoterms, currentIncoterm, isImport, serviceScope, paymentTerm, form]);
-
-    useEffect(() => {
-        const fetchContacts = async (customerId: string) => {
-            if (!user || !customerId) return;
-            setIsLoadingContacts(true);
-            try {
-                const fetchedContacts = await getContactsForCompany(customerId);
-                setContacts(fetchedContacts);
-            } catch (error: unknown) {
-                console.error("Error fetching contacts:", error);
-            } finally {
-                setIsLoadingContacts(false);
-            }
-        };
-
-        // Auto-fetch if customer changes (and we aren't in the middle of initial hydration which is handled by props usually,
-        // but here we just react to the state).
-        if (selectedCustomerId) {
-            // Avoid re-fetching if the contacts passed in props match the customer (optimization)
-            // For now, simpler to just fetch to ensure freshness, unless contacts are already populated correctly?
-            // To avoid infinite loops or overwriting initial data:
-            // If initialContacts are provided and match the defaultValues.customer_id, we might not need to fetch immediately.
-            // But for simplicity, we'll let it fetch or check if contacts are empty.
-            if (contacts.length === 0 || (contacts.length > 0 && selectedCustomerId !== defaultValues?.customer_id)) {
-                fetchContacts(selectedCustomerId);
-            }
-        } else {
-            setContacts([]);
-        }
-    }, [selectedCustomerId, user]); // Removed defaultValues dependency to avoid loop
-
-    function addPieceLine() {
-        append({
-            pieces: 1,
-            length_cm: "0",
-            width_cm: "0",
-            height_cm: "0",
-            gross_weight_kg: "0",
-            package_type: "Box",
-        });
-    }
-
-    const mapCargoToSPECommodity = (cargoType: string): SPECommodity => {
-        switch (cargoType) {
-            case 'Dangerous Goods': return 'DG';
-            case 'Perishable / Cold Chain': return 'PER';
-            case 'Live Animals': return 'AVI';
-            case 'Valuable / High-Value': return 'HVC';
-            case 'Oversized / OOG': return 'OOG';
-            case 'General Cargo':
-            default: return 'GCR';
+    // Log validation errors for debugging
+    const onFormError = (errors: Record<string, unknown>) => {
+        if (Object.keys(errors).length > 0) {
+            console.warn("Form Validation Errors:", errors);
         }
     };
-
-    const handleFormSubmit = async (data: QuoteFormSchemaV3) => {
-        setInternalError(null);
-        setMissingRates({ carrier: false, agent: false });
-
-        if (!user) {
-            setInternalError("Authentication token not available. Please log in.");
-            return;
-        }
-
-        const originCountry = originLocation?.country_code || '';
-        const destCountry = destinationLocation?.country_code || '';
-
-        // SPOT Logic
-        try {
-            // 1. Validate Scope
-            const scopeResult = await validateSpotScope({
-                origin_country: originCountry,
-                destination_country: destCountry,
-            });
-
-            if (!scopeResult.is_valid) {
-                setInternalError(scopeResult.error || "Shipment out of scope - only PNG routes supported");
-                return;
-            }
-
-            // 2. Evaluate Trigger
-            const commodity = mapCargoToSPECommodity(data.cargo_type);
-            const triggerResult = await evaluateSpotTrigger({
-                origin_country: originCountry,
-                destination_country: destCountry,
-                commodity,
-                origin_airport: data.origin_airport,
-                destination_airport: data.destination_airport,
-                has_valid_buy_rate: true,
-                service_scope: data.service_scope,
-            });
-
-            if (triggerResult.is_spot_required && triggerResult.trigger) {
-                const spe = await createSpotEnvelope({
-                    shipment_context: {
-                        origin_country: originCountry,
-                        destination_country: destCountry,
-                        origin_code: data.origin_airport || '',
-                        destination_code: data.destination_airport || '',
-                        commodity: commodity as SPECommodity,
-                        total_weight_kg: cargoMetrics.chargeableWeight,
-                        pieces: cargoMetrics.pieces,
-                        service_scope: (data.service_scope || 'P2P').toLowerCase(),
-                    },
-                    charges: [],
-                    trigger_code: triggerResult.trigger.code,
-                    trigger_text: triggerResult.trigger.text,
-                    conditions: { rate_validity_hours: 72 }
-                });
-
-                if (spe) {
-                    const shipmentType = originCountry === 'PG' && destCountry === 'PG' ? 'DOMESTIC' : (originCountry === 'PG' ? 'EXPORT' : 'IMPORT');
-                    const params = new URLSearchParams({
-                        origin_country: originCountry,
-                        dest_country: destCountry,
-                        origin_code: data.origin_airport || '',
-                        dest_code: data.destination_airport || '',
-                        commodity,
-                        weight: String(cargoMetrics.chargeableWeight),
-                        pieces: String(cargoMetrics.pieces),
-                        trigger_code: triggerResult.trigger.code,
-                        trigger_text: triggerResult.trigger.text,
-                        service_scope: data.service_scope,
-                        payment_term: data.payment_term,
-                        output_currency: data.output_currency || 'PGK',
-                        shipment_type: shipmentType,
-                    });
-                    if (triggerResult.trigger?.missing_components && triggerResult.trigger.missing_components.length > 0) {
-                        params.append('missing_components', triggerResult.trigger.missing_components.join(','));
-                    }
-                    router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
-                    return; // Stop here, we redirected
-                }
-            }
-        } catch (e) {
-            console.error("Spot/Trigger logic error", e);
-            // Continue to normal submit on error? Or block?
-            // Originally we continued.
-        }
-
-        // Call Parent Submit
-        await onSubmit(data);
-    };
-
-    const onInvalid = (errors: FieldErrors<QuoteFormSchemaV3>) => {
-        // Error handling logic
-        const firstErrorKey = Object.keys(errors)[0];
-        const getErrorMessage = (error: any): string | null => {
-            if (!error) return null;
-            if (typeof error === 'string') return error;
-            if (error.message) return error.message;
-            if (error.root) return getErrorMessage(error.root);
-            return null;
-        };
-        const errorMessage = getErrorMessage(errors) || "Please check required fields.";
-        setInternalError(`Validation Error: ${errorMessage}`);
-
-        if (firstErrorKey) {
-            const el = document.querySelector(`[name="${firstErrorKey}"]`);
-            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            (el as HTMLElement)?.focus();
-        } else {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-    };
-
-
-
-    // ... (keep existing imports up to Card/Select/Input etc which might be unused now but acceptable to leave or remove if unused)
-    // Ideally I should clean up unused imports too, but let's focus on the replacement first.
-
-    // ... inside component
 
     return (
         <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleFormSubmit, onInvalid)} className="space-y-6">
-                <div className="flex items-center justify-between">
-                    <h1 className="text-3xl font-bold">
-                        {defaultValues?.quote_id ? "Edit Quote" : "New Quote"}
-                    </h1>
-                </div>
+            <form onSubmit={form.handleSubmit(handleFormSubmit, onFormError)} className="space-y-8">
 
-                {apiError && (
-                    <Alert variant="destructive">
-                        <AlertTitle>Error</AlertTitle>
-                        <AlertDescription>{apiError}</AlertDescription>
-                    </Alert>
+                {(internalError || serverError) && (
+                    <div className="bg-destructive/15 text-destructive px-4 py-3 rounded-md flex items-center gap-2">
+                        <AlertTriangle className="h-5 w-5" />
+                        <p className="text-sm font-medium">{internalError || serverError}</p>
+                    </div>
                 )}
 
-                {/* 1. Customer */}
-                <CustomerSection
-                    form={form}
-                    contacts={contacts}
-                    isLoadingContacts={isLoadingContacts}
-                    selectedCustomerId={selectedCustomerId}
-                    selectedCustomer={selectedCustomer}
-                    onCustomerSelect={(company) => {
-                        setSelectedCustomer(company);
-                        const companyId = company?.id ?? null;
-                        form.setValue("customer_id", companyId ?? "", { shouldDirty: true, shouldValidate: true });
-                        setSelectedCustomerId(companyId);
-                        setContacts([]);
-                        if (companyId !== defaultValues?.customer_id) {
-                            form.setValue("contact_id", "", { shouldValidate: true });
-                        }
-                    }}
-                />
+                {/* --- 1. Customer Section --- */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <Package className="h-5 w-5 text-primary" />
+                            Customer Details
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <FormField
+                            control={form.control}
+                            name="customer_id"
+                            render={({ field }) => (
+                                <FormItem className="col-span-1 md:col-span-2">
+                                    <FormLabel>Customer</FormLabel>
+                                    <FormControl>
+                                        <CompanySearch
+                                            onSelect={(company) => {
+                                                field.onChange(company?.id);
+                                                setSelectedCustomerId(company?.id || null);
+                                                setSelectedCustomer(company);
+                                                // Reset contact when customer changes
+                                                form.setValue('contact_id', '');
+                                            }}
+                                            value={selectedCustomer}
+                                            placeholder="Search for a customer..."
+                                        />
+                                    </FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
 
-                {/* 2. Routing */}
-                <RoutingSection
-                    form={form}
-                    originLocation={originLocation}
-                    destinationLocation={destinationLocation}
-                    onOriginSelect={(selection) => {
-                        setOriginLocation(selection);
-                        setLocationFields("origin", selection, (value) => form.setValue("origin_location_id", value, { shouldDirty: true, shouldValidate: true }));
-                    }}
-                    onDestinationSelect={(selection) => {
-                        setDestinationLocation(selection);
-                        setLocationFields("destination", selection, (value) => form.setValue("destination_location_id", value, { shouldDirty: true, shouldValidate: true }));
-                    }}
-                />
+                        <FormField
+                            control={form.control}
+                            name="contact_id"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Contact Person</FormLabel>
+                                    <Select
+                                        onValueChange={field.onChange}
+                                        value={field.value}
+                                        disabled={!selectedCustomerId || isLoadingContacts}
+                                    >
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue placeholder={
+                                                    isLoadingContacts ? "Loading..." :
+                                                        (!selectedCustomerId ? "Select customer first" : "Select contact")
+                                                } />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {contacts.length > 0 ? (
+                                                contacts.map((contact) => (
+                                                    <SelectItem key={contact.id} value={contact.id}>
+                                                        {contact.first_name} {contact.last_name}
+                                                    </SelectItem>
+                                                ))
+                                            ) : (
+                                                <SelectItem value="no-contacts" disabled>
+                                                    No contacts found
+                                                </SelectItem>
+                                            )}
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+                    </CardContent>
+                </Card>
 
-                {/* 3. Shipment & Terms */}
-                <ShipmentTermsSection
-                    form={form}
-                    validIncoterms={validIncoterms}
-                />
+                {/* --- 2. Routing & Scope --- */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-lg flex items-center gap-2">
+                            <Plane className="h-5 w-5 text-primary" />
+                            Route & Service
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <FormField
+                                control={form.control}
+                                name="mode"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Mode</FormLabel>
+                                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                            <FormControl>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Select mode" />
+                                                </SelectTrigger>
+                                            </FormControl>
+                                            <SelectContent>
+                                                <SelectItem value="AIR">
+                                                    <div className="flex items-center gap-2">
+                                                        <Plane className="h-4 w-4" /> Air Freight
+                                                    </div>
+                                                </SelectItem>
+                                                <SelectItem value="SEA" disabled>
+                                                    <div className="flex items-center gap-2">
+                                                        <Ship className="h-4 w-4" /> Sea Freight (Coming Soon)
+                                                    </div>
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
 
-                {/* 4. Cargo Details */}
-                <CargoDetailsSection
-                    form={form}
-                    fields={fields}
-                    append={append}
-                    remove={remove}
-                    cargoMetrics={cargoMetrics}
-                />
+                            <FormField
+                                control={form.control}
+                                name="service_scope"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Service Scope</FormLabel>
+                                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                            <FormControl>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Select scope" />
+                                                </SelectTrigger>
+                                            </FormControl>
+                                            <SelectContent>
+                                                {Object.entries(V3_SERVICE_SCOPES).map(([key, value]) => (
+                                                    <SelectItem key={key} value={value}>{key}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        </div>
 
-                <div className="flex justify-end gap-4 pb-20">
-                    <Button type="button" variant="outline" onClick={() => router.back()}>
-                        Cancel
-                    </Button>
-                    <Button type="submit" size="lg" disabled={isSubmitting || !isValid}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
+                            {/* Connector Line (Visual) */}
+                            <div className="hidden md:block absolute top-10 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-border z-0" />
+
+                            <FormField
+                                control={form.control}
+                                name="origin_location_id"
+                                render={({ field }) => (
+                                    <FormItem className="z-10">
+                                        <FormLabel>Origin ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
+                                        <FormControl>
+                                            <LocationSearch
+                                                onSelect={(loc) => {
+                                                    setOriginLocation(loc);
+                                                    setLocationFields("origin", loc, field.onChange);
+                                                }}
+                                                value={field.value}
+                                                selectedLabel={originLocation ? `${originLocation.display_name} (${originLocation.code})` : undefined}
+                                                placeholder="Search airport..."
+                                            />
+                                        </FormControl>
+                                        <FormDescription>
+                                            {originLocation ? `${originLocation.display_name} [${originLocation.country_code}]` : "Search by code or city"}
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+
+                            <FormField
+                                control={form.control}
+                                name="destination_location_id"
+                                render={({ field }) => (
+                                    <FormItem className="z-10">
+                                        <FormLabel>Destination ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
+                                        <FormControl>
+                                            <LocationSearch
+                                                onSelect={(loc) => {
+                                                    setDestinationLocation(loc);
+                                                    setLocationFields("destination", loc, field.onChange);
+                                                }}
+                                                value={field.value}
+                                                selectedLabel={destinationLocation ? `${destinationLocation.display_name} (${destinationLocation.code})` : undefined}
+                                                placeholder="Search airport..."
+                                            />
+                                        </FormControl>
+                                        <FormDescription>
+                                            {destinationLocation ? `${destinationLocation.display_name} [${destinationLocation.country_code}]` : "Search by code or city"}
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        </div>
+                    </CardContent>
+                </Card>
+
+                {/* --- 3. Shipment Terms --- */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-lg">Shipment Terms</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <FormField
+                            control={form.control}
+                            name="payment_term"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Payment Term</FormLabel>
+                                    <Select onValueChange={field.onChange} value={field.value}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {Object.entries(V3_PAYMENT_TERMS).map(([key, value]) => (
+                                                <SelectItem key={key} value={value}>{key}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </FormItem>
+                            )}
+                        />
+
+                        <FormField
+                            control={form.control}
+                            name="incoterm"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Incoterm</FormLabel>
+                                    <Select onValueChange={field.onChange} value={field.value}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {Object.entries(V3_INCOTERMS).map(([key, value]) => (
+                                                <SelectItem
+                                                    key={key}
+                                                    value={value}
+                                                    disabled={!validIncoterms.includes(value)}
+                                                >
+                                                    {key} {(!validIncoterms.includes(value)) && "(N/A)"}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <FormDescription>
+                                        {isImport ? "Import shipment" : "Export/Domestic shipment"}
+                                    </FormDescription>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        <FormField
+                            control={form.control}
+                            name="is_dangerous_goods"
+                            render={({ field }) => (
+                                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                                    <div className="space-y-0.5">
+                                        <FormLabel className="text-base">Dangerous Goods</FormLabel>
+                                        <FormDescription>
+                                            Requires checking (DGR fee)
+                                        </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                        <Switch
+                                            checked={field.value}
+                                            onCheckedChange={field.onChange}
+                                            disabled // Disabled for MVP V3 as per spec
+                                        />
+                                    </FormControl>
+                                </FormItem>
+                            )}
+                        />
+                    </CardContent>
+                </Card>
+
+                {/* --- 4. Cargo Details --- */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-lg flex justify-between items-center">
+                            <span>Cargo Details</span>
+                            <div className="text-sm font-normal text-muted-foreground flex gap-4">
+                                <span>Act: <span className="font-medium text-foreground">{cargoMetrics.actualWeight} kg</span></span>
+                                <span>Vol: <span className="font-medium text-foreground">{cargoMetrics.volumetricWeight} kg</span></span>
+                                <span>Chg: <span className="font-bold text-primary">{cargoMetrics.chargeableWeight} kg</span></span>
+                            </div>
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <FormField
+                            control={form.control}
+                            name="cargo_type"
+                            render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Cargo Type</FormLabel>
+                                    <Select onValueChange={field.onChange} value={field.value}>
+                                        <FormControl>
+                                            <SelectTrigger>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                            {Object.entries(V3_CARGO_TYPES).map(([key, value]) => (
+                                                <SelectItem key={key} value={value}>{value}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <FormMessage />
+                                </FormItem>
+                            )}
+                        />
+
+                        <div className="space-y-4">
+                            {fields.map((fieldItem, index) => (
+                                <div key={fieldItem.id} className="grid grid-cols-12 gap-2 items-end border-b pb-4 last:border-0">
+                                    <div className="col-span-2">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.pieces`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Pieces</FormLabel>
+                                                    <FormControl>
+                                                        <Input type="number" {...field} min={1} />
+                                                    </FormControl>
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.length_cm`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Length (cm)</FormLabel>
+                                                    <FormControl>
+                                                        <Input type="number" {...field} />
+                                                    </FormControl>
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.width_cm`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Width (cm)</FormLabel>
+                                                    <FormControl>
+                                                        <Input type="number" {...field} />
+                                                    </FormControl>
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.height_cm`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Height (cm)</FormLabel>
+                                                    <FormControl>
+                                                        <Input type="number" {...field} />
+                                                    </FormControl>
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.gross_weight_kg`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Weight (kg)</FormLabel>
+                                                    <FormControl>
+                                                        <Input type="number" {...field} />
+                                                    </FormControl>
+                                                </FormItem>
+                                            )}
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            className="text-destructive"
+                                            onClick={() => remove(index)}
+                                            disabled={fields.length === 1}
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))}
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => append({ pieces: 1, length_cm: "", width_cm: "", height_cm: "", gross_weight_kg: "", package_type: "Box" })}
+                            >
+                                <Plus className="h-4 w-4 mr-2" /> Add Line
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <div className="flex justify-end gap-4">
+                    <Button type="submit" size="lg" disabled={isSubmitting}>
                         {isSubmitting ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 Calculating...
                             </>
                         ) : (
-                            "Calculate Quote"
+                            "Generate Quote"
                         )}
                     </Button>
                 </div>
-
             </form>
         </Form>
     );
 }
+
+// Deprecated: default export
+export default QuoteForm;

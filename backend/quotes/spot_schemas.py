@@ -20,7 +20,7 @@ Hard Guardrails (model-level):
 - Shipment context hash for integrity verification
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional, Literal
@@ -415,11 +415,6 @@ class SpotPricingEnvelope(BaseModel):
         if not self.charges:
             return self
         
-        primary_charges = [
-            c for c in self.charges
-            if c.is_primary_cost or c.code == "AIRFREIGHT_SPOT"
-        ]
-        
         # Check if any airfreight charges exist
         has_airfreight = any(c.bucket == "airfreight" for c in self.charges)
         
@@ -428,24 +423,23 @@ class SpotPricingEnvelope(BaseModel):
             if c.is_primary_cost or c.code == "AIRFREIGHT_SPOT"
         ]
         
-        if has_airfreight:
-            if len(primary_charges) != 1:
-                raise ValueError(
-                    f"SPE with Airfreight charges requires exactly one primary airfreight charge. "
-                    f"Found {len(primary_charges)}."
-                )
-        elif len(primary_charges) > 0:
-             # Should not happen if data is consistent, but good to check
-             raise ValueError(
-                 "Primary airfreight charge found but no charges are in 'airfreight' bucket."
-             )
+        if not has_airfreight:
+            raise ValueError(
+                "SPE requires an airfreight charge when charges are present."
+            )
+        if len(primary_charges) != 1:
+            raise ValueError(
+                f"SPE with Airfreight charges requires exactly one primary airfreight charge. "
+                f"Found {len(primary_charges)}."
+            )
         
         return self
     
     @property
     def is_expired(self) -> bool:
         """Check if SPE has expired."""
-        from datetime import timezone
+        if self.expires_at.tzinfo is None or self.expires_at.tzinfo.utcoffset(self.expires_at) is None:
+            return datetime.now() >= self.expires_at
         return datetime.now(timezone.utc) >= self.expires_at
     
     @property

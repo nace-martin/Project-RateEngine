@@ -30,6 +30,7 @@ export default function QuotesPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [modeFilter, setModeFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   // Quick Look State
   const [selectedQuote, setSelectedQuote] = useState<UnifiedQuote | null>(null);
@@ -132,14 +133,15 @@ export default function QuotesPage() {
         item.route.toLowerCase().includes(query);
 
       const matchesMode = modeFilter === "all" || item.mode === modeFilter;
+      const matchesStatus = statusFilter === "all" || item.rawStatus === statusFilter;
 
-      return matchesSearch && matchesMode;
+      return matchesSearch && matchesMode && matchesStatus;
     });
 
     // 4. Sort (Date Descending)
     return filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  }, [quotes, spotDrafts, searchQuery, modeFilter]);
+  }, [quotes, spotDrafts, searchQuery, modeFilter, statusFilter]);
 
   const columns = [
     {
@@ -193,6 +195,11 @@ export default function QuotesPage() {
       header: "Status",
       cell: (item: UnifiedQuote) => getStatusBadge(item),
       className: "w-[120px]",
+    },
+    {
+      header: "User",
+      accessorKey: "createdBy" as keyof UnifiedQuote,
+      className: "text-muted-foreground text-sm w-[100px]",
     },
     {
       header: "Total",
@@ -249,6 +256,19 @@ export default function QuotesPage() {
             <option value="AIR">Air Freight</option>
             <option value="SEA">Sea Freight</option>
             <option value="ROAD">Road/Inland</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <option value="all">All Statuses</option>
+            <option value="DRAFT">Draft</option>
+            <option value="FINALIZED">Finalized</option>
+            <option value="SENT">Sent</option>
+            <option value="ACCEPTED">Accepted (Won)</option>
+            <option value="LOST">Lost</option>
+            <option value="EXPIRED">Expired</option>
           </select>
           <Button variant="outline" size="sm" className="h-9 gap-2 text-muted-foreground hover:text-primary">
             <Save className="h-4 w-4" />
