@@ -18,7 +18,7 @@ from quotes.serializers import QuoteModelSerializerV3, QuoteListSerializerV3
 from services.models import ServiceComponent
 # from pricing_v2.pricing_service_v3 import PricingServiceV3
 from pricing_v4.adapter import PricingServiceV4Adapter as PricingServiceV3
-from pricing_v2.dataclasses_v3 import QuoteInput, ManualOverride
+from core.dataclasses import QuoteInput, ManualOverride
 
 # RBAC permissions
 from accounts.permissions import (

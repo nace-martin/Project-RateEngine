@@ -128,7 +128,7 @@ class Command(BaseCommand):
         """Run V4 pricing calculation and verify discount is applied."""
         self.stdout.write("\n3. Running V4 pricing calculation...")
         
-        from pricing_v2.dataclasses_v3 import (
+        from core.dataclasses import (
             QuoteInput, ShipmentDetails, LocationRef, Piece
         )
         from pricing_v4.adapter import PricingServiceV4Adapter

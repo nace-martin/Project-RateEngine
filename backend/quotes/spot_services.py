@@ -422,7 +422,7 @@ class StandardChargeService:
         from decimal import Decimal
         from uuid import uuid4
         
-        from pricing_v2.dataclasses_v3 import (
+        from core.dataclasses import (
             QuoteInput, ShipmentDetails, LocationRef, Piece
         )
         from pricing_v4.adapter import PricingServiceV4Adapter

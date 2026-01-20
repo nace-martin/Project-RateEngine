@@ -1,4 +1,4 @@
-# backend/pricing_v2/dataclasses_v3.py
+# backend/core/dataclasses.py
 
 """
 Dataclasses (Pydantic Models) for the V3 Pricing Service.

@@ -4,7 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from pricing_v4.adapter import PricingServiceV4Adapter
-from pricing_v2.dataclasses_v3 import CalculatedChargeLine, QuoteInput
+from core.dataclasses import CalculatedChargeLine, QuoteInput
 
 class AdapterChargeGroupingTest(TestCase):
     def setUp(self):

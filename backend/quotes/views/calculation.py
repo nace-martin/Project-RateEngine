@@ -21,7 +21,7 @@ from parties.models import Company, Contact
 
 # from pricing_v2.pricing_service_v3 import PricingServiceV3
 from pricing_v4.adapter import PricingServiceV4Adapter as PricingServiceV3 # Using V4 Adapter
-from pricing_v2.dataclasses_v3 import (
+from core.dataclasses import (
     QuoteInput,
     QuoteCharges,
     ShipmentDetails,

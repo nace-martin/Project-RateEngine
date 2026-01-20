@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
-from pricing_v2.dataclasses_v3 import CalculatedChargeLine, QuoteInput
+from core.dataclasses import CalculatedChargeLine, QuoteInput
 from quotes.models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
 from services.models import ServiceComponent
 

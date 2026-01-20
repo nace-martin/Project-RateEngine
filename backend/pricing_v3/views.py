@@ -13,7 +13,7 @@ from decimal import Decimal
 from quotes.models import Quote
 from services.models import ServiceRule, ServiceComponent
 from .resolvers import QuoteContextBuilder, BuyChargeResolver
-from pricing_v2.dataclasses_v3 import Piece, ShipmentDetails, QuoteInput
+from core.dataclasses import Piece, ShipmentDetails, QuoteInput
 
 from rest_framework import viewsets
 from .models import Zone, RateCard, RateLine, RateBreak, QuoteSpotRate, QuoteSpotCharge
@@ -462,7 +462,7 @@ class QuoteComputeV3View(APIView):
         if location.country and location.country.currency:
             currency_code = location.country.currency.code
         
-        from pricing_v2.dataclasses_v3 import LocationRef
+        from core.dataclasses import LocationRef
         return LocationRef(
             id=location.id,
             code=location.code,

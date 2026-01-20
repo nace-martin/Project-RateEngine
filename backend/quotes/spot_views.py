@@ -723,7 +723,7 @@ class SpotEnvelopeComputeAPIView(APIView):
     
     def post(self, request, envelope_id):
         from pricing_v4.adapter import PricingServiceV4Adapter
-        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
+        from core.dataclasses import QuoteInput, ShipmentDetails, Piece, LocationRef
         from core.models import Location
         
         spe_db = _get_spe_or_404(
@@ -969,7 +969,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
     
     def post(self, request, envelope_id):
         from pricing_v4.adapter import PricingServiceV4Adapter
-        from pricing_v2.dataclasses_v3 import QuoteInput, ShipmentDetails, Piece, LocationRef
+        from core.dataclasses import QuoteInput, ShipmentDetails, Piece, LocationRef
         from core.models import Location
         from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, ServiceComponent
         from parties.models import Company, Contact

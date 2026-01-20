@@ -8,7 +8,7 @@ from uuid import UUID
 
 from core.models import FxSnapshot, Policy
 from django.db import models
-from pricing_v2.dataclasses_v3 import (
+from core.dataclasses import (
     QuoteInput, QuoteCharges, CalculatedChargeLine, CalculatedTotals
 )
 from pricing_v4.engine.export_engine import ExportPricingEngine

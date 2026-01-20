@@ -14,7 +14,9 @@ import sys
 
 def _bootstrap_django() -> None:
     """Ensure `backend/` is importable and Django is configured."""
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    repo_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+    )
     backend_path = os.path.join(repo_root, "backend")
     if backend_path not in sys.path:
         sys.path.insert(0, backend_path)
