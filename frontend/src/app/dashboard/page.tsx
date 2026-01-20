@@ -2,13 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign, AlertCircle, Clock, TrendingUp } from "lucide-react";
+import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign, AlertCircle, Clock, TrendingUp, BarChart3 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import ProtectedRoute from "@/components/protected-route";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
-import { getQuotesV3, listSpotEnvelopes } from "@/lib/api";
+import { getQuotesV3, listSpotEnvelopes, getDashboardMetrics, type DashboardMetricsData, type DashboardTimeframe } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
 import type { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
+import { KPICard } from "@/components/KPICard";
 
 
 
@@ -51,6 +52,11 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [fxStatus, setFxStatus] = useState<FxStatusData | null>(null);
+
+    // Timeframe and dashboard metrics state for Sales/Manager view
+    const [timeframe, setTimeframe] = useState<DashboardTimeframe>('monthly');
+    const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetricsData | null>(null);
+    const [metricsLoading, setMetricsLoading] = useState(false);
 
     // ... (rest of useEffects) ...
 
@@ -103,6 +109,24 @@ export default function DashboardPage() {
         };
         fetchFxStatus();
     }, [user, isFinance]);
+
+    // Fetch dashboard metrics for Sales/Manager/Admin users when timeframe changes
+    useEffect(() => {
+        if (!user || isFinance) return; // Finance users have their own dashboard
+
+        const fetchMetrics = async () => {
+            setMetricsLoading(true);
+            try {
+                const data = await getDashboardMetrics(timeframe);
+                setDashboardMetrics(data);
+            } catch (err) {
+                console.error('Failed to fetch dashboard metrics:', err);
+            } finally {
+                setMetricsLoading(false);
+            }
+        };
+        fetchMetrics();
+    }, [user, isFinance, timeframe]);
 
     // Metrics calculations
     const metrics = useMemo(() => {
@@ -190,6 +214,9 @@ export default function DashboardPage() {
             heightPercent: (counts[i] / max) * 100
         }));
     }, [allQuotes, spotDrafts]);
+
+    const weeklyActivityData = dashboardMetrics?.weekly_activity ?? chartData;
+    const weeklyActivityMax = Math.max(...weeklyActivityData.map(a => a.count), 1);
 
     // Unified Data Logic for Recent Activity
     const recentQuotes = useMemo<UnifiedQuote[]>(() => {
@@ -438,68 +465,34 @@ export default function DashboardPage() {
                         </div>
                     </section>
 
-                    {/* Finance KPI Widgets - No Icons, Text Only */}
+                    {/* Finance KPI Widgets - Standardized */}
                     <section className="grid gap-6 md:grid-cols-3">
                         {/* Widget A: Finalized Revenue (PGK) */}
-                        <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-shadow">
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">
-                                    Finalized Revenue (This Month)
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                {loading ? (
-                                    <div className="space-y-2">
-                                        <Skeleton className="h-8 w-32" />
-                                        <Skeleton className="h-3 w-24" />
-                                    </div>
-                                ) : (
-                                    <>
-                                        <div className="text-2xl font-bold text-slate-900">
-                                            PGK {finalizedRevenuePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                                        </div>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            {finalizedThisMonth.length} finalized quotes
-                                        </p>
-                                    </>
-                                )}
-                            </CardContent>
-                        </Card>
+                        <KPICard
+                            title="Finalized Revenue (This Month)"
+                            value={loading ? <Skeleton className="h-8 w-32" /> : `PGK ${finalizedRevenuePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
+                            description={`${finalizedThisMonth.length} finalized quotes`}
+                            status="success"
+                            icon={DollarSign}
+                        />
 
-                        {/* Widget B: Pipeline Exposure (Draft Quotes in PGK) */}
-                        <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-shadow">
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">
-                                    Pipeline Exposure (Drafts)
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                {loading ? (
-                                    <div className="space-y-2">
-                                        <Skeleton className="h-8 w-32" />
-                                        <Skeleton className="h-3 w-24" />
-                                    </div>
-                                ) : (
-                                    <>
-                                        <div className="text-2xl font-bold text-slate-900">
-                                            PGK {pipelinePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                                        </div>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            {draftQuotes.length} draft quotes in market
-                                        </p>
-                                    </>
-                                )}
-                            </CardContent>
-                        </Card>
+                        {/* Widget B: Pipeline Exposure (Drafts) */}
+                        <KPICard
+                            title="Pipeline Exposure (Drafts)"
+                            value={loading ? <Skeleton className="h-8 w-32" /> : `PGK ${pipelinePGK.toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
+                            description={`${draftQuotes.length} draft quotes in market`}
+                            status="info"
+                            icon={BarChart3}
+                        />
 
-                        {/* Widget C: FX Rates - Text List */}
-                        <Card className="border border-slate-200 shadow-sm bg-white hover:shadow-md transition-shadow">
-                            <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">
-                                    FX Rates
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
+                        {/* Widget C: FX Rates */}
+                        <KPICard
+                            title="FX Rates"
+                            value={fxStatus ? (fxStatus.is_stale ? "Stale" : "Current") : <Skeleton className="h-8 w-24" />}
+                            status={fxStatus?.is_stale ? "warning" : "info"}
+                            icon={TrendingUp}
+                        >
+                            <div className="mt-4">
                                 {fxStatus ? (
                                     <div className="space-y-1">
                                         {fxStatus.rates
@@ -516,9 +509,6 @@ export default function DashboardPage() {
                                             })}
                                         <div className="pt-2 border-t mt-2">
                                             <p className="text-xs text-muted-foreground">
-                                                Status: {fxStatus.is_stale ? 'Stale' : 'Current'}
-                                            </p>
-                                            <p className="text-xs text-muted-foreground">
                                                 Source: {fxStatus.source || 'BSP'}
                                             </p>
                                         </div>
@@ -527,11 +517,10 @@ export default function DashboardPage() {
                                     <div className="space-y-2">
                                         <Skeleton className="h-4 w-full" />
                                         <Skeleton className="h-4 w-full" />
-                                        <Skeleton className="h-4 w-3/4" />
                                     </div>
                                 )}
-                            </CardContent>
-                        </Card>
+                            </div>
+                        </KPICard>
                     </section>
 
                     {/* Recent Quote Activity Table - New Columns */}
@@ -657,6 +646,14 @@ export default function DashboardPage() {
                                         <ArrowRight className="ml-2 h-4 w-4" />
                                     </Link>
                                 </Button>
+                                {(isManager || isAdmin) && (
+                                    <Button variant="outline" size="lg" className="bg-white/10 text-white border-white/20 hover:bg-white/20 h-12 px-6 rounded-xl backdrop-blur-sm" asChild>
+                                        <Link href="/dashboard/management">
+                                            <BarChart3 className="mr-2 h-4 w-4" />
+                                            Performance
+                                        </Link>
+                                    </Button>
+                                )}
                             </div>
                         </div>
 
@@ -690,94 +687,127 @@ export default function DashboardPage() {
                 </section>
 
                 {/* KPI SECTION */}
-                <section className="grid gap-6 md:grid-cols-3">
+                <section className="space-y-6">
+                    {/* Timeframe Toggle */}
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-lg font-semibold text-slate-800">Sales Metrics</h2>
+                        <div className="flex gap-2 bg-slate-100 p-1 rounded-lg">
+                            {(['weekly', 'monthly', 'ytd'] as const).map((tf) => (
+                                <button
+                                    key={tf}
+                                    onClick={() => setTimeframe(tf)}
+                                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${timeframe === tf
+                                        ? 'bg-[#0F52BA] text-white shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                                        }`}
+                                >
+                                    {tf === 'ytd' ? 'YTD' : tf.charAt(0).toUpperCase() + tf.slice(1)}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
 
-                    {/* 1. Quote Volume Chart (Replacing Drafts) */}
-                    <Card className="border-none shadow-md bg-white hover:shadow-xl transition-all duration-300 group overflow-hidden relative">
-                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-indigo-500" />
-                        <CardContent className="p-6">
-                            <div className="flex justify-between items-start mb-6">
-                                <div>
-                                    <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Weekly Activity</p>
-                                    <div className="flex items-baseline gap-2 mt-1">
-                                        <h3 className="text-3xl font-bold text-slate-900">{metrics.newQuotesLast7DaysCount}</h3>
-                                        <span className="text-sm text-emerald-600 font-medium flex items-center">
-                                            <TrendingUp className="h-3 w-3 mr-1" />
-                                            New
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="p-2 bg-blue-50 rounded-xl text-blue-600">
-                                    <FileText className="h-5 w-5" />
-                                </div>
-                            </div>
-
-                            {/* CSS Bar Chart */}
-                            <div className="h-24 flex items-end gap-2 justify-between">
-                                {chartData.map((d, i) => (
-                                    <div key={i} className="flex-1 flex flex-col items-center gap-1 group/bar">
-                                        <div
-                                            className="w-full bg-blue-100 rounded-t-sm group-hover/bar:bg-blue-500 transition-colors relative"
-                                            style={{ height: `${d.heightPercent}%` }}
-                                        >
-                                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                                {d.count}
+                    {/* Row 1: Core Metrics */}
+                    <div className="grid gap-6 md:grid-cols-3">
+                        {/* 1. Weekly Activity Chart */}
+                        <KPICard
+                            title="Weekly Activity"
+                            value={metricsLoading ? <Skeleton className="h-9 w-16" /> : (dashboardMetrics?.weekly_activity.reduce((sum, d) => sum + d.count, 0) ?? metrics.newQuotesLast7DaysCount)}
+                            trend={{ value: "New", positive: true }}
+                            status="info"
+                            icon={FileText}
+                            className="overflow-hidden"
+                            action={<TrendingUp className="h-4 w-4 text-success" />}
+                        >
+                            <div className="h-24 flex items-end gap-2 justify-between mt-4">
+                                {weeklyActivityData.map((d, i) => {
+                                    const count = 'count' in d ? d.count : 0;
+                                    const heightPercent = (count / weeklyActivityMax) * 100;
+                                    const dayLabel = 'day' in d && typeof d.day === 'string'
+                                        ? new Date(d.day).toLocaleDateString('en-US', { weekday: 'short' })
+                                        : ('day' in d ? d.day : '');
+                                    return (
+                                        <div key={i} className="flex-1 flex flex-col items-center gap-1 group/bar">
+                                            <div
+                                                className="w-full bg-blue-100 rounded-t-sm group-hover/bar:bg-blue-500 transition-colors relative"
+                                                style={{ height: `${heightPercent || 5}%` }}
+                                            >
+                                                <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                                    {count}
+                                                </div>
                                             </div>
+                                            <span className="text-[10px] font-medium text-slate-400 uppercase">{dayLabel}</span>
                                         </div>
-                                        <span className="text-[10px] font-medium text-slate-400 uppercase">{d.day}</span>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
-                        </CardContent>
-                    </Card>
+                        </KPICard>
 
-                    {/* 2. Finalized Count */}
-                    <Card className="border-none shadow-md bg-white hover:shadow-xl transition-all duration-300 relative group">
-                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-teal-500" />
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Finalized Success</CardTitle>
-                            <div className="p-2 bg-emerald-50 rounded-xl text-emerald-600 group-hover:bg-emerald-100 transition-colors">
-                                <CheckCircle2 className="h-5 w-5" />
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-3xl font-bold text-slate-900 mt-2">{metrics.finalizedCount}</div>
-                            <p className="text-sm text-emerald-600 font-medium mt-1">Ready for booking</p>
-                            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-muted-foreground">
-                                <span>Total Value</span>
-                                <span className="font-semibold text-slate-700">{formatCurrency(String(metrics.finalizedValue), metrics.currency)}</span>
-                            </div>
-                        </CardContent>
-                    </Card>
+                        {/* 2. Finalized Success */}
+                        <KPICard
+                            title="Finalized Success"
+                            value={metricsLoading ? <Skeleton className="h-9 w-16" /> : (dashboardMetrics?.finalized_count ?? metrics.finalizedCount)}
+                            description="Ready for booking"
+                            status="success"
+                            icon={CheckCircle2}
+                            trend={{
+                                value: metricsLoading ? <Skeleton className="h-4 w-20" /> : formatCurrency(String(dashboardMetrics?.finalized_value ?? metrics.finalizedValue), 'PGK'),
+                                label: "Total Value",
+                                positive: true
+                            }}
+                        />
 
-                    {/* 3. Pipeline Pulse */}
-                    <Card className="border-none shadow-md bg-white hover:shadow-xl transition-all duration-300 relative group">
-                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-400 to-purple-500" />
-                        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                            <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Pipeline</CardTitle>
-                            <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 group-hover:bg-indigo-100 transition-colors">
-                                <DollarSign className="h-5 w-5" />
+                        {/* 3. Total Pipeline */}
+                        <KPICard
+                            title="Total Pipeline"
+                            value={metricsLoading ? <Skeleton className="h-9 w-32" /> : formatCurrency(String(dashboardMetrics?.pipeline_value ?? metrics.pipelineValue), 'PGK')}
+                            description={`${dashboardMetrics?.pipeline_count ?? metrics.draftCount} draft${(dashboardMetrics?.pipeline_count ?? metrics.draftCount) !== 1 ? 's' : ''} in progress`}
+                            status="info"
+                            icon={DollarSign}
+                        />
+                    </div>
+
+                    {/* Row 2: Sales Efficiency Metrics */}
+                    <div className="grid gap-6 md:grid-cols-3">
+                        {/* 4. Win Rate % */}
+                        <KPICard
+                            title="Win Rate"
+                            value={metricsLoading ? "-" : `${dashboardMetrics?.win_rate_percent ?? 0}%`}
+                            status={
+                                (dashboardMetrics?.total_quotes_sent ?? 0) === 0 ? "neutral" :
+                                    (dashboardMetrics?.win_rate_percent ?? 0) >= 30 ? "success" : "warning"
+                            }
+                            icon={TrendingUp}
+                            description={`${dashboardMetrics?.quotes_accepted ?? 0} won of ${dashboardMetrics?.total_quotes_sent ?? 0} sent`}
+                        >
+                            {/* Simple visual bar for Win Rate */}
+                            <div className="mt-4 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full ${(dashboardMetrics?.win_rate_percent ?? 0) >= 30 ? 'bg-success' : 'bg-warning'
+                                        }`}
+                                    style={{ width: `${Math.min(dashboardMetrics?.win_rate_percent ?? 0, 100)}%` }}
+                                />
                             </div>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-3xl font-bold text-slate-900 mt-2 tracking-tight">
-                                {formatCurrency(String(metrics.pipelineValue), metrics.currency)}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                                <span className="inline-flex items-center text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                                    <TrendingUp className="h-3 w-3 mr-1" />
-                                    +{metrics.velocityPercent}%
-                                </span>
-                                <span className="text-xs text-muted-foreground">from last week</span>
-                            </div>
-                            <div className="mt-4 pt-4 border-t border-slate-100">
-                                <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                                    <div className="bg-indigo-500 h-full rounded-full" style={{ width: '75%' }}></div>
-                                </div>
-                                <p className="text-[10px] text-muted-foreground mt-1.5 text-right">75% to monthly goal</p>
-                            </div>
-                        </CardContent>
-                    </Card>
+                        </KPICard>
+
+                        {/* 5. Avg Quote Value */}
+                        <KPICard
+                            title="Avg Quote Value"
+                            value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.avg_quote_value ?? 0), 'PGK')}
+                            description="Based on finalized quotes"
+                            status="info"
+                            icon={DollarSign}
+                        />
+
+                        {/* 6. Lost Opportunity */}
+                        <KPICard
+                            title="Lost Opportunity"
+                            value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.lost_opportunity_value ?? 0), 'PGK')}
+                            description={`${(dashboardMetrics?.quotes_lost ?? 0) + (dashboardMetrics?.quotes_expired ?? 0)} quotes lost or expired`}
+                            status="danger"
+                            icon={AlertCircle}
+                        />
+                    </div>
                 </section>
 
                 {/* RECENT ACTIVITY TABLE - REFINED */}

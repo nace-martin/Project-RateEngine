@@ -260,3 +260,116 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at', 'latest_version', 'created_by'
         )
+
+
+# =============================================================================
+# SPOT PRICING ENVELOPE SERIALIZERS
+# =============================================================================
+
+from quotes.spot_models import (
+    SpotPricingEnvelopeDB,
+    SPEChargeLineDB,
+    SPEAcknowledgementDB,
+    SPEManagerApprovalDB,
+)
+
+class SPEChargeLineSerializer(serializers.ModelSerializer):
+    min_charge = serializers.SerializerMethodField()
+    amount = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SPEChargeLineDB
+        fields = (
+            'id', 'code', 'description', 'amount', 'currency', 'unit',
+            'bucket', 'is_primary_cost', 'conditional', 'min_charge',
+            'note', 'exclude_from_totals', 'percentage_basis', 'source_reference'
+        )
+
+    def get_amount(self, obj):
+        # Return as string to match original serialization
+        return str(obj.amount)
+
+    def get_min_charge(self, obj):
+        return str(obj.min_charge) if obj.min_charge is not None else None
+
+
+class SPEAcknowledgementSerializer(serializers.ModelSerializer):
+    acknowledged_by_user_id = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SPEAcknowledgementDB
+        fields = ('acknowledged_by_user_id', 'acknowledged_at', 'statement')
+        
+    def get_acknowledged_by_user_id(self, obj):
+        return str(obj.acknowledged_by_id) if obj.acknowledged_by_id else None
+
+
+class SPEManagerApprovalSerializer(serializers.ModelSerializer):
+    manager_user_id = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SPEManagerApprovalDB
+        fields = ('approved', 'manager_user_id', 'decision_at', 'comment')
+        
+    def get_manager_user_id(self, obj):
+        return str(obj.manager_id) if obj.manager_id else None
+
+
+class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
+    customer_name = serializers.SerializerMethodField()
+    shipment = serializers.JSONField(source='shipment_context_json')
+    conditions = serializers.JSONField(source='conditions_json')
+    charges = SPEChargeLineSerializer(source='charge_lines', many=True, read_only=True)
+    acknowledgement = SPEAcknowledgementSerializer(read_only=True)
+    manager_approval = SPEManagerApprovalSerializer(read_only=True)
+    
+    missing_mandatory_fields = serializers.SerializerMethodField()
+    can_proceed = serializers.SerializerMethodField()
+    has_acknowledgement = serializers.SerializerMethodField()
+    context_integrity_valid = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SpotPricingEnvelopeDB
+        fields = (
+            'id', 'status', 'customer_name', 'shipment', 'conditions',
+            'spot_trigger_reason_code', 'spot_trigger_reason_text',
+            'created_at', 'expires_at', 'is_expired',
+            'shipment_context_hash', 'context_integrity_valid',
+            'has_acknowledgement', 'acknowledgement', 'manager_approval',
+            'missing_mandatory_fields', 'can_proceed', 'charges'
+        )
+        read_only_fields = fields
+
+    def get_customer_name(self, obj):
+        if obj.quote and obj.quote.customer:
+            return obj.quote.customer.name
+        return None
+
+    def get_has_acknowledgement(self, obj):
+        return hasattr(obj, 'acknowledgement') and obj.acknowledgement is not None
+
+    def get_context_integrity_valid(self, obj):
+        return obj.verify_context_integrity()
+
+    def get_missing_mandatory_fields(self, obj) -> list:
+        missing = []
+        charges = obj.charge_lines.all()
+        
+        # Check if we have at least one rate charge
+        has_rate = any(
+            cl.amount is not None and float(cl.amount) > 0 
+            for cl in charges
+        )
+        if not has_rate:
+            missing.append('rate')
+        
+        # Check if all charges have currency
+        has_currency = all(cl.currency for cl in charges) if charges else False
+        if not has_currency:
+            missing.append('currency')
+        
+        return missing
+
+    def get_can_proceed(self, obj) -> bool:
+        return len(self.get_missing_mandatory_fields(obj)) == 0
+

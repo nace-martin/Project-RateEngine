@@ -10,6 +10,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { DataTable } from '@/components/ui/data-table-wrapper';
 import { cn } from '@/lib/utils';;
 
+interface SpotDimensionItem {
+    pieces: number | string;
+    length_cm: number | string;
+    width_cm: number | string;
+    height_cm: number | string;
+    gross_weight_kg: number | string;
+    package_type?: string;
+}
+
 interface ExportSpotManagerProps {
     showCarrierSpot: boolean;
     showAgentCharges: boolean;
@@ -31,14 +40,7 @@ interface ExportSpotManagerProps {
         weight: number;
         commodity?: string;
         serviceScope: string;
-        dimensions?: {
-            pieces: number | string;
-            length_cm: number | string;
-            width_cm: number | string;
-            height_cm: number | string;
-            gross_weight_kg: number | string;
-            package_type?: string;
-        }[];
+        dimensions?: SpotDimensionItem[];
     };
 }
 
@@ -120,7 +122,7 @@ Best regards,`;
         { header: "Type", accessorKey: "package_type" as const },
         {
             header: "Dimensions (cm)",
-            cell: (item: any) => `${item.length_cm} x ${item.width_cm} x ${item.height_cm}`
+            cell: (item: SpotDimensionItem) => `${item.length_cm} x ${item.width_cm} x ${item.height_cm}`
         },
         { header: "Weight (kg)", accessorKey: "gross_weight_kg" as const },
     ];

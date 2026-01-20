@@ -99,6 +99,7 @@ export function QuoteStatusBadge({ status, size = "default" }: QuoteStatusBadgeP
         ${sizeClasses[size]}
         font-medium
       `}
+            title={status === "INCOMPLETE" ? "Missing required rates. Click to resolve." : undefined}
         >
             {config.label}
         </Badge>

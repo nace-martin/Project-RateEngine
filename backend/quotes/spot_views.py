@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from django.utils import timezone
+from django.db import transaction
 
 from rest_framework import status
 from rest_framework.views import APIView
@@ -52,6 +53,7 @@ from quotes.spot_models import (
     SPEAcknowledgementDB,
     SPEManagerApprovalDB,
 )
+from quotes.serializers import SpotPricingEnvelopeSerializer
 
 
 logger = logging.getLogger(__name__)
@@ -71,30 +73,6 @@ def _user_can_access_spe(user, spe_db: SpotPricingEnvelopeDB) -> bool:
     if _user_is_manager_or_admin(user):
         return True
     return spe_db.created_by_id == user.id
-
-
-def _get_missing_mandatory_fields(spe_db: SpotPricingEnvelopeDB) -> list:
-    """
-    Compute missing mandatory fields for SPE.
-    Required: rate (at least one charge with amount), currency
-    """
-    missing = []
-    charges = list(spe_db.charge_lines.all())
-    
-    # Check if we have at least one rate charge
-    has_rate = any(
-        cl.amount is not None and float(cl.amount) > 0 
-        for cl in charges
-    )
-    if not has_rate:
-        missing.append('rate')
-    
-    # Check if all charges have currency
-    has_currency = all(cl.currency for cl in charges) if charges else False
-    if not has_currency:
-        missing.append('currency')
-    
-    return missing
 
 
 def _get_spe_or_404(user, envelope_id, queryset=None):
@@ -377,10 +355,12 @@ class SpotEnvelopeListCreateAPIView(APIView):
 
         spes = spe_qs.order_by('-created_at')[:20]
         
-        return Response([
-            self._serialize_spe(spe) for spe in spes
-        ])
+        spes = spe_qs.order_by('-created_at')[:20]
+        
+        serializer = SpotPricingEnvelopeSerializer(spes, many=True)
+        return Response(serializer.data)
     
+    @transaction.atomic
     def post(self, request):
         """Create new SPE in DRAFT status."""
         with open("debug_spe.log", "a") as f:
@@ -444,10 +424,10 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
             
-            return Response(
-                self._serialize_spe(spe_db),
-                status=status.HTTP_201_CREATED
-            )
+            logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
+            
+            serializer = SpotPricingEnvelopeSerializer(spe_db)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.exception("Unexpected error creating SPE")
             with open("debug_spe.log", "a") as f:
@@ -459,43 +439,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _serialize_spe(self, spe_db):
-        """Serialize SPE DB to JSON."""
-        missing_fields = _get_missing_mandatory_fields(spe_db)
-        customer_name = None
-        if spe_db.quote and spe_db.quote.customer:
-            customer_name = spe_db.quote.customer.name
 
-        return {
-            'customer_name': customer_name,
-            'id': str(spe_db.id),
-            'status': spe_db.status,
-            'shipment': spe_db.shipment_context_json,
-            'conditions': spe_db.conditions_json,
-            'spot_trigger_reason_code': spe_db.spot_trigger_reason_code,
-            'spot_trigger_reason_text': spe_db.spot_trigger_reason_text,
-            'created_at': spe_db.created_at.isoformat(),
-            'expires_at': spe_db.expires_at.isoformat(),
-            'is_expired': spe_db.is_expired,
-            'has_acknowledgement': hasattr(spe_db, 'acknowledgement'),
-            'missing_mandatory_fields': missing_fields,
-            'can_proceed': len(missing_fields) == 0,
-            'charges': [
-                {
-                    'id': str(cl.id),
-                    'code': cl.code,
-                    'description': cl.description,
-                    'amount': str(cl.amount),
-                    'currency': cl.currency,
-                    'unit': cl.unit,
-                    'bucket': cl.bucket,
-                    'is_primary_cost': cl.is_primary_cost,
-                    'conditional': cl.conditional,
-                    'source_reference': cl.source_reference,
-                }
-                for cl in spe_db.charge_lines.all()
-            ],
-        }
     
     def _validate_spe(self, spe_db):
         """Validate SPE via Pydantic schemas."""
@@ -558,7 +502,8 @@ class SpotEnvelopeDetailAPIView(APIView):
             ),
         )
         
-        return Response(self._serialize_spe(spe_db))
+        serializer = SpotPricingEnvelopeSerializer(spe_db)
+        return Response(serializer.data)
     
     def patch(self, request, envelope_id):
         """Update DRAFT SPE with new charges or conditions."""
@@ -619,65 +564,10 @@ class SpotEnvelopeDetailAPIView(APIView):
         
         spe_db.save()
         
-        return Response(self._serialize_spe(spe_db))
+        serializer = SpotPricingEnvelopeSerializer(spe_db)
+        return Response(serializer.data)
 
-    def _serialize_spe(self, spe_db):
-        """Full serialization including ack and approval."""
-        ack = None
-        if hasattr(spe_db, 'acknowledgement') and spe_db.acknowledgement:
-            ack_db = spe_db.acknowledgement
-            ack = {
-                'acknowledged_by_user_id': str(ack_db.acknowledged_by_id) if ack_db.acknowledged_by_id else None,
-                'acknowledged_at': ack_db.acknowledged_at.isoformat(),
-                'statement': ack_db.statement,
-            }
-        
-        approval = None
-        if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
-            appr_db = spe_db.manager_approval
-            approval = {
-                'approved': appr_db.approved,
-                'manager_user_id': str(appr_db.manager_id) if appr_db.manager_id else None,
-                'decision_at': appr_db.decision_at.isoformat(),
-                'comment': appr_db.comment,
-            }
-        
-        return {
-            'id': str(spe_db.id),
-            'status': spe_db.status,
-            'shipment': spe_db.shipment_context_json,
-            'shipment_context_hash': spe_db.shipment_context_hash,
-            'conditions': spe_db.conditions_json,
-            'spot_trigger_reason_code': spe_db.spot_trigger_reason_code,
-            'spot_trigger_reason_text': spe_db.spot_trigger_reason_text,
-            'created_at': spe_db.created_at.isoformat(),
-            'expires_at': spe_db.expires_at.isoformat(),
-            'is_expired': spe_db.is_expired,
-            'context_integrity_valid': spe_db.verify_context_integrity(),
-            'acknowledgement': ack,
-            'manager_approval': approval,
-            'missing_mandatory_fields': _get_missing_mandatory_fields(spe_db),
-            'can_proceed': len(_get_missing_mandatory_fields(spe_db)) == 0,
-            'charges': [
-                {
-                    'id': str(cl.id),
-                    'code': cl.code,
-                    'description': cl.description,
-                    'amount': str(cl.amount),
-                    'currency': cl.currency,
-                    'unit': cl.unit,
-                    'bucket': cl.bucket,
-                    'is_primary_cost': cl.is_primary_cost,
-                    'conditional': cl.conditional,
-                    'min_charge': str(cl.min_charge) if cl.min_charge is not None else None,
-                    'note': cl.note,
-                    'exclude_from_totals': cl.exclude_from_totals,
-                    'percentage_basis': cl.percentage_basis,
-                    'source_reference': cl.source_reference,
-                }
-                for cl in spe_db.charge_lines.all()
-            ],
-        }
+
 
 
 class SpotEnvelopeAcknowledgeAPIView(APIView):
@@ -688,6 +578,7 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
+    @transaction.atomic
     def post(self, request, envelope_id):
         spe_db = _get_spe_or_404(request.user, envelope_id)
         

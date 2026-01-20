@@ -369,21 +369,33 @@ export default function SpotRateEntryPage() {
                             </Button>
                         </div>
                     ) : (
-                        <QuoteVerificationPanel
-                            quoteResult={state.quoteResult}
-                            shipmentContext={{
-                                origin_code: originCode || state.spe?.shipment.origin_code || "",
-                                destination_code: destCode || state.spe?.shipment.destination_code || "",
-                                commodity: commodity || state.spe?.shipment.commodity || "GCR",
-                                total_weight_kg: weight || state.spe?.shipment.total_weight_kg || 0,
-                                pieces: pieces || state.spe?.shipment.pieces || 1,
-                                volume_cbm: state.spe?.shipment.volume_cbm,
-                                service_scope: serviceScope || undefined,
-                            }}
-                            onLockQuote={handleCreateQuote}
-                            onSaveDraft={() => router.push('/quotes')}
-                            isLoading={state.isLoading}
-                        />
+                        <div className="space-y-4">
+                            <QuoteVerificationPanel
+                                rawText={analysisResult?.raw_text || ""}
+                                extractedCharges={analysisResult?.assertions}
+                                initialCharges={state.spe?.charges || []}
+                                onSubmit={handleSaveAndAcknowledge}
+                                isLoading={state.isLoading}
+                                shipmentType={shipmentType}
+                                serviceScope={serviceScope}
+                            />
+                            <div className="flex justify-end gap-3">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => router.push("/quotes")}
+                                    disabled={state.isLoading}
+                                >
+                                    Save Draft
+                                </Button>
+                                <Button
+                                    onClick={handleCreateQuote}
+                                    disabled={state.isLoading}
+                                    className="bg-slate-900 hover:bg-slate-800"
+                                >
+                                    Create Quote
+                                </Button>
+                            </div>
+                        </div>
                     )}
                 </>
             )

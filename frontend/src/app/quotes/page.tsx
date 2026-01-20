@@ -152,17 +152,18 @@ export default function QuotesPage() {
     {
       header: "Date",
       cell: (item: UnifiedQuote) => {
-        // Only show expiry if within 48 hours
-        const showExpiry = item.expiry &&
-          (new Date(item.expiry).getTime() - Date.now()) < (48 * 60 * 60 * 1000);
+        // Requirement:
+        // 1. Finalized/Sent quotes MUST display expiry.
+        // 2. Draft/Incomplete must NOT display expiry.
+        const isFinalized = ["FINALIZED", "SENT", "ACCEPTED"].includes(item.rawStatus);
+        const showExpiry = isFinalized && item.expiry;
 
         return (
           <div className="flex flex-col">
             <span>{formatDate(item.date)}</span>
             {showExpiry && (
-              <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
-                <span className="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></span>
-                EXP: {formatDate(item.expiry as string)}
+              <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                <span className="text-slate-400">Exp:</span> {formatDate(item.expiry as string)}
               </span>
             )}
           </div>

@@ -136,6 +136,35 @@ class SpotTriggerEvaluator:
     // the required BUY rate components for the selected service scope.
     """
     
+    # Configuration for required components by direction and service scope
+    REQUIRED_COMPONENTS_MAP = {
+        'DOMESTIC': {
+            'default': ["AIRFREIGHT"]
+        },
+        'EXPORT': {
+            'D2A': ["EXPORT_CLEARANCE", "AIRFREIGHT"],
+            'D2D': [
+                "ORIGIN_PICKUP",
+                "EXPORT_CLEARANCE",
+                "AIRFREIGHT",
+                "DEST_CLEARANCE",
+                "DEST_DELIVERY"
+            ],
+            'default': ["AIRFREIGHT"] # P2P/A2A
+        },
+        'IMPORT': {
+            'A2D': ["AIRFREIGHT", "DEST_CLEARANCE", "DEST_DELIVERY"],
+            'D2D': [
+                "ORIGIN_PICKUP",
+                "AIRFREIGHT",
+                "DEST_CLEARANCE",
+                "DEST_DELIVERY"
+            ],
+            'D2A': ["ORIGIN_PICKUP", "AIRFREIGHT"],
+            'default': ["AIRFREIGHT"] # P2P/A2A
+        }
+    }
+    
     @classmethod
     def evaluate(
         cls,
@@ -161,37 +190,8 @@ class SpotTriggerEvaluator:
             )
 
         # 2️⃣ Determine Required BUY Components
-        required_components = []
-        if direction == 'DOMESTIC':
-            required_components = ["AIRFREIGHT"]
-        elif direction == 'EXPORT':
-            if service_scope == 'D2A':
-                required_components = ["EXPORT_CLEARANCE", "AIRFREIGHT"]
-            elif service_scope == 'D2D':
-                required_components = [
-                    "ORIGIN_PICKUP",
-                    "EXPORT_CLEARANCE",
-                    "AIRFREIGHT",
-                    "DEST_CLEARANCE",
-                    "DEST_DELIVERY"
-                ]
-            else: # Defaults to P2P/A2A if not specified
-                required_components = ["AIRFREIGHT"]
-
-        elif direction == 'IMPORT':
-            if service_scope == 'A2D':
-                required_components = ["AIRFREIGHT", "DEST_CLEARANCE", "DEST_DELIVERY"]
-            elif service_scope == 'D2D':
-                required_components = [
-                    "ORIGIN_PICKUP",
-                    "AIRFREIGHT",
-                    "DEST_CLEARANCE",
-                    "DEST_DELIVERY"
-                ]
-            elif service_scope == 'D2A':
-                required_components = ["ORIGIN_PICKUP", "AIRFREIGHT"]
-            else: # Defaults to P2P/A2A
-                required_components = ["AIRFREIGHT"]
+        direction_config = cls.REQUIRED_COMPONENTS_MAP.get(direction, {})
+        required_components = direction_config.get(service_scope, direction_config.get('default', ["AIRFREIGHT"]))
         
         # 3️⃣ Coverage Check
         missing_components = []

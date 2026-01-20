@@ -167,6 +167,13 @@ class Quote(models.Model):
         help_text="User who sent the quote."
     )
 
+    @property
+    def is_spot_quote(self) -> bool:
+        """Returns True if this quote has an associated Spot Pricing Envelope."""
+        if not self.pk:
+            return False
+        return self.spot_envelopes.exists()
+
     def __str__(self):
         return self.quote_number or str(self.id)
 
@@ -177,9 +184,8 @@ class Quote(models.Model):
             # Permanent QT-YYYY-NNNN is assigned on finalize()
             self.quote_number = f"DRAFT-{uuid.uuid4().hex[:8].upper()}"
 
-        if not self.valid_until:
-            created = self.created_at or timezone.now()
-            self.valid_until = (created + timedelta(days=7)).date()
+        # REMOVED: Do not set valid_until for Drafts. 
+        # Expiry is now exclusively for Finalized quotes.
 
         super().save(*args, **kwargs)
     
@@ -187,6 +193,7 @@ class Quote(models.Model):
         """
         Transition quote from DRAFT to FINALIZED.
         Assigns a permanent sequential quote_number in format: QT-YYYY-NNNN
+        Sets valid_until to 30 days from now.
         
         Uses database-level locking to prevent race conditions.
         
@@ -236,9 +243,14 @@ class Quote(models.Model):
             new_seq = last_seq + 1
             self.quote_number = f"QT-{current_year}-{new_seq:04d}"
             
-            # Update status and timestamps
+            # Update status, timestamps AND expiry
             self.status = self.Status.FINALIZED
             self.finalized_at = timezone.now()
+            
+            # Set expiry to 30 days from finalization
+            if not self.valid_until:
+                self.valid_until = (timezone.now() + timedelta(days=30)).date()
+                
             if user:
                 self.finalized_by = user
             
@@ -377,6 +389,18 @@ class QuoteTotal(models.Model):
     has_missing_rates = models.BooleanField(default=False)
     notes = models.TextField(null=True, blank=True)
 
+    @property
+    def gross_profit(self):
+        """Calculate Gross Profit (Sell - Cost) in PGK."""
+        return self.total_sell_pgk - self.total_cost_pgk
+
+    @property
+    def margin_percent(self):
+        """Calculate Margin % as ((Sell - Cost) / Sell) * 100."""
+        if self.total_sell_pgk and self.total_sell_pgk > 0:
+            return (self.gross_profit / self.total_sell_pgk) * 100
+        return 0
+
     def __str__(self):
         return f"Totals for v{self.quote_version.version_number} of {self.quote_version.quote.quote_number}"
 
@@ -413,3 +437,52 @@ class OverrideNote(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+# --- QuoteEvent MODEL for Funnel Tracking ---
+class QuoteEvent(models.Model):
+    """
+    Event-based logging for quote lifecycle tracking.
+    Enables accurate funnel analysis and time-to-quote metrics.
+    """
+
+    class EventType(models.TextChoices):
+        CREATED = 'CREATED', 'Created'
+        FINALIZED = 'FINALIZED', 'Finalized'
+        SENT = 'SENT', 'Sent'
+        ACCEPTED = 'ACCEPTED', 'Accepted'
+        LOST = 'LOST', 'Lost'
+        EXPIRED = 'EXPIRED', 'Expired'
+        REVISED = 'REVISED', 'Revised'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    quote = models.ForeignKey(
+        Quote,
+        on_delete=models.CASCADE,
+        related_name='events'
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='+'
+    )
+    event_type = models.CharField(
+        max_length=20,
+        choices=EventType.choices
+    )
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    metadata = models.JSONField(
+        null=True, blank=True,
+        help_text="Optional additional context for the event."
+    )
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['quote', 'event_type']),
+            models.Index(fields=['timestamp', 'event_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.quote.quote_number} - {self.event_type} at {self.timestamp}"

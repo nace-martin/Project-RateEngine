@@ -13,7 +13,7 @@ const Breadcrumb = React.forwardRef<
 Breadcrumb.displayName = "Breadcrumb"
 
 const BreadcrumbList = React.forwardRef<
-    HTMLOrderedListElement,
+    HTMLOListElement,
     React.ComponentPropsWithoutRef<"ol">
 >(({ className, ...props }, ref) => (
     <ol

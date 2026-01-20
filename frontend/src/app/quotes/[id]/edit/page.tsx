@@ -5,7 +5,7 @@ import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
 import { getQuoteV3, computeQuoteV3, getContactsForCompany } from "@/lib/api";
 import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES } from "@/lib/schemas/quoteSchema";
-import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Contact } from "@/lib/types";
+import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 import { Loader2 } from "lucide-react";
@@ -120,7 +120,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 }];
 
                 if (payload.dimensions && payload.dimensions.length > 0) {
-                    dimensions = payload.dimensions.map((d: any) => ({
+                    dimensions = payload.dimensions.map((d: V3DimensionInput) => ({
                         pieces: d.pieces,
                         length_cm: String(d.length_cm),
                         width_cm: String(d.width_cm),
@@ -148,11 +148,11 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 const formData: Partial<QuoteFormSchemaV3> = {
                     quote_id: quote.id, // Important for tracking updates
                     customer_id: payload.customer_id,
-                    contact_id: payload.contact_id || (quote.contact as any)?.id || "",
-                    mode: (payload.mode as any) || "AIR",
-                    incoterm: (payload.incoterm as any) || "EXW",
-                    payment_term: (payload.payment_term as any) || "PREPAID",
-                    service_scope: (payload.service_scope as any) || "A2A",
+                    contact_id: payload.contact_id || (quote.contact as QuoteContactRef)?.id || "",
+                    mode: (payload.mode as QuoteFormSchemaV3['mode']) || "AIR",
+                    incoterm: (payload.incoterm as QuoteFormSchemaV3['incoterm']) || "EXW",
+                    payment_term: (payload.payment_term as QuoteFormSchemaV3['payment_term']) || "PREPAID",
+                    service_scope: (payload.service_scope as QuoteFormSchemaV3['service_scope']) || "A2A",
                     origin_airport: originAirportCode,
                     destination_airport: destinationAirportCode,
                     origin_location_id: payload.origin_location_id || "",
@@ -169,7 +169,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
                 // Customer
                 if (payload.customer_id) {
-                    const custRef = quote.customer as any;
+                    const custRef = quote.customer as QuoteCustomerRef;
                     if (custRef && typeof custRef === 'object') {
                         setInitialCustomer({
                             id: custRef.id || payload.customer_id,

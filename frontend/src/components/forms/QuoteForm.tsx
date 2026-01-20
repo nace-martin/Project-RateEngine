@@ -19,15 +19,15 @@ import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Trash2, AlertTriangle, Plane, Ship, Package } from "lucide-react";
 import CompanySearch from "@/components/CompanySearchCombobox";
 import LocationSearch from "@/components/LocationSearchCombobox";
-import { Contact } from "@/lib/types";
+import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
 
 interface QuoteFormProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
-    initialCustomer?: any;
+    initialCustomer?: CompanySearchResult;
     initialContacts?: Contact[];
-    initialOrigin?: any;
-    initialDestination?: any;
-    user?: any;
+    initialOrigin?: LocationSearchResult;
+    initialDestination?: LocationSearchResult;
+    user?: User | null;
     onSubmit: (data: QuoteFormSchemaV3) => Promise<void>;
     isSubmitting?: boolean;
     serverError?: string | null;

@@ -131,3 +131,103 @@ class TestReportsViewSet:
         assert sales_entry['total_quotes'] == 2
         assert sales_entry['total_revenue'] == 2000.0
         assert sales_entry['converted_quotes'] == 1
+
+    def test_dashboard_metrics_default_monthly(self, api_client, manager_user, quote_factory):
+        """Test dashboard_metrics returns correct data for default monthly timeframe."""
+        api_client.force_authenticate(user=manager_user)
+        
+        # Create test data
+        quote_factory(manager_user, Quote.Status.DRAFT, 1000)
+        quote_factory(manager_user, Quote.Status.FINALIZED, 2000)
+        quote_factory(manager_user, Quote.Status.ACCEPTED, 3000)
+        
+        url = '/api/v3/reports/dashboard_metrics/'
+        response = api_client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        assert data['timeframe'] == 'monthly'
+        assert 'pipeline_count' in data
+        assert 'finalized_count' in data
+        assert 'win_rate_percent' in data
+        assert 'avg_quote_value' in data
+        assert 'lost_opportunity_value' in data
+        assert 'weekly_activity' in data
+        assert len(data['weekly_activity']) == 7
+
+    def test_dashboard_metrics_weekly_timeframe(self, api_client, manager_user, quote_factory):
+        """Test dashboard_metrics with weekly timeframe filter."""
+        api_client.force_authenticate(user=manager_user)
+        
+        quote_factory(manager_user, Quote.Status.FINALIZED, 1500)
+        
+        url = '/api/v3/reports/dashboard_metrics/?timeframe=weekly'
+        response = api_client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        assert data['timeframe'] == 'weekly'
+
+    def test_dashboard_metrics_ytd_timeframe(self, api_client, manager_user, quote_factory):
+        """Test dashboard_metrics with YTD timeframe filter."""
+        api_client.force_authenticate(user=manager_user)
+        
+        quote_factory(manager_user, Quote.Status.ACCEPTED, 5000)
+        
+        url = '/api/v3/reports/dashboard_metrics/?timeframe=ytd'
+        response = api_client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        assert data['timeframe'] == 'ytd'
+        assert data['quotes_accepted'] >= 1
+
+    def test_dashboard_metrics_win_rate_calculation(self, api_client, manager_user, quote_factory):
+        """Test win rate is calculated as ACCEPTED / (SENT + ACCEPTED + LOST) * 100."""
+        api_client.force_authenticate(user=manager_user)
+        
+        # Create 2 ACCEPTED, 1 LOST = 2/3 = 66.7% win rate
+        quote_factory(manager_user, Quote.Status.ACCEPTED, 1000)
+        quote_factory(manager_user, Quote.Status.ACCEPTED, 2000)
+        quote_factory(manager_user, Quote.Status.LOST, 500)
+        
+        url = '/api/v3/reports/dashboard_metrics/'
+        response = api_client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        assert data['total_quotes_sent'] == 3
+        assert data['quotes_accepted'] == 2
+        assert data['quotes_lost'] == 1
+        # 2/3 * 100 = 66.67, rounded to 66.7
+        assert data['win_rate_percent'] == 66.7
+
+    def test_dashboard_metrics_lost_opportunity(self, api_client, manager_user, quote_factory):
+        """Test lost opportunity sums LOST and EXPIRED quote values."""
+        api_client.force_authenticate(user=manager_user)
+        
+        quote_factory(manager_user, Quote.Status.LOST, 1000)
+        quote_factory(manager_user, Quote.Status.EXPIRED, 2000)
+        quote_factory(manager_user, Quote.Status.FINALIZED, 5000)  # Should not be included
+        
+        url = '/api/v3/reports/dashboard_metrics/'
+        response = api_client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        
+        # Lost (1000) + Expired (2000) = 3000 + GST
+        assert data['lost_opportunity_value'] >= 3000.0
+
+    def test_dashboard_metrics_access_denied_for_sales(self, api_client, sales_user):
+        """Test that sales users cannot access dashboard_metrics."""
+        api_client.force_authenticate(user=sales_user)
+        
+        url = '/api/v3/reports/dashboard_metrics/'
+        response = api_client.get(url)
+        
+        assert response.status_code == status.HTTP_403_FORBIDDEN

@@ -8,6 +8,7 @@ import { getQuoteV3, getQuoteCompute, downloadQuotePDF } from "@/lib/api";
 import {
   V3QuoteComputeResponse,
   QuoteComputeResult,
+  V3DimensionInput,
 } from "@/lib/types";
 import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
@@ -251,7 +252,7 @@ export default function QuoteDetailPage() {
                   {/* Calculate Gross Weight from payload */}
                   {(() => {
                     const dims = quote.latest_version?.payload_json?.dimensions || [];
-                    const totalKg = dims.reduce((sum: number, d: any) => sum + parseFloat(d.gross_weight_kg || 0), 0);
+                    const totalKg = dims.reduce((sum: number, d: V3DimensionInput) => sum + parseFloat(d.gross_weight_kg || "0"), 0);
                     return totalKg > 0 ? `${totalKg.toLocaleString()} kg` : "0 kg";
                   })()}
                 </p>

@@ -126,8 +126,32 @@ class QuoteStateMachine:
         return True, None
     
     def finalize(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
-        """Convenience method to finalize a quote."""
-        return self.transition_to(Quote.Status.FINALIZED, user)
+        """
+        Finalize a quote by delegating to the Quote model's finalize() method.
+        This properly assigns the permanent QT-YYYY-NNNN quote number.
+        """
+        # Validate transition first
+        if not self.can_transition_to(Quote.Status.FINALIZED):
+            current = self.current_state
+            valid = ', '.join(self.available_transitions) or 'none'
+            error = (
+                f"Cannot transition from {current} to FINALIZED. "
+                f"Valid transitions: {valid}"
+            )
+            logger.warning(f"Invalid quote transition attempt: {error}")
+            return False, error
+        
+        try:
+            # Delegate to the model's finalize() which handles:
+            # - Quote number assignment (QT-YYYY-NNNN)
+            # - Status change
+            # - Expiry date (valid_until)
+            # - Timestamps
+            self.quote.finalize(user=user)
+            logger.info(f"Quote {self.quote.quote_number} finalized by {user}")
+            return True, None
+        except ValueError as e:
+            return False, str(e)
     
     def mark_sent(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
         """Convenience method to mark quote as sent."""

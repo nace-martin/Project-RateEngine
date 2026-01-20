@@ -7,7 +7,8 @@ Clean table-style layout matching customer requirements.
 """
 
 import logging
-from decimal import Decimal
+import math
+from decimal import Decimal, ROUND_UP
 from pathlib import Path
 from typing import Optional
 
@@ -28,15 +29,29 @@ class QuotePDFGenerationError(Exception):
     pass
 
 
-
 def format_currency(amount) -> str:
-    """Format currency amount with thousand separators."""
+    """Format currency amount with thousand separators (shows decimals)."""
     if amount is None:
         return "0.00"
     try:
         return f"{float(amount):,.2f}"
     except (ValueError, TypeError):
         return "0.00"
+
+
+def format_currency_rounded(amount) -> str:
+    """
+    Format currency amount rounded UP to nearest whole PGK.
+    E.g., 100.53 -> 101, 50.02 -> 51, 100.00 -> 100
+    """
+    if amount is None:
+        return "0"
+    try:
+        value = float(amount)
+        rounded_up = math.ceil(value)
+        return f"{rounded_up:,}"
+    except (ValueError, TypeError):
+        return "0"
 
 
 def _clean_text(text) -> str:
@@ -354,7 +369,7 @@ def _build_pricing_section(pdf: QuotePDF, quote, charge_buckets):
             pdf.set_xy(15, row_y)
             pdf.cell(200, 6, _clean_text(bucket['name']))
             pdf.set_font('Helvetica', '', 10)
-            pdf.cell(67, 6, format_currency(bucket['subtotal']), align='R')
+            pdf.cell(67, 6, format_currency_rounded(bucket['subtotal']), align='R')
             pdf.line(15, row_y + 6, 282, row_y + 6)
             row_y += 7
     
@@ -389,7 +404,7 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(230, start_y + 2)
-    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency(totals['sell_excl_gst'])}", align='R')
+    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency_rounded(totals['sell_excl_gst'])}", align='R')
     
     # GST
     pdf.set_font('Helvetica', '', 9)
@@ -399,7 +414,7 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(230, start_y + 7)
-    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency(totals['gst'])}", align='R')
+    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency_rounded(totals['gst'])}", align='R')
     
     # Grand Total
     pdf.set_draw_color(*pdf.dark_blue)
@@ -411,13 +426,13 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.cell(50, 6, 'GRAND TOTAL:', align='R')
     pdf.set_font('Helvetica', 'B', 12)
     pdf.set_xy(230, start_y + 13)
-    pdf.cell(right_x - 230, 6, f"{quote.output_currency} {format_currency(totals['sell_incl_gst'])}", align='R')
+    pdf.cell(right_x - 230, 6, f"{quote.output_currency} {format_currency_rounded(totals['sell_incl_gst'])}", align='R')
     
     pdf.set_y(start_y + 24)
 
 
 def _build_footer(pdf: QuotePDF, quote, version):
-    """Build footer with contact info and terms."""
+    """Build footer with contact info, terms, and public quote link."""
     start_y = pdf.get_y()
     
     # Separator
@@ -425,22 +440,34 @@ def _build_footer(pdf: QuotePDF, quote, version):
     pdf.set_line_width(0.3)
     pdf.line(15, start_y, 282, start_y)
     
-    # Company contact (left)
+    # Public Quote Link - prominent at top of footer
+    public_url = build_public_quote_url(str(quote.id))
+    pdf.set_font('Helvetica', 'B', 8)
+    pdf.set_text_color(0, 102, 204)  # Blue link color
+    pdf.set_xy(15, start_y + 3)
+    pdf.cell(0, 4, 'View Full Itemized Breakdown:', link=public_url)
+    pdf.set_font('Helvetica', 'U', 7)  # Underlined
+    pdf.set_xy(15, start_y + 7)
+    # Truncate URL if too long for display
+    display_url = public_url if len(public_url) < 100 else public_url[:97] + '...'
+    pdf.cell(0, 4, display_url, link=public_url)
+    
+    # Company contact (left, below link)
     pdf.set_font('Helvetica', 'B', 7)
     pdf.set_text_color(15, 23, 42)
-    pdf.set_xy(15, start_y + 3)
+    pdf.set_xy(15, start_y + 14)
     pdf.cell(0, 4, 'EFM EXPRESS AIR CARGO')
     pdf.set_font('Helvetica', '', 7)
     pdf.set_text_color(*pdf.gray)
-    pdf.set_xy(15, start_y + 7)
+    pdf.set_xy(15, start_y + 18)
     pdf.cell(0, 4, 'Phone: +675 325 8500 | Email: quotes@efmexpress.com')
-    pdf.set_xy(15, start_y + 11)
+    pdf.set_xy(15, start_y + 22)
     pdf.cell(0, 4, 'PO Box 1791, Port Moresby, Papua New Guinea')
     
     # Terms (right)
     pdf.set_font('Helvetica', 'B', 7)
     pdf.set_text_color(15, 23, 42)
-    pdf.set_xy(140, start_y + 3)
+    pdf.set_xy(150, start_y + 14)
     pdf.cell(0, 4, 'TERMS & CONDITIONS')
     
     pdf.set_font('Helvetica', '', 6)
@@ -451,16 +478,16 @@ def _build_footer(pdf: QuotePDF, quote, version):
         "Space subject to availability",
         "Final charges based on actual/volumetric weight",
     ]
-    terms_y = start_y + 7
+    terms_y = start_y + 18
     for term in terms:
-        pdf.set_xy(140, terms_y)
+        pdf.set_xy(150, terms_y)
         pdf.cell(0, 3, _clean_text(f"- {term}"))
         terms_y += 3
     
     # Generated timestamp
     pdf.set_font('Helvetica', 'I', 6)
     pdf.set_text_color(148, 163, 184)
-    pdf.set_xy(15, start_y + 18)
+    pdf.set_xy(15, start_y + 28)
     pdf.cell(0, 4, f"Generated by RateEngine v{version.version_number} | {timezone.now().strftime('%d %b %Y %H:%M')}")
 
 

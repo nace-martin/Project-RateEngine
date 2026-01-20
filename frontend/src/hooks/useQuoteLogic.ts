@@ -13,7 +13,7 @@ import {
     getValidIncoterms,
     getDefaultIncoterm,
 } from "@/lib/schemas/quoteSchema";
-import { Contact, CompanySearchResult, LocationSearchResult } from "@/lib/types";
+import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
 import { SPECommodity } from "@/lib/spot-types";
 
 // Helper to map cargo type to commodity code
@@ -35,7 +35,7 @@ interface UseQuoteLogicProps {
     initialContacts?: Contact[];
     initialOrigin?: LocationSearchResult;
     initialDestination?: LocationSearchResult;
-    user?: any; // Auth user
+    user?: User | null; // Auth user
     onSubmit: (data: QuoteFormSchemaV3) => Promise<void>;
     isEditMode?: boolean; // Skip SPOT validation when editing existing quotes
 }

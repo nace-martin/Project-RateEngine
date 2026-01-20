@@ -60,10 +60,12 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
           <InfoBox label="Status" value={quote.status} />
           <InfoBox label="Incoterm" value={quote.incoterm} />
           <InfoBox label="Payment Term" value={quote.payment_term} />
-          <InfoBox
-            label="Valid Until"
-            value={new Date(quote.valid_until).toLocaleDateString()}
-          />
+          {quote.valid_until && !['DRAFT', 'INCOMPLETE'].includes(quote.status) && (
+            <InfoBox
+              label="Valid Until"
+              value={new Date(quote.valid_until).toLocaleDateString()}
+            />
+          )}
         </div>
 
         <div className="space-y-8">
