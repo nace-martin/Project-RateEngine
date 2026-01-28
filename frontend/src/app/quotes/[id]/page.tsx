@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/context/auth-context";
-import { getQuoteV3, getQuoteCompute, downloadQuotePDF } from "@/lib/api";
+import { getQuoteV3, getQuoteCompute, downloadQuotePDF, transitionQuoteStatus } from "@/lib/api";
 import {
   V3QuoteComputeResponse,
   QuoteComputeResult,
@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ChevronRight, ArrowLeft, CheckCircle, CheckCircle2 } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
-import { getCustomerName } from "@/lib/quote-helpers";
+import { getCustomerName, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -118,9 +118,10 @@ export default function QuoteDetailPage() {
     );
   }
 
-  const isIncomplete = quote.status === "INCOMPLETE";
+  const effectiveStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
+  const isIncomplete = effectiveStatus === "INCOMPLETE";
   const isArchived = quote.is_archived;
-  const canDownloadPDF = (quote.status === "FINALIZED" || quote.status === "SENT");
+  const canDownloadPDF = (effectiveStatus === "FINALIZED" || effectiveStatus === "SENT");
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -161,7 +162,7 @@ export default function QuoteDetailPage() {
             <h1 className="text-2xl font-bold text-slate-900">
               {quote.quote_number}
             </h1>
-            <QuoteStatusBadge status={quote.status} size="default" />
+            <QuoteStatusBadge status={effectiveStatus} size="default" />
             {isArchived && <span className="px-2 py-1 text-xs font-semibold bg-gray-100 text-gray-600 rounded">ARCHIVED</span>}
           </div>
           <p className="text-sm text-slate-500">
@@ -174,7 +175,7 @@ export default function QuoteDetailPage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Only show Back to Edit for editable quotes */}
-          {(!isArchived && (quote.status === "DRAFT" || quote.status === "INCOMPLETE")) && (
+          {(!isArchived && (effectiveStatus === "DRAFT" || effectiveStatus === "INCOMPLETE")) && (
             <Button
               variant="outline"
               onClick={() => {
@@ -199,6 +200,7 @@ export default function QuoteDetailPage() {
           <QuoteStatusActions
             quoteId={quote.id}
             status={quote.status}
+            validUntil={quote.valid_until}
             hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
             onStatusChange={() => {
               getQuoteV3(id).then((data) => setQuote(data));
@@ -327,15 +329,24 @@ export default function QuoteDetailPage() {
                 variant="outline"
                 className="hidden sm:flex"
                 disabled={pdfDownloading}
-                onClick={async () => {
-                  setPdfDownloading(true);
-                  try {
-                    await downloadQuotePDF(quote.id, quote.quote_number);
-                  } catch (err) {
-                    console.error("PDF download failed:", err);
-                    alert(err instanceof Error ? err.message : "Failed to download PDF");
-                  } finally {
-                    setPdfDownloading(false);
+                  onClick={async () => {
+                    setPdfDownloading(true);
+                    try {
+                      await downloadQuotePDF(quote.id, quote.quote_number);
+                      if (quote.status?.toUpperCase?.() === "FINALIZED") {
+                        const sendResult = await transitionQuoteStatus(quote.id, "send");
+                        if (sendResult.success) {
+                          const refreshed = await getQuoteV3(id);
+                          setQuote(refreshed);
+                        } else {
+                          console.error("Auto-send failed:", sendResult.error);
+                        }
+                      }
+                    } catch (err) {
+                      console.error("PDF download failed:", err);
+                      alert(err instanceof Error ? err.message : "Failed to download PDF");
+                    } finally {
+                      setPdfDownloading(false);
                   }
                 }}
               >
@@ -350,15 +361,16 @@ export default function QuoteDetailPage() {
               </Button>
             )}
             {/* Only show finalize button for DRAFT quotes, handled by QuoteStatusActions above */}
-            {quote.status === "FINALIZED" || quote.status === "SENT" ? (
+            {effectiveStatus === "FINALIZED" || effectiveStatus === "SENT" || effectiveStatus === "EXPIRED" ? (
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <CheckCircle className="h-4 w-4 text-emerald-600" />
-                <span>Quote {quote.status.toLowerCase()}</span>
+                <span>Quote {effectiveStatus.toLowerCase()}</span>
               </div>
-            ) : quote.status === "DRAFT" ? (
+            ) : effectiveStatus === "DRAFT" ? (
               <QuoteStatusActions
                 quoteId={quote.id}
                 status={quote.status}
+                validUntil={quote.valid_until}
                 hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
                 onStatusChange={() => {
                   getQuoteV3(id).then((data) => setQuote(data));

@@ -64,8 +64,27 @@ def _clean_text(text) -> str:
         return ""
     # Ensure it's a string
     text_str = str(text)
-    # Encode to latin-1, replacing errors with '?', then decode back to str
+    
+    # Replace common non-latin-1 chars
+    replacements = {
+        '\u2013': '-',  # en dash
+        '\u2014': '-',  # em dash
+        '\u2018': "'",  # left single quote
+        '\u2019': "'",  # right single quote
+        '\u201c': '"',  # left double quote
+        '\u201d': '"',  # right double quote
+        '\u2022': '-',  # bullet
+    }
+    
+    for char, replacement in replacements.items():
+        text_str = text_str.replace(char, replacement)
+        
+    # Encode to latin-1 and decode back, replacing errors
     return text_str.encode('latin-1', 'replace').decode('latin-1')
+
+
+
+
 
 
 
@@ -351,11 +370,15 @@ def _build_pricing_section(pdf: QuotePDF, quote, charge_buckets):
     
     # Table header
     pdf.set_fill_color(*pdf.light_gray)
+    # Draw background rectangle separately to cover full width (267mm)
+    pdf.rect(15, start_y + 9, 267, 6, 'F')
+    
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_text_color(*pdf.gray)
     pdf.set_xy(15, start_y + 9)
-    pdf.cell(200, 6, 'Charge Category', border=0, fill=True)
-    pdf.cell(67, 6, f'Subtotal ({quote.output_currency})', border=0, align='R', fill=True)
+    pdf.cell(200, 6, 'Charge Category', border=0, fill=False)
+    # 62 width ends at 277 (15+200+62), leaving 5mm padding inside the 282 boundary for text
+    pdf.cell(62, 6, f'Subtotal ({quote.output_currency})', border=0, align='R', fill=False)
     
     # Table rows
     pdf.set_draw_color(*pdf.light_border)
@@ -369,7 +392,8 @@ def _build_pricing_section(pdf: QuotePDF, quote, charge_buckets):
             pdf.set_xy(15, row_y)
             pdf.cell(200, 6, _clean_text(bucket['name']))
             pdf.set_font('Helvetica', '', 10)
-            pdf.cell(67, 6, format_currency_rounded(bucket['subtotal']), align='R')
+            # Match header alignment
+            pdf.cell(62, 6, format_currency(bucket['subtotal']), align='R')
             pdf.line(15, row_y + 6, 282, row_y + 6)
             row_y += 7
     
@@ -393,8 +417,8 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.set_line_width(0.3)
     pdf.rect(15, start_y, 267, 20, 'DF')
     
-    # Right-aligned totals
-    right_x = 275
+    # Right-aligned totals - align with pricing table (x=277)
+    right_x = 277
     
     # Total (Excl. GST)
     pdf.set_font('Helvetica', '', 9)
@@ -404,7 +428,7 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(230, start_y + 2)
-    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency_rounded(totals['sell_excl_gst'])}", align='R')
+    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency(totals['sell_excl_gst'])}", align='R')
     
     # GST
     pdf.set_font('Helvetica', '', 9)
@@ -414,10 +438,11 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(230, start_y + 7)
-    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency_rounded(totals['gst'])}", align='R')
+    pdf.cell(right_x - 230, 5, f"{quote.output_currency} {format_currency(totals['gst'])}", align='R')
     
     # Grand Total
     pdf.set_draw_color(*pdf.dark_blue)
+    # Line width 200 to right_x + 5 (282) covers the area
     pdf.line(200, start_y + 12, right_x + 5, start_y + 12)
     
     pdf.set_font('Helvetica', 'B', 10)
@@ -426,7 +451,7 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
     pdf.cell(50, 6, 'GRAND TOTAL:', align='R')
     pdf.set_font('Helvetica', 'B', 12)
     pdf.set_xy(230, start_y + 13)
-    pdf.cell(right_x - 230, 6, f"{quote.output_currency} {format_currency_rounded(totals['sell_incl_gst'])}", align='R')
+    pdf.cell(right_x - 230, 6, f"{quote.output_currency} {format_currency(totals['sell_incl_gst'])}", align='R')
     
     pdf.set_y(start_y + 24)
 
@@ -440,17 +465,14 @@ def _build_footer(pdf: QuotePDF, quote, version):
     pdf.set_line_width(0.3)
     pdf.line(15, start_y, 282, start_y)
     
-    # Public Quote Link - prominent at top of footer
+    # Public Quote Link - Clean text hyperlink
     public_url = build_public_quote_url(str(quote.id))
-    pdf.set_font('Helvetica', 'B', 8)
+    pdf.set_font('Helvetica', 'U', 9) # Underlined and slightly larger
     pdf.set_text_color(0, 102, 204)  # Blue link color
-    pdf.set_xy(15, start_y + 3)
-    pdf.cell(0, 4, 'View Full Itemized Breakdown:', link=public_url)
-    pdf.set_font('Helvetica', 'U', 7)  # Underlined
-    pdf.set_xy(15, start_y + 7)
-    # Truncate URL if too long for display
-    display_url = public_url if len(public_url) < 100 else public_url[:97] + '...'
-    pdf.cell(0, 4, display_url, link=public_url)
+    pdf.set_xy(15, start_y + 5)
+    
+    # Make the text itself the clickable link
+    pdf.cell(0, 5, '>> Click here to view Itemized Charge Breakdown <<', link=public_url)
     
     # Company contact (left, below link)
     pdf.set_font('Helvetica', 'B', 7)

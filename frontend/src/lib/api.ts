@@ -910,6 +910,33 @@ export async function cloneQuote(quoteId: string): Promise<CloneQuoteResponse> {
   return response.json();
 }
 
+// --- Quote Status Transitions ---
+
+export async function transitionQuoteStatus(
+  quoteId: string,
+  action: "finalize" | "send" | "cancel" | "mark_won" | "mark_lost" | "mark_expired"
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v3/quotes/${quoteId}/transition/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Token ${resolveAuthToken()}`
+      },
+      body: JSON.stringify({ action }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      return { success: false, error: data.detail || "Failed to update status" };
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Network error" };
+  }
+}
+
 // --- Quote PDF Export ---
 
 type QuotePDFOptions = {
@@ -1446,6 +1473,22 @@ export async function exportReportData(filters: ReportFilters = {}): Promise<Blo
   });
   if (!response.ok) throw new Error('Failed to export report data');
   return response.blob();
+}
+
+export async function getTier1Stats(start_date?: string, end_date?: string): Promise<import('./types').Tier1Stats> {
+  const params = new URLSearchParams();
+  if (start_date) params.append('start_date', start_date);
+  if (end_date) params.append('end_date', end_date);
+
+  const url = API_BASE_URL + `/api/v3/reports/tier1_customer_stats/${params.toString() ? '?' + params.toString() : ''}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch Tier-1 stats');
+  }
+  return response.json();
 }
 
 // =============================================================================

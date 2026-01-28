@@ -45,6 +45,19 @@ class CustomUser(AbstractUser):
         related_name='customuser_set',
         related_query_name='customuser',
     )
+    
+    DEPARTMENT_CHOICES = [
+        ('AIR', 'Air Freight'),
+        ('SEA', 'Sea Freight'),
+        ('LAND', 'Land Freight'),
+    ]
+    department = models.CharField(
+        max_length=10, 
+        choices=DEPARTMENT_CHOICES, 
+        null=True, 
+        blank=True,
+        help_text="Department assignment for visibility restrictions (e.g., Air vs Sea)."
+    )
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

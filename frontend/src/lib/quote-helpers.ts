@@ -65,6 +65,7 @@ export interface UnifiedQuote {
     customer: string;
     route: string;
     date: string; // ISO string
+    updatedAt?: string;
     expiry?: string | null; // ISO string
     weight: string;
     status: string;
@@ -77,6 +78,18 @@ export interface UnifiedQuote {
     scope?: string;
     createdBy?: string;
 }
+
+export const getEffectiveQuoteStatus = (status: string, validUntil?: string | null): string => {
+    const normalized = status?.toUpperCase?.() ?? "";
+    if (normalized !== "SENT" || !validUntil) {
+        return normalized || status;
+    }
+    const expiry = new Date(`${validUntil}T23:59:59`);
+    if (Number.isNaN(expiry.getTime())) {
+        return normalized;
+    }
+    return expiry.getTime() < Date.now() ? "EXPIRED" : normalized;
+};
 
 export const formatCurrency = (amountStr: string | undefined, currency: string | undefined) => {
     if (!amountStr || !currency) return "-";

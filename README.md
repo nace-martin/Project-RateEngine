@@ -9,22 +9,27 @@ RateEngine streamlines and automates air-freight quoting for freight forwarders.
 - **Styling**: Tailwind CSS
 - **Database**: PostgreSQL
 
-## V3 Architecture Overview
+## Architecture Overview
 
-The V3 rating core is a deterministic and auditable quoting process that replaces the monolithic `compute_quote` function with a series of pure functions.
+The project currently runs on the **Pricing V4 "Greenfield" Engine**. This architecture enforces a strict separation between Buy Rates (COGS) and Sell Rates to ensure commercial accuracy and auditability.
+
+For detailed documentation, see:
+- [**Pricing V4 Overview**](docs/pricing_v4_overview.md) (Active)
+- [**Pricing V3 Overview**](docs/pricing_v3_overview.md) (Legacy/Deprecated)
 
 ### Architecture Diagram
 
 ```mermaid
 graph TD
-    A[API Request /api/v3/quotes/compute] --> B{QUOTER_V3_ENABLED?}
-    B -- Yes --> C[compute_quote_v3 Orchestrator]
-    C --> D[normalize(QuoteContext)]
-    D --> E[rate_buy(NormalizedContext)]
-    E --> F[map_to_sell(BuyResult)]
-    F --> G[tax_fx_round(SellResult)]
-    G --> H[Totals Response]
-    B -- No --> I[Return 404 Not Found]
+    A[API Request /api/v4/quotes/compute] --> B[Quote Orchestrator]
+    B --> C{Determine Scope}
+    C -- Import/Export --> D[International Engine]
+    C -- Domestic --> E[Domestic Engine]
+    D --> F[Resolve COGS (Buy Rates)]
+    D --> G[Resolve Sell Rates]
+    F --> H[Apply Margins & Strategy]
+    G --> H
+    H --> I[Final Quote Response]
 ```
 
 ## Getting Started
@@ -85,30 +90,29 @@ To run locally, use two terminals.
 The API uses token-based authentication. Obtain a token by sending a POST request to `/api/auth/login/`:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/auth/login/ \\
-  -H "Content-Type: application/json" \\
+curl -X POST http://127.0.0.1:8000/api/auth/login/ \
+  -H "Content-Type: application/json" \
   -d '{"username":"sales_user","password":"sales_password"}'
 ```
 
-### V3 Quote Computation
+### Quote Computation
 
-To compute a quote using the V3 engine, send a POST request to `/api/v3/quotes/compute/`:
+To compute a quote, send a POST request to `/api/v4/quotes/compute/`:
 
 ```bash
-curl -X POST http://localhost:8000/api/v3/quotes/compute/ \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Token YOUR_TOKEN" \\
-  -d \\
+curl -X POST http://localhost:8000/api/v4/quotes/compute/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Token YOUR_TOKEN" \
+  -d \
   '{
     "mode": "AIR",
-    "origin_airport": 1,
-    "destination_airport": 2,
+    "origin_airport": "POM",
+    "destination_airport": "LAE",
     "incoterm": "FOB",
     "payment_term": "PREPAID",
     "is_dangerous_goods": false,
-    "dimensions": [{"weight_kg": 81}],
-    "customer_id": "c7a8b9c0-d1e2-f3a4-b5c6-d7e8f9a0b1c2",
-    "contact_id": "c7a8b9c0-d1e2-f3a4-b5c6-d7e8f9a0b1c2"
+    "items": [{"weight_kg": 50}],
+    "customer_id": "c7a8b9c0-d1e2-f3a4-b5c6-d7e8f9a0b1c2"
   }'
 ```
 

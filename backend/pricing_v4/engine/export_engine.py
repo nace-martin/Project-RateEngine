@@ -117,6 +117,7 @@ class ExportPricingEngine:
         Returns:
             List of ProductCode IDs to quote
         """
+
         if service_scope == 'A2A':
             service_scope = 'P2P'
 
@@ -129,19 +130,18 @@ class ExportPricingEngine:
             1030,  # EXP-TERM - Terminal Handling
             1031,  # EXP-BUILDUP - Build-Up
             1040,  # EXP-SCREEN - Security Screening
+            1050,  # EXP-PICKUP - Pickup/Collection (Requested to be always applied)
+            1060,  # EXP-FSC-PICKUP - Fuel Surcharge on Pickup (Requested to be always applied)
         ]
         
         # Origin Pickup (D2A, D2D)
         if service_scope in ('D2A', 'D2D'):
-            codes.append(1050)  # EXP-PICKUP - Pickup/Collection
-            codes.append(1060)  # EXP-FSC-PICKUP - Fuel Surcharge on Pickup
             codes.append(1020)  # EXP-CLEAR - Customs Clearance (Origin)
         
         # Destination Charges (D2D, A2D)
         if service_scope in ('D2D', 'A2D'):
             codes.append(1080)  # EXP-CLEAR-DEST
             codes.append(1081)  # EXP-DELIVERY-DEST
-        
         # Conditional charges
         if is_dg:
             codes.append(1070)  # EXP-DG - DG Acceptance

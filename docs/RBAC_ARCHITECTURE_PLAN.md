@@ -1,7 +1,17 @@
 # Role-Based Access Control (RBAC) Architecture Plan
 
 ## Overview
-This document outlines the architecture and implementation plan for Role-Based Access Control (RBAC) in the RateEngine application. The RBAC system will implement three distinct user roles with different levels of access to application features and data.
+This document outlines the architecture and implementation plan for Role-Based Access Control (RBAC) in the RateEngine application. The RBAC system implements three distinct user roles (Sales, Manager, Finance) and a Departmental structure (Air/Sea) to control data visibility.
+
+## Core Concepts
+
+### 1. Departments
+Users are assigned to a specific department:
+- **AIR**: Air Freight
+- **SEA**: Sea Freight
+- **LAND**: Land Freight (Future)
+
+**Visibility Rule**: Managers only see quotes created by Sales users within their own department. Admins/Superusers see all.
 
 ## User Roles
 
@@ -16,13 +26,14 @@ This document outlines the architecture and implementation plan for Role-Based A
 ### 2. Manager Role
 - **Permissions:**
   - All Sales permissions
+  - **Departmental Scoping**: Can only view quotes from their own department (e.g., Air Manager sees Air quotes).
   - Can view COGS (cost of goods sold)
   - Can access system settings (read-only)
   - Can approve quotes
 
 ### 3. Finance Role
 - **Permissions:**
-  - All Manager permissions
+  - All Manager permissions (Global visibility, not scoped by department)
   - Can modify system settings
   - Can change FX, CAF, and margin rules
   - Full access to all financial data
@@ -31,6 +42,7 @@ This document outlines the architecture and implementation plan for Role-Based A
 
 ### 1. User Model Extension
 - Extend the existing `CustomUser` model to include a `role` field
+- Includes `department` field (CHOICES: AIR, SEA, LAND)
 - Use Django's built-in `AbstractUser` as the base
 - Define role choices as constants
 
@@ -139,3 +151,4 @@ graph TD
     A -->|Full Access| D[All Features]
     B -->|Read COGS + Settings| E[Limited Features]
     C -->|Sell Only| F[Restricted Features]
+```

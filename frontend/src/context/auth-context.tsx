@@ -26,15 +26,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('authToken');
-    const role = localStorage.getItem('userRole');
-    const username = localStorage.getItem('username');
+    console.log('AuthProvider mounted');
+    try {
+      const storedToken = localStorage.getItem('authToken');
+      const role = localStorage.getItem('userRole');
+      const username = localStorage.getItem('username');
 
-    if (storedToken && role && username) {
-      setUser({ username, role });
-      setToken(storedToken);
+      if (storedToken && role && username) {
+        console.log('Restoring session for:', username);
+        setUser({ username, role });
+        setToken(storedToken);
+      } else {
+        console.log('No session found');
+      }
+    } catch (e) {
+      console.error('Error in AuthProvider effect:', e);
+    } finally {
+      console.log('Setting loading to false');
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   const login = (newToken: string, role: string, username: string) => {

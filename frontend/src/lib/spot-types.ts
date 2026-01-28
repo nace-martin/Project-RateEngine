@@ -167,6 +167,7 @@ export interface SpotPricingEnvelope {
     spot_trigger_reason_code: string;
     spot_trigger_reason_text: string;
     created_at: string;
+    updated_at?: string;
     expires_at: string;
     is_expired: boolean;
     context_integrity_valid?: boolean;

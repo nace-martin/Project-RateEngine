@@ -223,6 +223,7 @@ export interface V3QuoteComputeResponse {
   is_archived?: boolean;
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
+  updated_at?: string; // ISO date string
   created_by?: string | null; // Assigned Agent (Sales Rep)
   rate_provider?: string | null; // Agent who provided rates
   latest_version: V3QuoteVersion;
@@ -366,6 +367,8 @@ export interface SpotChargesBucketTotals {
   margin_rate: string;
 }
 
+
+
 export interface SpotChargesCalculateResponse {
   chargeable_weight: string;
   quoting_currency: string;
@@ -380,5 +383,16 @@ export interface SpotChargesCalculateResponse {
     destination_sell_pgk: string;
     grand_total_pgk: string;
     grand_total_fcy: string | null;
+  };
+}
+
+export interface Tier1Stats {
+  active_customers: number;
+  repeat_customers_pct: number;
+  top_customers: { name: string; value: number }[];
+  dormant_customers: {
+    '30d': number;
+    '60d': number;
+    '90d': number;
   };
 }

@@ -1,0 +1,172 @@
+--- Inspecting Export Service Rules ---
+
+Rule ID: e9464576-beee-4648-acc6-8ba2353a0236 | Mode: AIR | Scope: D2A | Incoterm: CPT
+  - DST-HANDL-STD: DST-HANDL-STD
+  - DST-TERM-INTL: DST-TERM-INTL
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP: Agency Fee (Export)
+  - CLEAR_EXP: Customs Clearance (Export)
+  - DOC_EXP_AWB: International Export AWB Fee (AWB)
+  - DOC_EXP_BIC: International Export Documentation Fee (BIC)
+  - FUEL_SURCHARGE_EXP: Fuel Surcharge (Export)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP: Pick-Up Fee (PICKUP)
+  - PICKUP_EXP: Pick up Fee (Export)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+Rule ID: 8573b33b-c955-4330-b5bd-6d39396f48e7 | Mode: AIR | Scope: D2D | Incoterm: CPT
+  - DST-DELIV-FUEL: DST-DELIV-FUEL
+  - DST-DELIV-STD: DST-DELIV-STD
+  - DST-HANDL-STD: DST-HANDL-STD
+  - DST-TERM-INTL: DST-TERM-INTL
+  - PICKUP_FUEL_DST: Destination Pickup Fuel Surcharge
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP: Agency Fee (Export)
+  - CLEAR_EXP: Customs Clearance (Export)
+  - DOC_EXP_AWB: International Export AWB Fee (AWB)
+  - DOC_EXP_BIC: International Export Documentation Fee (BIC)
+  - FUEL_SURCHARGE_EXP: Fuel Surcharge (Export)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP_EXP: Pick up Fee (Export)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+Rule ID: 3cd163e9-3716-45c6-9843-187364b97ebd | Mode: AIR | Scope: D2D | Incoterm: DAP
+  - DST-AGENCY-IMP: DST-AGENCY-IMP
+  - DST-CLEAR-CUS: DST-CLEAR-CUS
+  - DST-DELIV-FUEL: DST-DELIV-FUEL
+  - DST-DELIV-STD: DST-DELIV-STD
+  - DST-DOC-IMP: DST-DOC-IMP
+  - DST-HANDL-STD: DST-HANDL-STD
+  - DST-TERM-INTL: DST-TERM-INTL
+  - PICKUP_FUEL_DST: Destination Pickup Fuel Surcharge
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP_SELL: Agency Fee (Export Sell)
+  - AWB_FEE_SELL: Air Waybill Fee (Export Sell)
+  - CLEARANCE_SELL: Customs Clearance (Export Sell)
+  - CUSTOMS_ENTRY: Customs Entry
+  - DOC_EXP_SELL: Documentation Fee (Export Sell)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - PICKUP_SELL: Pick up Fee (Export Sell)
+  - SECURITY_SELL: Security Surcharge Fee (Export Sell)
+
+Rule ID: 8406332b-5581-49a8-912c-1d8f2858c141 | Mode: AIR | Scope: D2D | Incoterm: DDP
+  - DST-AGENCY-IMP: DST-AGENCY-IMP
+  - DST-CLEAR-CUS: DST-CLEAR-CUS
+  - DST-DELIV-FUEL: DST-DELIV-FUEL
+  - DST-DELIV-STD: DST-DELIV-STD
+  - DST-DOC-IMP: DST-DOC-IMP
+  - DST-HANDL-STD: DST-HANDL-STD
+  - DST-TERM-INTL: DST-TERM-INTL
+  - PICKUP_FUEL_DST: Destination Pickup Fuel Surcharge
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP: Agency Fee (Export)
+  - CLEAR_EXP: Customs Clearance (Export)
+  - DOC_EXP_AWB: International Export AWB Fee (AWB)
+  - DOC_EXP_BIC: International Export Documentation Fee (BIC)
+  - FUEL_SURCHARGE_EXP: Fuel Surcharge (Export)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP_EXP: Pick up Fee (Export)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+Rule ID: 3924fc3a-6c95-4613-93cd-a12f77e901a5 | Mode: AIR | Scope: D2A | Incoterm: EXW
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP_SELL: Agency Fee (Export Sell)
+  - AWB_FEE_SELL: Air Waybill Fee (Export Sell)
+  - CLEARANCE_SELL: Customs Clearance (Export Sell)
+  - DOC_EXP_SELL: Documentation Fee (Export Sell)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP: Pick-Up Fee (PICKUP)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+Rule ID: 3d8a72e2-efd6-4c8e-8e6c-8f8c769d37f3 | Mode: AIR | Scope: D2A | Incoterm: EXW
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP_SELL: Agency Fee (Export Sell)
+  - AWB_FEE_SELL: Air Waybill Fee (Export Sell)
+  - CLEARANCE_SELL: Customs Clearance (Export Sell)
+  - DOC_EXP_SELL: Documentation Fee (Export Sell)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP: Pick-Up Fee (PICKUP)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+Rule ID: 017202cf-7a3b-42b0-8ae9-64b9e69ebc1f | Mode: AIR | Scope: D2D | Incoterm: EXW
+  - DST-AGENCY-IMP: DST-AGENCY-IMP
+  - DST-CLEAR-CUS: DST-CLEAR-CUS
+  - DST-DELIV-FUEL: DST-DELIV-FUEL
+  - DST-DELIV-STD: DST-DELIV-STD
+  - DST-DOC-IMP: DST-DOC-IMP
+  - DST-HANDL-STD: DST-HANDL-STD
+  - DST-TERM-INTL: DST-TERM-INTL
+  - PICKUP_FUEL_DST: Destination Pickup Fuel Surcharge
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP_SELL: Agency Fee (Export Sell)
+  - AWB_FEE_SELL: Air Waybill Fee (Export Sell)
+  - CLEARANCE_SELL: Customs Clearance (Export Sell)
+  - CUSTOMS_ENTRY: Customs Entry
+  - DOC_EXP_SELL: Documentation Fee (Export Sell)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - PICKUP_SELL: Pick up Fee (Export Sell)
+  - SECURITY_SELL: Security Surcharge Fee (Export Sell)
+
+Rule ID: 1a5ebe75-029d-4d62-8d0c-bf69a99cffd4 | Mode: AIR | Scope: D2A | Incoterm: FCA
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP_SELL: Agency Fee (Export Sell)
+  - AWB_FEE_SELL: Air Waybill Fee (Export Sell)
+  - CLEARANCE_SELL: Customs Clearance (Export Sell)
+  - DOC_EXP_SELL: Documentation Fee (Export Sell)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP: Pick-Up Fee (PICKUP)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+Rule ID: 49734629-bb3b-42cf-8e1a-01053a0e8f34 | Mode: AIR | Scope: D2A | Incoterm: FCA
+  - FRT_AIR_EXP: Air Freight (Export Sell Rate)
+  - AGENCY_EXP_SELL: Agency Fee (Export Sell)
+  - AWB_FEE_SELL: Air Waybill Fee (Export Sell)
+  - CLEARANCE_SELL: Customs Clearance (Export Sell)
+  - DOC_EXP_SELL: Documentation Fee (Export Sell)
+  - HND_EXP_BPC: International Export Build-Up Fee (BPC)
+  - HND_EXP_BSC: International Export Terminal Fee (BSC)
+  - PICKUP: Pick-Up Fee (PICKUP)
+  - PICKUP_FUEL_ORG: Origin Pickup Fuel Surcharge
+  - SEC_EXP_MXC: International Export Security Surcharge Fee (MXC)
+
+--- Inspecting Pickup Components ---
+Component: PICKUP_FUEL_DST - Destination Pickup Fuel Surcharge
+Component: DOM-PICKUP - Pickup / Collection
+Component: EXP-FSC-PICKUP - Export Fuel Surcharge on Pickup
+Component: EXP-PICKUP - Export Pickup/Collection
+Component: IMP-FSC-PICKUP - Pick-Up Fuel Surcharge (V4)
+Component: IMP-PICKUP - Pick-Up Fee (Origin)
+Component: PICKUP - Pick-Up Fee (PICKUP)
+Component: PICKUP_EXP - Pick up Fee (Export)
+Component: PICKUP_FUEL - Pick-Up Fuel Surcharge
+Component: PICKUP_FUEL_ORG - Origin Pickup Fuel Surcharge
+Component: PICKUP_SELL - Pick up Fee (Export Sell)
+Component: PKUP_ORG - Origin Pickup / Cartage
+Component: PUF_BNE - Pick-Up Fuel Surcharge (BNE)
+Component: PUP_BNE - Pick-Up Fee
+
+--- Inspecting Fuel Surcharge Components ---
+Component: CARTAGE_FUEL - Cartage Fuel Surcharge
+Component: DST-DELIV-FUEL - DST-DELIV-FUEL
+Component: IMP-FSC-CARTAGE-DEST - Cartage Fuel Surcharge (V4)
+Component: PICKUP_FUEL_DST - Destination Pickup Fuel Surcharge
+Component: FUEL_SUR - Fuel & Security Surcharge
+Component: DOM-FSC - Fuel Surcharge
+Component: EXP-FSC-PICKUP - Export Fuel Surcharge on Pickup
+Component: FUEL_SURCHARGE_EXP - Fuel Surcharge (Export)
+Component: IMP-FSC-PICKUP - Pick-Up Fuel Surcharge (V4)
+Component: PICKUP_FUEL - Pick-Up Fuel Surcharge
+Component: PICKUP_FUEL_ORG - Origin Pickup Fuel Surcharge
+Component: PUF_BNE - Pick-Up Fuel Surcharge (BNE)

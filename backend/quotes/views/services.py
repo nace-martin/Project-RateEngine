@@ -19,6 +19,7 @@ from quotes.models import Quote
 
 # RBAC permissions
 from accounts.permissions import CanUseAIIntake, QuoteAccessPermission
+from quotes.selectors import get_quote_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,7 @@ class AIRateIntakeAPIView(APIView):
         # Local import to avoid circular dependency loop if service uses models that use views (unlikely but safe)
         from quotes.ai_intake_service import parse_rate_quote_text, parse_pdf_rate_quote
         
-        quote = get_object_or_404(Quote, id=quote_id)
+        quote = get_quote_for_user(request.user, quote_id)
         
         # Build context for AI analysis
         context = {
@@ -361,7 +362,8 @@ class QuotePDFAPIView(APIView):
         from quotes.pdf_service import generate_quote_pdf, QuotePDFGenerationError
         
         # Get quote to validate access and get quote number
-        quote = get_object_or_404(Quote, id=quote_id)
+        # SECURITY FIX: Enforce IDOR protection
+        quote = get_quote_for_user(request.user, quote_id)
         
         try:
             # Optional: Allow specifying version number via query param

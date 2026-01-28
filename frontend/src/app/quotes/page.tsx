@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
-import { getQuotesV3, listSpotEnvelopes } from "@/lib/api";
+import ProtectedRoute from "@/components/protected-route";
+import { getQuotesV3, listSpotEnvelopes, transitionQuoteStatus } from "@/lib/api";
 import { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 import { QuoteQuickLook } from "@/components/QuoteQuickLook";
 
-import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal } from "@/lib/quote-helpers";
+import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 
 // --- Main Component ---
 
@@ -39,27 +40,42 @@ export default function QuotesPage() {
   // Raw Data
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [spotDrafts, setSpotDrafts] = useState<SpotPricingEnvelope[]>([]);
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (user) {
-      const fetchData = async () => {
-        setLoading(true);
-        try {
-          const [quotesData, draftsData] = await Promise.all([
-            getQuotesV3({}), // Fetch all, handle filtering client-side for now for unified search
-            listSpotEnvelopes('draft').catch(() => []),
-          ]);
-          setQuotes(quotesData.results);
-          setSpotDrafts(draftsData);
-        } catch (err) {
-          console.error("Failed to fetch quotes", err);
-        } finally {
-          setLoading(false);
-        }
-      };
-      fetchData();
+  const fetchData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [quotesData, draftsData] = await Promise.all([
+        getQuotesV3({}), // Fetch all, handle filtering client-side for now for unified search
+        listSpotEnvelopes('draft').catch(() => []),
+      ]);
+      setQuotes(quotesData.results);
+      setSpotDrafts(draftsData);
+    } catch (err) {
+      console.error("Failed to fetch quotes", err);
+    } finally {
+      setLoading(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleStatusUpdate = async (item: UnifiedQuote, action: "mark_won" | "mark_lost") => {
+    if (item.type !== "STANDARD") return;
+    setStatusUpdatingId(item.id);
+    try {
+      const result = await transitionQuoteStatus(item.id, action);
+      if (!result.success) {
+        console.error("Failed to update status:", result.error);
+      }
+      await fetchData();
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
 
   // specific status badges for spot drafts
   const getStatusBadge = (item: UnifiedQuote) => {
@@ -85,10 +101,11 @@ export default function QuotesPage() {
         customer: getCustomerName(q.customer),
         route: `${formatRoute(q.origin_location)} → ${formatRoute(q.destination_location)}`,
         date: q.created_at,
+        updatedAt: q.updated_at,
         expiry: q.valid_until, // Standard quotes have valid_until field
         weight: getWeight(q),
         status: q.status,
-        rawStatus: q.status,
+        rawStatus: getEffectiveQuoteStatus(q.status, q.valid_until),
         total: formatCurrency(totalAmt, currency),
         actionLink: `/quotes/${q.id}`,
         mode: q.mode || "AIR",
@@ -111,6 +128,7 @@ export default function QuotesPage() {
         customer: d.customer_name || "Spot Request",
         route: `${formatRoute(d.shipment.origin_code)} → ${formatRoute(d.shipment.destination_code)}`,
         date: d.created_at,
+        updatedAt: d.updated_at,
         expiry: d.expires_at,
         weight: `${d.shipment.total_weight_kg} kg`,
         status: "Draft",
@@ -157,6 +175,13 @@ export default function QuotesPage() {
         // 2. Draft/Incomplete must NOT display expiry.
         const isFinalized = ["FINALIZED", "SENT", "ACCEPTED"].includes(item.rawStatus);
         const showExpiry = isFinalized && item.expiry;
+        const createdTime = new Date(item.date).getTime();
+        const updatedTime = item.updatedAt ? new Date(item.updatedAt).getTime() : null;
+        const showUpdated =
+          updatedTime !== null &&
+          !Number.isNaN(updatedTime) &&
+          !Number.isNaN(createdTime) &&
+          updatedTime !== createdTime;
 
         return (
           <div className="flex flex-col">
@@ -164,6 +189,11 @@ export default function QuotesPage() {
             {showExpiry && (
               <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
                 <span className="text-slate-400">Exp:</span> {formatDate(item.expiry as string)}
+              </span>
+            )}
+            {showUpdated && (
+              <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                <span className="text-slate-400">Last activity:</span> {formatDate(item.updatedAt as string)}
               </span>
             )}
           </div>
@@ -194,7 +224,31 @@ export default function QuotesPage() {
     },
     {
       header: "Status",
-      cell: (item: UnifiedQuote) => getStatusBadge(item),
+      cell: (item: UnifiedQuote) => (
+        <div className="flex items-center gap-2">
+          {getStatusBadge(item)}
+          {item.type === "STANDARD" && item.rawStatus === "SENT" && (
+            <select
+              defaultValue=""
+              disabled={statusUpdatingId === item.id}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              onChange={async (e) => {
+                const action = e.target.value as "mark_won" | "mark_lost" | "";
+                if (!action) return;
+                await handleStatusUpdate(item, action);
+                e.target.value = "";
+              }}
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="" disabled>Update</option>
+              <option value="mark_won">Won</option>
+              <option value="mark_lost">Lost</option>
+            </select>
+          )}
+        </div>
+      ),
       className: "w-[120px]",
     },
     {
@@ -226,10 +280,9 @@ export default function QuotesPage() {
     }
   ];
 
-  if (!user) return null;
-
   return (
-    <StandardPageContainer>
+    <ProtectedRoute>
+      <StandardPageContainer>
       <PageHeader
         title={isFinance ? "Quotes Register" : "Quotes Dashboard"}
         description="Manage and track all logistics quotes."
@@ -266,7 +319,7 @@ export default function QuotesPage() {
             <option value="all">All Statuses</option>
             <option value="DRAFT">Draft</option>
             <option value="FINALIZED">Finalized</option>
-            <option value="SENT">Sent</option>
+            <option value="SENT">Pending</option>
             <option value="ACCEPTED">Accepted (Won)</option>
             <option value="LOST">Lost</option>
             <option value="EXPIRED">Expired</option>
@@ -314,6 +367,7 @@ export default function QuotesPage() {
         onOpenChange={setIsQuickLookOpen}
         quote={selectedQuote}
       />
-    </StandardPageContainer>
+      </StandardPageContainer>
+    </ProtectedRoute>
   );
 }

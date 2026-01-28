@@ -27,6 +27,11 @@ import { useState } from 'react';
 
 export default function AppHeader() {
   const pathname = usePathname();
+
+  // Hide header on login page
+  if (pathname === '/login') {
+    return null;
+  }
   const router = useRouter();
   const { user, logout } = useAuth();
   const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
@@ -59,6 +64,11 @@ export default function AppHeader() {
   // Settings
   if (canEditFXRates) {
     moreItems.push({ href: '/settings', label: 'Settings', icon: Settings });
+  }
+
+  // User Management (Manager/Admin only)
+  if (isManager || isAdmin) {
+    moreItems.push({ href: '/settings/users', label: 'Users', icon: Users });
   }
 
   // Role badge styling

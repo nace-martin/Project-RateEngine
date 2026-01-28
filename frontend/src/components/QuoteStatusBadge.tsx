@@ -14,10 +14,11 @@ import {
     DialogTrigger,
     DialogClose,
 } from "@/components/ui/dialog";
-import { Loader2, Lock, Send, CheckCircle, Copy, XCircle, Trophy, Ban, Clock } from "lucide-react";
+import { Loader2, Lock, Send, CheckCircle, Copy, XCircle, Trophy, Ban } from "lucide-react";
 import { cloneQuote } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
 import { useToast } from "@/context/toast-context";
+import { getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 
 // Status color configuration
 const STATUS_CONFIG: Record<string, {
@@ -45,7 +46,7 @@ const STATUS_CONFIG: Record<string, {
         borderColor: "border-emerald-700",
     },
     SENT: {
-        label: "Sent",
+        label: "Pending",
         bgColor: "bg-blue-600",
         textColor: "text-white",
         borderColor: "border-blue-700",
@@ -77,7 +78,8 @@ interface QuoteStatusBadgeProps {
 }
 
 export function QuoteStatusBadge({ status, size = "default" }: QuoteStatusBadgeProps) {
-    const config = STATUS_CONFIG[status] || {
+    const normalizedStatus = status?.toUpperCase?.() ?? "";
+    const config = STATUS_CONFIG[normalizedStatus] || {
         label: status,
         bgColor: "bg-gray-100",
         textColor: "text-gray-600",
@@ -133,6 +135,7 @@ async function transitionQuoteStatus(quoteId: string, action: "finalize" | "send
 interface QuoteStatusActionsProps {
     quoteId: string;
     status: string;
+    validUntil?: string | null;
     hasMissingRates?: boolean;
     onStatusChange?: () => void;
 }
@@ -140,18 +143,22 @@ interface QuoteStatusActionsProps {
 export function QuoteStatusActions({
     quoteId,
     status,
+    validUntil,
     hasMissingRates = false,
     onStatusChange
 }: QuoteStatusActionsProps) {
+    const normalizedStatus = status?.toUpperCase?.() ?? "";
+    const effectiveStatus = getEffectiveQuoteStatus(normalizedStatus, validUntil);
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [cloning, setCloning] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [dialogOpen, setDialogOpen] = useState(false);
+    const [sendDialogOpen, setSendDialogOpen] = useState(false);
     const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
     const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
     const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
-    const [pendingOutcome, setPendingOutcome] = useState<"mark_won" | "mark_lost" | "mark_expired" | null>(null);
+    const [pendingOutcome, setPendingOutcome] = useState<"mark_won" | "mark_lost" | null>(null);
 
     const { toast } = useToast();
 
@@ -163,6 +170,7 @@ export function QuoteStatusActions({
 
         if (result.success) {
             setDialogOpen(false);
+            setSendDialogOpen(false);
             setCancelDialogOpen(false);
             setOutcomeDialogOpen(false);
             onStatusChange?.();
@@ -212,10 +220,10 @@ export function QuoteStatusActions({
     };
 
     // FINALIZED and SENT quotes can be cloned
-    const canClone = status === "FINALIZED" || status === "SENT";
+    const canClone = effectiveStatus === "FINALIZED" || effectiveStatus === "SENT" || effectiveStatus === "EXPIRED";
 
     // Terminal states that show only Clone button
-    if (status === "SENT" || status === "ACCEPTED" || status === "LOST" || status === "EXPIRED") {
+    if (effectiveStatus === "ACCEPTED" || effectiveStatus === "LOST" || effectiveStatus === "EXPIRED") {
         return (
             <div className="flex items-center gap-3">
                 {error && (
@@ -262,14 +270,14 @@ export function QuoteStatusActions({
                 )}
                 <div className="flex items-center gap-2 text-sm text-slate-400">
                     <Lock className="h-4 w-4" />
-                    <span>Quote is {status.toLowerCase()}</span>
+                    <span>Quote is {effectiveStatus.toLowerCase()}</span>
                 </div>
             </div>
         );
     }
 
     // INCOMPLETE quotes need to be completed first
-    if (status === "INCOMPLETE") {
+    if (effectiveStatus === "INCOMPLETE") {
         return (
             <div className="text-sm text-slate-400">
                 Complete all required rates to finalize
@@ -284,7 +292,7 @@ export function QuoteStatusActions({
             )}
 
             {/* DRAFT → FINALIZED + Cancel */}
-            {status === "DRAFT" && (
+            {effectiveStatus === "DRAFT" && (
                 <>
                     {/* Cancel Quote Button */}
                     <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
@@ -366,8 +374,50 @@ export function QuoteStatusActions({
                 </>
             )}
 
-            {/* SENT → Won/Lost/Expired */}
-            {status === "SENT" && (
+            {/* FINALIZED → SENT */}
+            {effectiveStatus === "FINALIZED" && (
+                <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
+                    <DialogTrigger asChild>
+                        <Button
+                            variant="default"
+                            size="sm"
+                            disabled={loading}
+                            className="bg-blue-600 hover:bg-blue-700"
+                        >
+                            {loading ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Send className="mr-2 h-4 w-4" />
+                            )}
+                            Send Quote
+                        </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Mark this quote as sent?</DialogTitle>
+                            <DialogDescription>
+                                This will update the quote status to SENT so you can record outcomes.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter>
+                            <DialogClose asChild>
+                                <Button variant="outline">Cancel</Button>
+                            </DialogClose>
+                            <Button
+                                onClick={() => handleTransition("send")}
+                                disabled={loading}
+                                className="bg-blue-600 hover:bg-blue-700"
+                            >
+                                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Mark as Sent
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+
+            {/* SENT → Won/Lost */}
+            {effectiveStatus === "SENT" && (
                 <>
                     {/* Clone Button */}
                     <Dialog open={cloneDialogOpen} onOpenChange={setCloneDialogOpen}>
@@ -437,32 +487,17 @@ export function QuoteStatusActions({
                                     <Ban className="mr-2 h-4 w-4" />
                                     Lost
                                 </Button>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={loading}
-                                    className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                                    onClick={() => {
-                                        setPendingOutcome("mark_expired");
-                                        setOutcomeDialogOpen(true);
-                                    }}
-                                >
-                                    <Clock className="mr-2 h-4 w-4" />
-                                    Expired
-                                </Button>
                             </div>
                         </DialogTrigger>
                         <DialogContent>
                             <DialogHeader>
                                 <DialogTitle>
-                                    Mark quote as {pendingOutcome === 'mark_won' ? 'Won' : (pendingOutcome === 'mark_lost' ? 'Lost' : 'Expired')}?
+                                    Mark quote as {pendingOutcome === 'mark_won' ? 'Won' : 'Lost'}?
                                 </DialogTitle>
                                 <DialogDescription>
                                     {pendingOutcome === 'mark_won'
                                         ? "Great! Marking this quote as ACCEPTED. This will be recorded in your win count."
-                                        : (pendingOutcome === 'mark_lost'
-                                            ? "Marking this quote as LOST. You can still clone it later if the customer returns."
-                                            : "Marking this quote as EXPIRED. This indicates the validity period has passed.")
+                                        : "Marking this quote as LOST. You can still clone it later if the customer returns."
                                     }
                                 </DialogDescription>
                             </DialogHeader>

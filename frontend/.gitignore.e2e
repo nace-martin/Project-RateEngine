@@ -1,0 +1,5 @@
+# E2E Test Artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+e2e/screenshots/

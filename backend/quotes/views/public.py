@@ -178,7 +178,7 @@ class QuotePublicDetailAPIView(APIView):
             'valid_until': quote.valid_until.isoformat() if quote.valid_until else None,
             'customer': {
                 'name': quote.customer.name if quote.customer else 'Customer',
-                'contact': quote.contact.name if quote.contact else None,
+                'contact': f"{quote.contact.first_name} {quote.contact.last_name}".strip() if quote.contact else None,
             },
             'shipment': {
                 'mode': quote.mode,

@@ -11,12 +11,14 @@ export default function RootPage() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.replace("/dashboard");
+        // Use window.location for robust redirection from root
+        window.location.href = "/dashboard";
       } else {
-        router.replace("/login");
+        window.location.href = "/login";
       }
     }
   }, [user, loading, router]);
 
-  return null;
+  if (loading) return null;
+  return null; // Will redirect via window.location
 }

@@ -1,0 +1,70 @@
+                setMetricsLoading(false);
+            }
+        };
+        fetchMetrics();
+    }, [user, shouldFetchDashboardMetrics, timeframe]);
+
+    // Metrics calculations
+    const metrics = useMemo(() => {
+        const draftQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'draft');
+        const finalizedQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'finalized');
+        const sentQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'sent');
+        const approvedQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'approved');
+        const cancelledQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'cancelled');
+
+        const currency = allQuotes[0]?.latest_version.totals.total_sell_fcy_currency ?? "PGK";
+
+        // Total value of finalized quotes
+        const finalizedValue = finalizedQuotes.reduce((sum, quote) => {
+            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            return sum + (isNaN(amount) ? 0 : amount);
+        }, 0);
+
+        // Pipeline value (all non-cancelled)
+        const pipelineValue = allQuotes
+            .filter(q => q.status?.toLowerCase() !== 'cancelled')
+            .reduce((sum, quote) => {
+                const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+                return sum + (isNaN(amount) ? 0 : amount);
+            }, 0);
+
+        // Velocity (Growth last 7 days)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const newQuotesLast7Days = allQuotes.filter(q => new Date(q.created_at) > sevenDaysAgo);
+        const newValueLast7Days = newQuotesLast7Days.reduce((sum, quote) => {
+            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            return sum + (isNaN(amount) ? 0 : amount);
+        }, 0);
+
+        // Approximation of "Previous Pipeline" = Current - New
+        const previousPipeline = pipelineValue - newValueLast7Days;
+        const velocityPercent = previousPipeline > 0 ? ((newValueLast7Days / previousPipeline) * 100).toFixed(0) : "0";
+
+        // Needs Attention (Expiring in 24h)
+        const expiringSoon = allQuotes.filter(q => {
+            if (!q.valid_until || q.status === 'FINALIZED' || q.status === 'SENT') return false;
+            // Logic: is valid_until within next 24h?
+            const expiry = new Date(q.valid_until);
+            const now = new Date();
+            const diffHours = (expiry.getTime() - now.getTime()) / (1000 * 60 * 60);
+            return diffHours > 0 && diffHours < 48; // Using 48h to be generous for demo
+        });
+
+
+        return {
+            draftCount: draftQuotes.length,
+            finalizedCount: finalizedQuotes.length,
+            sentCount: sentQuotes.length,
+            approvedCount: approvedQuotes.length,
+            cancelledCount: cancelledQuotes.length,
+            totalQuotes: allQuotes.length,
+            finalizedValue,
+            pipelineValue,
+            currency,
+            velocityPercent,
+            expiringSoon,
+            newQuotesLast7DaysCount: newQuotesLast7Days.length
+        };
+    }, [allQuotes]);

@@ -4,6 +4,7 @@ from decimal import Decimal
 from dataclasses import replace
 
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import viewsets, status, serializers
@@ -25,6 +26,7 @@ from accounts.permissions import (
     CanFinalizeQuotes,
     CanEditQuotes,
 )
+from quotes.selectors import get_quote_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -187,24 +189,35 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         ).order_by('-created_at')
 
         # 1. Role-Based Visibility
-        # Managers, Admins, and Finance can view all quotes.
-        # Sales users can ONLY view quotes they created.
         if user.is_authenticated:
-            # Check permissions based on CustomUser properties
-            role = getattr(user, 'role', None)
-            is_privileged_role = role in {
-                getattr(user, 'ROLE_MANAGER', 'manager'),
-                getattr(user, 'ROLE_ADMIN', 'admin'),
-                getattr(user, 'ROLE_FINANCE', 'finance'),
-            }
-            is_privileged = (
-                getattr(user, 'is_manager', False)
-                or getattr(user, 'is_admin', False)
-                or getattr(user, 'is_finance', False)
-                or is_privileged_role
+            role = getattr(user, 'role', '')
+            
+            # Global View: Admin & Finance
+            is_global = (
+                getattr(user, 'is_admin', False) or 
+                getattr(user, 'is_finance', False) or 
+                role in ('admin', 'finance')
             )
             
-            if not is_privileged:
+            if is_global:
+                pass # See all
+                
+            # Manager View: Restricted by Department
+            elif getattr(user, 'is_manager', False) or role == 'manager':
+                dept = getattr(user, 'department', None)
+                if dept:
+                    # See quotes from same department users OR own quotes
+                    qs = qs.filter(
+                        Q(created_by__department=dept) | 
+                        Q(created_by=user)
+                    )
+                else:
+                    # No department assigned -> Fallback to own quotes only?
+                    # Or see "unassigned"? Strict interpretation suggests restricted.
+                    qs = qs.filter(created_by=user)
+
+            # Sales / Standard View: Own quotes only
+            else:
                 qs = qs.filter(created_by=user)
 
         # 2. Filtering (Manual implementation since django-filter is not installed)
@@ -321,7 +334,8 @@ class QuoteTransitionAPIView(APIView):
         """Get current status and available transitions."""
         from quotes.state_machine import QuoteStateMachine, get_status_display_info
         
-        quote = get_object_or_404(Quote, id=quote_id)
+        # SECURITY FIX: Enforce IDOR protection
+        quote = get_quote_for_user(request.user, quote_id)
         machine = QuoteStateMachine(quote)
         
         return Response({
@@ -340,7 +354,8 @@ class QuoteTransitionAPIView(APIView):
         """Perform status transition."""
         from quotes.state_machine import QuoteStateMachine
         
-        quote = get_object_or_404(Quote, id=quote_id)
+        # SECURITY FIX: Enforce IDOR protection
+        quote = get_quote_for_user(request.user, quote_id)
         machine = QuoteStateMachine(quote)
         
         action = request.data.get('action', '').lower()
@@ -410,7 +425,8 @@ class QuoteCloneAPIView(APIView):
     def post(self, request, quote_id):
         
         # Get source quote
-        source_quote = get_object_or_404(Quote, id=quote_id)
+        # SECURITY FIX: Enforce IDOR protection
+        source_quote = get_quote_for_user(request.user, quote_id)
         
         # Validate source quote status - only allow cloning FINALIZED or SENT quotes
         allowed_statuses = [Quote.Status.FINALIZED, Quote.Status.SENT]
@@ -520,7 +536,8 @@ class QuoteVersionCreateAPIView(APIView):
         Creates a new QuoteVersion by re-running the PricingServiceV3 with manual overrides.
         """
         quote_id = self.kwargs.get("quote_id")
-        original_quote = get_object_or_404(Quote, id=quote_id)
+        # SECURITY FIX: Enforce IDOR protection
+        original_quote = get_quote_for_user(request.user, quote_id)
         
         # Block version creation for locked quotes (FINALIZED or SENT)
         from quotes.state_machine import is_quote_editable

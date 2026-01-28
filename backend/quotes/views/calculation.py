@@ -14,6 +14,7 @@ from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
 from quotes.schemas import QuoteComputeRequest
 from accounts.permissions import QuoteAccessPermission
+from quotes.selectors import get_quote_for_user
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
@@ -79,19 +80,14 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
         existing_quote = None
         if payload.quote_id:
-            existing_quote = get_object_or_404(Quote, id=payload.quote_id)
+            # SECURITY FIX: Enforce IDOR protection
+            existing_quote = get_quote_for_user(request.user, payload.quote_id)
             
             # Block recalculation for locked quotes (FINALIZED or SENT)
             from quotes.state_machine import is_quote_editable
             if not is_quote_editable(existing_quote):
                 return Response(
                     {"detail": f"Cannot recalculate. Quote is {existing_quote.status} and locked for editing."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            
-            if existing_quote.created_by_id and existing_quote.created_by_id != request.user.id:
-                return Response(
-                    {"detail": "You do not have permission to update this quote."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
         

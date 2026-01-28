@@ -1,5 +1,11 @@
 # Pricing V3 Overview
 
+> [!WARNING]
+> **Legacy Documentation**
+> This document describes the V3 Pricing Engine, which is now in maintenance mode.
+> The active development standard is **Pricing V4**. 
+> Please refer to [Pricing V4 Overview](./pricing_v4_overview.md) for current architecture.
+
 ## Introduction
 `pricing_v3` is a new Django app designed to modernize the rate resolution logic. It introduces a "Charge Engine + Resolver" pattern, separating the **finding** of rates from the **calculation** of charges.
 

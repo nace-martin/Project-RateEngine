@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from .models import Quote, QuoteTotal, QuoteVersion, QuoteEvent
+from parties.models import Company
 from accounts.permissions import IsManagerOrAdmin, IsFinanceOrAdmin
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,18 @@ class ReportsViewSet(viewsets.ViewSet):
     Phase 1 MVP: Quote Funnel, Revenue/Margin, User Performance.
     """
     permission_classes = [IsAuthenticated, IsManagerOrAdmin | IsFinanceOrAdmin]
+
+    def _get_user_scope(self, request):
+        """
+        Determine if the user should be restricted to their own data.
+        Returns user_id to filter by, or None if user has full access.
+        """
+        user = request.user
+        # Sales users are restricted. Managers, Admin, Finance are not.
+        # Check based on role constants from CustomUser
+        if user.role in [user.ROLE_MANAGER, user.ROLE_ADMIN, user.ROLE_FINANCE] or user.is_superuser:
+            return None
+        return user.id
 
     def _parse_date_params(self, request):
         """Parse start_date and end_date query params. Default to current month."""
@@ -489,6 +502,118 @@ class ReportsViewSet(viewsets.ViewSet):
             
             # Chart data
             'weekly_activity': weekly_activity,
+        })
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def tier1_customer_stats(self, request):
+        """
+        Tier-1 Customer Stats for the dashboard.
+        Accessible by Sales (scoped to own quotes) and Management (scoped to all).
+        """
+        start_date, end_date = self._parse_date_params(request)
+        target_user_id = self._get_user_scope(request)
+        
+        # Base QuerySet for the selected period
+        qs_period = Quote.objects.filter(
+            created_at__date__gte=start_date,
+            created_at__date__lte=end_date
+        ).exclude(is_archived=True)
+        
+        if target_user_id:
+            qs_period = qs_period.filter(created_by_id=target_user_id)
+            
+        # 1. Active Customers
+        # Count distinct customers with >=1 quote
+        active_customers_count = qs_period.values('customer').distinct().count()
+        
+        # 2. Repeat Customers (%)
+        # Customers with 2+ quotes in period
+        customer_counts = qs_period.values('customer').annotate(
+            quote_count=Count('id')
+        ).filter(quote_count__gte=2)
+        
+        repeat_customers_count = customer_counts.count()
+        repeat_customers_pct = 0.0
+        if active_customers_count > 0:
+            repeat_customers_pct = (repeat_customers_count / active_customers_count) * 100
+            
+        # 3. Top 5 Customers by Pipeline Value (MTD)
+        # "Time filter: Monthly only (ignore Weekly / YTD)."
+        today = timezone.now().date()
+        mtd_start = today.replace(day=1)
+        
+        # Pipeline = DRAFT, FINALIZED, SENT (Excluding Accepted/Lost/Expired for "Pipeline" usually, 
+        # but user said "open / draft / in-progress")
+        pipeline_statuses = [Quote.Status.DRAFT, Quote.Status.FINALIZED, Quote.Status.SENT]
+        
+        qs_pipeline = Quote.objects.filter(
+            created_at__date__gte=mtd_start,
+            created_at__date__lte=today,
+            status__in=pipeline_statuses
+        ).exclude(is_archived=True)
+        
+        if target_user_id:
+            qs_pipeline = qs_pipeline.filter(created_by_id=target_user_id)
+            
+        latest_total = self._get_latest_total_subquery()
+        qs_pipeline = qs_pipeline.annotate(
+            total_val=Subquery(latest_total.values('total_sell_pgk_incl_gst')[:1])
+        )
+        
+        top_customers = qs_pipeline.values(
+            'customer__name'
+        ).annotate(
+            pipeline_value=Sum('total_val')
+        ).order_by('-pipeline_value')[:5]
+        
+        # 4. Dormant Customers
+        # Customers with no quotes in last 30/60/90 days
+        # We look at ALL history for the user/company to find last activity
+        qs_all_activity = Quote.objects.exclude(is_archived=True)
+        if target_user_id:
+            qs_all_activity = qs_all_activity.filter(created_by_id=target_user_id)
+            
+        # Find last quote date for each customer
+        from django.db.models import Max
+        customer_last_dates = qs_all_activity.values('customer').annotate(
+            last_quote_date=Max('created_at')
+        )
+        
+        dormant_30 = 0
+        dormant_60 = 0
+        dormant_90 = 0
+        
+        now = timezone.now()
+        
+        for entry in customer_last_dates:
+            last_date = entry['last_quote_date']
+            if not last_date:
+                continue
+            
+            delta_days = (now - last_date).days
+            
+            if 30 <= delta_days < 60:
+                dormant_30 += 1
+            elif 60 <= delta_days < 90:
+                dormant_60 += 1
+            elif delta_days >= 90:
+                dormant_90 += 1
+                
+        return Response({
+            'active_customers': active_customers_count,
+            'repeat_customers_pct': round(repeat_customers_pct, 1),
+            'top_customers': [
+                {
+                    'name': c['customer__name'] or 'Unknown', 
+                    'value': float(c['pipeline_value'] or 0)
+                } 
+                for c in top_customers
+            ],
+            'dormant_customers': {
+                '30d': dormant_30,
+                '60d': dormant_60,
+                '90d': dormant_90
+            }
         })
 
     @action(detail=False, methods=['get'])

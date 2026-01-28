@@ -12,7 +12,7 @@ import { getQuotesV3, listSpotEnvelopes, getDashboardMetrics, type DashboardMetr
 import { API_BASE_URL } from "@/lib/config";
 import type { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
-import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal } from "@/lib/quote-helpers";
+import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 import { Button } from "@/components/ui/button";
 import {
     Card,
@@ -32,6 +32,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 import { KPICard } from "@/components/KPICard";
+import { Tier1StatsRow } from "@/components/dashboard/Tier1StatsRow";
 
 
 
@@ -110,9 +111,15 @@ export default function DashboardPage() {
         fetchFxStatus();
     }, [user, isFinance]);
 
-    // Fetch dashboard metrics for Sales/Manager/Admin users when timeframe changes
+    const shouldFetchDashboardMetrics = !isFinance && (isManager || isAdmin);
+
+    // Fetch dashboard metrics for Manager/Admin users when timeframe changes
     useEffect(() => {
-        if (!user || isFinance) return; // Finance users have their own dashboard
+        if (!user || !shouldFetchDashboardMetrics) {
+            setDashboardMetrics(null);
+            setMetricsLoading(false);
+            return;
+        }
 
         const fetchMetrics = async () => {
             setMetricsLoading(true);
@@ -126,15 +133,23 @@ export default function DashboardPage() {
             }
         };
         fetchMetrics();
-    }, [user, isFinance, timeframe]);
+    }, [user, shouldFetchDashboardMetrics, timeframe]);
 
     // Metrics calculations
     const metrics = useMemo(() => {
-        const draftQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'draft');
-        const finalizedQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'finalized');
-        const sentQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'sent');
-        const approvedQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'approved');
-        const cancelledQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'cancelled');
+        const normalizedStatus = (status?: string, validUntil?: string | null) =>
+            getEffectiveQuoteStatus(status ?? "", validUntil);
+
+        const draftQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'DRAFT');
+        const finalizedQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'FINALIZED');
+        const sentQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'SENT');
+        const acceptedQuotes = allQuotes.filter(q => {
+            const status = normalizedStatus(q.status, q.valid_until);
+            return status === 'ACCEPTED' || status === 'APPROVED';
+        });
+        const lostQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'LOST');
+        const expiredQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'EXPIRED');
+        const cancelledQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'CANCELLED');
 
         const currency = allQuotes[0]?.latest_version.totals.total_sell_fcy_currency ?? "PGK";
 
@@ -146,7 +161,7 @@ export default function DashboardPage() {
 
         // Pipeline value (all non-cancelled)
         const pipelineValue = allQuotes
-            .filter(q => q.status?.toLowerCase() !== 'cancelled')
+            .filter(q => normalizedStatus(q.status, q.valid_until) !== 'CANCELLED')
             .reduce((sum, quote) => {
                 const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
                 return sum + (isNaN(amount) ? 0 : amount);
@@ -168,7 +183,9 @@ export default function DashboardPage() {
 
         // Needs Attention (Expiring in 24h)
         const expiringSoon = allQuotes.filter(q => {
-            if (!q.valid_until || q.status === 'FINALIZED' || q.status === 'SENT') return false;
+            if (!q.valid_until) return false;
+            const status = normalizedStatus(q.status, q.valid_until);
+            if (status === 'FINALIZED' || status === 'SENT') return false;
             // Logic: is valid_until within next 24h?
             const expiry = new Date(q.valid_until);
             const now = new Date();
@@ -176,12 +193,20 @@ export default function DashboardPage() {
             return diffHours > 0 && diffHours < 48; // Using 48h to be generous for demo
         });
 
+        const totalSentCount = sentQuotes.length + acceptedQuotes.length + lostQuotes.length + expiredQuotes.length;
+        const winRatePercent = totalSentCount > 0 ? Math.round((acceptedQuotes.length / totalSentCount) * 100) : 0;
+
+        const avgQuoteValue = finalizedQuotes.length > 0 ? finalizedValue / finalizedQuotes.length : 0;
+        const lostOpportunityValue = [...lostQuotes, ...expiredQuotes].reduce((sum, quote) => {
+            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            return sum + (isNaN(amount) ? 0 : amount);
+        }, 0);
 
         return {
             draftCount: draftQuotes.length,
             finalizedCount: finalizedQuotes.length,
             sentCount: sentQuotes.length,
-            approvedCount: approvedQuotes.length,
+            approvedCount: acceptedQuotes.length,
             cancelledCount: cancelledQuotes.length,
             totalQuotes: allQuotes.length,
             finalizedValue,
@@ -189,7 +214,14 @@ export default function DashboardPage() {
             currency,
             velocityPercent,
             expiringSoon,
-            newQuotesLast7DaysCount: newQuotesLast7Days.length
+            newQuotesLast7DaysCount: newQuotesLast7Days.length,
+            totalSentCount,
+            acceptedCount: acceptedQuotes.length,
+            lostCount: lostQuotes.length,
+            expiredCount: expiredQuotes.length,
+            winRatePercent,
+            avgQuoteValue,
+            lostOpportunityValue,
         };
     }, [allQuotes]);
 
@@ -233,9 +265,10 @@ export default function DashboardPage() {
                 customer: getCustomerName(q.customer),
                 route: `${formatRoute(q.origin_location)} → ${formatRoute(q.destination_location)}`,
                 date: q.created_at,
+                updatedAt: q.updated_at,
                 weight: getWeight(q),
                 status: q.status,
-                rawStatus: q.status,
+                rawStatus: getEffectiveQuoteStatus(q.status, q.valid_until),
                 total: formatCurrency(totalAmt, currency),
                 actionLink: `/quotes/${q.id}`,
                 mode: q.mode,
@@ -252,6 +285,7 @@ export default function DashboardPage() {
                 customer: d.customer_name || "Spot Request",
                 route: `${formatRoute(d.shipment.origin_code)} → ${formatRoute(d.shipment.destination_code)}`,
                 date: d.created_at,
+                updatedAt: d.updated_at,
                 weight: `${d.shipment.total_weight_kg} kg`,
                 status: "Draft",
                 rawStatus: "DRAFT",
@@ -340,7 +374,15 @@ export default function DashboardPage() {
                                     </span>
                                 </TableCell>
                                 <TableCell className="text-muted-foreground text-sm">
-                                    {formatDate(quote.date)}
+                                    <div className="flex flex-col">
+                                        <span>{formatDate(quote.date)}</span>
+                                        {quote.updatedAt && !Number.isNaN(new Date(quote.updatedAt).getTime()) &&
+                                            new Date(quote.updatedAt).getTime() !== new Date(quote.date).getTime() && (
+                                                <span className="text-xs text-slate-500 font-medium">
+                                                    Last activity: {formatDate(quote.updatedAt)}
+                                                </span>
+                                            )}
+                                    </div>
                                 </TableCell>
                                 <TableCell className="max-w-[200px] truncate" title={quote.customer}>
                                     {quote.customer}
@@ -723,9 +765,20 @@ export default function DashboardPage() {
                                 {weeklyActivityData.map((d, i) => {
                                     const count = 'count' in d ? d.count : 0;
                                     const heightPercent = (count / weeklyActivityMax) * 100;
-                                    const dayLabel = 'day' in d && typeof d.day === 'string'
-                                        ? new Date(d.day).toLocaleDateString('en-US', { weekday: 'short' })
-                                        : ('day' in d ? d.day : '');
+                                    const dayLabel = (() => {
+                                        if (!('day' in d)) {
+                                            return '';
+                                        }
+                                        const rawDay = d.day;
+                                        if (typeof rawDay !== 'string') {
+                                            return rawDay ? String(rawDay) : '';
+                                        }
+                                        const parsed = new Date(rawDay);
+                                        if (!Number.isNaN(parsed.getTime())) {
+                                            return parsed.toLocaleDateString('en-US', { weekday: 'short' });
+                                        }
+                                        return rawDay;
+                                    })();
                                     return (
                                         <div key={i} className="flex-1 flex flex-col items-center gap-1 group/bar">
                                             <div
@@ -772,20 +825,20 @@ export default function DashboardPage() {
                         {/* 4. Win Rate % */}
                         <KPICard
                             title="Win Rate"
-                            value={metricsLoading ? "-" : `${dashboardMetrics?.win_rate_percent ?? 0}%`}
+                            value={metricsLoading ? "-" : `${dashboardMetrics?.win_rate_percent ?? metrics.winRatePercent}%`}
                             status={
-                                (dashboardMetrics?.total_quotes_sent ?? 0) === 0 ? "neutral" :
-                                    (dashboardMetrics?.win_rate_percent ?? 0) >= 30 ? "success" : "warning"
+                                (dashboardMetrics?.total_quotes_sent ?? metrics.totalSentCount) === 0 ? "neutral" :
+                                    (dashboardMetrics?.win_rate_percent ?? metrics.winRatePercent) >= 30 ? "success" : "warning"
                             }
                             icon={TrendingUp}
-                            description={`${dashboardMetrics?.quotes_accepted ?? 0} won of ${dashboardMetrics?.total_quotes_sent ?? 0} sent`}
+                            description={`${dashboardMetrics?.quotes_accepted ?? metrics.acceptedCount} won of ${dashboardMetrics?.total_quotes_sent ?? metrics.totalSentCount} sent`}
                         >
                             {/* Simple visual bar for Win Rate */}
                             <div className="mt-4 h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                                 <div
-                                    className={`h-full rounded-full ${(dashboardMetrics?.win_rate_percent ?? 0) >= 30 ? 'bg-success' : 'bg-warning'
+                                    className={`h-full rounded-full ${(dashboardMetrics?.win_rate_percent ?? metrics.winRatePercent) >= 30 ? 'bg-success' : 'bg-warning'
                                         }`}
-                                    style={{ width: `${Math.min(dashboardMetrics?.win_rate_percent ?? 0, 100)}%` }}
+                                    style={{ width: `${Math.min(dashboardMetrics?.win_rate_percent ?? metrics.winRatePercent, 100)}%` }}
                                 />
                             </div>
                         </KPICard>
@@ -793,7 +846,7 @@ export default function DashboardPage() {
                         {/* 5. Avg Quote Value */}
                         <KPICard
                             title="Avg Quote Value"
-                            value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.avg_quote_value ?? 0), 'PGK')}
+                            value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.avg_quote_value ?? metrics.avgQuoteValue), dashboardMetrics ? 'PGK' : metrics.currency)}
                             description="Based on finalized quotes"
                             status="info"
                             icon={DollarSign}
@@ -802,35 +855,22 @@ export default function DashboardPage() {
                         {/* 6. Lost Opportunity */}
                         <KPICard
                             title="Lost Opportunity"
-                            value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.lost_opportunity_value ?? 0), 'PGK')}
-                            description={`${(dashboardMetrics?.quotes_lost ?? 0) + (dashboardMetrics?.quotes_expired ?? 0)} quotes lost or expired`}
+                            value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.lost_opportunity_value ?? metrics.lostOpportunityValue), dashboardMetrics ? 'PGK' : metrics.currency)}
+                            description={`${(dashboardMetrics?.quotes_lost ?? metrics.lostCount) + (dashboardMetrics?.quotes_expired ?? metrics.expiredCount)} quotes lost or expired`}
                             status="danger"
                             icon={AlertCircle}
                         />
                     </div>
+
+                    {/* Row 3: Tier-1 Customer Stats */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">Customer Engagement</h3>
+                        <Tier1StatsRow timeframe={timeframe} />
+                    </div>
                 </section>
 
-                {/* RECENT ACTIVITY TABLE - REFINED */}
-                <Card className="border-none shadow-lg bg-white overflow-hidden rounded-2xl">
-                    <CardHeader className="border-b border-slate-100 bg-white px-8 py-6">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <CardTitle className="text-xl font-bold text-slate-800">Recent Activity</CardTitle>
-                                <CardDescription className="text-slate-500">Real-time update of your latest quoting actions</CardDescription>
-                            </div>
-                            <Button variant="outline" size="sm" className="rounded-full px-4 border-slate-200 text-slate-600 hover:text-primary hover:border-primary/50" asChild>
-                                <Link href="/quotes">
-                                    View Full History
-                                    <ArrowRight className="ml-2 h-4 w-4" />
-                                </Link>
-                            </Button>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                        {renderRecentQuotes()}
-                    </CardContent>
-                </Card>
+
             </main>
-        </ProtectedRoute>
+        </ProtectedRoute >
     );
 }
