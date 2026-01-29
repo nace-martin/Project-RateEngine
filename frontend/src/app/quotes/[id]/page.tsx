@@ -122,6 +122,17 @@ export default function QuoteDetailPage() {
   const isIncomplete = effectiveStatus === "INCOMPLETE";
   const isArchived = quote.is_archived;
   const canDownloadPDF = (effectiveStatus === "FINALIZED" || effectiveStatus === "SENT");
+  const displayTotals = computeResult?.totals ?? quote.latest_version?.totals;
+  const displayCurrency =
+    displayTotals?.currency ||
+    quote.latest_version?.totals?.total_sell_fcy_currency ||
+    "PGK";
+  const displayAmount =
+    displayTotals?.total_sell_fcy_incl_gst ||
+    displayTotals?.sell_pgk_incl_gst ||
+    quote.latest_version?.totals?.total_sell_fcy_incl_gst ||
+    quote.latest_version?.totals?.total_sell_pgk_incl_gst ||
+    "0";
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -309,7 +320,7 @@ export default function QuoteDetailPage() {
             <div>
               <p className="text-xs text-slate-500 uppercase font-semibold">Total Estimated Cost</p>
               <p className="text-2xl font-bold text-slate-900">
-                {quote.latest_version?.totals?.currency || 'PGK'} {parseFloat(quote.latest_version?.totals?.total_sell_fcy_incl_gst || quote.latest_version?.totals?.total_sell_pgk_incl_gst || "0").toLocaleString()}
+                {displayCurrency} {parseFloat(displayAmount).toLocaleString()}
               </p>
               <p className="text-[10px] text-slate-400">
                 Inc. GST

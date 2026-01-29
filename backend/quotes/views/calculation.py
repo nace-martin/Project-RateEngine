@@ -83,6 +83,17 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # SECURITY FIX: Enforce IDOR protection
             existing_quote = get_quote_for_user(request.user, payload.quote_id)
             
+            if existing_quote.is_archived:
+                if existing_quote.status in (Quote.Status.DRAFT, Quote.Status.INCOMPLETE):
+                    return Response(
+                        {"detail": "Draft quote was deleted and can no longer be edited."},
+                        status=status.HTTP_410_GONE,
+                    )
+                return Response(
+                    {"detail": "Cannot recalculate. Quote is archived and locked for editing."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
             # Block recalculation for locked quotes (FINALIZED or SENT)
             from quotes.state_machine import is_quote_editable
             if not is_quote_editable(existing_quote):
@@ -230,7 +241,13 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
     def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location) -> str:
         """
         Determine the correct output currency based on shipment type and payment term.
-        Import PREPAID should surface FCY (origin currency) while COLLECT stays PGK.
+        
+        Currency Rules:
+        - Import PREPAID: FCY (origin currency - AUD for AU, USD for others)
+        - Import COLLECT: PGK (customer pays in PNG)
+        - Export PREPAID: PGK (customer pays in PNG)
+        - Export COLLECT: FCY (destination currency - AUD for AU, USD for others)
+        - Domestic: Always PGK
         """
         if shipment_type == Quote.ShipmentType.IMPORT:
             if payment_term == Quote.PaymentTerm.PREPAID:
@@ -239,7 +256,19 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 return 'AUD'  # Fallback FCY for prepaid imports
             return 'PGK'
         
-        # Default to PGK for other shipment types
+        if shipment_type == Quote.ShipmentType.EXPORT:
+            if payment_term == Quote.PaymentTerm.COLLECT:
+                # Export Collect: Customer (consignee) pays overseas
+                # AUD only if destination is Australia, otherwise USD
+                if destination_location.country:
+                    if destination_location.country.code == 'AU':
+                        return 'AUD'
+                    else:
+                        return 'USD'  # Default for all other international destinations
+                return 'USD'  # Fallback
+            return 'PGK'  # Export PREPAID: Customer pays in PNG
+        
+        # Domestic: Always PGK
         return 'PGK'
 
     @transaction.atomic
@@ -320,7 +349,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             fx_snapshot=snapshot,
             status=initial_status,
             reason="Initial Draft" if is_new_quote else "Recalculated with spot rates",
-            created_by=request.user
+            created_by=request.user,
+            engine_version='V4',  # Always V4 - V3 is deprecated
         )
 
         # Create QuoteLines (bulk insert for performance)
@@ -357,7 +387,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             total_sell_fcy_incl_gst=charges.totals.total_sell_fcy_incl_gst,
             total_sell_fcy_currency=charges.totals.total_sell_fcy_currency,
             has_missing_rates=charges.totals.has_missing_rates,
-            notes=charges.totals.notes
+            notes=charges.totals.notes,
+            engine_version='V4',  # Always V4 - V3 is deprecated
         )
 
         # Attach latest version for serializers expecting the attribute

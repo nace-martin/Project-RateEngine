@@ -171,15 +171,14 @@ class QuoteStateMachine:
     
     def cancel(self, user: Optional[User] = None) -> Tuple[bool, Optional[str]]:
         """
-        Cancel/archive a draft quote.
-        This is a soft-delete (sets is_archived=True) rather than a state transition.
+        Cancel a draft quote by permanently deleting it.
         """
         if self.quote.status != Quote.Status.DRAFT:
             return False, f"Cannot cancel quote with status {self.quote.status}. Only DRAFT quotes can be cancelled."
-        
-        self.quote.is_archived = True
-        self.quote.save(update_fields=['is_archived'])
-        logger.info(f"Quote {self.quote.quote_number} cancelled/archived by {user}")
+
+        quote_number = self.quote.quote_number
+        self.quote.delete()
+        logger.info(f"Quote {quote_number} cancelled/deleted by {user}")
         return True, None
 
 

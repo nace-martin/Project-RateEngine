@@ -11,6 +11,7 @@ Key Rules:
 5. Direction determines CAF direction (Import = subtract)
 6. Payment Term determines quote currency
 7. Service Scope determines which legs are chargeable
+8. PNG GST: Proper classification using get_png_gst_category()
 """
 from dataclasses import dataclass, field
 from datetime import date
@@ -20,6 +21,7 @@ from enum import Enum
 import logging
 
 from pricing_v4.models import ImportCOGS, ImportSellRate, ProductCode
+from quotes.tax_policy import get_png_gst_category
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +65,12 @@ class ChargeLine:
     caf_applied: bool = False
     margin_applied: bool = False
     
+    # PNG GST Classification
+    gst_category: str = ''  # service_in_PNG, export_service, offshore_service, imported_goods
+    gst_rate: Decimal = Decimal('0')
+    gst_amount: Decimal = Decimal('0')
+    sell_incl_gst: Decimal = Decimal('0')
+    
     notes: str = ""
 
 
@@ -89,6 +97,8 @@ class QuoteResult:
     total_cost: Decimal = Decimal('0')
     total_sell: Decimal = Decimal('0')
     total_margin: Decimal = Decimal('0')
+    total_gst: Decimal = Decimal('0')
+    total_sell_incl_gst: Decimal = Decimal('0')
     
     # FX info used
     fx_rate_used: Optional[Decimal] = None
@@ -341,6 +351,8 @@ class ImportPricingEngine:
         result.total_cost = sum(line.cost_amount for line in all_lines)
         result.total_sell = sum(line.sell_amount for line in all_lines)
         result.total_margin = sum(line.margin_amount for line in all_lines)
+        result.total_gst = sum(line.gst_amount for line in all_lines)
+        result.total_sell_incl_gst = sum(line.sell_incl_gst for line in all_lines)
         
         return result
     
@@ -451,6 +463,15 @@ class ImportPricingEngine:
                 margin_amount = sell_amount - cost_amount
                 margin_percent = (margin_amount / cost_amount * 100).quantize(Decimal('0.1'))
         
+        # Calculate GST using PNG classification
+        gst_category, gst_rate = get_png_gst_category(
+            product_code=pc,
+            shipment_type='IMPORT',
+            leg=leg
+        )
+        gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        sell_incl_gst = sell_amount + gst_amount
+        
         return ChargeLine(
             product_code_id=pc.id,
             product_code=pc.code,
@@ -459,7 +480,7 @@ class ImportPricingEngine:
             leg=leg,
             cost_amount=cost_amount,
             cost_currency=cost_currency,
-            agent_name=cogs.agent.name if cogs and cogs.agent else None,  # NEW
+            agent_name=cogs.agent.name if cogs and cogs.agent else None,
             sell_amount=sell_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
             sell_currency=sell_currency,
             margin_amount=margin_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
@@ -467,6 +488,10 @@ class ImportPricingEngine:
             fx_applied=fx_applied,
             caf_applied=caf_applied,
             margin_applied=margin_applied,
+            gst_category=gst_category,
+            gst_rate=gst_rate,
+            gst_amount=gst_amount,
+            sell_incl_gst=sell_incl_gst,
         )
     
     def _calculate_sell_amount(self, sell_rate) -> Decimal:

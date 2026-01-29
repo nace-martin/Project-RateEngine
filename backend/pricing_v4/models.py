@@ -372,7 +372,7 @@ class ExportSellRate(models.Model):
     
     class Meta:
         db_table = 'export_sell_rates'
-        unique_together = ['product_code', 'origin_airport', 'destination_airport', 'valid_from']
+        unique_together = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'valid_from']
         ordering = ['product_code', 'origin_airport', 'destination_airport']
         verbose_name = 'Export Sell Rate'
         verbose_name_plural = 'Export Sell Rates'

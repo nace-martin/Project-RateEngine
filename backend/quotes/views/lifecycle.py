@@ -74,6 +74,7 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges, ser
         status=Quote.Status.DRAFT,
         reason="Manual recalculation",
         created_by=user,
+        engine_version='V4',  # Always V4 - V3 is deprecated
     )
 
     for line_charge in charges.lines:
@@ -107,6 +108,7 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges, ser
         total_sell_fcy_currency=totals.total_sell_fcy_currency,
         has_missing_rates=totals.has_missing_rates,
         notes=totals.notes,
+        engine_version='V4',  # Always V4 - V3 is deprecated
     )
 
     quote.request_details_json = payload
@@ -377,7 +379,7 @@ class QuoteTransitionAPIView(APIView):
             success, error = machine.mark_sent(user=request.user)
         
         elif action == 'cancel':
-            # Cancel/archive a draft quote
+            # Cancel a draft quote (permanent delete)
             success, error = machine.cancel(user=request.user)
             
         elif action == 'mark_won':
@@ -404,6 +406,9 @@ class QuoteTransitionAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        if action == 'cancel':
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
         # Return updated quote
         quote.refresh_from_db()
         return Response({

@@ -11,7 +11,7 @@ from django.db import models
 from core.dataclasses import (
     QuoteInput, QuoteCharges, CalculatedChargeLine, CalculatedTotals
 )
-from pricing_v4.engine.export_engine import ExportPricingEngine
+from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as ExportPaymentTerm
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.models import ProductCode, CustomerDiscount
@@ -238,12 +238,49 @@ class PricingServiceV4Adapter:
         dest_code = shipment.destination_location.code
 
         if shipment.shipment_type == 'EXPORT':
-            # Export Engine
+            # Export Engine - now supports payment term and FCY conversion
+            # Get FX rates from snapshot
+            fx_rates = self._get_fx_rates_dict()
+            
+            # Determine quote currency for Export COLLECT
+            # Rule: AUD only if destination is Australia, otherwise USD
+            dest_country = None
+            if shipment.destination_location:
+                dest_country = getattr(shipment.destination_location, 'country_code', None)
+            
+            if dest_country == 'AU':
+                quote_currency = 'AUD'
+            else:
+                quote_currency = 'USD'  # Default for all other international (SIN, HKG, etc.)
+            
+            # Get TT rates for the quote currency
+            fx_info = fx_rates.get(quote_currency, {})
+            tt_buy = Decimal(str(fx_info.get('tt_buy', '2.50'))) if fx_info else Decimal('2.50')
+            tt_sell = Decimal(str(fx_info.get('tt_sell', '2.78'))) if fx_info else Decimal('2.78')
+            
+            # Get CAF and margin from policy or use defaults
+            caf_rate = None
+            margin_rate = None
+            if self.policy:
+                if self.policy.caf_export_pct is not None:
+                    caf_rate = Decimal(str(self.policy.caf_export_pct))
+                if self.policy.margin_pct is not None:
+                    margin_rate = Decimal(str(self.policy.margin_pct))
+            
+            # Convert payment term string to enum
+            export_payment_term = ExportPaymentTerm(shipment.payment_term) if shipment.payment_term else ExportPaymentTerm.PREPAID
+            
             engine = ExportPricingEngine(
-                quote_date=self.quote_input.quote_date, # Add quote_date
+                quote_date=self.quote_input.quote_date,
                 origin=origin_code,
                 destination=dest_code,
-                chargeable_weight_kg=chargeable_weight # Rename param
+                chargeable_weight_kg=chargeable_weight,
+                payment_term=export_payment_term,
+                tt_buy=tt_buy,
+                tt_sell=tt_sell,
+                caf_rate=caf_rate,
+                margin_rate=margin_rate,
+                destination_currency=quote_currency,
             )
         elif shipment.shipment_type == 'IMPORT':
             # Import Engine
@@ -468,32 +505,47 @@ class PricingServiceV4Adapter:
         """
         Determine the output currency for the quote based on payment terms.
         
-        Rules:
-        - Import Prepaid: Quote in origin currency (FCY - customer pays overseas)
-        - Import Collect: Quote in PGK (customer pays in PNG)
-        - Export Prepaid: Quote in PGK (customer pays in PNG)
-        - Export Collect: Quote in destination currency (FCY - customer pays overseas)
+        Currency Rules:
+        - AUD: Only used when dealing with Australia (Export to AU, Import from AU)
+        - USD: Default for all other international quotes
+        - PGK: For domestic and when customer pays in PNG
+        
+        Specific Rules:
+        - Import Prepaid: AUD if origin is AU, otherwise USD
+        - Import Collect: PGK (customer pays in PNG)
+        - Export Prepaid: PGK (customer pays in PNG)
+        - Export Collect: AUD if destination is AU, otherwise USD
         - Domestic: Always PGK
         """
         shipment = self.quote_input.shipment
         
         if shipment.shipment_type == 'IMPORT':
             if shipment.payment_term == 'PREPAID':
-                # Import Prepaid: Customer pays shipper overseas -> quote in origin FCY
-                origin_ccy = None
+                # Import Prepaid: Customer pays shipper overseas
+                # AUD only if origin is Australia, otherwise USD
+                origin_country = None
                 if shipment.origin_location:
-                    origin_ccy = getattr(shipment.origin_location, 'currency_code', None)
-                return origin_ccy or self.quote_input.output_currency or 'AUD'
+                    origin_country = getattr(shipment.origin_location, 'country_code', None)
+                
+                if origin_country == 'AU':
+                    return 'AUD'
+                else:
+                    return 'USD'  # Default for all other international origins
             # Import Collect: Customer pays in PNG -> PGK
             return 'PGK'
         
         elif shipment.shipment_type == 'EXPORT':
             if shipment.payment_term == 'COLLECT':
-                # Export Collect: Customer (consignee) pays overseas -> quote in dest FCY
-                dest_ccy = None
+                # Export Collect: Customer (consignee) pays overseas
+                # AUD only if destination is Australia, otherwise USD
+                dest_country = None
                 if shipment.destination_location:
-                    dest_ccy = getattr(shipment.destination_location, 'currency_code', None)
-                return dest_ccy or self.quote_input.output_currency or 'AUD'
+                    dest_country = getattr(shipment.destination_location, 'country_code', None)
+                
+                if dest_country == 'AU':
+                    return 'AUD'
+                else:
+                    return 'USD'  # Default for all other international destinations
             # Export Prepaid: Customer pays in PNG -> PGK
             return 'PGK'
         

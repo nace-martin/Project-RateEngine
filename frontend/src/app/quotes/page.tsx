@@ -41,6 +41,7 @@ export default function QuotesPage() {
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [spotDrafts, setSpotDrafts] = useState<SpotPricingEnvelope[]>([]);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  const activeQuotes = useMemo(() => quotes.filter(q => !q.is_archived), [quotes]);
 
   const fetchData = useCallback(async () => {
     if (!user) return;
@@ -90,7 +91,7 @@ export default function QuotesPage() {
     const unified: UnifiedQuote[] = [];
 
     // 1. Map Standard Quotes
-    quotes.forEach(q => {
+    activeQuotes.forEach(q => {
       const totalAmt = q.latest_version?.totals?.total_sell_fcy_incl_gst;
       const currency = q.latest_version?.totals?.total_sell_fcy_currency;
 
@@ -159,7 +160,7 @@ export default function QuotesPage() {
     // 4. Sort (Date Descending)
     return filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  }, [quotes, spotDrafts, searchQuery, modeFilter, statusFilter]);
+  }, [activeQuotes, spotDrafts, searchQuery, modeFilter, statusFilter]);
 
   const columns = [
     {
@@ -332,7 +333,7 @@ export default function QuotesPage() {
       </div>
 
       <div className="text-sm text-muted-foreground">
-        Showing {tableData.length} of {quotes.length + spotDrafts.length} quotes
+        Showing {tableData.length} of {activeQuotes.length + spotDrafts.length} quotes
       </div>
 
       {loading ? (

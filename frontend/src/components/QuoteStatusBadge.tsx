@@ -177,7 +177,7 @@ export function QuoteStatusActions({
             const messages: Record<string, { title: string; description: string }> = {
                 finalize: { title: 'Quote Finalized', description: 'Quote has been locked.' },
                 send: { title: 'Quote Sent', description: 'Quote marked as sent.' },
-                cancel: { title: 'Quote Cancelled', description: 'Quote has been archived.' },
+                cancel: { title: 'Draft Deleted', description: 'Draft quote has been permanently deleted.' },
                 mark_won: { title: 'Quote Won!', description: 'Quote marked as accepted.' },
                 mark_lost: { title: 'Quote Lost', description: 'Quote marked as lost.' },
                 mark_expired: { title: 'Quote Expired', description: 'Quote marked as expired.' },
@@ -311,15 +311,15 @@ export function QuoteStatusActions({
                                 className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
                             >
                                 <XCircle className="mr-2 h-4 w-4" />
-                                Cancel
+                                Delete Draft
                             </Button>
                         </DialogTrigger>
                         <DialogContent>
                             <DialogHeader>
-                                <DialogTitle>Cancel this quote?</DialogTitle>
+                                <DialogTitle>Delete this draft?</DialogTitle>
                                 <DialogDescription>
-                                    This will archive the quote and remove it from your active list.
-                                    You can restore it later if needed.
+                                    This will permanently delete the draft quote.
+                                    This action cannot be undone.
                                 </DialogDescription>
                             </DialogHeader>
                             <DialogFooter>
@@ -332,7 +332,7 @@ export function QuoteStatusActions({
                                     variant="destructive"
                                 >
                                     {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    Cancel Quote
+                                    Delete Draft
                                 </Button>
                             </DialogFooter>
                         </DialogContent>

@@ -301,6 +301,14 @@ class QuoteVersion(models.Model):
         on_delete=models.SET_NULL,
         null=True, blank=True, related_name='+'
     )
+    
+    # --- Engine Version Tracking ---
+    engine_version = models.CharField(
+        max_length=10,
+        choices=[('V3', 'V3 Legacy'), ('V4', 'V4 ProductCode')],
+        default='V4',
+        help_text="Pricing engine version used for this calculation."
+    )
 
     class Meta:
         unique_together = ('quote', 'version_number')
@@ -357,6 +365,34 @@ class QuoteLine(models.Model):
         help_text="If True, this is a conditional charge shown as a note, not included in totals."
     )
 
+    # --- PNG GST Classification Fields ---
+    GST_CATEGORY_SERVICE_IN_PNG = 'service_in_PNG'
+    GST_CATEGORY_EXPORT_SERVICE = 'export_service'
+    GST_CATEGORY_OFFSHORE_SERVICE = 'offshore_service'
+    GST_CATEGORY_IMPORTED_GOODS = 'imported_goods'
+
+    GST_CATEGORY_CHOICES = [
+        (GST_CATEGORY_SERVICE_IN_PNG, 'Service in PNG (10% GST)'),
+        (GST_CATEGORY_EXPORT_SERVICE, 'Export Service (0% Zero-Rated)'),
+        (GST_CATEGORY_OFFSHORE_SERVICE, 'Offshore Service (0% Exempt)'),
+        (GST_CATEGORY_IMPORTED_GOODS, 'Imported Goods (0% - Customs)'),
+    ]
+
+    gst_category = models.CharField(
+        max_length=20,
+        choices=GST_CATEGORY_CHOICES,
+        null=True, blank=True,
+        help_text="PNG GST classification for this line item"
+    )
+    gst_rate = models.DecimalField(
+        max_digits=5, decimal_places=4, default=0,
+        help_text="GST rate applied (0.10 = 10%)"
+    )
+    gst_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        help_text="Calculated GST amount for this line"
+    )
+
     def __str__(self):
         name = self.service_component.description if self.service_component else 'Manual Line'
         return f"v{self.quote_version.version_number} - {name}"
@@ -388,6 +424,13 @@ class QuoteTotal(models.Model):
 
     has_missing_rates = models.BooleanField(default=False)
     notes = models.TextField(null=True, blank=True)
+    
+    # --- Engine Version Tracking (denormalized for reporting) ---
+    engine_version = models.CharField(
+        max_length=10,
+        default='V4',
+        help_text="Pricing engine version (denormalized for reporting queries)."
+    )
 
     @property
     def gross_profit(self):

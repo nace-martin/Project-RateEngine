@@ -106,6 +106,14 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
         const loadQuote = async () => {
             try {
                 const quote = await getQuoteV3(id);
+                if (quote.is_archived) {
+                    const status = String(quote.status || '').toUpperCase();
+                    const message = (status === 'DRAFT' || status === 'INCOMPLETE')
+                        ? "This draft was deleted and can no longer be edited."
+                        : "This quote is archived and read-only.";
+                    setApiError(message);
+                    return;
+                }
                 const payload = quote.latest_version?.payload_json;
                 if (!payload) throw new Error("No payload found checks quote");
 

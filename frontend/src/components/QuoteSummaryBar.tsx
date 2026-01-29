@@ -37,7 +37,11 @@ export default function QuoteSummaryBar({ quote }: QuoteSummaryBarProps) {
     // Get totals from latest version
     const totals = quote.latest_version?.totals;
     const currency = totals?.total_sell_fcy_currency || "PGK";
-    const totalAmount = totals?.total_sell_fcy || "0";
+    const totalAmount =
+        totals?.total_sell_fcy_incl_gst ||
+        totals?.total_sell_pgk_incl_gst ||
+        totals?.total_sell_fcy ||
+        "0";
 
     // Service and scope info
     const serviceScope = quote.service_scope || "D2D";
@@ -117,7 +121,7 @@ export default function QuoteSummaryBar({ quote }: QuoteSummaryBarProps) {
                         </span>
                     </div>
                     <div className="text-[10px] text-primary/70 mt-0.5">
-                        Excl. GST
+                        Incl. GST
                     </div>
                 </div>
             </div>

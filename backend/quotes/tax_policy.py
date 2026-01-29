@@ -60,6 +60,117 @@ def get_gst_from_product_code(product_code: 'ProductCode') -> Tuple[bool, Decima
 
 
 # =============================================================================
+# PNG GST Classification for Line Items
+# =============================================================================
+
+# GST Categories (matching QuoteLine choices)
+GST_CATEGORY_SERVICE_IN_PNG = 'service_in_PNG'
+GST_CATEGORY_EXPORT_SERVICE = 'export_service'
+GST_CATEGORY_OFFSHORE_SERVICE = 'offshore_service'
+GST_CATEGORY_IMPORTED_GOODS = 'imported_goods'
+
+# PNG GST rate (10%)
+PNG_GST_RATE_DECIMAL = Decimal('0.10')
+
+
+def get_png_gst_category(
+    product_code: 'ProductCode',
+    shipment_type: str,  # IMPORT, EXPORT, DOMESTIC
+    leg: str = None,     # ORIGIN, FREIGHT, DESTINATION
+) -> Tuple[str, Decimal]:
+    """
+    Classify a charge for PNG GST and return (category, rate).
+    
+    PNG GST Rules:
+    - Services supplied/performed in PNG attract 10% GST
+    - Exported services are zero-rated (0%)
+    - Offshore services (performed outside PNG) are 0%
+    - Imported goods values never have GST in quotes (handled by Customs)
+    
+    Classification by shipment type:
+    
+    EXPORT (from PNG):
+    - Air freight leaving PNG = export_service (0%)
+    - Origin services in PNG (pickup, docs) = service_in_PNG (10%) 
+      UNLESS gst_treatment='ZERO_RATED' (export with evidence)
+    - Destination services = offshore_service (0%)
+    
+    IMPORT (to PNG):
+    - Origin services = offshore_service (0%)
+    - Air freight = export_service from origin country (0%)
+    - Destination services in PNG = service_in_PNG (10%)
+    - Goods value/CIF = imported_goods (0%)
+    
+    DOMESTIC (within PNG):
+    - All services = service_in_PNG (10%)
+    
+    Args:
+        product_code: ProductCode instance
+        shipment_type: 'IMPORT', 'EXPORT', or 'DOMESTIC'
+        leg: Optional leg ('ORIGIN', 'FREIGHT', 'DESTINATION')
+        
+    Returns:
+        Tuple of (gst_category, gst_rate)
+    """
+    # Get existing GST treatment from ProductCode
+    gst_treatment = getattr(product_code, 'gst_treatment', 'STANDARD')
+    category = product_code.category if product_code else ''
+    
+    # Handle EXEMPT (disbursements like DUTY, AQIS)
+    if gst_treatment == 'EXEMPT':
+        return (GST_CATEGORY_IMPORTED_GOODS, Decimal('0'))
+    
+    # DOMESTIC - All services in PNG attract 10% GST
+    if shipment_type == 'DOMESTIC':
+        return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+    
+    # EXPORT
+    if shipment_type == 'EXPORT':
+        # Freight is always zero-rated for export
+        if leg == 'FREIGHT' or category == 'FREIGHT':
+            return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
+        
+        # Destination services (performed offshore)
+        if leg == 'DESTINATION':
+            return (GST_CATEGORY_OFFSHORE_SERVICE, Decimal('0'))
+        
+        # Origin services (performed in PNG)
+        if leg == 'ORIGIN' or leg is None:
+            # Check if ProductCode is zero-rated (export with evidence)
+            if gst_treatment == 'ZERO_RATED':
+                return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
+            # Standard origin services attract GST
+            return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+    
+    # IMPORT
+    if shipment_type == 'IMPORT':
+        # Origin services (performed offshore)
+        if leg == 'ORIGIN':
+            return (GST_CATEGORY_OFFSHORE_SERVICE, Decimal('0'))
+        
+        # Freight (international, not PNG service)
+        if leg == 'FREIGHT' or category == 'FREIGHT':
+            return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
+        
+        # Destination services (performed in PNG)
+        if leg == 'DESTINATION' or leg is None:
+            # Goods value never has GST in quote
+            if category in ('GOODS', 'CIF', 'DISBURSEMENT'):
+                return (GST_CATEGORY_IMPORTED_GOODS, Decimal('0'))
+            # Check if zero-rated
+            if gst_treatment == 'ZERO_RATED':
+                return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
+            # Standard destination services attract GST
+            return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+    
+    # Fallback: Use ProductCode settings
+    if gst_treatment == 'STANDARD' or getattr(product_code, 'is_gst_applicable', False):
+        return (GST_CATEGORY_SERVICE_IN_PNG, product_code.gst_rate)
+    
+    return (GST_CATEGORY_OFFSHORE_SERVICE, Decimal('0'))
+
+
+# =============================================================================
 # Legacy Jurisdiction-Based Tax Policy (for SPOT Flow)
 # =============================================================================
 
