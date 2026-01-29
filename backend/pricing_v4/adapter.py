@@ -465,14 +465,39 @@ class PricingServiceV4Adapter:
         return lines
 
     def get_output_currency(self):
+        """
+        Determine the output currency for the quote based on payment terms.
+        
+        Rules:
+        - Import Prepaid: Quote in origin currency (FCY - customer pays overseas)
+        - Import Collect: Quote in PGK (customer pays in PNG)
+        - Export Prepaid: Quote in PGK (customer pays in PNG)
+        - Export Collect: Quote in destination currency (FCY - customer pays overseas)
+        - Domestic: Always PGK
+        """
         shipment = self.quote_input.shipment
+        
         if shipment.shipment_type == 'IMPORT':
             if shipment.payment_term == 'PREPAID':
+                # Import Prepaid: Customer pays shipper overseas -> quote in origin FCY
                 origin_ccy = None
                 if shipment.origin_location:
                     origin_ccy = getattr(shipment.origin_location, 'currency_code', None)
                 return origin_ccy or self.quote_input.output_currency or 'AUD'
+            # Import Collect: Customer pays in PNG -> PGK
             return 'PGK'
+        
+        elif shipment.shipment_type == 'EXPORT':
+            if shipment.payment_term == 'COLLECT':
+                # Export Collect: Customer (consignee) pays overseas -> quote in dest FCY
+                dest_ccy = None
+                if shipment.destination_location:
+                    dest_ccy = getattr(shipment.destination_location, 'currency_code', None)
+                return dest_ccy or self.quote_input.output_currency or 'AUD'
+            # Export Prepaid: Customer pays in PNG -> PGK
+            return 'PGK'
+        
+        # Domestic: Always PGK
         return self.quote_input.output_currency or 'PGK'
 
     def _get_fx_rates_dict(self) -> dict:

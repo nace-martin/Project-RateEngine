@@ -152,3 +152,59 @@ class QuoteRequestSerializerV4(serializers.Serializer):
         # e.g. If DOMESTIC, ensure origin/dest are within PNG (logic might be in engine though)
         
         return data
+
+
+# =============================================================================
+# V4 SELL RATE SERIALIZERS
+# =============================================================================
+
+from .models import ExportSellRate, ImportSellRate, DomesticSellRate
+
+
+class ExportSellRateSerializer(serializers.ModelSerializer):
+    """Serializer for Export Sell Rates."""
+    product_code_code = serializers.CharField(source='product_code.code', read_only=True)
+    product_code_description = serializers.CharField(source='product_code.description', read_only=True)
+    
+    class Meta:
+        model = ExportSellRate
+        fields = [
+            'id', 'product_code', 'product_code_code', 'product_code_description',
+            'origin_airport', 'destination_airport', 'currency',
+            'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
+            'percent_rate', 'weight_breaks', 'is_additive',
+            'valid_from', 'valid_until', 'created_at', 'updated_at'
+        ]
+
+
+class ImportSellRateSerializer(serializers.ModelSerializer):
+    """Serializer for Import Sell Rates."""
+    product_code_code = serializers.CharField(source='product_code.code', read_only=True)
+    product_code_description = serializers.CharField(source='product_code.description', read_only=True)
+    
+    class Meta:
+        model = ImportSellRate
+        fields = [
+            'id', 'product_code', 'product_code_code', 'product_code_description',
+            'origin_airport', 'destination_airport', 'currency',
+            'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
+            'percent_rate', 'weight_breaks', 'is_additive',
+            'valid_from', 'valid_until', 'created_at', 'updated_at'
+        ]
+
+
+class DomesticSellRateSerializer(serializers.ModelSerializer):
+    """Serializer for Domestic Sell Rates."""
+    product_code_code = serializers.CharField(source='product_code.code', read_only=True)
+    product_code_description = serializers.CharField(source='product_code.description', read_only=True)
+    
+    class Meta:
+        model = DomesticSellRate
+        fields = [
+            'id', 'product_code', 'product_code_code', 'product_code_description',
+            'origin_zone', 'destination_zone', 'currency',
+            'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
+            'percent_rate', 'weight_breaks', 'is_additive',
+            'valid_from', 'valid_until', 'created_at', 'updated_at'
+        ]
+

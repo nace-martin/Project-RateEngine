@@ -173,7 +173,6 @@ export function QuoteStatusActions({
             setSendDialogOpen(false);
             setCancelDialogOpen(false);
             setOutcomeDialogOpen(false);
-            onStatusChange?.();
 
             const messages: Record<string, { title: string; description: string }> = {
                 finalize: { title: 'Quote Finalized', description: 'Quote has been locked.' },
@@ -189,6 +188,14 @@ export function QuoteStatusActions({
                 description: messages[action]?.description || 'Quote status updated.',
                 variant: action === 'mark_won' ? 'success' : (action === 'cancel' || action === 'mark_lost' || action === 'mark_expired' ? 'default' : 'success')
             });
+
+            if (action === "cancel") {
+                setLoading(false);
+                router.push("/quotes");
+                return;
+            }
+
+            onStatusChange?.();
         } else {
             setError(result.error || "Failed to update status");
         }

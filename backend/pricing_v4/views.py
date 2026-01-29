@@ -150,3 +150,173 @@ class ProductCodeListViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [filters.SearchFilter]
     search_fields = ['code', 'description']
 
+
+# =============================================================================
+# V4 SELL RATE VIEWSETS
+# =============================================================================
+
+from django_filters.rest_framework import DjangoFilterBackend
+from .models import ExportSellRate, ImportSellRate, DomesticSellRate
+from .serializers import ExportSellRateSerializer, ImportSellRateSerializer, DomesticSellRateSerializer
+
+
+class ExportSellRateViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for Export Sell Rates.
+    
+    Path: /api/v4/rates/export/
+    """
+    queryset = ExportSellRate.objects.select_related('product_code').order_by(
+        'origin_airport', 'destination_airport', 'product_code__code'
+    )
+    serializer_class = ExportSellRateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['origin_airport', 'destination_airport', 'product_code', 'currency']
+    search_fields = ['product_code__code', 'product_code__description', 'origin_airport', 'destination_airport']
+    ordering_fields = ['product_code__code', 'origin_airport', 'destination_airport', 'valid_from']
+
+
+class ImportSellRateViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for Import Sell Rates.
+    
+    Path: /api/v4/rates/import/
+    """
+    queryset = ImportSellRate.objects.select_related('product_code').order_by(
+        'origin_airport', 'destination_airport', 'product_code__code'
+    )
+    serializer_class = ImportSellRateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['origin_airport', 'destination_airport', 'product_code', 'currency']
+    search_fields = ['product_code__code', 'product_code__description', 'origin_airport', 'destination_airport']
+    ordering_fields = ['product_code__code', 'origin_airport', 'destination_airport', 'valid_from']
+
+
+class DomesticSellRateViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for Domestic Sell Rates.
+    
+    Path: /api/v4/rates/domestic/
+    """
+    queryset = DomesticSellRate.objects.select_related('product_code').order_by(
+        'origin_zone', 'destination_zone', 'product_code__code'
+    )
+    serializer_class = DomesticSellRateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['origin_zone', 'destination_zone', 'product_code', 'currency']
+    search_fields = ['product_code__code', 'product_code__description', 'origin_zone', 'destination_zone']
+    ordering_fields = ['product_code__code', 'origin_zone', 'destination_zone', 'valid_from']
+
+
+# =============================================================================
+# LOGICAL RATE CARDS VIEW
+# =============================================================================
+
+from rest_framework.views import APIView
+from .rate_card_config import LOGICAL_RATE_CARDS
+from .serializers import ExportSellRateSerializer, ImportSellRateSerializer, DomesticSellRateSerializer
+
+
+class LogicalRateCardsView(APIView):
+    """
+    Returns the 5 logical rate cards with their associated rate lines.
+    
+    Path: /api/v4/rate-cards/
+    
+    This is a read-only view layer over existing rate data.
+    No impact on pricing calculations.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        result = []
+        
+        for card_config in LOGICAL_RATE_CARDS:
+            card_data = {
+                'id': card_config['id'],
+                'name': card_config['name'],
+                'description': card_config['description'],
+                'service_scope': card_config.get('service_scope'),
+                'domain': card_config['domain'],
+                'lines': [],
+                'line_count': 0,
+                'currencies': set(),
+                'corridors': set(),
+            }
+            
+            # Get the appropriate queryset
+            lines = self._get_rate_lines(card_config)
+            
+            # Serialize and add metadata
+            for line in lines:
+                card_data['lines'].append(self._serialize_line(line, card_config))
+                card_data['currencies'].add(line.currency)
+                origin = getattr(line, 'origin_airport', None) or getattr(line, 'origin_zone', None)
+                dest = getattr(line, 'destination_airport', None) or getattr(line, 'destination_zone', None)
+                if origin and dest:
+                    card_data['corridors'].add(f"{origin}→{dest}")
+            
+            card_data['line_count'] = len(card_data['lines'])
+            card_data['currencies'] = list(card_data['currencies'])
+            card_data['corridors'] = sorted(list(card_data['corridors']))
+            
+            result.append(card_data)
+        
+        return Response(result)
+    
+    def _get_rate_lines(self, config):
+        """Query the appropriate rate table with filters."""
+        table_name = config['rate_table']
+        currency_filter = config.get('currency_filter', [])
+        origin_filter = config.get('origin_filter')
+        destination_filter = config.get('destination_filter')
+        
+        if table_name == 'ExportSellRate':
+            qs = ExportSellRate.objects.select_related('product_code')
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            if origin_filter:
+                qs = qs.filter(origin_airport__in=origin_filter)
+            if destination_filter:
+                qs = qs.filter(destination_airport__in=destination_filter)
+            return qs.order_by('origin_airport', 'destination_airport', 'product_code__code')
+            
+        elif table_name == 'ImportSellRate':
+            qs = ImportSellRate.objects.select_related('product_code')
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            if origin_filter:
+                qs = qs.filter(origin_airport__in=origin_filter)
+            if destination_filter:
+                qs = qs.filter(destination_airport__in=destination_filter)
+            return qs.order_by('origin_airport', 'destination_airport', 'product_code__code')
+            
+        elif table_name == 'DomesticSellRate':
+            qs = DomesticSellRate.objects.select_related('product_code')
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            if origin_filter:
+                qs = qs.filter(origin_zone__in=origin_filter)
+            if destination_filter:
+                qs = qs.filter(destination_zone__in=destination_filter)
+            return qs.order_by('origin_zone', 'destination_zone', 'product_code__code')
+        
+        return []
+    
+    def _serialize_line(self, line, config):
+        """Serialize a rate line to dict."""
+        table_name = config['rate_table']
+        
+        if table_name == 'ExportSellRate':
+            return ExportSellRateSerializer(line).data
+        elif table_name == 'ImportSellRate':
+            return ImportSellRateSerializer(line).data
+        elif table_name == 'DomesticSellRate':
+            return DomesticSellRateSerializer(line).data
+        return {}
+
+
+

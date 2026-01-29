@@ -1619,3 +1619,101 @@ export async function getProductCodes(params?: {
   if (!response.ok) throw new Error('Failed to fetch product codes');
   return response.json();
 }
+
+
+// =============================================================================
+// V4 SELL RATES API
+// =============================================================================
+
+export interface V4SellRate {
+  id: number;
+  product_code: number;
+  product_code_code: string;
+  product_code_description: string;
+  origin_airport?: string;
+  destination_airport?: string;
+  origin_zone?: string;
+  destination_zone?: string;
+  currency: string;
+  rate_per_kg: string | null;
+  rate_per_shipment: string | null;
+  min_charge: string | null;
+  max_charge: string | null;
+  percent_rate: string | null;
+  weight_breaks: { min_kg: number; rate: string }[] | null;
+  is_additive: boolean;
+  valid_from: string;
+  valid_until: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getExportSellRates(params?: {
+  origin?: string;
+  destination?: string;
+}): Promise<V4SellRate[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/rates/export/');
+  if (params?.origin) url.searchParams.append('origin_airport', params.origin);
+  if (params?.destination) url.searchParams.append('destination_airport', params.destination);
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch export sell rates');
+  return response.json();
+}
+
+export async function getImportSellRates(params?: {
+  origin?: string;
+  destination?: string;
+}): Promise<V4SellRate[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/rates/import/');
+  if (params?.origin) url.searchParams.append('origin_airport', params.origin);
+  if (params?.destination) url.searchParams.append('destination_airport', params.destination);
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch import sell rates');
+  return response.json();
+}
+
+export async function getDomesticSellRates(params?: {
+  origin?: string;
+  destination?: string;
+}): Promise<V4SellRate[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/rates/domestic/');
+  if (params?.origin) url.searchParams.append('origin_zone', params.origin);
+  if (params?.destination) url.searchParams.append('destination_zone', params.destination);
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch domestic sell rates');
+  return response.json();
+}
+
+
+// =============================================================================
+// LOGICAL RATE CARDS API
+// =============================================================================
+
+export interface LogicalRateCard {
+  id: string;
+  name: string;
+  description: string;
+  service_scope: string | null;
+  domain: string;
+  lines: V4SellRate[];
+  line_count: number;
+  currencies: string[];
+  corridors: string[];
+}
+
+export async function getLogicalRateCards(): Promise<LogicalRateCard[]> {
+  const url = API_BASE_URL + '/api/v4/rate-cards/';
+  const response = await fetch(url, {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) throw new Error('Failed to fetch rate cards');
+  return response.json();
+}
+
+
