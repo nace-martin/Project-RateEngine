@@ -20,8 +20,8 @@ from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
 from parties.models import Company, Contact
 
-# from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v4.adapter import PricingServiceV4Adapter as PricingServiceV3 # Using V4 Adapter
+# Pricing Dispatcher - Single Entry Point
+from quotes.services.dispatcher import PricingDispatcher, RoutingError
 from core.dataclasses import (
     QuoteInput,
     QuoteCharges,
@@ -121,6 +121,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        customer = get_object_or_404(Company, id=payload.customer_id)
+
         try:
             # 1. Enforce Business Rules for EXPORT Incoterms
             if shipment_type == Quote.ShipmentType.EXPORT:
@@ -137,28 +139,37 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 shipment_type,
                 origin_location,
                 destination_location,
+                customer
             )
             
-            # 3. Call the pricing service
-            service = PricingServiceV3(quote_input)
-            calculated_charges = service.calculate_charges()
-            derived_output_currency = service.get_output_currency()
+            # 3. Call the pricing dispatcher (single entry point)
+            dispatcher = PricingDispatcher()
+            result = dispatcher.calculate(quote_input)
+            calculated_charges = result.charges
+            engine_version = result.engine_version
+            
+            # Get derived values from the adapter (via charges)
+            from pricing_v4.adapter import PricingServiceV4Adapter
+            adapter = PricingServiceV4Adapter(quote_input)
+            derived_output_currency = adapter.get_output_currency()
+            
             has_missing_rates = calculated_charges.totals.has_missing_rates
             quote_status = (
                 Quote.Status.INCOMPLETE if has_missing_rates else Quote.Status.DRAFT
             )
 
-            # 3. Save to DB
+            # 4. Save to DB with engine version from dispatcher
             quote = self._save_quote_v3(
                 request, 
                 payload, 
-                shipment_type, # <-- Pass calculated type
+                shipment_type,
                 calculated_charges, 
-                service.get_fx_snapshot(),
-                service.get_policy(),
+                adapter.get_fx_snapshot(),
+                adapter.get_policy(),
                 derived_output_currency,
                 quote_status,
                 existing_quote,
+                engine_version,  # Pass engine version from dispatcher
             )
             
             # 4. Serialize and return the created quote
@@ -168,6 +179,11 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
             return Response(QuoteModelSerializerV3(quote).data, status=status.HTTP_201_CREATED)
 
+        except RoutingError as e:
+            # Dispatcher routing errors -> 400 Bad Request
+            logger.warning(f"Pricing dispatcher routing error: {e}")
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            
         except (ValueError, NotImplementedError) as e:
             # Domain logic errors (e.g., "Unsupported shipment type") -> 400 Bad Request
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -183,10 +199,13 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         except Exception as e:
             # Unexpected errors (bugs) -> Log and 500, but do NOT mask the stack trace in dev
             logger.exception(f"Unexpected error during quote computation: {e}")
+            import traceback
+            with open('last_error.traceback', 'w') as f:
+                f.write(traceback.format_exc())
             # Re-raise so Django's exception handler can do its job (or return generic 500)
             raise
 
-    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location):
+    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location, customer: Company):
         """Helper to convert Pydantic model to PricingService dataclasses."""
 
         origin_ref = self._location_to_ref(origin_location)
@@ -212,6 +231,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             data.payment_term,
             origin_location,
             destination_location,
+            customer
         )
 
         return QuoteInput(
@@ -238,17 +258,19 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             currency_code=currency_code,
         )
 
-    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location) -> str:
+    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location, customer: Company) -> str:
         """
-        Determine the correct output currency based on shipment type and payment term.
+        Determine the correct output currency based on customer preference or shipment type.
         
-        Currency Rules:
-        - Import PREPAID: FCY (origin currency - AUD for AU, USD for others)
-        - Import COLLECT: PGK (customer pays in PNG)
-        - Export PREPAID: PGK (customer pays in PNG)
-        - Export COLLECT: FCY (destination currency - AUD for AU, USD for others)
-        - Domestic: Always PGK
+        Priority:
+        1. Customer Preferred Currency (if set in Commercial Profile)
+        2. Standard Logic (based on shipment terms)
         """
+        # 1. Customer Preference Override
+        if hasattr(customer, 'commercial_profile') and customer.commercial_profile.preferred_quote_currency:
+            return customer.commercial_profile.preferred_quote_currency.code
+
+        # 2. Standard Logic
         if shipment_type == Quote.ShipmentType.IMPORT:
             if payment_term == Quote.PaymentTerm.PREPAID:
                 if origin_location.country and origin_location.country.currency:
@@ -272,7 +294,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         return 'PGK'
 
     @transaction.atomic
-    def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None):
+    def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None, engine_version: str = 'V4'):
         """
         Helper to save the quote, version, lines, and totals to the database.
         When an existing quote is provided, we append a new version instead of creating a duplicate quote.
@@ -350,7 +372,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             status=initial_status,
             reason="Initial Draft" if is_new_quote else "Recalculated with spot rates",
             created_by=request.user,
-            engine_version='V4',  # Always V4 - V3 is deprecated
+            engine_version=engine_version,  # From dispatcher result
         )
 
         # Create QuoteLines (bulk insert for performance)
@@ -388,7 +410,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             total_sell_fcy_currency=charges.totals.total_sell_fcy_currency,
             has_missing_rates=charges.totals.has_missing_rates,
             notes=charges.totals.notes,
-            engine_version='V4',  # Always V4 - V3 is deprecated
+            engine_version=engine_version,  # From dispatcher result
         )
 
         # Attach latest version for serializers expecting the attribute

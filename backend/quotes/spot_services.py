@@ -153,7 +153,7 @@ class SpotTriggerEvaluator:
             'default': ["AIRFREIGHT"] # P2P/A2A
         },
         'IMPORT': {
-            'A2D': ["AIRFREIGHT", "DEST_CLEARANCE", "DEST_DELIVERY"],
+            'A2D': ["DEST_CLEARANCE", "DEST_DELIVERY"],
             'D2D': [
                 "ORIGIN_PICKUP",
                 "AIRFREIGHT",

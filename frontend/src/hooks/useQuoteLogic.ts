@@ -117,7 +117,7 @@ export function useQuoteLogic({
             const kg = parseFloat(String(dim.gross_weight_kg)) || 0;
 
             totalPieces += pcs;
-            totalActual += kg;
+            totalActual += kg * pcs;
             totalVolumetric += (l * w * h / 6000) * pcs;
         }
 

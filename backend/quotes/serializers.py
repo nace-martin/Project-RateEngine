@@ -100,7 +100,8 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
             'id', 'service_component', 'cost_pgk', 'cost_fcy', 'cost_fcy_currency',
             'sell_pgk', 'sell_pgk_incl_gst', 'sell_fcy', 'sell_fcy_incl_gst',
             'sell_fcy_currency', 'exchange_rate', 'cost_source',
-            'cost_source_description', 'is_rate_missing', 'leg', 'bucket'
+            'cost_source_description', 'is_rate_missing', 'leg', 'bucket',
+            'gst_category', 'gst_rate', 'gst_amount'
         )
     
     def to_representation(self, instance):

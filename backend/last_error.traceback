@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\views\calculation.py", line 147, in post
+    result = dispatcher.calculate(quote_input)
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\services\dispatcher.py", line 214, in calculate
+    return self._execute_v4(quote_input, shipment_type)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\services\dispatcher.py", line 227, in _execute_v4
+    v4_charges = self._calculate_v4(quote_input)
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\services\dispatcher.py", line 280, in _calculate_v4
+    return adapter.calculate_charges()
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\pricing_v4\adapter.py", line 207, in calculate_charges
+    raise e
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\pricing_v4\adapter.py", line 200, in calculate_charges
+    standard_lines = self._calculate_standard_lines()
+  File "C:\Users\commercial.manager\dev\Project-RateEngine\backend\pricing_v4\adapter.py", line 310, in _calculate_standard_lines
+    engine = ImportPricingEngine(
+        quote_date=self.quote_input.quote_date,
+    ...<10 lines>...
+        quote_currency=quote_currency,
+    )
+TypeError: ImportPricingEngine.__init__() got an unexpected keyword argument 'caf_rate'

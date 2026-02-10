@@ -208,3 +208,45 @@ class DomesticSellRateSerializer(serializers.ModelSerializer):
             'valid_from', 'valid_until', 'created_at', 'updated_at'
         ]
 
+
+# =============================================================================
+# LOCAL RATE SERIALIZERS (One Commercial Truth)
+# =============================================================================
+
+from .models import LocalSellRate, LocalCOGSRate
+
+
+class LocalSellRateSerializer(serializers.ModelSerializer):
+    """Serializer for Local Sell Rates (centralized origin/destination charges)."""
+    product_code_code = serializers.CharField(source='product_code.code', read_only=True)
+    product_code_description = serializers.CharField(source='product_code.description', read_only=True)
+    
+    class Meta:
+        model = LocalSellRate
+        fields = [
+            'id', 'product_code', 'product_code_code', 'product_code_description',
+            'location', 'direction', 'payment_term', 'currency',
+            'rate_type', 'amount', 'is_additive', 'additive_flat_amount',
+            'min_charge', 'max_charge', 'weight_breaks',
+            'percent_of_product_code',
+            'valid_from', 'valid_until', 'created_at', 'updated_at'
+        ]
+
+
+class LocalCOGSRateSerializer(serializers.ModelSerializer):
+    """Serializer for Local COGS Rates (centralized origin/destination costs)."""
+    product_code_code = serializers.CharField(source='product_code.code', read_only=True)
+    product_code_description = serializers.CharField(source='product_code.description', read_only=True)
+    agent_name = serializers.CharField(source='agent.name', read_only=True, allow_null=True)
+    carrier_name = serializers.CharField(source='carrier.name', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = LocalCOGSRate
+        fields = [
+            'id', 'product_code', 'product_code_code', 'product_code_description',
+            'location', 'direction', 'agent', 'agent_name', 'carrier', 'carrier_name',
+            'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount',
+            'min_charge', 'max_charge', 'weight_breaks',
+            'percent_of_product_code',
+            'valid_from', 'valid_until', 'created_at', 'updated_at'
+        ]

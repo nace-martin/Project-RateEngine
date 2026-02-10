@@ -102,7 +102,13 @@ class CalculatedChargeLine(BaseModel):
     cost_source_description: Optional[str] = None
     is_rate_missing: bool = False
     bucket: str = "origin_charges"
+
     is_informational: bool = False
+
+    # --- GST Fields ---
+    gst_category: Optional[str] = None
+    gst_rate: Decimal = Decimal("0.0")
+    gst_amount: Decimal = Decimal("0.0")
 
 class CalculatedTotals(BaseModel):
     """The final, summed totals for the quote."""

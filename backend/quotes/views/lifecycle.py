@@ -95,6 +95,9 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges, ser
             is_rate_missing=line_charge.is_rate_missing,
             leg=line_charge.leg,
             bucket=line_charge.bucket,
+            gst_category=line_charge.gst_category,
+            gst_rate=line_charge.gst_rate,
+            gst_amount=line_charge.gst_amount,
         )
 
     totals = charges.totals
@@ -134,6 +137,7 @@ def _build_quote_input_from_payload(payload: dict):
     
     from .calculation import _classify_shipment_type, QuoteComputeV3APIView
     from quotes.schemas import QuoteComputeRequest
+    from parties.models import Company
     from core.models import Location
     from pydantic import ValidationError
 
@@ -144,6 +148,7 @@ def _build_quote_input_from_payload(payload: dict):
 
     origin_location = get_object_or_404(Location, pk=validated.origin_location_id, is_active=True)
     destination_location = get_object_or_404(Location, pk=validated.destination_location_id, is_active=True)
+    customer = get_object_or_404(Company, id=validated.customer_id)
     
     shipment_type = _classify_shipment_type(
         validated.mode,
@@ -161,6 +166,7 @@ def _build_quote_input_from_payload(payload: dict):
         shipment_type,
         origin_location,
         destination_location,
+        customer,
     )
     return quote_input, validated
 

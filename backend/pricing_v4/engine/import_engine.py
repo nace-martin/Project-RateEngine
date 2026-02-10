@@ -20,10 +20,20 @@ from typing import Dict, List, Optional, Literal
 from enum import Enum
 import logging
 
-from pricing_v4.models import ImportCOGS, ImportSellRate, ProductCode
+from pricing_v4.models import (
+    ImportCOGS, ImportSellRate, ProductCode,
+    LocalSellRate, LocalCOGSRate
+)
 from quotes.tax_policy import get_png_gst_category
 
 logger = logging.getLogger(__name__)
+
+# Categories that are location-based (not lane-based) for destination services
+# NOTE: Do NOT include origin-only surcharges (e.g., IMP-FSC-PICKUP) here.
+LOCAL_DEST_CATEGORIES = [
+    'CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING',
+    'AGENCY', 'SURCHARGE',
+]
 
 
 class PaymentTerm(Enum):
@@ -136,6 +146,8 @@ class ImportPricingEngine:
         tt_sell: Optional[Decimal] = None,
         caf_rate: Optional[Decimal] = None,
         margin_rate: Optional[Decimal] = None,
+        fx_rates: Optional[Dict] = None,
+        quote_currency: Optional[str] = None,
     ):
         self.quote_date = quote_date
         self.origin = origin
@@ -148,9 +160,10 @@ class ImportPricingEngine:
         self.tt_sell = tt_sell or Decimal('0.36')  # Default TT SELL
         self.caf_rate = caf_rate or self.DEFAULT_CAF
         self.margin_rate = margin_rate or self.DEFAULT_MARGIN
+        self.fx_rates = fx_rates or {}
         
-        # Determine quote currency from payment term
-        self.quote_currency = self._determine_quote_currency()
+        # Determine quote currency (prefer explicit override, else derive)
+        self.quote_currency = quote_currency or self._determine_quote_currency()
         
         # Cache for FSC calculations
         self._cost_cache: Dict[str, Decimal] = {}
@@ -171,7 +184,7 @@ class ImportPricingEngine:
         Service Scope determines which legs are in scope.
         """
         if self.service_scope == ServiceScope.A2D:
-            return ['DESTINATION']
+            return ['FREIGHT', 'DESTINATION']
         elif self.service_scope == ServiceScope.D2A:
             return ['ORIGIN', 'FREIGHT']
         elif self.service_scope == ServiceScope.D2D:
@@ -197,30 +210,68 @@ class ImportPricingEngine:
                 return leg == 'DESTINATION'
         return False
     
-    def _convert_fcy_to_pgk(self, amount: Decimal) -> Decimal:
+    def _get_rate_for_currency(self, currency: str, rate_type: str = 'tt_sell') -> Decimal:
+        """Get FX rate for specific currency."""
+        if currency == 'PGK':
+            return Decimal('1.0')
+        
+        # Check standard rates
+        if currency == self.quote_currency:
+             return self.tt_buy if rate_type == 'tt_buy' else self.tt_sell
+             
+        # Look up in fx_rates
+        info = self.fx_rates.get(currency)
+        if info and info.get(rate_type):
+            return Decimal(str(info[rate_type]))
+            
+        logger.warning(f"Missing {rate_type} rate for {currency}, defaulting to 1.0")
+        return Decimal('1.0')
+
+    def _convert_fcy_to_pgk(self, amount: Decimal, currency: Optional[str] = None) -> Decimal:
         """
         FCY → PGK conversion (Import).
         Uses TT BUY, CAF subtracted, DIVIDE.
-        
-        Per PricingPolicy.md:
-        effective_rate = tt_buy × (1 − CAF)
-        amount_pgk = fcy_amount ÷ effective_rate
         """
-        effective_rate = self.tt_buy * (Decimal('1') - self.caf_rate)
+        rate = self.tt_buy
+        if currency:
+            rate = self._get_rate_for_currency(currency, 'tt_buy')
+            
+        effective_rate = rate * (Decimal('1') - self.caf_rate)
+        if effective_rate == 0: return amount # Prevent div/0
+        
         pgk = amount / effective_rate
         return pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
-    def _convert_pgk_to_fcy(self, amount: Decimal) -> Decimal:
+    def _convert_pgk_to_fcy(self, amount: Decimal, target_currency: Optional[str] = None) -> Decimal:
         """
-        PGK → FCY conversion (for Prepaid dest charges).
+        PGK → FCY conversion.
         Uses TT SELL, CAF subtracted (Import), MULTIPLY.
-        
-        Note: For Import, CAF is subtracted regardless of conversion direction.
         """
-        effective_rate = self.tt_sell * (Decimal('1') - self.caf_rate)
+        rate = self.tt_sell
+        if target_currency:
+             rate = self._get_rate_for_currency(target_currency, 'tt_sell')
+             
+        effective_rate = rate * (Decimal('1') - self.caf_rate)
         fcy = amount * effective_rate
         return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
+    def _convert_cross_currency(self, amount: Decimal, from_curr: str, to_curr: str) -> Decimal:
+        """Convert any currency to any currency via PGK."""
+        if from_curr == to_curr:
+            return amount
+            
+        # 1. Convert source to PGK (using TT BUY)
+        if from_curr == 'PGK':
+            amount_pgk = amount
+        else:
+            amount_pgk = self._convert_fcy_to_pgk(amount, from_curr)
+            
+        # 2. Convert PGK to target (using TT SELL)
+        if to_curr == 'PGK':
+            return amount_pgk
+        else:
+            return self._convert_pgk_to_fcy(amount_pgk, to_curr)
+
     def _apply_margin(self, amount: Decimal) -> Decimal:
         """Apply margin (always last)."""
         return (amount * (Decimal('1') + self.margin_rate)).quantize(
@@ -359,28 +410,14 @@ class ImportPricingEngine:
     def _calculate_charge_line(self, pc: ProductCode, leg: str) -> Optional[ChargeLine]:
         """Calculate a single charge line."""
         
-        # Get COGS
-        cogs = ImportCOGS.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).select_related('agent').first()
+        # Get COGS - route to local table for destination local categories
+        cogs = self._get_cogs(pc, leg)
         
-        # Get explicit Sell (for destination)
-        # Prefer quote currency but allow fallback for conversion.
+        # Get explicit Sell (for destination) - route to local table for local categories
         if leg == 'DESTINATION':
             sell_rate = self._get_destination_sell_rate(pc)
         else:
-            sell_rate = ImportSellRate.objects.filter(
-                product_code=pc,
-                origin_airport=self.origin,
-                destination_airport=self.destination,
-                currency=self.quote_currency,
-                valid_from__lte=self.quote_date,
-                valid_until__gte=self.quote_date
-            ).first()
+            sell_rate = self._get_sell_rate(pc, leg)
         
         # Skip if no rates found
         if not cogs and not sell_rate:
@@ -414,19 +451,11 @@ class ImportPricingEngine:
                 sell_amount = self._calculate_sell_amount(sell_rate)
             
             # Currency handling for destination charges
-            # Prefer quote currency, but if we fell back to a non-matching currency,
-            # apply conversion to align with quote currency.
+            # If sell rate currency != quote currency, we must convert.
             if sell_rate.currency != self.quote_currency:
-                if self.payment_term == PaymentTerm.PREPAID and sell_rate.currency == 'PGK':
-                    # Fallback: Prepaid using PGK rate -> convert to FCY
-                    sell_amount = self._convert_pgk_to_fcy(sell_amount)
-                    fx_applied = True
-                    caf_applied = True
-                elif self.payment_term == PaymentTerm.COLLECT and sell_rate.currency != 'PGK':
-                    # Fallback: Collect using FCY rate -> convert to PGK
-                    sell_amount = self._convert_fcy_to_pgk(sell_amount)
-                    fx_applied = True
-                    caf_applied = True
+                sell_amount = self._convert_cross_currency(sell_amount, sell_rate.currency, self.quote_currency)
+                fx_applied = True
+                caf_applied = True
             
             sell_currency = self.quote_currency
             
@@ -435,11 +464,10 @@ class ImportPricingEngine:
             sell_amount = cost_amount
             
             # FX conversion if needed
-            if self._needs_fx_conversion(leg):
-                if cost_currency == 'AUD' and self.quote_currency == 'PGK':
-                    sell_amount = self._convert_fcy_to_pgk(cost_amount)
-                    fx_applied = True
-                    caf_applied = True
+            if cost_currency != self.quote_currency:
+                sell_amount = self._convert_cross_currency(cost_amount, cost_currency, self.quote_currency)
+                fx_applied = True
+                caf_applied = True
             
             # Apply margin
             sell_amount = self._apply_margin(sell_amount)
@@ -453,12 +481,10 @@ class ImportPricingEngine:
             # For proper margin calc, need to compare in same currency
             if fx_applied and cost_currency != sell_currency:
                 # Convert cost to sell currency for comparison
-                if cost_currency == 'AUD' and sell_currency == 'PGK':
-                    cost_in_quote_curr = cost_amount / self.tt_buy  # Simple conversion for display
-                else:
-                    cost_in_quote_curr = cost_amount
+                cost_in_quote_curr = self._convert_cross_currency(cost_amount, cost_currency, sell_currency)
                 margin_amount = sell_amount - cost_in_quote_curr
-                margin_percent = (margin_amount / cost_in_quote_curr * 100).quantize(Decimal('0.1'))
+                if cost_in_quote_curr > 0:
+                    margin_percent = (margin_amount / cost_in_quote_curr * 100).quantize(Decimal('0.1'))
             else:
                 margin_amount = sell_amount - cost_amount
                 margin_percent = (margin_amount / cost_amount * 100).quantize(Decimal('0.1'))
@@ -527,15 +553,19 @@ class ImportPricingEngine:
         if sell_rate:
             sell_amount = self._calculate_sell_amount(sell_rate)
             if sell_rate.currency != self.quote_currency:
-                if self.payment_term == PaymentTerm.PREPAID and sell_rate.currency == 'PGK':
-                    sell_amount = self._convert_pgk_to_fcy(sell_amount)
-                elif self.payment_term == PaymentTerm.COLLECT and sell_rate.currency != 'PGK':
-                    sell_amount = self._convert_fcy_to_pgk(sell_amount)
+                sell_amount = self._convert_cross_currency(sell_amount, sell_rate.currency, self.quote_currency)
             return sell_amount
         return Decimal('0')
 
-    def _get_destination_sell_rate(self, pc: ProductCode) -> Optional[ImportSellRate]:
-        """Prefer quote currency rates but allow fallback for destination conversion."""
+    def _get_destination_sell_rate(self, pc: ProductCode):
+        """
+        Get destination sell rate.
+        Routes to LocalSellRate for local categories, ImportSellRate for freight.
+        """
+        if pc.category in LOCAL_DEST_CATEGORIES:
+            return self._get_local_sell_rate(pc)
+        
+        # Lane-based lookup for FREIGHT
         base_qs = ImportSellRate.objects.filter(
             product_code=pc,
             origin_airport=self.origin,
@@ -548,7 +578,151 @@ class ImportPricingEngine:
         if sell_rate:
             return sell_rate
         if self.payment_term == PaymentTerm.PREPAID:
-            return base_qs.filter(currency='PGK').first()
+            pgk = base_qs.filter(currency='PGK').first()
+            if pgk: return pgk
         if self.payment_term == PaymentTerm.COLLECT:
-            return base_qs.exclude(currency='PGK').first()
-        return None
+            fcy = base_qs.exclude(currency='PGK').first()
+            if fcy: return fcy
+            
+        # Final fallback: Anything we can find (e.g. USD when quote is AUD)
+        return base_qs.first()
+    
+    def _get_cogs(self, pc: ProductCode, leg: Optional[str] = None):
+        """
+        Get COGS for a product code.
+        Routes to LocalCOGSRate for local categories, ImportCOGS for freight.
+        """
+        if leg == 'DESTINATION' and pc.category in LOCAL_DEST_CATEGORIES:
+            return self._get_local_cogs(pc)
+        
+        # Lane-based lookup for FREIGHT
+        return ImportCOGS.objects.filter(
+            product_code=pc,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        ).select_related('agent').first()
+    
+    def _get_sell_rate(self, pc: ProductCode, leg: str):
+        """
+        Get sell rate for non-destination legs.
+        Uses lane-based ImportSellRate (origin/freight sell is cost-plus).
+        """
+        # Lane-based lookup
+        return ImportSellRate.objects.filter(
+            product_code=pc,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            currency=self.quote_currency,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        ).first()
+    
+    def _get_local_cogs(self, pc: ProductCode):
+        """
+        Lookup local COGS from centralized table (by destination, direction=IMPORT).
+        Falls back to legacy ImportCOGS table if no LocalCOGSRate is found.
+        """
+        # Try new LocalCOGSRate table first
+        local_rate = LocalCOGSRate.objects.filter(
+            product_code=pc,
+            location=self.destination,
+            direction='IMPORT',
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        ).first()
+        
+        if local_rate:
+            return local_rate
+        
+        # Fallback: Check legacy ImportCOGS table (lane-based)
+        # This ensures backward compatibility during migration
+        base_qs = ImportCOGS.objects.filter(
+            product_code=pc,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        ).select_related('agent')
+        
+        # Prefer PGK for local destination costs in PNG
+        cogs = base_qs.filter(currency='PGK').first()
+        if cogs:
+            return cogs
+        return base_qs.first()
+    
+    def _get_local_sell_rate(self, pc: ProductCode):
+        """
+        Lookup local sell rate from centralized table.
+        Falls back to legacy ImportSellRate table if no LocalSellRate is found.
+        
+        Priority: Exact payment_term match first, then fallback to 'ANY'.
+        
+        Currency Rules for Import Destination Charges:
+        - COLLECT: PGK (consignee in PNG pays in local currency)
+        - PREPAID from AU: AUD 
+        - PREPAID from other: USD
+        """
+        payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
+        
+        # Try new LocalSellRate table first
+        base_qs = LocalSellRate.objects.filter(
+            product_code=pc,
+            location=self.destination,
+            direction='IMPORT',
+            payment_term__in=[payment_term_value, 'ANY'],
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        )
+
+        # Priority 1: Match quote currency + exact payment term
+        rates = base_qs.filter(currency=self.quote_currency)
+        exact = rates.filter(payment_term=payment_term_value).first()
+        if exact:
+            return exact
+
+        # Priority 2: Match quote currency + ANY term
+        any_term = rates.filter(payment_term='ANY').first()
+        if any_term:
+            return any_term
+
+        # Priority 3: Any currency + exact payment term
+        exact_any_currency = base_qs.filter(payment_term=payment_term_value).first()
+        if exact_any_currency:
+            return exact_any_currency
+
+        # Priority 4: Any currency + ANY term
+        any_any = base_qs.filter(payment_term='ANY').first()
+        if any_any:
+            return any_any
+        
+        # Fallback: Check legacy ImportSellRate table (lane-based)
+        # This ensures backward compatibility during migration
+        base_qs = ImportSellRate.objects.filter(
+            product_code=pc,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        )
+        
+        # Priority 1: Match quote currency
+        sell_rate = base_qs.filter(currency=self.quote_currency).first()
+        if sell_rate:
+            return sell_rate
+        
+        # Priority 2: Payment term specific fallback
+        if self.payment_term == PaymentTerm.PREPAID:
+            # PREPAID: shipper abroad pays, try PGK if FCY not found
+            pgk = base_qs.filter(currency='PGK').first()
+            if pgk:
+                return pgk
+        elif self.payment_term == PaymentTerm.COLLECT:
+            # COLLECT: consignee in PNG pays - need PGK, use FCY as last resort
+            fcy = base_qs.exclude(currency='PGK').first()
+            if fcy:
+                return fcy
+        
+        # Last resort: any available rate
+        return base_qs.first()

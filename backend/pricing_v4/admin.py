@@ -146,3 +146,67 @@ class CustomerDiscountAdmin(admin.ModelAdmin):
     )
     readonly_fields = ['created_at', 'updated_at']
 
+
+# =============================================================================
+# LOCAL RATE ADMINS (One Commercial Truth)
+# =============================================================================
+
+from .models import LocalSellRate, LocalCOGSRate
+
+
+@admin.register(LocalSellRate)
+class LocalSellRateAdmin(admin.ModelAdmin):
+    list_display = ['product_code', 'location', 'direction', 'payment_term', 'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'valid_from', 'valid_until']
+    list_filter = ['location', 'direction', 'payment_term', 'currency', 'rate_type']
+    search_fields = ['product_code__code', 'location']
+    ordering = ['location', 'direction', 'product_code']
+    autocomplete_fields = ['product_code', 'percent_of_product_code']
+    
+    fieldsets = (
+        ('Scope', {
+            'fields': ('product_code', 'location', 'direction', 'payment_term')
+        }),
+        ('Rate Configuration', {
+            'fields': ('currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'min_charge', 'max_charge', 'weight_breaks')
+        }),
+        ('Percentage (if applicable)', {
+            'fields': ('percent_of_product_code',),
+            'classes': ('collapse',)
+        }),
+        ('Validity', {
+            'fields': ('valid_from', 'valid_until')
+        }),
+    )
+
+
+@admin.register(LocalCOGSRate)
+class LocalCOGSRateAdmin(admin.ModelAdmin):
+    list_display = ['product_code', 'location', 'direction', 'get_counterparty', 'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'valid_from', 'valid_until']
+    list_filter = ['location', 'direction', 'currency', 'rate_type', 'agent', 'carrier']
+    search_fields = ['product_code__code', 'location']
+    ordering = ['location', 'direction', 'product_code']
+    autocomplete_fields = ['product_code', 'agent', 'carrier', 'percent_of_product_code']
+    
+    def get_counterparty(self, obj):
+        return obj.carrier or obj.agent
+    get_counterparty.short_description = 'Counterparty'
+    
+    fieldsets = (
+        ('Scope', {
+            'fields': ('product_code', 'location', 'direction')
+        }),
+        ('Counterparty', {
+            'fields': ('agent', 'carrier'),
+            'description': 'Select EITHER agent OR carrier, not both.'
+        }),
+        ('Rate Configuration', {
+            'fields': ('currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'min_charge', 'max_charge', 'weight_breaks')
+        }),
+        ('Percentage (if applicable)', {
+            'fields': ('percent_of_product_code',),
+            'classes': ('collapse',)
+        }),
+        ('Validity', {
+            'fields': ('valid_from', 'valid_until')
+        }),
+    )

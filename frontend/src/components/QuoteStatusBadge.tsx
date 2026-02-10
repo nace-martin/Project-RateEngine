@@ -145,8 +145,9 @@ export function QuoteStatusActions({
     status,
     validUntil,
     hasMissingRates = false,
+    showDelete = true,
     onStatusChange
-}: QuoteStatusActionsProps) {
+}: QuoteStatusActionsProps & { showDelete?: boolean }) {
     const normalizedStatus = status?.toUpperCase?.() ?? "";
     const effectiveStatus = getEffectiveQuoteStatus(normalizedStatus, validUntil);
     const router = useRouter();
@@ -301,42 +302,43 @@ export function QuoteStatusActions({
             {/* DRAFT → FINALIZED + Cancel */}
             {effectiveStatus === "DRAFT" && (
                 <>
-                    {/* Cancel Quote Button */}
-                    <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
-                        <DialogTrigger asChild>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={loading}
-                                className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-                            >
-                                <XCircle className="mr-2 h-4 w-4" />
-                                Delete Draft
-                            </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                            <DialogHeader>
-                                <DialogTitle>Delete this draft?</DialogTitle>
-                                <DialogDescription>
-                                    This will permanently delete the draft quote.
-                                    This action cannot be undone.
-                                </DialogDescription>
-                            </DialogHeader>
-                            <DialogFooter>
-                                <DialogClose asChild>
-                                    <Button variant="outline">Back</Button>
-                                </DialogClose>
+                    {/* Delete Draft Button */}
+                    {showDelete && (
+                        <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+                            <DialogTrigger asChild>
                                 <Button
-                                    onClick={() => handleTransition("cancel")}
+                                    variant="outline"
+                                    size="sm"
                                     disabled={loading}
-                                    variant="destructive"
+                                    className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
                                 >
-                                    {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    <XCircle className="mr-2 h-4 w-4" />
                                     Delete Draft
                                 </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
+                            </DialogTrigger>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Delete this draft?</DialogTitle>
+                                    <DialogDescription>
+                                        This action cannot be undone. The draft quote will be permanently removed.
+                                    </DialogDescription>
+                                </DialogHeader>
+                                <DialogFooter>
+                                    <DialogClose asChild>
+                                        <Button variant="outline">Cancel</Button>
+                                    </DialogClose>
+                                    <Button
+                                        onClick={() => handleTransition("cancel")}
+                                        disabled={loading}
+                                        className="bg-red-600 hover:bg-red-700"
+                                    >
+                                        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                        Delete Forever
+                                    </Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+                    )}
 
                     {/* Finalize Quote Button */}
                     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

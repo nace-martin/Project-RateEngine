@@ -229,10 +229,8 @@ class PricingServiceV4Adapter:
         result = None
         
         # Calculate weight
-        gross_weight = sum(p.gross_weight_kg * p.pieces for p in shipment.pieces)
-        # Simple volume weight? The engines take 'weight_kg'. Let's assume charge weight logic is inside or handled here.
-        # For now, pass gross weight as verified in scripts.
-        chargeable_weight = gross_weight # Simplify for now
+        # Calculate chargeable weight (Max of Actual vs Volumetric)
+        chargeable_weight = self._calculate_chargeable_weight()
         
         origin_code = shipment.origin_location.code
         dest_code = shipment.destination_location.code
@@ -243,15 +241,20 @@ class PricingServiceV4Adapter:
             fx_rates = self._get_fx_rates_dict()
             
             # Determine quote currency for Export COLLECT
-            # Rule: AUD only if destination is Australia, otherwise USD
-            dest_country = None
-            if shipment.destination_location:
-                dest_country = getattr(shipment.destination_location, 'country_code', None)
-            
-            if dest_country == 'AU':
-                quote_currency = 'AUD'
+            # If customer preference was provided in QuoteInput, honor it.
+            preferred_currency = self.quote_input.output_currency
+            if preferred_currency:
+                quote_currency = preferred_currency
             else:
-                quote_currency = 'USD'  # Default for all other international (SIN, HKG, etc.)
+                # Rule: AUD only if destination is Australia, otherwise USD
+                dest_country = None
+                if shipment.destination_location:
+                    dest_country = getattr(shipment.destination_location, 'country_code', None)
+                
+                if dest_country == 'AU':
+                    quote_currency = 'AUD'
+                else:
+                    quote_currency = 'USD'  # Default for all other international (SIN, HKG, etc.)
             
             # Get TT rates for the quote currency
             fx_info = fx_rates.get(quote_currency, {})
@@ -288,13 +291,40 @@ class PricingServiceV4Adapter:
             payment_term_enum = PaymentTerm(shipment.payment_term)
             service_scope_enum = ServiceScope(shipment.service_scope)
             
+            # Prepare FX data
+            fx_rates = self._get_fx_rates_dict()
+            # PRIORITY: Use the currency already determined by the View/User (Customer Preference)
+            # If not set, fallback to adapter logic
+            quote_currency = self.quote_input.output_currency or self.get_output_currency()
+            
+            fx_info = fx_rates.get(quote_currency, {})
+            # Use defaults if missing (same as Export)
+            tt_buy = Decimal(str(fx_info.get('tt_buy', '0.35'))) if fx_info else Decimal('0.35')
+            tt_sell = Decimal(str(fx_info.get('tt_sell', '0.36'))) if fx_info else Decimal('0.36')
+            
+            # Get specific policy overrides if any (reuse Export policy fields or define Import ones?)
+            # Assuming shared policy margin/caf for now or defaults in engine
+            caf_rate = None
+            margin_rate = None
+            if self.policy:
+                if self.policy.caf_import_pct is not None:
+                     caf_rate = Decimal(str(self.policy.caf_import_pct))
+                if self.policy.margin_pct is not None:
+                     margin_rate = Decimal(str(self.policy.margin_pct))
+
             engine = ImportPricingEngine(
                 quote_date=self.quote_input.quote_date,
                 origin=origin_code,
                 destination=dest_code,
                 chargeable_weight_kg=chargeable_weight,
                 payment_term=payment_term_enum,
-                service_scope=service_scope_enum
+                service_scope=service_scope_enum,
+                tt_buy=tt_buy,
+                tt_sell=tt_sell,
+                caf_rate=caf_rate,
+                margin_rate=margin_rate,
+                fx_rates=fx_rates,
+                quote_currency=quote_currency,
             )
         elif shipment.shipment_type == 'DOMESTIC':
             # Domestic Engine
@@ -380,6 +410,9 @@ class PricingServiceV4Adapter:
                     'leg': leg,
                     'sell_currency': sell_currency,
                     'cost_currency': cost_currency,
+                    'gst_category': getattr(line, 'gst_category', None),
+                    'gst_rate': getattr(line, 'gst_rate', Decimal('0')),
+                    'gst_amount': getattr(line, 'gst_amount', Decimal('0')),
                     'agent_name': getattr(line, 'agent_name', None),  # NEW
                 }
             
@@ -448,14 +481,14 @@ class PricingServiceV4Adapter:
                 fx_buy_rate = self._get_fx_buy_rate(cost_currency, self._get_fx_rates_dict())
                 
                 if fx_sell_rate > 0:
-                    sell_pgk = sell_fcy * fx_sell_rate
-                    sell_pgk_incl_gst = sell_fcy_incl_gst * fx_sell_rate
+                    sell_pgk = self._convert_fcy_to_pgk(sell_fcy, fx_sell_rate)
+                    sell_pgk_incl_gst = self._convert_fcy_to_pgk(sell_fcy_incl_gst, fx_sell_rate)
                 else:
                     sell_pgk = sell_fcy
                     sell_pgk_incl_gst = sell_fcy_incl_gst
 
                 if fx_buy_rate > 0:
-                    cost_pgk = cost_fcy * fx_buy_rate
+                    cost_pgk = self._convert_fcy_to_pgk(cost_fcy, fx_buy_rate)
                 else:
                     cost_pgk = cost_fcy
 
@@ -476,11 +509,19 @@ class PricingServiceV4Adapter:
 
                     cost_source=cost_source,  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
+                    # GST Fields
+                    gst_category=data.get('gst_category'),
+                    gst_rate=data.get('gst_rate', Decimal('0')),
+                    gst_amount=data.get('gst_amount', Decimal('0')),
                 ))
             else:
+                cost_fcy = None
+                cost_fcy_currency = None
                 if cost_currency != 'PGK':
+                    cost_fcy = data['cost_amount']
+                    cost_fcy_currency = cost_currency
                     fx_buy_rate = self._get_fx_buy_rate(cost_currency, self._get_fx_rates_dict())
-                    cost_pgk = data['cost_amount'] * fx_buy_rate if fx_buy_rate > 0 else data['cost_amount']
+                    cost_pgk = self._convert_fcy_to_pgk(data['cost_amount'], fx_buy_rate) if fx_buy_rate > 0 else data['cost_amount']
                 else:
                     cost_pgk = data['cost_amount']
                 lines.append(CalculatedChargeLine(
@@ -494,9 +535,15 @@ class PricingServiceV4Adapter:
                     sell_fcy=data['sell_amount'],
                     sell_fcy_incl_gst=data.get('sell_incl_gst', data['sell_amount']),
                     sell_fcy_currency='PGK',
+                    cost_fcy=cost_fcy,
+                    cost_fcy_currency=cost_fcy_currency,
                     bucket=data.get('bucket', 'origin_charges'),
                     cost_source=cost_source,  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
+                    # GST Fields
+                    gst_category=data.get('gst_category'),
+                    gst_rate=data.get('gst_rate', Decimal('0')),
+                    gst_amount=data.get('gst_amount', Decimal('0')),
                 ))
 
         return lines
@@ -518,6 +565,10 @@ class PricingServiceV4Adapter:
         - Domestic: Always PGK
         """
         shipment = self.quote_input.shipment
+
+        preferred_currency = self.quote_input.output_currency
+        if preferred_currency:
+            return preferred_currency
         
         if shipment.shipment_type == 'IMPORT':
             if shipment.payment_term == 'PREPAID':
@@ -581,6 +632,21 @@ class PricingServiceV4Adapter:
             return Decimal(str(info['tt_sell']))
         logger.warning("No FX SELL rate found for %s; using 1.0", currency)
         return Decimal('1')
+
+    def _convert_fcy_to_pgk(self, amount: Decimal, fx_rate: Decimal) -> Decimal:
+        """
+        Convert FCY to PGK using the stored FX rate.
+
+        The system stores rates as FCY per PGK (e.g., 0.3342 AUD per 1 PGK),
+        but may also contain PGK per FCY (>1). Use a safe heuristic:
+        - If rate >= 1, assume PGK per FCY: PGK = FCY * rate
+        - If rate < 1, assume FCY per PGK: PGK = FCY / rate
+        """
+        if fx_rate <= 0:
+            return amount
+        if fx_rate >= 1:
+            return amount * fx_rate
+        return amount / fx_rate
 
     def _calculate_chargeable_weight(self) -> Decimal:
         total_actual = Decimal('0')

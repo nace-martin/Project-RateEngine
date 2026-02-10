@@ -20,8 +20,14 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
 from enum import Enum
 
-from pricing_v4.models import ProductCode, ExportCOGS, ExportSellRate
+from pricing_v4.models import (
+    ProductCode, ExportCOGS, ExportSellRate,
+    LocalSellRate, LocalCOGSRate
+)
 from quotes.tax_policy import get_png_gst_category
+
+# Categories that are location-based (not lane-based)
+LOCAL_CATEGORIES = ['CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING']
 
 
 class PaymentTerm(Enum):
@@ -385,7 +391,16 @@ class ExportPricingEngine:
             return None
     
     def _get_cogs(self, product_code_id: int) -> Optional[ExportCOGS]:
-        """Simple lookup. No business logic."""
+        """
+        Get COGS for a product code.
+        Routes to LocalCOGSRate for local categories, ExportCOGS for freight.
+        """
+        # Check if this is a local category
+        pc = self._get_product_code(product_code_id)
+        if pc and pc.category in LOCAL_CATEGORIES:
+            return self._get_local_cogs(product_code_id)
+        
+        # Lane-based lookup for FREIGHT
         if hasattr(self, '_cogs_rate_cache') and product_code_id in self._cogs_rate_cache:
             return self._cogs_rate_cache[product_code_id]
         if hasattr(self, '_cogs_rate_cache'):
@@ -399,13 +414,99 @@ class ExportPricingEngine:
             valid_until__gte=self.quote_date,
         ).first()
     
+    def _get_local_cogs(self, product_code_id: int) -> Optional[ExportCOGS]:
+        """
+        Lookup local COGS from centralized table (by origin, direction=EXPORT).
+        Falls back to legacy ExportCOGS table if no LocalCOGSRate is found.
+        """
+        # Try new LocalCOGSRate table first
+        local_rate = LocalCOGSRate.objects.filter(
+            product_code_id=product_code_id,
+            location=self.origin,
+            direction='EXPORT',
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        ).first()
+        
+        if local_rate:
+            return local_rate
+        
+        # Fallback: Check legacy ExportCOGS table (lane-based)
+        # This ensures backward compatibility during migration
+        return ExportCOGS.objects.filter(
+            product_code_id=product_code_id,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date,
+        ).first()
+    
     def _get_sell_rate(self, product_code_id: int) -> Optional[ExportSellRate]:
-        """Simple lookup. No business logic."""
+        """
+        Get Sell Rate for a product code.
+        Routes to LocalSellRate for local categories, ExportSellRate for freight.
+        """
+        # Check if this is a local category
+        pc = self._get_product_code(product_code_id)
+        if pc and pc.category in LOCAL_CATEGORIES:
+            return self._get_local_sell_rate(product_code_id)
+        
+        # Lane-based lookup for FREIGHT
         if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache:
             return self._sell_rate_cache[product_code_id]
         if hasattr(self, '_sell_rate_cache'):
             return None
             
+        return ExportSellRate.objects.filter(
+            product_code_id=product_code_id,
+            origin_airport=self.origin,
+            destination_airport=self.destination,
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date,
+        ).first()
+    
+    def _get_local_sell_rate(self, product_code_id: int) -> Optional[ExportSellRate]:
+        """
+        Lookup local sell rate from centralized table.
+        Falls back to legacy ExportSellRate table if no LocalSellRate is found.
+        
+        Priority: Exact payment_term match first, then fallback to 'ANY'.
+        """
+        payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
+        
+        # Try new LocalSellRate table first
+        base_qs = LocalSellRate.objects.filter(
+            product_code_id=product_code_id,
+            location=self.origin,
+            direction='EXPORT',
+            payment_term__in=[payment_term_value, 'ANY'],
+            valid_from__lte=self.quote_date,
+            valid_until__gte=self.quote_date
+        )
+
+        # Priority 1: Match quote currency + exact payment term
+        rates = base_qs.filter(currency=self.quote_currency)
+        exact = rates.filter(payment_term=payment_term_value).first()
+        if exact:
+            return exact
+
+        # Priority 2: Match quote currency + ANY term
+        any_term = rates.filter(payment_term='ANY').first()
+        if any_term:
+            return any_term
+
+        # Priority 3: Any currency + exact payment term
+        exact_any_currency = base_qs.filter(payment_term=payment_term_value).first()
+        if exact_any_currency:
+            return exact_any_currency
+
+        # Priority 4: Any currency + ANY term
+        any_any = base_qs.filter(payment_term='ANY').first()
+        if any_any:
+            return any_any
+        
+        # Fallback: Check legacy ExportSellRate table (lane-based)
+        # This ensures backward compatibility during migration
         return ExportSellRate.objects.filter(
             product_code_id=product_code_id,
             origin_airport=self.origin,

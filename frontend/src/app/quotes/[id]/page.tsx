@@ -19,7 +19,7 @@ import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDi
 import { getSpotChargesForQuote } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, ChevronRight, ArrowLeft, CheckCircle, CheckCircle2 } from "lucide-react";
+import { Loader2, ChevronRight, ArrowLeft, CheckCircle, CheckCircle2, Pencil, ArrowRight } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
 import { getCustomerName, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 import {
@@ -258,6 +258,84 @@ export default function QuoteDetailPage() {
                 </p>
               </div>
 
+              {/* Routing */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Routing</p>
+                <div className="font-medium text-slate-900 flex items-center gap-1">
+                  <span>{quote.origin_location?.split('-')[0] || quote.origin_location}</span>
+                  <ArrowRight className="h-3 w-3" />
+                  <span>{quote.destination_location?.split('-')[0] || quote.destination_location}</span>
+                </div>
+              </div>
+
+              {/* FX Rate */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
+                <div className="font-medium text-slate-900 text-xs">
+                  {(() => {
+                    if (!computeResult?.exchange_rates) return <span className="text-slate-400 italic">N/A</span>;
+
+                    const relevantCurrencies = new Set<string>();
+
+                    // Helper to safely add currency
+                    const addCurrency = (c: string | null | undefined) => {
+                      if (c && c.toUpperCase() !== 'PGK' && c.trim() !== '') {
+                        relevantCurrencies.add(c.toUpperCase());
+                      }
+                    };
+
+                    // 1. Output Currency
+                    addCurrency(quote.output_currency);
+                    addCurrency(quote.latest_version?.totals?.currency);
+                    addCurrency(computeResult.totals?.currency);
+
+                    // 2. Lines from latest_version (Stored State)
+                    quote.latest_version?.lines?.forEach(line => {
+                      addCurrency(line.cost_fcy_currency);
+                      addCurrency(line.sell_fcy_currency);
+                    });
+
+                    // 3. Lines from computeResult (Calculated State)
+                    computeResult.buy_lines?.forEach(line => addCurrency(line.currency));
+                    computeResult.sell_lines?.forEach(line => addCurrency(line.sell_currency));
+
+                    // Filter rates that match relevant currencies
+                    const ratesToShow = Object.entries(computeResult.exchange_rates).filter(([key]) => {
+                      const upperKey = key.toUpperCase();
+                      // If key is exactly one of the relevant currencies (e.g. "AUD")
+                      if (relevantCurrencies.has(upperKey)) return true;
+
+                      // If key is a pair containing one of the relevant currencies (e.g. "AUD/PGK")
+                      for (const code of Array.from(relevantCurrencies)) {
+                        if (upperKey.includes(`${code}/`) || upperKey.includes(`/${code}`)) return true;
+                        if (upperKey.includes(code)) return true; // Broad match fallback
+                      }
+                      return false;
+                    });
+
+                    if (ratesToShow.length === 0) {
+                      // If we have rates but filtered them all out, it implies everything is PGK.
+                      // But usually we shouldn't be here if there are foreign currencies involved.
+                      // Check if we actually found relevant currencies
+                      if (relevantCurrencies.size === 0) {
+                        // User feedback: "if app is converting AUD to PGK then I want that particular FX rate"
+                        // If we didn't find "AUD" in the lines, then we missed it.
+                        // Fallback: show ALL rates if no foreign currency detected but exchange rates exist?
+                        // No, user specifically said "not all".
+                        // Let's assume if it says "Base (PGK)" it's because the data doesn't have the currency tag.
+                        return <span className="text-slate-400 italic">Base (PGK)</span>;
+                      }
+                      return <span className="text-slate-400 italic">None</span>;
+                    }
+
+                    // Sort to put pairs first if possible, or just standard sort
+                    return ratesToShow.sort().map(([currency, rate]) => (
+                      <div key={currency}>{currency}: {rate}</div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
               {/* Chargeable Weight */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Total Weight</p>
@@ -265,7 +343,11 @@ export default function QuoteDetailPage() {
                   {/* Calculate Gross Weight from payload */}
                   {(() => {
                     const dims = quote.latest_version?.payload_json?.dimensions || [];
-                    const totalKg = dims.reduce((sum: number, d: V3DimensionInput) => sum + parseFloat(d.gross_weight_kg || "0"), 0);
+                    const totalKg = dims.reduce((sum: number, d: V3DimensionInput) => {
+                      const pcs = d.pieces || 1;
+                      const weight = parseFloat(d.gross_weight_kg || "0");
+                      return sum + (weight * pcs);
+                    }, 0);
                     return totalKg > 0 ? `${totalKg.toLocaleString()} kg` : "0 kg";
                   })()}
                 </p>
@@ -340,24 +422,24 @@ export default function QuoteDetailPage() {
                 variant="outline"
                 className="hidden sm:flex"
                 disabled={pdfDownloading}
-                  onClick={async () => {
-                    setPdfDownloading(true);
-                    try {
-                      await downloadQuotePDF(quote.id, quote.quote_number);
-                      if (quote.status?.toUpperCase?.() === "FINALIZED") {
-                        const sendResult = await transitionQuoteStatus(quote.id, "send");
-                        if (sendResult.success) {
-                          const refreshed = await getQuoteV3(id);
-                          setQuote(refreshed);
-                        } else {
-                          console.error("Auto-send failed:", sendResult.error);
-                        }
+                onClick={async () => {
+                  setPdfDownloading(true);
+                  try {
+                    await downloadQuotePDF(quote.id, quote.quote_number);
+                    if (quote.status?.toUpperCase?.() === "FINALIZED") {
+                      const sendResult = await transitionQuoteStatus(quote.id, "send");
+                      if (sendResult.success) {
+                        const refreshed = await getQuoteV3(id);
+                        setQuote(refreshed);
+                      } else {
+                        console.error("Auto-send failed:", sendResult.error);
                       }
-                    } catch (err) {
-                      console.error("PDF download failed:", err);
-                      alert(err instanceof Error ? err.message : "Failed to download PDF");
-                    } finally {
-                      setPdfDownloading(false);
+                    }
+                  } catch (err) {
+                    console.error("PDF download failed:", err);
+                    alert(err instanceof Error ? err.message : "Failed to download PDF");
+                  } finally {
+                    setPdfDownloading(false);
                   }
                 }}
               >
@@ -378,21 +460,38 @@ export default function QuoteDetailPage() {
                 <span>Quote {effectiveStatus.toLowerCase()}</span>
               </div>
             ) : effectiveStatus === "DRAFT" ? (
-              <QuoteStatusActions
-                quoteId={quote.id}
-                status={quote.status}
-                validUntil={quote.valid_until}
-                hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
-                onStatusChange={() => {
-                  getQuoteV3(id).then((data) => setQuote(data));
-                }}
-              />
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 mr-2 hidden sm:flex"
+                  onClick={() => {
+                    if (quote.shipment_type === "SPOT_NEGOTIATION" && quote.spot_negotiation) {
+                      router.push(`/quotes/spot/${quote.spot_negotiation.id}`);
+                    } else {
+                      router.push(`/quotes/${quote.id}/edit`);
+                    }
+                  }}
+                >
+                  <Pencil className="h-4 w-4" />
+                  Edit Quote
+                </Button>
+                <QuoteStatusActions
+                  quoteId={quote.id}
+                  status={quote.status}
+                  validUntil={quote.valid_until}
+                  hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+                  showDelete={false}
+                  onStatusChange={() => {
+                    getQuoteV3(id).then((data) => setQuote(data));
+                  }}
+                />
+              </>
             ) : null}
           </div>
         </div>
       </div>
 
-    </div>
+    </div >
   );
 }
-

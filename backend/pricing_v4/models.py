@@ -1024,3 +1024,341 @@ class CustomerDiscount(models.Model):
             if self.discount_value < 0:
                 raise ValidationError("Discount value cannot be negative.")
 
+
+# =============================================================================
+# LOCAL RATE TABLES (One Commercial Truth for Origin/Destination Services)
+# =============================================================================
+
+class LocalSellRate(models.Model):
+    """
+    Centralized local sell rates - "One Commercial Truth" for origin/destination services.
+    
+    Purpose: What EFM CHARGES the customer for local services.
+    
+    Replaces:
+    - Local portions of ExportSellRate (Origin charges)
+    - Local portions of ImportSellRate (Destination charges)
+    - A2DDAPRate (Passthrough pricing)
+    
+    Design:
+    - location: Single IATA code (origin for EXPORT, destination for IMPORT)
+    - direction: EXPORT or IMPORT
+    - payment_term: PREPAID, COLLECT, or ANY (applies to both)
+    """
+    
+    DIRECTION_CHOICES = [
+        ('EXPORT', 'Export (Origin Charges)'),
+        ('IMPORT', 'Import (Destination Charges)'),
+    ]
+    
+    PAYMENT_TERM_CHOICES = [
+        ('PREPAID', 'Prepaid'),
+        ('COLLECT', 'Collect'),
+        ('ANY', 'Any Term'),
+    ]
+    
+    RATE_TYPE_CHOICES = [
+        ('FIXED', 'Fixed Per Shipment'),
+        ('PER_KG', 'Per Kilogram'),
+        ('PERCENT', 'Percentage of Component'),
+    ]
+    
+    # Scope
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        related_name='local_sell_rates',
+        help_text='The ProductCode this rate applies to'
+    )
+    location = models.CharField(
+        max_length=3,
+        db_index=True,
+        help_text='IATA airport code (origin for EXPORT, destination for IMPORT)'
+    )
+    direction = models.CharField(
+        max_length=6,
+        choices=DIRECTION_CHOICES,
+        db_index=True,
+        help_text='EXPORT = origin charges, IMPORT = destination charges'
+    )
+    payment_term = models.CharField(
+        max_length=7,
+        choices=PAYMENT_TERM_CHOICES,
+        default='ANY',
+        db_index=True,
+        help_text='PREPAID, COLLECT, or ANY (applies to both)'
+    )
+    
+    # Commercials
+    currency = models.CharField(max_length=3)
+    rate_type = models.CharField(
+        max_length=10,
+        choices=RATE_TYPE_CHOICES,
+        default='FIXED'
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text='Rate amount (flat fee, per-kg rate, or percentage)'
+    )
+    # Additive support (per-kg + flat fee)
+    is_additive = models.BooleanField(
+        default=False,
+        help_text='If True, adds a flat amount to the per-kg charge (PER_KG only).'
+    )
+    additive_flat_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Flat amount added when is_additive=True (PER_KG only).'
+    )
+    min_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Minimum charge (for per-kg rates)'
+    )
+    max_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Maximum charge (cap for per-kg rates)'
+    )
+    
+    # Weight breaks for tiered pricing (e.g., cartage)
+    weight_breaks = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='For tiered cartage rates: [{"min_kg": 0, "rate": "5.00"}, ...]'
+    )
+    
+    # For PERCENT rate type (e.g., FSC = 10% of Cartage)
+    percent_of_product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='local_sell_dependent_rates',
+        help_text='For PERCENT type: the ProductCode this is a percentage of'
+    )
+    
+    # Validity
+    valid_from = models.DateField()
+    valid_until = models.DateField()
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'local_sell_rates'
+        unique_together = [
+            'product_code', 'location', 'direction', 'payment_term', 'currency', 'valid_from'
+        ]
+        ordering = ['location', 'direction', 'product_code']
+        verbose_name = 'Local Sell Rate'
+        verbose_name_plural = 'Local Sell Rates'
+    
+    def __str__(self):
+        return f"SELL: {self.product_code.code} @ {self.location} ({self.direction}, {self.payment_term})"
+
+    # Compatibility helpers for shared pricing logic
+    @property
+    def rate_per_kg(self):
+        if self.rate_type == 'PER_KG':
+            return self.amount
+        return None
+
+    @property
+    def rate_per_shipment(self):
+        if self.rate_type == 'FIXED':
+            return self.amount
+        if self.rate_type == 'PER_KG' and self.is_additive:
+            return self.additive_flat_amount
+        return None
+
+    @property
+    def percent_rate(self):
+        if self.rate_type == 'PERCENT':
+            return self.amount
+        return None
+
+
+class LocalCOGSRate(models.Model):
+    """
+    Centralized local COGS rates - "One Commercial Truth" for origin/destination costs.
+    
+    Purpose: What EFM PAYS the vendor for local services.
+    
+    Replaces:
+    - Local portions of ExportCOGS (Origin costs)
+    - Local portions of ImportCOGS (Destination costs)
+    
+    Design:
+    - location: Single IATA code (origin for EXPORT, destination for IMPORT)
+    - direction: EXPORT or IMPORT
+    - Counterparty: agent OR carrier (never both)
+    """
+    
+    DIRECTION_CHOICES = [
+        ('EXPORT', 'Export (Origin Costs)'),
+        ('IMPORT', 'Import (Destination Costs)'),
+    ]
+    
+    RATE_TYPE_CHOICES = [
+        ('FIXED', 'Fixed Per Shipment'),
+        ('PER_KG', 'Per Kilogram'),
+        ('PERCENT', 'Percentage of Component'),
+    ]
+    
+    # Scope
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        related_name='local_cogs_rates',
+        help_text='The ProductCode this rate applies to'
+    )
+    location = models.CharField(
+        max_length=3,
+        db_index=True,
+        help_text='IATA airport code (origin for EXPORT, destination for IMPORT)'
+    )
+    direction = models.CharField(
+        max_length=6,
+        choices=DIRECTION_CHOICES,
+        db_index=True,
+        help_text='EXPORT = origin costs, IMPORT = destination costs'
+    )
+    
+    # Counterparty: agent OR carrier (never both, never null for both)
+    carrier = models.ForeignKey(
+        Carrier,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='local_cogs_rates',
+        help_text='For carrier-provided services'
+    )
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='local_cogs_rates',
+        help_text='For agent-provided services (typical for local charges)'
+    )
+    
+    # Commercials
+    currency = models.CharField(max_length=3)
+    rate_type = models.CharField(
+        max_length=10,
+        choices=RATE_TYPE_CHOICES,
+        default='FIXED'
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        help_text='Rate amount (flat fee, per-kg rate, or percentage)'
+    )
+    # Additive support (per-kg + flat fee)
+    is_additive = models.BooleanField(
+        default=False,
+        help_text='If True, adds a flat amount to the per-kg charge (PER_KG only).'
+    )
+    additive_flat_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Flat amount added when is_additive=True (PER_KG only).'
+    )
+    min_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Minimum charge (for per-kg rates)'
+    )
+    max_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Maximum charge (cap for per-kg rates)'
+    )
+    
+    # Weight breaks for tiered pricing
+    weight_breaks = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='For tiered rates: [{"min_kg": 0, "rate": "5.00"}, ...]'
+    )
+    
+    # For PERCENT rate type (e.g., FSC = 20% of Pickup)
+    percent_of_product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='local_cogs_dependent_rates',
+        help_text='For PERCENT type: the ProductCode this is a percentage of'
+    )
+    
+    # Validity
+    valid_from = models.DateField()
+    valid_until = models.DateField()
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'local_cogs_rates'
+        ordering = ['location', 'direction', 'product_code']
+        verbose_name = 'Local COGS Rate'
+        verbose_name_plural = 'Local COGS Rates'
+        constraints = [
+            # Ensure exactly one counterparty (carrier XOR agent)
+            models.CheckConstraint(
+                check=(
+                    models.Q(carrier__isnull=False, agent__isnull=True) |
+                    models.Q(carrier__isnull=True, agent__isnull=False)
+                ),
+                name='local_cogs_one_counterparty'
+            ),
+        ]
+    
+    def clean(self):
+        """Validate exactly one counterparty is set."""
+        if self.carrier and self.agent:
+            raise ValidationError("Cannot set both carrier and agent. Choose one.")
+        if not self.carrier and not self.agent:
+            raise ValidationError("Must set either carrier or agent.")
+    
+    def __str__(self):
+        counterparty = self.carrier or self.agent
+        return f"COGS: {self.product_code.code} @ {self.location} ({self.direction}) - {counterparty}"
+
+    # Compatibility helpers for shared pricing logic
+    @property
+    def rate_per_kg(self):
+        if self.rate_type == 'PER_KG':
+            return self.amount
+        return None
+
+    @property
+    def rate_per_shipment(self):
+        if self.rate_type == 'FIXED':
+            return self.amount
+        if self.rate_type == 'PER_KG' and self.is_additive:
+            return self.additive_flat_amount
+        return None
+
+    @property
+    def percent_rate(self):
+        if self.rate_type == 'PERCENT':
+            return self.amount
+        return None

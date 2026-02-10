@@ -53,13 +53,13 @@ function calculateBucketTotal(lines: SellLine[], field: 'sell_pgk_incl_gst' | 's
 
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
-    const { sell_lines } = result;
+    const { sell_lines, totals } = result;
 
     // Detect display currency from the sell_currency field
     // For Prepaid Import, sell_currency will be 'AUD' (or other FCY)
     // For Collect Import or Domestic, sell_currency will be 'PGK'
     const firstLineCurrency = sell_lines[0]?.sell_currency || 'PGK';
-    const displayCurrency = firstLineCurrency;
+    const displayCurrency = totals?.currency || firstLineCurrency;
     const isOverallPassthrough = displayCurrency !== 'PGK';
 
     // Separate informational (conditional) charges from priced lines
@@ -78,14 +78,17 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
         buckets[bucket].push(line);
     });
 
-    // Calculate totals (only from priced lines - backend already excludes informational)
+    // Use backend-provided totals (single source of truth) instead of re-calculating
+    // This ensures consistency with the sticky footer
     const totalExGst = isOverallPassthrough
-        ? calculateBucketTotal(pricedLines, 'sell_fcy')
-        : calculateBucketTotal(pricedLines, 'sell_pgk');
-    const totalGst = isOverallPassthrough
-        ? 0 // No GST for passthrough
-        : pricedLines.reduce((sum, l) => sum + parseFloat(l.gst_amount || '0'), 0);
-    const totalIncGst = totalExGst + totalGst;
+        ? parseFloat(totals?.total_sell_fcy || '0')
+        : parseFloat(totals?.sell_pgk || '0');
+    const totalGst = parseFloat(totals?.gst_amount || '0');
+    const totalIncGst = isOverallPassthrough
+        ? parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')
+        : parseFloat(totals?.sell_pgk_incl_gst || totals?.sell_pgk || '0');
+
+
 
     return (
         <Card className="overflow-hidden border-slate-200">

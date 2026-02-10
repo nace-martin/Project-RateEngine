@@ -14,7 +14,7 @@ export interface LoginData {
 }
 
 export interface User {
-  id: number;
+  id?: number;
   username: string;
   role: string;
 }
