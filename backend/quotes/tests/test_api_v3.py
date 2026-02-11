@@ -1,14 +1,17 @@
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from parties.models import Company, Contact
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+from quotes.spot_models import SpotPricingEnvelopeDB
 from core.models import Location
 
 
@@ -122,6 +125,59 @@ class QuoteRetrieveV3APITest(APITestCase):
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_spot_negotiation_serializes_latest_envelope(self):
+        SpotPricingEnvelopeDB.objects.create(
+            quote=self.quote,
+            shipment_context_json={
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": "POM",
+                "destination_code": "SYD",
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 2,
+            },
+            spot_trigger_reason_code="MISSING_SCOPE_RATES",
+            spot_trigger_reason_text="Missing required rate components",
+            expires_at=timezone.now() + timedelta(hours=72),
+        )
+
+        second_envelope = SpotPricingEnvelopeDB.objects.create(
+            quote=self.quote,
+            shipment_context_json={
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": "POM",
+                "destination_code": "SYD",
+                "commodity": "GCR",
+                "total_weight_kg": 110,
+                "pieces": 3,
+            },
+            spot_trigger_reason_code="MISSING_SCOPE_RATES",
+            spot_trigger_reason_text="Missing required rate components",
+            expires_at=timezone.now() + timedelta(hours=72),
+        )
+        SpotPricingEnvelopeDB.objects.filter(id=second_envelope.id).update(
+            created_at=timezone.now() + timedelta(seconds=1)
+        )
+
+        detail_response = self.client.get(self.url)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        detail_data = detail_response.json()
+        self.assertEqual(
+            detail_data["spot_negotiation"]["id"],
+            str(second_envelope.id),
+        )
+
+        list_url = reverse("quotes:quote-v3-list")
+        list_response = self.client.get(list_url)
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        list_data = list_response.json()["results"][0]
+        self.assertEqual(
+            list_data["spot_negotiation"]["id"],
+            str(second_envelope.id),
+        )
 
 
 class QuoteListV3APITest(APITestCase):

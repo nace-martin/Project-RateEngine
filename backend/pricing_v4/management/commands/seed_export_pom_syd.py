@@ -1,6 +1,6 @@
 # backend/pricing_v4/management/commands/seed_export_pom_bne.py
 """
-Seed ProductCodes and rates for the first corridor: Export Air D2A Prepaid POM→BNE
+Seed ProductCodes and rates for the first corridor: Export Air D2A Prepaid POM->BNE
 
 Rule 8: ProductCode must exist before any rate row
 Rule 9: One corridor must work end-to-end before expanding
@@ -22,9 +22,18 @@ from pricing_v4.models import Carrier, Agent, ProductCode, ExportCOGS, ExportSel
 class Command(BaseCommand):
     help = 'Seeds Export rates for POM->SYD corridor'
 
-    def handle(self, *args, **kwargs):
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--year',
+            type=int,
+            default=date.today().year,
+            help='Seed rates for the given year (default: current year).',
+        )
+
+    def handle(self, *args, **options):
+        self.year = options['year']
         self.stdout.write("=" * 60)
-        self.stdout.write("Seeding Export rates for POM->SYD corridor")
+        self.stdout.write(f"Seeding Export rates for POM->SYD corridor ({self.year})")
         self.stdout.write("=" * 60)
         
         with transaction.atomic():
@@ -34,7 +43,7 @@ class Command(BaseCommand):
             self._seed_export_cogs()
             self._seed_export_sell_rates()
         
-        self.stdout.write(self.style.SUCCESS("\n✓ Corridor seeding complete!"))
+        self.stdout.write(self.style.SUCCESS("\nCorridor seeding complete!"))
     
     def _seed_carriers(self):
         """Seed carriers (airlines/shipping lines for freight COGS)."""
@@ -279,7 +288,7 @@ class Command(BaseCommand):
     
     def _seed_export_cogs(self):
         """
-        Seed ExportCOGS for POM→BNE corridor.
+        Seed ExportCOGS for POM->BNE corridor.
         
         Source: PX rate card (what EFM pays)
         
@@ -289,14 +298,14 @@ class Command(BaseCommand):
         
         All COGS use carrier=PX.
         """
-        self.stdout.write("\n--- Seeding ExportCOGS (POM→SYD) ---")
+        self.stdout.write("\n--- Seeding ExportCOGS (POM->SYD) ---")
         
         # Get carrier - PX handles all Export services
         carrier_px = Carrier.objects.get(code='PX')
         
         # Common validity dates
-        valid_from = date(2025, 1, 1)
-        valid_until = date(2025, 12, 31)
+        valid_from = date(self.year, 1, 1)
+        valid_until = date(self.year, 12, 31)
         
         # COGS rates from PX rate card - all services via carrier PX
         cogs_rates = [
@@ -342,6 +351,17 @@ class Command(BaseCommand):
             # Terminal Fee - flat fee
             {
                 'product_code_id': 1030,  # EXP-TERM
+                'origin_airport': 'POM',
+                'destination_airport': 'SYD',
+                'carrier': carrier_px,
+                'agent': None,
+                'currency': 'PGK',
+                'rate_per_shipment': Decimal('35.00'),
+                'is_additive': False,
+            },
+            # Handling Fee - flat fee
+            {
+                'product_code_id': 1032,  # EXP-HANDLE
                 'origin_airport': 'POM',
                 'destination_airport': 'SYD',
                 'carrier': carrier_px,
@@ -411,19 +431,19 @@ class Command(BaseCommand):
             pc = ProductCode.objects.get(id=rate_data['product_code_id'])
             counterparty = rate_data.get('carrier') or rate_data.get('agent')
             status = "Created" if created else "Updated"
-            self.stdout.write(f"  {status}: COGS {pc.code} POM→SYD ({counterparty})")
+            self.stdout.write(f"  {status}: COGS {pc.code} POM->SYD ({counterparty})")
     
     def _seed_export_sell_rates(self):
         """
-        Seed ExportSellRate for POM→BNE corridor.
+        Seed ExportSellRate for POM->BNE corridor.
         
         Source: EFM sell rate card (what EFM charges customers)
         """
-        self.stdout.write("\n--- Seeding ExportSellRate (POM→SYD) ---")
+        self.stdout.write("\n--- Seeding ExportSellRate (POM->SYD) ---")
         
         # Common validity dates
-        valid_from = date(2025, 1, 1)
-        valid_until = date(2025, 12, 31)
+        valid_from = date(self.year, 1, 1)
+        valid_until = date(self.year, 12, 31)
         
         # Sell rates from actual rate card
         sell_rates = [
@@ -460,6 +480,14 @@ class Command(BaseCommand):
             # Terminal Fee - flat fee
             {
                 'product_code_id': 1030,  # EXP-TERM
+                'origin_airport': 'POM',
+                'destination_airport': 'SYD',
+                'currency': 'PGK',
+                'rate_per_shipment': Decimal('50.00'),
+            },
+            # Handling Fee - flat fee
+            {
+                'product_code_id': 1032,  # EXP-HANDLE
                 'origin_airport': 'POM',
                 'destination_airport': 'SYD',
                 'currency': 'PGK',
@@ -549,4 +577,4 @@ class Command(BaseCommand):
             )
             pc = ProductCode.objects.get(id=rate_data['product_code_id'])
             status = "Created" if created else "Updated"
-            self.stdout.write(f"  {status}: SELL {pc.code} POM→SYD")
+            self.stdout.write(f"  {status}: SELL {pc.code} POM->SYD")

@@ -266,9 +266,11 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         1. Customer Preferred Currency (if set in Commercial Profile)
         2. Standard Logic (based on shipment terms)
         """
-        # 1. Customer Preference Override
+        # 1. Customer Preference Override (ignore PGK since it's the default)
         if hasattr(customer, 'commercial_profile') and customer.commercial_profile.preferred_quote_currency:
-            return customer.commercial_profile.preferred_quote_currency.code
+            preferred_code = customer.commercial_profile.preferred_quote_currency.code
+            if preferred_code and preferred_code != 'PGK':
+                return preferred_code
 
         # 2. Standard Logic
         if shipment_type == Quote.ShipmentType.IMPORT:

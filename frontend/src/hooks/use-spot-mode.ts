@@ -308,6 +308,7 @@ export function useSpotMode() {
                 updateState({
                     error: result.reason || 'Quote computation incomplete',
                     isLoading: false,
+                    quoteResult: result,
                 });
                 return result;
             }

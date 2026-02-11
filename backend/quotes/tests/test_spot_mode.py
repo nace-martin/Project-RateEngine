@@ -33,6 +33,11 @@ from quotes.spot_services import (
     SpotEnvelopeService,
     SpotTriggerReason,
 )
+from quotes.completeness import (
+    COMPONENT_FREIGHT,
+    COMPONENT_ORIGIN_LOCAL,
+    COMPONENT_DESTINATION_LOCAL,
+)
 
 
 pytestmark = pytest.mark.django_db
@@ -124,12 +129,12 @@ class TestSpotTriggerEvaluation:
             destination_country="AU",
             direction="EXPORT",
             service_scope="P2P",
-            component_availability={"AIRFREIGHT": False}
+            component_availability={COMPONENT_FREIGHT: False}
         )
         
         assert is_spot is True
         assert result.code == SpotTriggerReason.MISSING_SCOPE_RATES
-        assert "AIRFREIGHT" in result.text
+        assert COMPONENT_FREIGHT in result.text
     
     def test_spot_trigger_complete_p2p(self):
         """Standard P2P with airfreight does NOT trigger SPOT."""
@@ -138,7 +143,7 @@ class TestSpotTriggerEvaluation:
             destination_country="AU",
             direction="EXPORT",
             service_scope="P2P",
-            component_availability={"AIRFREIGHT": True}
+            component_availability={COMPONENT_FREIGHT: True}
         )
         
         assert is_spot is False
@@ -152,18 +157,15 @@ class TestSpotTriggerEvaluation:
             direction="EXPORT",
             service_scope="D2D",
             component_availability={
-                "ORIGIN_PICKUP": True,
-                "EXPORT_CLEARANCE": True,
-                "AIRFREIGHT": True,
-                "DEST_CLEARANCE": False,
-                "DEST_DELIVERY": False
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+                COMPONENT_DESTINATION_LOCAL: False,
             }
         )
         
         assert is_spot is True
         assert result.code == SpotTriggerReason.MISSING_SCOPE_RATES
-        assert "DEST_CLEARANCE" in result.text
-        assert "DEST_DELIVERY" in result.text
+        assert COMPONENT_DESTINATION_LOCAL in result.text
 
     def test_spot_trigger_commodity_no_longer_trigger(self):
         """Commodity type (like DG) is no longer a direct SPOT trigger in the evaluator."""
@@ -174,7 +176,7 @@ class TestSpotTriggerEvaluation:
             destination_country="AU",
             direction="EXPORT",
             service_scope="P2P",
-            component_availability={"AIRFREIGHT": True}
+            component_availability={COMPONENT_FREIGHT: True}
         )
         
         assert is_spot is False

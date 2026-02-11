@@ -1,47 +1,11 @@
 "use client";
-
-import React, { useEffect, useState } from "react";
-import { Loader2, CheckCircle, Plane, Package, MapPin, Lock } from "lucide-react";
+import { CheckCircle, Plane, Package, MapPin, Lock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { calculateSpotCharges, getQuoteCompute } from "@/lib/api";
-import type { SpotChargesCalculateResponse, V3QuoteComputeResponse, QuoteComputeResult } from "@/lib/types";
+import type { V3QuoteComputeResponse } from "@/lib/types";
 
 interface SpotChargeResultDisplayProps {
     quote: V3QuoteComputeResponse;
-}
-
-/**
- * Get auto-rated bucket totals from the main pricing engine.
- * This extracts Origin/Freight/Destination totals from rate card charges.
- */
-function getAutoRatedBucketTotals(computeResult: QuoteComputeResult | null): {
-    origin: number;
-    freight: number;
-    destination: number;
-} {
-    if (!computeResult?.sell_lines) {
-        return { origin: 0, freight: 0, destination: 0 };
-    }
-
-    let origin = 0;
-    let freight = 0;
-    let destination = 0;
-
-    for (const line of computeResult.sell_lines) {
-        const sellPgk = parseFloat(line.sell_pgk || "0");
-        const leg = line.leg?.toUpperCase();
-
-        if (leg === "ORIGIN") {
-            origin += sellPgk;
-        } else if (leg === "MAIN" || leg === "FREIGHT") {
-            freight += sellPgk;
-        } else if (leg === "DESTINATION") {
-            destination += sellPgk;
-        }
-    }
-
-    return { origin, freight, destination };
 }
 
 /**
@@ -49,73 +13,49 @@ function getAutoRatedBucketTotals(computeResult: QuoteComputeResult | null): {
  * Merges spot charges with auto-rated charges from the main pricing engine.
  */
 export function SpotChargeResultDisplay({ quote }: SpotChargeResultDisplayProps) {
-    const [spotResult, setSpotResult] = useState<SpotChargesCalculateResponse | null>(null);
-    const [computeResult, setComputeResult] = useState<QuoteComputeResult | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        const fetchResults = async () => {
-            setLoading(true);
-            try {
-                // Fetch both spot charges and auto-rated charges in parallel
-                const [spotCalc, compute] = await Promise.all([
-                    calculateSpotCharges(quote.id).catch(() => null),
-                    getQuoteCompute(quote.id).catch(() => null),
-                ]);
-                setSpotResult(spotCalc);
-                setComputeResult(compute);
-            } catch (err) {
-                console.error("Failed to fetch charge results:", err);
-                setError("Failed to load charge calculation");
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchResults();
-    }, [quote.id]);
-
-    if (loading) {
-        return (
-            <Card>
-                <CardContent className="flex items-center justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                    <span className="ml-2 text-muted-foreground">Loading quote totals...</span>
-                </CardContent>
-            </Card>
-        );
-    }
-
-    if (error || (!spotResult && !computeResult)) {
+    const lines = quote.latest_version?.lines || [];
+    if (!lines.length) {
         return (
             <Card className="border-destructive/20">
                 <CardContent className="p-6 text-center text-destructive">
-                    {error || "No calculation found"}
+                    No calculation found
                 </CardContent>
             </Card>
         );
     }
 
-    // Get auto-rated totals from main pricing engine
-    const autoRated = getAutoRatedBucketTotals(computeResult);
+    let originTotal = 0;
+    let freightTotal = 0;
+    let destTotal = 0;
 
-    // Get spot charge totals (if any)
-    const spotOrigin = spotResult ? parseFloat(spotResult.totals.origin_sell_pgk) : 0;
-    const spotFreight = spotResult ? parseFloat(spotResult.totals.freight_sell_pgk) : 0;
-    const spotDest = spotResult ? parseFloat(spotResult.totals.destination_sell_pgk) : 0;
+    let originHasSpot = false;
+    let freightHasSpot = false;
+    let destHasSpot = false;
 
-    // Merge: Use spot if > 0, otherwise use auto-rated
-    // For scenarios where user entered spot charges for a bucket, those override auto-rated
-    const originTotal = spotOrigin > 0 ? spotOrigin : autoRated.origin;
-    const freightTotal = spotFreight > 0 ? spotFreight : autoRated.freight;
-    const destTotal = spotDest > 0 ? spotDest : autoRated.destination;
+    for (const line of lines) {
+        const sellPgk = parseFloat(line.sell_pgk || "0");
+        const leg = line.leg?.toUpperCase();
+        const isSpot = !!quote.spot_negotiation?.id && (
+            line.cost_source === "SPOT Envelope" || !!line.cost_source_description
+        );
+
+        if (leg === "ORIGIN") {
+            originTotal += sellPgk;
+            originHasSpot = originHasSpot || isSpot;
+        } else if (leg === "MAIN" || leg === "FREIGHT") {
+            freightTotal += sellPgk;
+            freightHasSpot = freightHasSpot || isSpot;
+        } else if (leg === "DESTINATION") {
+            destTotal += sellPgk;
+            destHasSpot = destHasSpot || isSpot;
+        }
+    }
 
     const grandTotal = originTotal + freightTotal + destTotal;
 
-    // Determine which buckets are from spot vs auto
-    const originSource = spotOrigin > 0 ? "spot" : "auto";
-    const freightSource = spotFreight > 0 ? "spot" : "auto";
-    const destSource = spotDest > 0 ? "spot" : "auto";
+    const originSource = originHasSpot ? "spot" : "auto";
+    const freightSource = freightHasSpot ? "spot" : "auto";
+    const destSource = destHasSpot ? "spot" : "auto";
 
     const buckets = [
         {
@@ -147,8 +87,8 @@ export function SpotChargeResultDisplay({ quote }: SpotChargeResultDisplayProps)
         },
     ];
 
-    const chargeableWeight = spotResult?.chargeable_weight || "0";
-    const quotingCurrency = spotResult?.quoting_currency || computeResult?.totals?.currency || "PGK";
+    const quotingCurrency = quote.latest_version?.totals?.currency || "PGK";
+    const chargeableWeight = quote.latest_version?.total_weight_kg?.toString() || "0";
 
     return (
         <div className="space-y-4">
@@ -206,13 +146,13 @@ export function SpotChargeResultDisplay({ quote }: SpotChargeResultDisplayProps)
                                     PGK
                                 </div>
                             </div>
-                            {spotResult?.totals.grand_total_fcy && quotingCurrency !== "PGK" && (
+                            {quote.latest_version?.totals?.total_sell_fcy && quotingCurrency !== "PGK" && (
                                 <div className="text-right">
                                     <div className="text-sm text-muted-foreground">
                                         Quote Currency ({quotingCurrency})
                                     </div>
                                     <div className="font-mono text-xl font-semibold">
-                                        {parseFloat(spotResult.totals.grand_total_fcy).toLocaleString("en-US", {
+                                        {parseFloat(quote.latest_version.totals.total_sell_fcy).toLocaleString("en-US", {
                                             minimumFractionDigits: 2,
                                             maximumFractionDigits: 2,
                                         })}{" "}

@@ -54,6 +54,7 @@ from quotes.spot_models import (
     SPEManagerApprovalDB,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer
+from quotes.selectors import get_quote_for_user
 
 
 logger = logging.getLogger(__name__)
@@ -368,6 +369,16 @@ class SpotEnvelopeListCreateAPIView(APIView):
             f.write(f"Data: {request.data}\n")
         try:
             data = request.data
+            quote = None
+            quote_id = data.get('quote_id')
+            if quote_id:
+                quote = get_quote_for_user(request.user, quote_id)
+                from quotes.state_machine import is_quote_editable
+                if not is_quote_editable(quote):
+                    return Response(
+                        {'error': f"Cannot create SPE for locked quote ({quote.status})."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
             # Validate required fields
             required = ['shipment_context', 'trigger_code', 'trigger_text']
@@ -391,6 +402,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 spot_trigger_reason_text=data['trigger_text'],
                 created_by=request.user,
                 expires_at=now + timedelta(hours=validity_hours),
+                quote=quote,
             )
             
             # Create charge lines (optional)
@@ -853,8 +865,20 @@ class SpotEnvelopeComputeAPIView(APIView):
                         'as_of': adapter.fx_snapshot.as_of_timestamp.isoformat() if adapter.fx_snapshot.as_of_timestamp else None,
                     }
         
+        from quotes.completeness import evaluate_from_lines
+
+        resolved_scope = quote_data.get('service_scope') or ctx.get('service_scope') or 'D2D'
+        coverage = evaluate_from_lines(
+            result.lines,
+            shipment_type,
+            resolved_scope
+        )
+
         return Response({
-            'is_complete': True,
+            'is_complete': coverage.is_complete,
+            'has_missing_rates': not coverage.is_complete,
+            'missing_components': coverage.missing_required,
+            'completeness_notes': coverage.notes,
             'pricing_mode': adapter.get_pricing_mode(),
             'spe_id': str(spe_db.id),
             'fx_info': fx_info,
@@ -953,6 +977,67 @@ class SpotReplyAnalysisAPIView(APIView):
                 raw_text=text,
                 assertions=manual_assertions
             )
+
+        # Auto-populate SPE with AI-extracted charges (draft only)
+        if use_ai and not manual_assertions and spe_id and shipment_context:
+            try:
+                spe_db = _get_spe_or_404(request.user, spe_id)
+            except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
+                spe_db = None
+
+            if spe_db and spe_db.status == 'draft':
+                from decimal import Decimal, InvalidOperation
+
+                def _to_decimal(val):
+                    if val is None or val == "":
+                        return None
+                    try:
+                        return Decimal(str(val))
+                    except (InvalidOperation, ValueError):
+                        return None
+
+                auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+                    result,
+                    source_reference="Agent reply (AI)"
+                )
+
+                now = timezone.now()
+                if auto_charges:
+                    # Replace existing draft charges
+                    spe_db.charge_lines.all().delete()
+
+                    for charge in auto_charges:
+                        amount_val = _to_decimal(charge.get("amount"))
+                        if amount_val is None or amount_val <= 0:
+                            continue
+
+                        min_charge_val = _to_decimal(charge.get("min_charge"))
+
+                        SPEChargeLineDB.objects.create(
+                            envelope=spe_db,
+                            code=charge["code"],
+                            description=charge["description"],
+                            amount=amount_val,
+                            currency=charge["currency"],
+                            unit=charge["unit"],
+                            bucket=charge["bucket"],
+                            is_primary_cost=charge.get("is_primary_cost", False),
+                            conditional=charge.get("conditional", False),
+                            min_charge=min_charge_val,
+                            note=charge.get("note") or "",
+                            exclude_from_totals=charge.get("exclude_from_totals", False),
+                            percentage_basis=charge.get("percentage_basis"),
+                            source_reference=charge["source_reference"],
+                            entered_by=request.user,
+                            entered_at=now,
+                        )
+
+                    # Update conditional flag in SPE conditions
+                    if any(c.get("conditional") for c in auto_charges):
+                        conditions = spe_db.conditions_json or {}
+                        conditions["conditional_charges_present"] = True
+                        spe_db.conditions_json = conditions
+                        spe_db.save(update_fields=["conditions_json"])
         
         return Response(result.model_dump())
 
@@ -1077,12 +1162,47 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        from quotes.completeness import evaluate_from_lines
+        resolved_scope = quote_data.get('service_scope') or ctx.get('service_scope') or 'D2D'
+        coverage = evaluate_from_lines(
+            result.lines,
+            shipment_type,
+            resolved_scope
+        )
+        if not coverage.is_complete:
+            return Response(
+                {
+                    'error': coverage.notes or 'Missing required components for SPOT coverage.',
+                    'has_missing_rates': True,
+                    'missing_components': coverage.missing_required,
+                    'completeness_notes': coverage.notes,
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # --- 2. Create/Update Quote ---
         if spe_db.quote:
             quote = spe_db.quote
-            # Update fields?
-            # quote.status = Quote.Status.DRAFT 
-            # quote.save()
+            quote.status = Quote.Status.DRAFT
+            quote.output_currency = quote_input.output_currency
+            quote.incoterm = shipment.incoterm
+            quote.payment_term = shipment.payment_term
+            quote.service_scope = shipment.service_scope
+            quote.shipment_type = shipment_type
+            quote.origin_location = origin_loc
+            quote.destination_location = dest_loc
+            quote.request_details_json = quote_input.model_dump(mode='json')
+            quote.save(update_fields=[
+                'status',
+                'output_currency',
+                'incoterm',
+                'payment_term',
+                'service_scope',
+                'shipment_type',
+                'origin_location',
+                'destination_location',
+                'request_details_json',
+            ])
         else:
             quote = Quote.objects.create(
                 customer_id=cust_id,

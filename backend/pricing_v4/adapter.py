@@ -16,6 +16,7 @@ from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, Se
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.models import ProductCode, CustomerDiscount
 from services.models import ServiceComponent
+from quotes.completeness import evaluate_from_lines
 
 logger = logging.getLogger(__name__)
 
@@ -678,6 +679,11 @@ class PricingServiceV4Adapter:
             total_sell_fcy = total_sell / output_fx_sell
             total_sell_fcy_incl_gst = total_sell_pgk_incl_gst / output_fx_sell
         
+        shipment = getattr(self.quote_input, "shipment", None)
+        shipment_type = getattr(shipment, "shipment_type", None)
+        service_scope = getattr(shipment, "service_scope", None)
+        coverage = evaluate_from_lines(lines, shipment_type, service_scope)
+
         totals = CalculatedTotals(
             total_cost_pgk=total_cost,
             total_sell_pgk=total_sell,
@@ -685,7 +691,8 @@ class PricingServiceV4Adapter:
             total_sell_fcy=total_sell_fcy,
             total_sell_fcy_incl_gst=total_sell_fcy_incl_gst,
             total_sell_fcy_currency=output_currency,
-            has_missing_rates=any(l.is_rate_missing for l in lines)
+            has_missing_rates=not coverage.is_complete,
+            notes=coverage.notes,
         )
         return QuoteCharges(lines=lines, totals=totals)
 
@@ -775,6 +782,8 @@ class PricingServiceV4Adapter:
                 bucket=cl.bucket,
                 is_primary_cost=cl.is_primary_cost,
                 conditional=cl.conditional,
+                exclude_from_totals=getattr(cl, "exclude_from_totals", False),
+                percentage_basis=getattr(cl, "percentage_basis", None),
                 source_reference=cl.source_reference,
                 entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
                 entered_at=cl.entered_at,
@@ -863,11 +872,21 @@ class PricingServiceV4Adapter:
             sc.code: sc for sc in ServiceComponent.objects.filter(code__in=codes)
         }
         
+        bucket_has_base: Dict[str, bool] = {}
+        for charge in charges:
+            if charge.unit != "percentage" and not charge.conditional and not getattr(charge, "exclude_from_totals", False):
+                bucket_has_base[charge.bucket] = True
+
         for charge in charges:
             # [FIX] Handle conditional/informational charges
             # If conditional, we strip the value to prevent it affecting totals, 
             # and mark it as informational.
-            is_info = charge.conditional
+            is_percentage = charge.unit == "percentage"
+            is_info = (
+                charge.conditional
+                or getattr(charge, "exclude_from_totals", False)
+                or (is_percentage and not bucket_has_base.get(charge.bucket, False))
+            )
             
             # Determine CAF pct
             caf_pct = Decimal("0")

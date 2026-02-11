@@ -30,6 +30,8 @@ class AdapterChargeGroupingTest(TestCase):
         mock_line.sell_amount = Decimal('300.00')
         mock_line.sell_incl_gst = Decimal('300.00')
         mock_line.gst_amount = Decimal('0')
+        mock_line.gst_category = None
+        mock_line.gst_rate = Decimal('0')
         mock_line.sell_currency = 'PGK'
         mock_line.cost_currency = 'PGK'
         mock_line.is_rate_missing = False
@@ -93,6 +95,8 @@ class AdapterChargeGroupingTest(TestCase):
         mock_line.sell_amount = Decimal('300.00')
         mock_line.sell_incl_gst = Decimal('330.00')
         mock_line.gst_amount = Decimal('30.00')
+        mock_line.gst_category = None
+        mock_line.gst_rate = Decimal('0.10')
         mock_line.sell_currency = 'PGK'
         mock_line.cost_currency = 'PGK'
         mock_line.is_rate_missing = False

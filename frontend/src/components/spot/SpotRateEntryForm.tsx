@@ -52,22 +52,65 @@ export function SpotRateEntryForm({
     serviceScope = "D2D",
 }: SpotRateEntryFormProps) {
 
-    // Determine visible buckets
-    const visibleBuckets = useMemo(() => {
-        const buckets = new Set<SPEChargeBucket>();
-        const scope = serviceScope.toUpperCase();
+    const normalizeScope = (scope?: string) => {
+        if (!scope) return "A2A";
+        const normalized = scope.toUpperCase();
+        return normalized === "P2P" ? "A2A" : normalized;
+    };
 
-        if (shipmentType === "IMPORT") {
-            buckets.add("airfreight");
-            if (scope.startsWith("D")) buckets.add("origin_charges");
-        } else {
-            if (scope.endsWith("D")) buckets.add("destination_charges");
+    const getRequiredComponents = (
+        shipment: "EXPORT" | "IMPORT" | "DOMESTIC",
+        scope?: string,
+    ) => {
+        const normalizedScope = normalizeScope(scope);
+
+        if (shipment === "DOMESTIC") {
+            return ["FREIGHT"] as const;
         }
-        // Always allow airfreight bucket for now as a fallback
-        buckets.add("airfreight");
+
+        if (normalizedScope === "A2A") return ["FREIGHT"] as const;
+        if (normalizedScope === "D2A") return ["ORIGIN_LOCAL", "FREIGHT"] as const;
+        if (normalizedScope === "A2D") return ["DESTINATION_LOCAL"] as const;
+        if (normalizedScope === "D2D") return ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"] as const;
+
+        return ["FREIGHT"] as const;
+    };
+
+    const componentToBucket = (component: string): SPEChargeBucket | null => {
+        if (component === "FREIGHT") return "airfreight";
+        if (component === "ORIGIN_LOCAL") return "origin_charges";
+        if (component === "DESTINATION_LOCAL") return "destination_charges";
+        return null;
+    };
+
+    const assertionToBucket = (assertion: ExtractedAssertion): SPEChargeBucket | null => {
+        if (assertion.category === "rate") return "airfreight";
+        if (assertion.category === "origin_charges") return "origin_charges";
+        if (assertion.category === "dest_charges") return "destination_charges";
+        return null;
+    };
+
+    // Determine visible buckets using REQUIRED COMPONENT model + existing data
+    const visibleBuckets = useMemo(() => {
+        const requiredComponents = getRequiredComponents(shipmentType, serviceScope);
+        const requiredBuckets = requiredComponents
+            .map(componentToBucket)
+            .filter((bucket): bucket is SPEChargeBucket => bucket !== null);
+
+        const buckets = new Set<SPEChargeBucket>(requiredBuckets);
+
+        initialCharges.forEach((charge) => buckets.add(charge.bucket));
+        suggestedCharges.forEach((assertion) => {
+            const bucket = assertionToBucket(assertion);
+            if (bucket) buckets.add(bucket);
+        });
+
+        if (buckets.size === 0) {
+            CHARGE_BUCKETS.forEach((bucket) => buckets.add(bucket.id));
+        }
 
         return CHARGE_BUCKETS.filter(b => buckets.has(b.id));
-    }, [shipmentType, serviceScope]);
+    }, [shipmentType, serviceScope, initialCharges, suggestedCharges]);
 
     // Initial values
     const defaultValues: SpotFormValues = {

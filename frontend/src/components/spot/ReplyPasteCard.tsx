@@ -39,9 +39,13 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
 
         // Map codes to friendly names
         const friendlyNames = missingComponents.map(c => {
-            if (c.includes('DEST')) return 'Destination Charges';
-            if (c.includes('ORIGIN')) return 'Origin Charges';
-            if (c.includes('AIRFREIGHT')) return 'Freight Rate';
+            const normalized = c.toUpperCase();
+            if (normalized === 'DESTINATION_LOCAL') return 'Destination Charges';
+            if (normalized === 'ORIGIN_LOCAL') return 'Origin Charges';
+            if (normalized === 'FREIGHT') return 'Freight Rate';
+            if (normalized.includes('DEST')) return 'Destination Charges';
+            if (normalized.includes('ORIGIN')) return 'Origin Charges';
+            if (normalized.includes('AIRFREIGHT')) return 'Freight Rate';
             return c.replace(/_/g, ' ');
         });
 

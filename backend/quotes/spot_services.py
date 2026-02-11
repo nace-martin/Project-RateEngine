@@ -35,6 +35,12 @@ from quotes.spot_schemas import (
     SPEManagerApproval,
     SPEStatus,
 )
+from quotes.completeness import (
+    evaluate_from_availability,
+    COMPONENT_DESTINATION_LOCAL,
+    COMPONENT_FREIGHT,
+    COMPONENT_ORIGIN_LOCAL,
+)
 
 
 # =============================================================================
@@ -136,35 +142,6 @@ class SpotTriggerEvaluator:
     // the required BUY rate components for the selected service scope.
     """
     
-    # Configuration for required components by direction and service scope
-    REQUIRED_COMPONENTS_MAP = {
-        'DOMESTIC': {
-            'default': ["AIRFREIGHT"]
-        },
-        'EXPORT': {
-            'D2A': ["EXPORT_CLEARANCE", "AIRFREIGHT"],
-            'D2D': [
-                "ORIGIN_PICKUP",
-                "EXPORT_CLEARANCE",
-                "AIRFREIGHT",
-                "DEST_CLEARANCE",
-                "DEST_DELIVERY"
-            ],
-            'default': ["AIRFREIGHT"] # P2P/A2A
-        },
-        'IMPORT': {
-            'A2D': ["DEST_CLEARANCE", "DEST_DELIVERY"],
-            'D2D': [
-                "ORIGIN_PICKUP",
-                "AIRFREIGHT",
-                "DEST_CLEARANCE",
-                "DEST_DELIVERY"
-            ],
-            'D2A': ["ORIGIN_PICKUP", "AIRFREIGHT"],
-            'default': ["AIRFREIGHT"] # P2P/A2A
-        }
-    }
-    
     @classmethod
     def evaluate(
         cls,
@@ -173,7 +150,7 @@ class SpotTriggerEvaluator:
         direction: str,
         service_scope: str,
         # A dictionary mapping component codes to their availability in the DB
-        # { "AIRFREIGHT": True, "EXPORT_CLEARANCE": False, ... }
+        # { "FREIGHT": True, "ORIGIN_LOCAL": False, "DESTINATION_LOCAL": True, ... }
         component_availability: dict[str, bool]
     ) -> Tuple[bool, Optional[TriggerResult]]:
         """
@@ -189,23 +166,21 @@ class SpotTriggerEvaluator:
                 text="RateEngine only supports shipments to or from PNG."
             )
 
-        # 2️⃣ Determine Required BUY Components
-        direction_config = cls.REQUIRED_COMPONENTS_MAP.get(direction, {})
-        required_components = direction_config.get(service_scope, direction_config.get('default', ["AIRFREIGHT"]))
-        
-        # 3️⃣ Coverage Check
-        missing_components = []
-        for component in required_components:
-            available = component_availability.get(component, False)
-            if not available:
-                missing_components.append(component)
+        coverage = evaluate_from_availability(
+            component_availability=component_availability,
+            shipment_type=direction,
+            service_scope=service_scope,
+        )
 
-        # 4️⃣ SPOT Decision
-        if missing_components:
+        # 2️⃣ SPOT Decision
+        if coverage.missing_required:
             return True, TriggerResult(
                 code=SpotTriggerReason.MISSING_SCOPE_RATES,
-                text=f"Missing required rate components for selected service scope: {', '.join(missing_components)}",
-                missing_components=missing_components
+                text=(
+                    "Missing required rate components for selected service scope: "
+                    f"{', '.join(coverage.missing_required)}"
+                ),
+                missing_components=coverage.missing_required,
             )
 
         # 5️⃣ Normal Pricing Path
@@ -234,23 +209,20 @@ class RateAvailabilityService:
             Surcharge,
             ProductCode,
             DomesticCOGS,
+            LocalCOGSRate,
         )
         from datetime import date
         
         today = date.today()
         availability = {
-            "AIRFREIGHT": False,
-            "EXPORT_CLEARANCE": False,
-            "ORIGIN_PICKUP": False,
-            "DEST_CLEARANCE": False,
-            "DEST_DELIVERY": False,
-            "ORIGIN_OTHER": False,  # Docs, Handling, etc at origin
-            "DEST_OTHER": False,    # Docs, Handling, etc at destination
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
         }
         
         # 1. Freight Coverage (AIRFREIGHT)
         if direction == 'DOMESTIC':
-            availability["AIRFREIGHT"] = DomesticCOGS.objects.filter(
+            availability[COMPONENT_FREIGHT] = DomesticCOGS.objects.filter(
                 origin_zone=origin_airport,
                 destination_zone=destination_airport,
                 product_code__category=ProductCode.CATEGORY_FREIGHT,
@@ -259,7 +231,7 @@ class RateAvailabilityService:
             ).exists()
             return availability
         if direction == 'EXPORT':
-            availability["AIRFREIGHT"] = ExportCOGS.objects.filter(
+            availability[COMPONENT_FREIGHT] = ExportCOGS.objects.filter(
                 origin_airport=origin_airport,
                 destination_airport=destination_airport,
                 product_code__category=ProductCode.CATEGORY_FREIGHT,
@@ -267,99 +239,100 @@ class RateAvailabilityService:
                 valid_until__gte=today
             ).exists()
         else:
-            availability["AIRFREIGHT"] = ImportCOGS.objects.filter(
+            availability[COMPONENT_FREIGHT] = ImportCOGS.objects.filter(
                 origin_airport=origin_airport,
                 destination_airport=destination_airport,
                 product_code__category=ProductCode.CATEGORY_FREIGHT,
                 valid_from__lte=today,
                 valid_until__gte=today
             ).exists()
-            
-        # 2. Origin Charges Coverage
+
+        def classify_export_component(code: str, category: str) -> str:
+            code = (code or "").upper()
+            if category == ProductCode.CATEGORY_FREIGHT:
+                return COMPONENT_FREIGHT
+            if "DEST" in code:
+                return COMPONENT_DESTINATION_LOCAL
+            return COMPONENT_ORIGIN_LOCAL
+
+        def classify_import_component(code: str, category: str) -> str:
+            code = (code or "").upper()
+            if category == ProductCode.CATEGORY_FREIGHT or "FRT" in code or "FREIGHT" in code:
+                return COMPONENT_FREIGHT
+            if "DEST" in code or code in {"IMP-CLEAR", "IMP-CARTAGE-DEST", "IMP-FSC-CARTAGE-DEST"}:
+                return COMPONENT_DESTINATION_LOCAL
+            if "ORIGIN" in code or code in {"IMP-PICKUP", "IMP-FSC-PICKUP"}:
+                return COMPONENT_ORIGIN_LOCAL
+            if category in {ProductCode.CATEGORY_CARTAGE, ProductCode.CATEGORY_CLEARANCE}:
+                return COMPONENT_DESTINATION_LOCAL
+            return COMPONENT_ORIGIN_LOCAL
+
         if direction == 'EXPORT':
-            # Export Origin = PG
-            origin_cats = set(ExportCOGS.objects.filter(
+            export_codes = ExportCOGS.objects.filter(
                 origin_airport=origin_airport,
                 destination_airport=destination_airport,
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-            origin_cats.update(Surcharge.objects.filter(
+            ).values_list('product_code__code', 'product_code__category')
+            for code, category in export_codes:
+                availability[classify_export_component(code, category)] = True
+
+            if LocalCOGSRate.objects.filter(
+                location=origin_airport,
+                direction='EXPORT',
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).exists():
+                availability[COMPONENT_ORIGIN_LOCAL] = True
+
+            if Surcharge.objects.filter(
                 service_type='EXPORT_ORIGIN',
                 origin_filter=origin_airport,
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-            
-            availability["EXPORT_CLEARANCE"] = ProductCode.CATEGORY_CLEARANCE in origin_cats
-            availability["ORIGIN_PICKUP"] = ProductCode.CATEGORY_CARTAGE in origin_cats
-            availability["ORIGIN_OTHER"] = any(c in origin_cats for c in [
-                ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING
-            ])
+            ).exists():
+                availability[COMPONENT_ORIGIN_LOCAL] = True
 
-        else:
-            # Import Origin = Overseas
-            origin_cats = set(ImportCOGS.objects.filter(
-                origin_airport=origin_airport,
-                destination_airport=destination_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-            origin_cats.update(Surcharge.objects.filter(
-                service_type='IMPORT_ORIGIN',
-                origin_filter=origin_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-            
-            availability["ORIGIN_PICKUP"] = ProductCode.CATEGORY_CARTAGE in origin_cats
-            availability["ORIGIN_OTHER"] = any(c in origin_cats for c in [
-                ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING, ProductCode.CATEGORY_CLEARANCE
-            ])
-
-        # 3. Destination Charges Coverage
-        if direction == 'EXPORT':
-            # Export Destination = Overseas
-            dest_cats = set(ExportCOGS.objects.filter(
-                origin_airport=origin_airport,
-                destination_airport=destination_airport,
-                product_code__code__icontains='DEST',
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-            dest_cats.update(Surcharge.objects.filter(
+            if Surcharge.objects.filter(
                 service_type='EXPORT_DEST',
                 destination_filter=destination_airport,
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-
-            availability["DEST_CLEARANCE"] = ProductCode.CATEGORY_CLEARANCE in dest_cats
-            availability["DEST_DELIVERY"] = ProductCode.CATEGORY_CARTAGE in dest_cats
-            availability["DEST_OTHER"] = any(c in dest_cats for c in [
-                ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING
-            ])
-        
+            ).exists():
+                availability[COMPONENT_DESTINATION_LOCAL] = True
         else:
-            # Import Destination = PNG
-            dest_cats = set(ImportCOGS.objects.filter(
+            import_codes = ImportCOGS.objects.filter(
                 origin_airport=origin_airport,
                 destination_airport=destination_airport,
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-            dest_cats.update(Surcharge.objects.filter(
+            ).values_list('product_code__code', 'product_code__category')
+            for code, category in import_codes:
+                availability[classify_import_component(code, category)] = True
+
+            if LocalCOGSRate.objects.filter(
+                location=destination_airport,
+                direction='IMPORT',
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).exists():
+                availability[COMPONENT_DESTINATION_LOCAL] = True
+
+            if Surcharge.objects.filter(
+                service_type='IMPORT_ORIGIN',
+                origin_filter=origin_airport,
+                valid_from__lte=today,
+                valid_until__gte=today
+            ).exists():
+                availability[COMPONENT_ORIGIN_LOCAL] = True
+
+            if Surcharge.objects.filter(
                 service_type='IMPORT_DEST',
                 destination_filter=destination_airport,
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).values_list('product_code__category', flat=True))
-
-            availability["DEST_CLEARANCE"] = ProductCode.CATEGORY_CLEARANCE in dest_cats
-            availability["DEST_DELIVERY"] = ProductCode.CATEGORY_CARTAGE in dest_cats
-            availability["DEST_OTHER"] = any(c in dest_cats for c in [
-                 ProductCode.CATEGORY_DOCUMENTATION, ProductCode.CATEGORY_HANDLING, ProductCode.CATEGORY_AGENCY, ProductCode.CATEGORY_SCREENING
-            ])
+            ).exists():
+                availability[COMPONENT_DESTINATION_LOCAL] = True
             
         lane_key = f"{origin_airport.upper()}-{destination_airport.upper()}"
         config = getattr(settings, 'SPOT_ROUTE_COVERAGE', {})
@@ -368,18 +341,14 @@ class RateAvailabilityService:
         import_a2d_destination_global = config.get('import_a2d_destination_global', False)
 
         if direction == 'EXPORT' and lane_key in export_d2a_lanes:
-            availability["AIRFREIGHT"] = True
-            availability["EXPORT_CLEARANCE"] = True
-            availability["ORIGIN_PICKUP"] = True
-            availability["ORIGIN_OTHER"] = True
+            availability[COMPONENT_FREIGHT] = True
+            availability[COMPONENT_ORIGIN_LOCAL] = True
 
         if direction == 'IMPORT':
             if import_a2d_destination_global:
-                availability["DEST_CLEARANCE"] = True
-                availability["DEST_DELIVERY"] = True
-                availability["DEST_OTHER"] = True
+                availability[COMPONENT_DESTINATION_LOCAL] = True
             if lane_key in import_d2a_lanes:
-                availability["AIRFREIGHT"] = True
+                availability[COMPONENT_FREIGHT] = True
 
         return availability
 
@@ -1102,7 +1071,10 @@ class ReplyAnalysisService:
                     final_currency = line.currency or ai_result.quote_currency
                     
                     # For MIN_OR_PER_KG, use minimum as the display amount
-                    display_amount = line.minimum if line.minimum else line.amount
+                    display_amount = line.minimum if line.minimum is not None else line.amount
+                    # For PERCENTAGE, use percentage value as the display amount
+                    if line.unit_basis == "PERCENTAGE" and line.percentage is not None:
+                        display_amount = line.percentage
 
                     ai_assertions.append(ExtractedAssertion(
                         text=line.description,
@@ -1226,13 +1198,13 @@ class ReplyAnalysisService:
             for a in suggestions:
                 # Map assertion category to availability keys
                 should_skip = False
-                if a.category == AssertionCategory.RATE and availability.get("AIRFREIGHT"):
+                if a.category == AssertionCategory.RATE and availability.get(COMPONENT_FREIGHT):
                     should_skip = True
                 elif a.category == AssertionCategory.ORIGIN_CHARGES:
-                    if availability.get("EXPORT_CLEARANCE") or availability.get("ORIGIN_PICKUP") or availability.get("ORIGIN_OTHER"):
+                    if availability.get(COMPONENT_ORIGIN_LOCAL):
                         should_skip = True
                 elif a.category == AssertionCategory.DEST_CHARGES:
-                    if availability.get("DEST_CLEARANCE") or availability.get("DEST_DELIVERY") or availability.get("DEST_OTHER"):
+                    if availability.get(COMPONENT_DESTINATION_LOCAL):
                         should_skip = True
                 
                 if not should_skip:
@@ -1256,13 +1228,13 @@ class ReplyAnalysisService:
         # This ensures we don't show "Missing rate" if DB has rates for this lane
         if availability:
             # If DB has airfreight rate, we have a rate
-            if availability.get("AIRFREIGHT"):
+            if availability.get(COMPONENT_FREIGHT):
                 summary.has_rate = True
             # Destination charges count as rate for Import A2D/D2D
-            if availability.get("DEST_CLEARANCE") or availability.get("DEST_DELIVERY") or availability.get("DEST_OTHER"):
+            if availability.get(COMPONENT_DESTINATION_LOCAL):
                 summary.has_rate = True
             # Origin charges count as rate for Export D2A/D2D  
-            if availability.get("EXPORT_CLEARANCE") or availability.get("ORIGIN_PICKUP") or availability.get("ORIGIN_OTHER"):
+            if availability.get(COMPONENT_ORIGIN_LOCAL):
                 summary.has_rate = True
         
         # 2️⃣ Enrich from assertions
@@ -1361,39 +1333,86 @@ class ReplyAnalysisService:
         Returns:
             List of charge line dicts ready for SPE creation
         """
+        from decimal import Decimal, InvalidOperation
         from quotes.reply_schemas import AssertionStatus, AssertionCategory
-        
-        charges = []
-        
+        from quotes.completeness import (
+            COMPONENT_ORIGIN_LOCAL,
+            COMPONENT_FREIGHT,
+            COMPONENT_DESTINATION_LOCAL,
+        )
+
+        charges: List[dict] = []
+
+        component_map = {
+            AssertionCategory.RATE: (COMPONENT_FREIGHT, "airfreight"),
+            AssertionCategory.ORIGIN_CHARGES: (COMPONENT_ORIGIN_LOCAL, "origin_charges"),
+            AssertionCategory.DEST_CHARGES: (COMPONENT_DESTINATION_LOCAL, "destination_charges"),
+        }
+
+        def _parse_decimal(value) -> Optional[Decimal]:
+            if value is None:
+                return None
+            try:
+                return Decimal(str(value))
+            except (InvalidOperation, ValueError, TypeError):
+                return None
+
         for a in analysis.assertions:
-            # Skip missing assertions
-            if a.status == AssertionStatus.MISSING:
+            # Skip missing or implicit assertions (AI-only population uses confirmed/conditional)
+            if a.status in (AssertionStatus.MISSING, AssertionStatus.IMPLICIT):
                 continue
-            
-            # Only create charge lines for rate-related assertions
-            if a.category in (
-                AssertionCategory.RATE,
-                AssertionCategory.ORIGIN_CHARGES,
-                AssertionCategory.DEST_CHARGES,
-            ):
-                # Determine bucket
-                if a.category == AssertionCategory.RATE:
-                    bucket = "airfreight"
-                elif a.category == AssertionCategory.ORIGIN_CHARGES:
-                    bucket = "origin_charges"
-                else:
-                    bucket = "destination_charges"
-                
-                charges.append({
-                    'code': a.category.value.upper(),
-                    'description': a.text,
-                    'amount': str(a.rate_amount) if a.rate_amount else a.value or '0',
-                    'currency': a.rate_currency or 'USD',
-                    'unit': a.rate_unit or 'per_kg',
-                    'bucket': bucket,
-                    'is_primary_cost': a.category == AssertionCategory.RATE,
-                    'conditional': a.status == AssertionStatus.CONDITIONAL,
-                    'source_reference': source_reference,
-                })
-        
+
+            if a.category not in component_map:
+                continue
+
+            component_code, bucket = component_map[a.category]
+
+            unit_raw = (a.rate_unit or "").lower().strip()
+            default_unit = "per_kg" if a.category == AssertionCategory.RATE else "flat"
+
+            min_charge = None
+            exclude_from_totals = False
+
+            # Normalize unit to SPE-supported values
+            if unit_raw in {"per_kg", "per_shipment", "flat", "per_awb", "per_trip", "per_set", "per_man", "percentage"}:
+                unit = unit_raw
+            elif unit_raw in {"min_or_per_kg", "min-per-kg"}:
+                unit = "per_kg"
+            else:
+                unit = default_unit
+
+            amount = None
+            rate_amount = _parse_decimal(a.rate_amount)
+            rate_per_unit = _parse_decimal(a.rate_per_unit)
+            value_amount = _parse_decimal(a.value)
+
+            if unit_raw in {"min_or_per_kg", "min-per-kg"}:
+                # Min OR per kg: use per-kg rate as amount, store minimum separately
+                amount = rate_per_unit or rate_amount
+                min_charge = rate_amount
+            elif unit == "per_kg":
+                amount = rate_per_unit or rate_amount
+            elif unit == "percentage":
+                amount = rate_amount or rate_per_unit or value_amount
+                exclude_from_totals = True
+            else:
+                amount = rate_amount or value_amount
+
+            if amount is None or amount <= 0:
+                continue
+
+            charges.append({
+                "code": component_code,
+                "description": a.text,
+                "amount": str(amount),
+                "currency": (a.rate_currency or "USD").upper(),
+                "unit": unit,
+                "bucket": bucket,
+                "is_primary_cost": a.category == AssertionCategory.RATE,
+                "conditional": a.status == AssertionStatus.CONDITIONAL,
+                "min_charge": str(min_charge) if min_charge else None,
+                "exclude_from_totals": exclude_from_totals,
+                "source_reference": source_reference,
+            })
+
         return charges

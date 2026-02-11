@@ -205,6 +205,8 @@ class HybridPricingTest(TestCase):
         mock_line.sell_amount = Decimal('100.00')
         mock_line.sell_incl_gst = Decimal('100.00')
         mock_line.gst_amount = Decimal('0')
+        mock_line.gst_category = None
+        mock_line.gst_rate = Decimal('0')
         mock_line.cost_currency = 'AUD'
         mock_line.sell_currency = 'AUD'
         mock_line.is_rate_missing = False

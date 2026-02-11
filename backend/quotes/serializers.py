@@ -195,6 +195,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     # Expose the creator as the "Agent"
     created_by = serializers.SerializerMethodField()
     rate_provider = serializers.SerializerMethodField()
+    spot_negotiation = serializers.SerializerMethodField()
     
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -224,13 +225,22 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             
         return ", ".join(sorted(providers))
 
+    def get_spot_negotiation(self, obj):
+        spe = getattr(obj, 'spot_envelopes', None)
+        if not spe:
+            return None
+        latest = spe.order_by('-created_at', '-id').first()
+        if not latest:
+            return None
+        return {'id': str(latest.id)}
+
     class Meta:
         model = Quote
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version',
+            'status', 'valid_until', 'created_at', 'latest_version', 'spot_negotiation',
             'created_by', 'rate_provider'
         )
 
@@ -245,6 +255,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
     origin_location = serializers.StringRelatedField()
     destination_location = serializers.StringRelatedField()
     created_by = serializers.SerializerMethodField()
+    spot_negotiation = serializers.SerializerMethodField()
 
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -253,13 +264,23 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
         full_name = f"{user.first_name} {user.last_name}".strip()
         return full_name if full_name else user.username
 
+    def get_spot_negotiation(self, obj):
+        spe = getattr(obj, 'spot_envelopes', None)
+        if not spe:
+            return None
+        latest = spe.order_by('-created_at', '-id').first()
+        if not latest:
+            return None
+        return {'id': str(latest.id)}
+
     class Meta:
         model = Quote
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version', 'created_by'
+            'status', 'valid_until', 'created_at', 'latest_version', 'created_by',
+            'spot_negotiation'
         )
 
 

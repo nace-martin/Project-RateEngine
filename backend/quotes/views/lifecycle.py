@@ -194,7 +194,7 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         # Prefetch related data to optimize query
         qs = Quote.objects.all().select_related(
             'customer', 'contact', 'origin_location', 'destination_location'
-        ).order_by('-created_at')
+        ).prefetch_related('spot_envelopes').order_by('-created_at')
 
         # 1. Role-Based Visibility
         if user.is_authenticated:

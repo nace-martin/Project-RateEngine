@@ -154,6 +154,7 @@ export interface CreateSPERequest {
     conditions?: Partial<SPEConditions>;
     trigger_code: string;
     trigger_text: string;
+    quote_id?: string;
     validity_hours?: number;
 }
 
@@ -205,6 +206,9 @@ export interface SPEComputeResultLine {
 export interface SPEComputeResponse {
     is_complete: boolean;
     reason?: string;
+    has_missing_rates?: boolean;
+    missing_components?: string[];
+    completeness_notes?: string | null;
     pricing_mode?: 'SPOT' | 'NORMAL';
     spe_id?: string;
     fx_info?: {

@@ -91,7 +91,9 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(compute_response.status_code, status.HTTP_200_OK)
 
         payload = compute_response.json()
-        self.assertTrue(payload["is_complete"])
+        self.assertFalse(payload["is_complete"])
+        self.assertIn("ORIGIN_LOCAL", payload["missing_components"])
+        self.assertIn("DESTINATION_LOCAL", payload["missing_components"])
         self.assertEqual(payload["pricing_mode"], "SPOT")
         self.assertEqual(len(payload["lines"]), 1)
         self.assertNotEqual(payload["totals"]["total_sell_pgk"], "0")

@@ -70,6 +70,18 @@ export default function SpotRateEntryPage() {
     const [showAckModal, setShowAckModal] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
 
+    const formatMissingComponents = (components?: string[]) => {
+        if (!components || components.length === 0) return null;
+        const friendly = components.map((component) => {
+            const normalized = component.toUpperCase();
+            if (normalized === "DESTINATION_LOCAL") return "Destination Charges";
+            if (normalized === "ORIGIN_LOCAL") return "Origin Charges";
+            if (normalized === "FREIGHT") return "Freight Rate";
+            return component.replace(/_/g, " ");
+        });
+        return Array.from(new Set(friendly));
+    };
+
     // Load existing SPE
     useEffect(() => {
         if (speId && !isNew) {
@@ -296,6 +308,21 @@ export default function SpotRateEntryPage() {
             {state.error && (
                 <div className="mb-6 rounded-md border border-red-200 bg-red-50 p-4">
                     <p className="text-sm font-medium text-red-800">{state.error}</p>
+                    {state.quoteResult?.has_missing_rates && (
+                        <div className="mt-2 text-sm text-red-700">
+                            {formatMissingComponents(state.quoteResult.missing_components)?.length ? (
+                                <p>
+                                    Missing required components:{" "}
+                                    <span className="font-semibold">
+                                        {formatMissingComponents(state.quoteResult.missing_components)?.join(", ")}
+                                    </span>
+                                </p>
+                            ) : null}
+                            {state.quoteResult.completeness_notes && (
+                                <p className="mt-1">{state.quoteResult.completeness_notes}</p>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 

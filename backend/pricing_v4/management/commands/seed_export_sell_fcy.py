@@ -18,9 +18,18 @@ from pricing_v4.models import ProductCode, ExportSellRate
 class Command(BaseCommand):
     help = 'Seeds Export SELL Rates in USD/AUD for Export Collect quotes'
 
-    def handle(self, *args, **kwargs):
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--year',
+            type=int,
+            default=date.today().year,
+            help='Seed rates for the given year (default: current year).',
+        )
+
+    def handle(self, *args, **options):
+        self.year = options['year']
         self.stdout.write("=" * 60)
-        self.stdout.write("Seeding Export Collect FCY Sell Rates (USD/AUD)")
+        self.stdout.write(f"Seeding Export Collect FCY Sell Rates (USD/AUD) for {self.year}")
         self.stdout.write("=" * 60)
         
         # Air Freight Rates from spreadsheet
@@ -82,8 +91,8 @@ class Command(BaseCommand):
         }
         
         with transaction.atomic():
-            valid_from = date(2026, 1, 1)
-            valid_until = date(2026, 12, 31)
+            valid_from = date(self.year, 1, 1)
+            valid_until = date(self.year, 12, 31)
             
             for dest, data in air_freight_rates.items():
                 currency = data['currency']
@@ -147,7 +156,7 @@ class Command(BaseCommand):
             defaults['is_additive'] = False
         
         # Use FCY valid_from date to distinguish from PGK rates
-        fcy_valid_from = date(2026, 1, 2)  # One day after PGK rates
+        fcy_valid_from = date(self.year, 1, 2)  # One day after PGK rates
         
         obj, created = ExportSellRate.objects.update_or_create(
             product_code_id=product_id,

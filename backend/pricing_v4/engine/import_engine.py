@@ -184,7 +184,7 @@ class ImportPricingEngine:
         Service Scope determines which legs are in scope.
         """
         if self.service_scope == ServiceScope.A2D:
-            return ['FREIGHT', 'DESTINATION']
+            return ['DESTINATION']
         elif self.service_scope == ServiceScope.D2A:
             return ['ORIGIN', 'FREIGHT']
         elif self.service_scope == ServiceScope.D2D:
