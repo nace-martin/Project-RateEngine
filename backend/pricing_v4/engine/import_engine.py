@@ -24,6 +24,7 @@ from pricing_v4.models import (
     ImportCOGS, ImportSellRate, ProductCode,
     LocalSellRate, LocalCOGSRate
 )
+from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
 
 logger = logging.getLogger(__name__)
@@ -299,7 +300,17 @@ class ImportPricingEngine:
                     amount = self.weight * Decimal(str(tier['rate']))
                     break
         elif cogs.rate_per_kg:
-            amount = self.weight * cogs.rate_per_kg
+            calc_type = 'MIN_OR_PER_UNIT' if cogs.min_charge else 'PER_UNIT'
+            amount = evaluate_charge_rule(
+                {
+                    'calculation_type': calc_type,
+                    'unit_type': 'KG',
+                    'rate': cogs.rate_per_kg,
+                    'min_amount': cogs.min_charge,
+                    'max_amount': cogs.max_charge,
+                },
+                {'chargeable_weight_kg': self.weight},
+            )
         
         # Flat rate
         if cogs.rate_per_shipment:
@@ -309,7 +320,7 @@ class ImportPricingEngine:
                 amount += cogs.rate_per_shipment
         
         # Min/Max
-        if cogs.min_charge and amount < cogs.min_charge:
+        if cogs.min_charge and amount < cogs.min_charge and not cogs.rate_per_kg:
             amount = cogs.min_charge
         if cogs.max_charge and amount > cogs.max_charge:
             amount = cogs.max_charge
@@ -337,6 +348,7 @@ class ImportPricingEngine:
         Calculate complete import quote.
         """
         active_legs = self._get_active_legs()
+        mandatory_ids = self.get_mandatory_product_codes(is_dg=False, service_scope=self.service_scope.value)
         
         result = QuoteResult(
             origin=self.origin,
@@ -389,6 +401,49 @@ class ImportPricingEngine:
                 continue
             
             line = self._calculate_charge_line(pc, leg)
+            
+            # If no line but it's mandatory, check for defaults or create a missing rate line
+            if not line and pc.id in mandatory_ids:
+                # [AMENDMENT] Mandatory Customs Brokerage Fee Default (PGK 300.00)
+                if pc.id == 2020:
+                    line = ChargeLine(
+                        product_code_id=pc.id, product_code=pc.code, description=pc.description,
+                        category=pc.category, leg=leg, cost_amount=Decimal('0'),
+                        cost_currency='PGK', agent_name=None, sell_amount=Decimal('300.00'),
+                        sell_currency=self.quote_currency, margin_amount=Decimal('300.00'),
+                        margin_percent=Decimal('100.00'), notes="Default Customs Brokerage Fee applied.",
+                    )
+                    # Handle FCY conversion for PREPAID quotes
+                    if self.quote_currency != 'PGK':
+                        line.sell_amount = self._convert_pgk_to_fcy(Decimal('300.00'))
+                        line.fx_applied = True
+                        line.caf_applied = True
+                    
+                    # Apply GST Classification
+                    gst_cat, gst_r = get_png_gst_category(product_code=pc, shipment_type='IMPORT', leg=leg)
+                    line.gst_category = gst_cat
+                    line.gst_rate = gst_r
+                    # Force GST to 0 if rate is missing to prevent AUD 0.00 base with non-zero GST
+                    line.gst_amount = Decimal('0.00')
+                    line.sell_incl_gst = Decimal('0.00')
+                else:
+                    line = ChargeLine(
+                        product_code_id=pc.id,
+                        product_code=pc.code,
+                        description=pc.description,
+                        category=pc.category,
+                        leg=leg,
+                        cost_amount=Decimal('0'),
+                        cost_currency='PGK',
+                        agent_name=None,
+                        sell_amount=Decimal('0'),
+                        sell_currency=self.quote_currency,
+                        margin_amount=Decimal('0'),
+                        margin_percent=Decimal('0'),
+                        notes=f"Mandatory rate missing for {pc.code}",
+                    )
+                    line.is_rate_missing = True # Dynamically added for adapter detection
+
             if line:
                 if leg == 'ORIGIN':
                     result.origin_lines.append(line)
@@ -406,6 +461,46 @@ class ImportPricingEngine:
         result.total_sell_incl_gst = sum(line.sell_incl_gst for line in all_lines)
         
         return result
+
+    @staticmethod
+    def get_mandatory_product_codes(is_dg: bool = False, service_scope: str = 'A2A') -> List[int]:
+        """
+        Returns list of ProductCode IDs that MUST be present for commercial validity.
+        """
+        service_scope = service_scope.upper()
+        if service_scope == 'P2P': service_scope = 'A2A'
+
+        codes = []
+        
+        # Freight is mandatory for all scopes involving linehaul
+        if service_scope in ('A2A', 'D2A', 'D2D'):
+            codes.append(2001)  # IMP-FRT-AIR
+
+        # Origin Local mandatory for D2A and D2D
+        if service_scope in ('D2A', 'D2D'):
+            codes.extend([
+                2010,  # IMP-DOC-ORIGIN
+                2011,  # IMP-AWB-ORIGIN
+                2012,  # IMP-AGENCY-ORIGIN
+                2030,  # IMP-CTO-ORIGIN
+                2040,  # IMP-SCREEN-ORIGIN
+                2050,  # IMP-PICKUP
+                2060,  # IMP-FSC-PICKUP
+            ])
+
+        # Destination Local mandatory for A2D and D2D
+        if service_scope in ('A2D', 'D2D'):
+            codes.extend([
+                2020,  # IMP-CLEAR
+                2021,  # IMP-AGENCY-DEST
+                2022,  # IMP-DOC-DEST
+                2070,  # IMP-HANDLING-DEST
+                2071,  # IMP-LOADING-DEST
+                2072,  # IMP-CARTAGE-DEST
+                2080,  # IMP-FSC-CARTAGE-DEST
+            ])
+
+        return codes
     
     def _calculate_charge_line(self, pc: ProductCode, leg: str) -> Optional[ChargeLine]:
         """Calculate a single charge line."""
@@ -531,7 +626,17 @@ class ImportPricingEngine:
                     amount = self.weight * Decimal(str(tier['rate']))
                     break
         elif sell_rate.rate_per_kg:
-            amount = self.weight * sell_rate.rate_per_kg
+            calc_type = 'MIN_OR_PER_UNIT' if sell_rate.min_charge else 'PER_UNIT'
+            amount = evaluate_charge_rule(
+                {
+                    'calculation_type': calc_type,
+                    'unit_type': 'KG',
+                    'rate': sell_rate.rate_per_kg,
+                    'min_amount': sell_rate.min_charge,
+                    'max_amount': sell_rate.max_charge,
+                },
+                {'chargeable_weight_kg': self.weight},
+            )
         
         if sell_rate.rate_per_shipment:
             if amount == 0:
@@ -539,7 +644,7 @@ class ImportPricingEngine:
             elif hasattr(sell_rate, 'is_additive') and sell_rate.is_additive:
                 amount += sell_rate.rate_per_shipment
         
-        if sell_rate.min_charge and amount < sell_rate.min_charge:
+        if sell_rate.min_charge and amount < sell_rate.min_charge and not sell_rate.rate_per_kg:
             amount = sell_rate.min_charge
         if sell_rate.max_charge and amount > sell_rate.max_charge:
             amount = sell_rate.max_charge

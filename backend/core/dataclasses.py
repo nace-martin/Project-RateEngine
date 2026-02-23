@@ -104,6 +104,7 @@ class CalculatedChargeLine(BaseModel):
     bucket: str = "origin_charges"
 
     is_informational: bool = False
+    conditional: bool = False
 
     # --- GST Fields ---
     gst_category: Optional[str] = None

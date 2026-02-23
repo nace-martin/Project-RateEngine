@@ -507,8 +507,12 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
       const originLocation = quote.origin_location;
       const destinationLocation = quote.destination_location;
 
-      const originCode = extractIataCode(originLocation);
-      const destinationCode = extractIataCode(destinationLocation);
+      const originCode =
+        extractIataCode(originLocation) ||
+        (quote.latest_version?.payload_json?.origin_airport || "").toUpperCase();
+      const destinationCode =
+        extractIataCode(destinationLocation) ||
+        (quote.latest_version?.payload_json?.destination_airport || "").toUpperCase();
       const originCountry = extractCountryCode(originLocation, originCode) || "OTHER";
       const destinationCountry = extractCountryCode(destinationLocation, destinationCode) || "OTHER";
 
@@ -519,6 +523,8 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
       const scopeCheck = await validateSpotScope({
         origin_country: originCountry,
         destination_country: destinationCountry,
+        origin_code: originCode || "",
+        destination_code: destinationCode || "",
       });
       if (!scopeCheck.is_valid) {
         throw new Error(scopeCheck.error || "Shipment is out of SPOT scope.");
@@ -645,6 +651,8 @@ function extractIataCode(location?: string): string | undefined {
   if (!location) return undefined;
   const iataMatch = location.match(/\(([A-Z]{3})\)/i);
   if (iataMatch) return iataMatch[1].toUpperCase();
+  const prefixMatch = location.match(/^([A-Z]{3})(?:\s*[-,/]|$)/i);
+  if (prefixMatch) return prefixMatch[1].toUpperCase();
   const trimmed = location.trim();
   if (trimmed.length === 3) return trimmed.toUpperCase();
   return undefined;

@@ -44,8 +44,9 @@ function getBucket(line: SellLine): BucketType {
 }
 
 // Calculate bucket subtotal
-function calculateBucketTotal(lines: SellLine[], field: 'sell_pgk_incl_gst' | 'sell_pgk' | 'sell_fcy' | 'sell_fcy_incl_gst'): number {
+function calculateBucketTotal(lines: any[], field: string): number {
     return lines.reduce((sum, line) => {
+        // Handle field aliases (e.g., sell_pgk vs total_sell_pgk)
         const value = parseFloat(line[field] || '0');
         return sum + value;
     }, 0);
@@ -53,18 +54,20 @@ function calculateBucketTotal(lines: SellLine[], field: 'sell_pgk_incl_gst' | 's
 
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
-    const { sell_lines, totals } = result;
+    // BACKWARD COMPATIBILITY FIX: 
+    // If we receive a full Quote object (V3), map its latest_version to the expected fields
+    const data = (result as any).latest_version ? (result as any).latest_version : result;
+    const sell_lines = data.sell_lines || data.lines || [];
+    const totals = data.totals;
 
-    // Detect display currency from the sell_currency field
-    // For Prepaid Import, sell_currency will be 'AUD' (or other FCY)
-    // For Collect Import or Domestic, sell_currency will be 'PGK'
-    const firstLineCurrency = sell_lines[0]?.sell_currency || 'PGK';
-    const displayCurrency = totals?.currency || firstLineCurrency;
-    const isOverallPassthrough = displayCurrency !== 'PGK';
+    // Detect display currency and logic flags
+    const firstLineCurrency = sell_lines[0]?.sell_fcy_currency || sell_lines[0]?.sell_currency || 'PGK';
+    const displayCurrency = totals?.currency || totals?.total_sell_fcy_currency || firstLineCurrency;
+    const isShowingFCY = displayCurrency !== 'PGK';
 
     // Separate informational (conditional) charges from priced lines
-    const pricedLines = sell_lines.filter((line: SellLine) => !line.is_informational);
-    const informationalLines = sell_lines.filter((line: SellLine) => line.is_informational);
+    const pricedLines = sell_lines.filter((line: any) => !line.is_informational);
+    const informationalLines = sell_lines.filter((line: any) => line.is_informational);
 
     // Group PRICED lines by bucket (not informational ones)
     const buckets: Record<BucketType, SellLine[]> = {
@@ -78,15 +81,16 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
         buckets[bucket].push(line);
     });
 
-    // Use backend-provided totals (single source of truth) instead of re-calculating
-    // This ensures consistency with the sticky footer
-    const totalExGst = isOverallPassthrough
-        ? parseFloat(totals?.total_sell_fcy || '0')
-        : parseFloat(totals?.sell_pgk || '0');
-    const totalGst = parseFloat(totals?.gst_amount || '0');
-    const totalIncGst = isOverallPassthrough
-        ? parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')
-        : parseFloat(totals?.sell_pgk_incl_gst || totals?.sell_pgk || '0');
+    // 3. Robust Total Mapping - Exhaustive check of all possible backend field names
+    const totalExGst = isShowingFCY
+        ? parseFloat(totals?.total_sell_ex_gst || totals?.total_sell_fcy || totals?.sell_fcy || '0')
+        : parseFloat(totals?.total_sell_pgk || totals?.sell_pgk || '0');
+        
+    const totalGst = parseFloat(totals?.gst_amount || totals?.total_gst || totals?.gst_pgk || '0');
+    
+    const totalIncGst = isShowingFCY
+        ? parseFloat(totals?.total_quote_amount || totals?.total_sell_fcy_incl_gst || totals?.sell_fcy_incl_gst || totals?.total_sell_fcy || '0')
+        : parseFloat(totals?.total_sell_pgk_incl_gst || totals?.sell_pgk_incl_gst || totals?.sell_pgk || '0');
 
 
 
@@ -110,7 +114,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         title="Origin Charges"
                         lines={buckets.ORIGIN}
                         displayCurrency={displayCurrency}
-                        isPassthrough={isOverallPassthrough}
+                        isShowingFCY={isShowingFCY}
                         icon={<Package className="w-4 h-4 text-blue-600" />}
                         colorClass="blue"
                     />
@@ -121,7 +125,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         title="Freight Charges"
                         lines={buckets.FREIGHT}
                         displayCurrency={displayCurrency}
-                        isPassthrough={isOverallPassthrough}
+                        isShowingFCY={isShowingFCY}
                         icon={<Plane className="w-4 h-4 text-blue-600" />}
                         colorClass="blue"
                     />
@@ -133,7 +137,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         title="Destination Charges"
                         lines={buckets.DESTINATION}
                         displayCurrency={displayCurrency}
-                        isPassthrough={isOverallPassthrough}
+                        isShowingFCY={isShowingFCY}
                         icon={<MapPin className="w-4 h-4 text-blue-600" />}
                         colorClass="blue"
                     />
@@ -206,14 +210,14 @@ function BucketSection({
     title,
     lines,
     displayCurrency,
-    isPassthrough,
+    isShowingFCY,
     icon,
     // colorClass prop is present in parent but ignored here to enforce standardized Blue theme
 }: {
     title: string;
-    lines: SellLine[];
+    lines: any[];
     displayCurrency: string;
-    isPassthrough: boolean;
+    isShowingFCY: boolean;
     icon: React.ReactNode;
     colorClass?: string;
 }) {
@@ -223,7 +227,7 @@ function BucketSection({
     const styles = getSectionStyle();
 
     // Calculate subtotal for this bucket
-    const bucketTotal = isPassthrough
+    const bucketTotal = isShowingFCY
         ? calculateBucketTotal(lines, 'sell_fcy')
         : calculateBucketTotal(lines, 'sell_pgk');
 
@@ -278,12 +282,12 @@ function BucketSection({
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {lines.map((line, index) => (
+                                {lines.map((line: any, index: number) => (
                                     <ChargeRow
                                         key={index}
                                         line={line}
                                         displayCurrency={displayCurrency}
-                                        isPassthrough={isPassthrough}
+                                        isShowingFCY={isShowingFCY}
                                     />
                                 ))}
                             </TableBody>
@@ -299,29 +303,31 @@ function BucketSection({
 function ChargeRow({
     line,
     displayCurrency,
-    isPassthrough
+    isShowingFCY
 }: {
-    line: SellLine;
+    line: any;
     displayCurrency: string;
-    isPassthrough: boolean;
+    isShowingFCY: boolean;
 }) {
-    const sellExGst = isPassthrough ? line.sell_fcy : line.sell_pgk;
-    const gstAmountVal = parseFloat((isPassthrough ? '0' : line.gst_amount) || '0');
+    // Robust line mapping
+    const sellExGst = isShowingFCY 
+        ? (line.sell_fcy || line.sell_pgk) 
+        : (line.sell_pgk || line.sell_fcy);
+        
+    const gstAmountVal = parseFloat(line.gst_amount || '0');
 
     // Determine GST display text
     let gstDisplay: React.ReactNode = '—';
-    if (!isPassthrough) {
-        if (gstAmountVal > 0) {
-            gstDisplay = formatAmount(gstAmountVal, displayCurrency);
-        } else {
-            // Updated to non-interactive muted text
-            gstDisplay = <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Exempt</span>;
-        }
+    if (gstAmountVal > 0) {
+        gstDisplay = formatAmount(gstAmountVal, displayCurrency);
+    } else {
+        // Updated to non-interactive muted text
+        gstDisplay = <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Exempt</span>;
     }
 
-    const total = isPassthrough
-        ? line.sell_fcy
-        : (line.sell_pgk_incl_gst || line.sell_pgk);
+    const total = isShowingFCY
+        ? (line.sell_fcy_incl_gst || line.sell_fcy)
+        : (line.sell_pgk_incl_gst || line.sell_pgk || line.sell_fcy_incl_gst);
 
     return (
         <TableRow className="hover:bg-blue-50/30 border-b border-slate-50 last:border-0 transition-colors">

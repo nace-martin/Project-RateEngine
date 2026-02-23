@@ -378,6 +378,10 @@ class QuoteComputeV3View(APIView):
                             leg = 'FREIGHT' # Assume Spot is mostly freight if unknown?
                 
                 # Build sell line
+                sell_fcy = line.sell_fcy or line.sell_pgk
+                sell_fcy_incl_gst = line.sell_fcy_incl_gst or sell_fcy
+                gst_amount_fcy = (sell_fcy_incl_gst - sell_fcy).quantize(Decimal('0.01'))
+                
                 sell_line = {
                     "line_type": "COMPONENT",
                     "component": sc_code,
@@ -387,9 +391,9 @@ class QuoteComputeV3View(APIView):
                     "cost_pgk": str(line.cost_pgk),
                     "sell_pgk": str(line.sell_pgk),
                     "sell_pgk_incl_gst": str(line.sell_pgk_incl_gst or line.sell_pgk * Decimal('1.1')),
-                    "gst_amount": str(gst_amount),
-                    "sell_fcy": str(line.sell_fcy or line.sell_pgk),
-                    "sell_fcy_incl_gst": str(line.sell_fcy_incl_gst or line.sell_fcy or line.sell_pgk),
+                    "gst_amount": str(gst_amount_fcy if (line.sell_fcy_currency and line.sell_fcy_currency != 'PGK') else gst_amount),
+                    "sell_fcy": str(sell_fcy),
+                    "sell_fcy_incl_gst": str(sell_fcy_incl_gst),
                     "sell_currency": line.sell_fcy_currency or 'PGK',
                     "margin_percent": str(((line.sell_pgk - line.cost_pgk) / line.cost_pgk * 100) if line.cost_pgk > 0 else 0),
                     "exchange_rate": str(line.exchange_rate or 1.0),
@@ -414,6 +418,12 @@ class QuoteComputeV3View(APIView):
             
             # Get totals from QuoteTotal if available
             quote_total = getattr(latest_version, 'totals', None)
+            output_currency = quote_total.total_sell_fcy_currency if quote_total else (quote.output_currency or 'PGK')
+            
+            # Calculate FCY GST if applicable
+            total_gst_fcy = Decimal('0.00')
+            if quote_total:
+                total_gst_fcy = (quote_total.total_sell_fcy_incl_gst - quote_total.total_sell_fcy).quantize(Decimal('0.01'))
             
             response_data = {
                 "quote_id": str(quote_id),
@@ -423,11 +433,18 @@ class QuoteComputeV3View(APIView):
                 "totals": {
                     "cost_pgk": str(total_cost_pgk),
                     "sell_pgk": str(total_sell_pgk),
+                    "total_sell_pgk": str(total_sell_pgk),
                     "sell_pgk_incl_gst": str(total_sell_pgk + total_gst),
-                    "gst_amount": str(total_gst),
-                    "sell_fcy": str(quote_total.total_sell_fcy if quote_total else total_sell_pgk),
+                    "total_sell_pgk_incl_gst": str(total_sell_pgk + total_gst),
+                    "gst_amount": str(total_gst_fcy if output_currency != 'PGK' else total_gst),
+                    "total_gst": str(total_gst_fcy if output_currency != 'PGK' else total_gst),
+                    "total_sell_fcy": str(quote_total.total_sell_fcy if quote_total else total_sell_pgk),
+                    "total_sell_ex_gst": str(quote_total.total_sell_fcy if quote_total else total_sell_pgk),
                     "total_sell_fcy_incl_gst": str(quote_total.total_sell_fcy_incl_gst if quote_total else total_sell_pgk + total_gst),
-                    "currency": quote_total.total_sell_fcy_currency if quote_total else (quote.output_currency or 'PGK'),
+                    "total_quote_amount": str(quote_total.total_sell_fcy_incl_gst if quote_total else total_sell_pgk + total_gst),
+                    "currency": output_currency,
+                    "total_sell_fcy_currency": output_currency,
+                    "has_missing_rates": quote_total.has_missing_rates if quote_total else False,
                 },
                 "exchange_rates": rates_dict,
                 "computation_date": latest_version.created_at.strftime('%Y-%m-%d') if latest_version.created_at else quote.created_at.strftime('%Y-%m-%d'),

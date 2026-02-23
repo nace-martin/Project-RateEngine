@@ -94,6 +94,50 @@ class SpotChargeLine(BaseModel):
         ...,
         description="PER_KG (weight-based), PER_SHIPMENT (flat fee), PERCENTAGE (% of another charge)"
     )
+
+    # Canonical rule type for downstream evaluator (backward-compatible with unit_basis)
+    calculation_type: Optional[Literal[
+        "FLAT",
+        "PER_UNIT",
+        "MIN_OR_PER_UNIT",
+        "PERCENT_OF",
+        "PER_LINE_WITH_CAP",
+        "MAX_OR_PER_UNIT",
+    ]] = Field(
+        None,
+        description="Canonical calculation rule type"
+    )
+
+    # Canonical quantity basis for per-unit rules
+    unit_type: Optional[Literal["KG", "SHIPMENT", "AWB", "TRIP", "SET", "LINE", "MAN", "CBM", "RT"]] = Field(
+        None,
+        description="Canonical unit for quantity lookup"
+    )
+
+    # Canonical structured rule fields
+    rate: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Per-unit or flat rate amount"
+    )
+    min_amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Minimum amount for composite rules"
+    )
+    max_amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Maximum amount for composite rules"
+    )
+    percent_basis: Optional[str] = Field(
+        None,
+        description="Basis key for percentage calculations (e.g., FREIGHT)"
+    )
+    rule_meta: Optional[dict] = Field(
+        default_factory=dict,
+        description="Extensible rule parameters (e.g., cap thresholds)"
+    )
     
     # For percentage-based charges
     percentage: Optional[Decimal] = Field(
@@ -157,9 +201,25 @@ class SpotChargeLine(BaseModel):
         # Unknown currencies are allowed but will generate warning in model_validator
         return v
 
+    @field_validator("rule_meta", mode="before")
+    @classmethod
+    def coerce_rule_meta(cls, v):
+        """Accept null or invalid rule_meta from AI and normalize to empty dict."""
+        if v is None:
+            return {}
+        if isinstance(v, dict):
+            return v
+        return {}
+
     @model_validator(mode='after')
     def validate_charge_type(self):
         """Ensure charge has required fields based on unit_basis."""
+        unit_type_map = {
+            "PER_KG": "KG",
+            "PER_SHIPMENT": "SHIPMENT",
+            "MIN_OR_PER_KG": "KG",
+            "PERCENTAGE": "LINE",
+        }
         
         # PER_SHIPMENT requires amount
         if self.unit_basis == "PER_SHIPMENT":
@@ -205,6 +265,39 @@ class SpotChargeLine(BaseModel):
         if self.minimum is not None and self.maximum is not None:
             if self.minimum > self.maximum:
                 raise ValueError("minimum cannot exceed maximum")
+
+        # Canonical mapping for downstream rule engine (backward-compatible)
+        if self.unit_type is None:
+            object.__setattr__(self, "unit_type", unit_type_map.get(self.unit_basis, "SHIPMENT"))
+
+        if self.calculation_type is None:
+            if self.unit_basis == "MIN_OR_PER_KG":
+                object.__setattr__(self, "calculation_type", "MIN_OR_PER_UNIT")
+            elif self.unit_basis == "PER_KG":
+                object.__setattr__(self, "calculation_type", "PER_UNIT")
+            elif self.unit_basis == "PERCENTAGE":
+                object.__setattr__(self, "calculation_type", "PERCENT_OF")
+            else:
+                object.__setattr__(self, "calculation_type", "FLAT")
+
+        if self.rate is None:
+            if self.unit_basis in {"PER_KG", "MIN_OR_PER_KG"}:
+                object.__setattr__(self, "rate", self.rate_per_unit or self.amount)
+            else:
+                object.__setattr__(self, "rate", self.amount)
+
+        if self.min_amount is None and (self.minimum is not None or self.amount is not None):
+            if self.unit_basis == "MIN_OR_PER_KG":
+                object.__setattr__(self, "min_amount", self.minimum or self.amount)
+
+        if self.max_amount is None and self.maximum is not None:
+            object.__setattr__(self, "max_amount", self.maximum)
+
+        if self.percent_basis is None and self.percent_applies_to is not None:
+            object.__setattr__(self, "percent_basis", self.percent_applies_to)
+
+        if self.rule_meta is None:
+            object.__setattr__(self, "rule_meta", {})
         
         # Add warning for unknown currency (but don't reject)
         if self.currency and self.currency not in VALID_CURRENCIES:

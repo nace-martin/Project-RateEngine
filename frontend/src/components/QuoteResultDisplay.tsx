@@ -37,8 +37,18 @@ const formatCurrency = (amountStr: string | null | undefined, currency: string) 
 export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
   // Get the latest version and its totals
   const version = quote.latest_version;
-  const totals = version.totals;
-  const currency = totals.total_sell_fcy_currency;
+  const totals = version?.totals;
+  const displayCurrency = totals?.currency || totals?.total_sell_fcy_currency || 'PGK';
+  const isShowingFCY = displayCurrency !== 'PGK';
+
+  // Robust mapping
+  const totalExGst = isShowingFCY
+    ? parseFloat(totals?.total_sell_ex_gst || totals?.total_sell_fcy || '0')
+    : parseFloat(totals?.total_sell_pgk || totals?.sell_pgk || '0');
+
+  const totalIncGst = isShowingFCY
+    ? parseFloat(totals?.total_quote_amount || totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')
+    : parseFloat(totals?.total_sell_pgk_incl_gst || totals?.sell_pgk_incl_gst || totals?.sell_pgk || '0');
 
   return (
     <Card className="overflow-hidden">
@@ -48,7 +58,7 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
             <CardTitle className="text-2xl font-bold text-primary">Quote Summary</CardTitle>
             <CardDescription>Final breakdown and totals</CardDescription>
           </div>
-          {totals.has_missing_rates && (
+          {totals?.has_missing_rates && (
             <Badge variant="destructive" className="text-sm px-3 py-1">
               Incomplete
             </Badge>
@@ -69,16 +79,16 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
         </div>
 
         <div className="space-y-8">
-          <ChargeSection title="Origin Charges" lines={version.lines.filter(l => (l.service_component?.leg || 'MAIN') === 'ORIGIN')} currency={currency} />
-          <ChargeSection title="Freight Charges" lines={version.lines.filter(l => ['MAIN', 'FREIGHT'].includes(l.service_component?.leg || 'MAIN'))} currency={currency} />
-          <ChargeSection title="Destination Charges" lines={version.lines.filter(l => (l.service_component?.leg || 'MAIN') === 'DESTINATION')} currency={currency} />
+          <ChargeSection title="Origin Charges" lines={version.lines.filter(l => (l.service_component?.leg || 'MAIN') === 'ORIGIN')} currency={displayCurrency} />
+          <ChargeSection title="Freight Charges" lines={version.lines.filter(l => ['MAIN', 'FREIGHT'].includes(l.service_component?.leg || 'MAIN'))} currency={displayCurrency} />
+          <ChargeSection title="Destination Charges" lines={version.lines.filter(l => (l.service_component?.leg || 'MAIN') === 'DESTINATION')} currency={displayCurrency} />
 
           {/* Catch-all for any others */}
           {version.lines.some(l => !['ORIGIN', 'MAIN', 'FREIGHT', 'DESTINATION'].includes(l.service_component?.leg || 'MAIN')) && (
             <ChargeSection
               title="Other Charges"
               lines={version.lines.filter(l => !['ORIGIN', 'MAIN', 'FREIGHT', 'DESTINATION'].includes(l.service_component?.leg || 'MAIN'))}
-              currency={currency}
+              currency={displayCurrency}
             />
           )}
         </div>
@@ -87,28 +97,28 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
       <div className="bg-muted/30 p-6">
         <div className="flex flex-col items-end space-y-3">
           <div className="flex w-full max-w-sm justify-between text-sm">
-            <span className="text-muted-foreground">Total (Excl. GST)</span>
+            <span className="text-muted-foreground">Total Sell (Ex GST)</span>
             <span className="font-medium font-mono">
-              {formatCurrency(totals.total_sell_fcy, currency)}
+              {formatCurrency(totalExGst.toString(), displayCurrency)}
             </span>
           </div>
           <div className="flex w-full max-w-sm justify-between text-sm">
             <span className="text-muted-foreground">GST</span>
             <span className="font-medium font-mono">
               {formatCurrency(
-                (parseFloat(totals.total_sell_fcy_incl_gst || "0") - parseFloat(totals.total_sell_fcy || "0")).toString(),
-                currency
+                (totalIncGst - totalExGst).toString(),
+                displayCurrency
               )}
             </span>
           </div>
           <Separator className="my-2 w-full max-w-sm" />
           <div className="flex w-full max-w-sm justify-between items-end">
-            <span className="text-base font-semibold text-foreground">Total Amount</span>
+            <span className="text-base font-semibold text-foreground">Total Quote Amount</span>
             <div className="text-right">
               <span className="block text-3xl font-bold text-primary tracking-tight">
-                {formatCurrency(totals.total_sell_fcy_incl_gst, currency)}
+                {formatCurrency(totalIncGst.toString(), displayCurrency)}
               </span>
-              <span className="text-xs text-muted-foreground uppercase font-medium">{currency}</span>
+              <span className="text-xs text-muted-foreground uppercase font-medium">{displayCurrency}</span>
             </div>
           </div>
         </div>

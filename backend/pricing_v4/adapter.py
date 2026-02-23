@@ -2,7 +2,7 @@ import uuid
 import json
 import logging
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -11,6 +11,7 @@ from django.db import models
 from core.dataclasses import (
     QuoteInput, QuoteCharges, CalculatedChargeLine, CalculatedTotals
 )
+from core.charge_rules import evaluate_charge_rule
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as ExportPaymentTerm
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
@@ -346,7 +347,11 @@ class PricingServiceV4Adapter:
                 is_dg=shipment.is_dangerous_goods,
                 service_scope=shipment.service_scope
             )
-            result = engine.calculate_quote(product_code_ids)
+            result = engine.calculate_quote(
+                product_code_ids,
+                is_dg=shipment.is_dangerous_goods,
+                service_scope=shipment.service_scope
+            )
         else:
             # Import and Domestic engines use calculate_quote() without args
             result = engine.calculate_quote()
@@ -387,7 +392,15 @@ class PricingServiceV4Adapter:
             # Map V4 category/leg to V3 bucket
             v4_category = getattr(line, 'category', 'HANDLING')
             bucket = 'origin_charges'
-            if v4_category == 'FREIGHT' or leg == 'FREIGHT':
+            if code == 'EXP-FSC-AIR':
+                # Rule: Reclassify Airline Export Fuel Surcharge to Origin Charges
+                bucket = 'origin_charges'
+                leg = 'ORIGIN'
+            elif code == 'IMP-FSC-AIR':
+                # Rule: Reclassify Airline Import Fuel Surcharge to Destination Charges
+                bucket = 'destination_charges'
+                leg = 'DESTINATION'
+            elif v4_category == 'FREIGHT' or leg == 'FREIGHT':
                 bucket = 'airfreight'
                 leg = 'MAIN'
             elif leg == 'DESTINATION' or 'DEST' in code.upper() or 'DEST' in getattr(line, 'description', '').upper():
@@ -513,7 +526,7 @@ class PricingServiceV4Adapter:
                     # GST Fields
                     gst_category=data.get('gst_category'),
                     gst_rate=data.get('gst_rate', Decimal('0')),
-                    gst_amount=data.get('gst_amount', Decimal('0')),
+                    gst_amount=(sell_fcy_incl_gst - sell_fcy).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
                 ))
             else:
                 cost_fcy = None
@@ -547,6 +560,33 @@ class PricingServiceV4Adapter:
                     gst_amount=data.get('gst_amount', Decimal('0')),
                 ))
 
+        # 3. Apply Prioritized Sorting
+        # Priority 1: Customs Clearance
+        # Priority 2: Agency Fees
+        # Priority 3: Ancillary/Local charges (Documentation, AWB, Handling, Terminal, etc.)
+        # Priority 4: Freight/Main
+        def sort_priority(line: CalculatedChargeLine):
+            code = line.service_component_code.upper()
+            
+            # Base priority by bucket to keep sections grouped
+            # 0: Origin, 1: Freight, 2: Destination
+            bucket_map = {'origin_charges': 0, 'airfreight': 100, 'destination_charges': 200}
+            base_prio = bucket_map.get(line.bucket, 300)
+
+            # Internal priority within bucket
+            item_prio = 50
+            if 'CLEAR' in code:
+                item_prio = 1
+            elif 'AGENCY' in code:
+                item_prio = 2
+            elif any(k in code for k in ['DOC', 'AWB', 'HANDLING', 'TERMINAL', 'LOADING', 'CARTAGE', 'SCREEN', 'PICKUP', 'FSC-CARTAGE', 'FSC-AIR']):
+                item_prio = 10
+            elif 'FRT' in code or 'FREIGHT' in code:
+                item_prio = 90
+                
+            return base_prio + item_prio
+
+        lines.sort(key=sort_priority)
         return lines
 
     def get_output_currency(self):
@@ -663,35 +703,70 @@ class PricingServiceV4Adapter:
         return max(total_actual, total_volumetric)
 
     def _calculate_totals(self, lines: List[CalculatedChargeLine]) -> QuoteCharges:
-        total_cost = sum(l.cost_pgk for l in lines)
-        total_sell = sum(l.sell_pgk for l in lines)
-        total_gst = sum(l.sell_pgk_incl_gst - l.sell_pgk for l in lines)
-        total_sell_pgk_incl_gst = total_sell + total_gst
+        # Filter out informational lines and conditional charges from final totals
+        billable_lines = [
+            l for l in lines 
+            if not getattr(l, "is_informational", False) and not getattr(l, "conditional", False)
+        ]
+
+        # PRIMARY FIX: Sum from line-level values to ensure consistency
+        total_cost_pgk = sum(l.cost_pgk for l in billable_lines)
+        total_sell_pgk = sum(l.sell_pgk for l in billable_lines)
+        total_sell_pgk_incl_gst = sum(l.sell_pgk_incl_gst for l in billable_lines)
+        
+        # Calculate FCY totals by summing converted line items directly
+        # This prevents rounding drift and ensures Total = Sum(Lines)
+        total_sell_fcy = sum(l.sell_fcy for l in billable_lines).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        total_sell_fcy_incl_gst = sum(l.sell_fcy_incl_gst for l in billable_lines).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         fx_rates = self._get_fx_rates_dict()
         output_currency = self.quote_input.output_currency or 'PGK'
-        output_fx_sell = self._get_fx_sell_rate(output_currency, fx_rates)
-
-        if output_currency == 'PGK' or output_fx_sell <= 0:
-            total_sell_fcy = total_sell
-            total_sell_fcy_incl_gst = total_sell_pgk_incl_gst
-        else:
-            total_sell_fcy = total_sell / output_fx_sell
-            total_sell_fcy_incl_gst = total_sell_pgk_incl_gst / output_fx_sell
         
         shipment = getattr(self.quote_input, "shipment", None)
         shipment_type = getattr(shipment, "shipment_type", None)
         service_scope = getattr(shipment, "service_scope", None)
+        is_dg = getattr(shipment, "is_dangerous_goods", False)
+        
+        # 1. Bucket-based completeness evaluation
         coverage = evaluate_from_lines(lines, shipment_type, service_scope)
+        
+        # 2. Refined Greenfield Mandatory Validation
+        has_missing_rates = not coverage.is_complete
+        
+        # Rule: If any mandatory line (even if billed at 0.00) is explicitly marked as missing, force flag
+        if any(getattr(l, "is_rate_missing", False) for l in billable_lines):
+            has_missing_rates = True
+            
+        # Rule: Check if all mandatory IDs from engine are present in resolved lines
+        mandatory_ids = []
+        if shipment_type == 'EXPORT':
+            mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+        elif shipment_type == 'IMPORT':
+            mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+            
+        # Map ServiceComponent codes to ProductCode IDs for validation
+        resolved_codes = {l.service_component_code for l in lines}
+        resolved_ids = set()
+        if mandatory_ids:
+            # Reverse lookup ProductCode IDs from codes in result
+            resolved_ids = set(ProductCode.objects.filter(
+                code__in=resolved_codes
+            ).values_list('id', flat=True))
+        
+        missing_mandatories = [m for m in mandatory_ids if m not in resolved_ids]
+        if missing_mandatories:
+            has_missing_rates = True
+            missing_codes = list(ProductCode.objects.filter(id__in=missing_mandatories).values_list('code', flat=True))
+            logger.warning(f"Mandatory ProductCodes missing from result: {missing_codes} (IDs: {missing_mandatories})")
 
         totals = CalculatedTotals(
-            total_cost_pgk=total_cost,
-            total_sell_pgk=total_sell,
+            total_cost_pgk=total_cost_pgk,
+            total_sell_pgk=total_sell_pgk,
             total_sell_pgk_incl_gst=total_sell_pgk_incl_gst,
             total_sell_fcy=total_sell_fcy,
             total_sell_fcy_incl_gst=total_sell_fcy_incl_gst,
             total_sell_fcy_currency=output_currency,
-            has_missing_rates=not coverage.is_complete,
+            has_missing_rates=has_missing_rates,
             notes=coverage.notes,
         )
         return QuoteCharges(lines=lines, totals=totals)
@@ -784,6 +859,14 @@ class PricingServiceV4Adapter:
                 conditional=cl.conditional,
                 exclude_from_totals=getattr(cl, "exclude_from_totals", False),
                 percentage_basis=getattr(cl, "percentage_basis", None),
+                calculation_type=getattr(cl, "calculation_type", None),
+                unit_type=getattr(cl, "unit_type", None),
+                rate=float(cl.rate) if getattr(cl, "rate", None) is not None else None,
+                min_amount=float(cl.min_amount) if getattr(cl, "min_amount", None) is not None else None,
+                max_amount=float(cl.max_amount) if getattr(cl, "max_amount", None) is not None else None,
+                percent=float(cl.percent) if getattr(cl, "percent", None) is not None else None,
+                percent_basis=getattr(cl, "percent_basis", None),
+                rule_meta=getattr(cl, "rule_meta", {}) or {},
                 source_reference=cl.source_reference,
                 entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
                 entered_at=cl.entered_at,
@@ -877,11 +960,31 @@ class PricingServiceV4Adapter:
             if charge.unit != "percentage" and not charge.conditional and not getattr(charge, "exclude_from_totals", False):
                 bucket_has_base[charge.bucket] = True
 
-        for charge in charges:
+        ordered_charges = sorted(
+            charges,
+            key=lambda c: 1 if ((c.calculation_type or "").lower() == "percent_of" or c.unit == "percentage") else 0
+        )
+
+        basis_amounts: Dict[str, Decimal] = {
+            "freight": Decimal("0"),
+            "origin": Decimal("0"),
+            "destination": Decimal("0"),
+            "total": Decimal("0"),
+        }
+        shipment_context = {
+            "chargeable_weight_kg": chargeable_weight,
+            "shipment_count": Decimal("1"),
+            "awb_count": Decimal("1"),
+            "trip_count": Decimal("1"),
+            "set_count": Decimal("1"),
+            "man_count": Decimal("1"),
+            "line_count": Decimal(len(charges)),
+            "basis_amounts": basis_amounts,
+        }
+
+        for charge in ordered_charges:
             # [FIX] Handle conditional/informational charges
-            # If conditional, we strip the value to prevent it affecting totals, 
-            # and mark it as informational.
-            is_percentage = charge.unit == "percentage"
+            is_percentage = charge.unit == "percentage" or (charge.calculation_type or "").lower() == "percent_of"
             is_info = (
                 charge.conditional
                 or getattr(charge, "exclude_from_totals", False)
@@ -901,28 +1004,25 @@ class PricingServiceV4Adapter:
             fx_buy = self._get_fx_buy_rate(charge.currency, fx_rates)
             fx_buy_adjusted = fx_buy * (Decimal('1') + caf_pct)
             
-            # Calculate Base Cost in FCY
-            # Handle 'per_kg' OR 'min_or_per_kg' using min_charge if present
-            cost_fcy_base = Decimal("0")
-            
-            # Clean cost_fcy from amount
-            unit_rate = Decimal(str(charge.amount))
-            if is_info:
-                unit_rate = Decimal("0")
-                
-            if charge.unit == 'per_kg' or charge.unit == 'min_or_per_kg':
-                base_calc = unit_rate * chargeable_weight
-                min_val = Decimal(str(charge.min_charge)) if charge.min_charge is not None else Decimal("0")
-                if is_info: 
-                    min_val = Decimal("0")
-                cost_fcy = max(base_calc, min_val)
-            elif charge.unit == 'percentage':
-                # Existing logic
-                logger.warning(f"Percentage charge '{charge.code}' skipped. Setting cost to 0.")
+            # Canonical rule evaluator (supports FLAT, PER_UNIT, MIN_OR_PER_UNIT, PERCENT_OF, etc.)
+            rule = {
+                "calculation_type": charge.calculation_type,
+                "unit_type": charge.unit_type,
+                "rate": charge.rate,
+                "min_amount": charge.min_amount,
+                "max_amount": charge.max_amount,
+                "percent": charge.percent,
+                "percent_basis": charge.percent_basis or charge.percentage_basis,
+                "rule_meta": charge.rule_meta or {},
+                # Legacy fallback fields (for backward compatibility)
+                "amount": charge.amount,
+                "unit": charge.unit,
+                "min_charge": charge.min_charge,
+                "percentage_basis": charge.percentage_basis,
+            }
+            cost_fcy = evaluate_charge_rule(rule, shipment_context)
+            if cost_fcy < 0:
                 cost_fcy = Decimal("0")
-            else:
-                # Flat or other
-                cost_fcy = unit_rate
                 
             # Convert to PGK using Adjusted FX
             cost_pgk = cost_fcy * fx_buy_adjusted
@@ -1033,6 +1133,22 @@ class PricingServiceV4Adapter:
                 bucket=charge.bucket, # Ensure bucket is passed
                 is_informational=is_info,
                 is_rate_missing=False,
+                # GST Fields
+                gst_category=charge_mock.gst_category if hasattr(charge_mock, 'gst_category') else None,
+                gst_rate=gst_rate,
+                gst_amount=(sell_fcy_incl_gst - sell_fcy).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
             ))
+
+            # Track computed non-conditional base amounts for percentage basis lookups.
+            if not charge.conditional and not getattr(charge, "exclude_from_totals", False):
+                code_key = (charge.code or "").lower()
+                basis_amounts[code_key] = basis_amounts.get(code_key, Decimal("0")) + cost_fcy
+                if charge.bucket == "airfreight":
+                    basis_amounts["freight"] += cost_fcy
+                elif charge.bucket == "origin_charges":
+                    basis_amounts["origin"] += cost_fcy
+                elif charge.bucket == "destination_charges":
+                    basis_amounts["destination"] += cost_fcy
+                basis_amounts["total"] += cost_fcy
             
         return lines

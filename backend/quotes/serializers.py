@@ -93,11 +93,15 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
     SALES role users cannot see cost/COGS fields.
     """
     service_component = V3ServiceComponentSerializer()
+    # Alias for frontend compatibility (some components look for 'component' code)
+    component = serializers.CharField(source='service_component.code', read_only=True)
+    description = serializers.CharField(source='service_component.description', read_only=True)
     
     class Meta:
         model = QuoteLine
         fields = (
-            'id', 'service_component', 'cost_pgk', 'cost_fcy', 'cost_fcy_currency',
+            'id', 'service_component', 'component', 'description', 
+            'cost_pgk', 'cost_fcy', 'cost_fcy_currency',
             'sell_pgk', 'sell_pgk_incl_gst', 'sell_fcy', 'sell_fcy_incl_gst',
             'sell_fcy_currency', 'exchange_rate', 'cost_source',
             'cost_source_description', 'is_rate_missing', 'leg', 'bucket',
@@ -107,6 +111,12 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Mask cost fields if user cannot view COGS."""
         data = super().to_representation(instance)
+        
+        # FRONTEND FIX: The UI expects gst_amount to be in FCY if quote is FCY
+        # But it also uses it for PGK. We ensure it's always the applicable GST for display.
+        if instance.sell_fcy_currency != 'PGK':
+            # For FCY quotes, use the FCY GST amount
+            data['gst_amount'] = (instance.sell_fcy_incl_gst - instance.sell_fcy).quantize(Decimal('0.01'))
         
         request = self.context.get('request')
         if request and hasattr(request, 'user') and request.user.is_authenticated:
@@ -123,19 +133,28 @@ class V3QuoteTotalSerializer(serializers.ModelSerializer):
     Serializer for QuoteTotal with RBAC-based field masking.
     SALES role users cannot see cost totals.
     """
-    # Alias for frontend compatibility - maps total_sell_fcy_currency to 'currency'
+    # Alias for frontend compatibility
     currency = serializers.CharField(source='total_sell_fcy_currency', read_only=True)
+    total_sell_ex_gst = serializers.DecimalField(source='total_sell_fcy', max_digits=12, decimal_places=2, read_only=True)
+    # UI looks for 'gst_amount' in totals
+    gst_amount = serializers.SerializerMethodField()
+    total_quote_amount = serializers.DecimalField(source='total_sell_fcy_incl_gst', max_digits=12, decimal_places=2, read_only=True)
     
     class Meta:
         model = QuoteTotal
         fields = (
-            'currency',  # Alias for total_sell_fcy_currency
+            'currency',
             'total_cost_pgk',
             'total_sell_pgk', 'total_sell_pgk_incl_gst',
             'total_sell_fcy', 'total_sell_fcy_incl_gst', 'total_sell_fcy_currency',
+            'total_sell_ex_gst', 'gst_amount', 'total_quote_amount',
             'has_missing_rates', 'notes',
         )
     
+    def get_gst_amount(self, obj):
+        """Derive total GST in FCY from the difference between Inc and Ex totals."""
+        return (obj.total_sell_fcy_incl_gst - obj.total_sell_fcy).quantize(Decimal('0.01'))
+
     def to_representation(self, instance):
         """Mask cost totals if user cannot view COGS."""
         data = super().to_representation(instance)
@@ -298,13 +317,20 @@ from quotes.spot_models import (
 class SPEChargeLineSerializer(serializers.ModelSerializer):
     min_charge = serializers.SerializerMethodField()
     amount = serializers.SerializerMethodField()
+    rate = serializers.SerializerMethodField()
+    min_amount = serializers.SerializerMethodField()
+    max_amount = serializers.SerializerMethodField()
+    percent = serializers.SerializerMethodField()
+    rule_display = serializers.SerializerMethodField()
     
     class Meta:
         model = SPEChargeLineDB
         fields = (
             'id', 'code', 'description', 'amount', 'currency', 'unit',
             'bucket', 'is_primary_cost', 'conditional', 'min_charge',
-            'note', 'exclude_from_totals', 'percentage_basis', 'source_reference'
+            'note', 'exclude_from_totals', 'percentage_basis', 'source_reference',
+            'calculation_type', 'unit_type', 'rate', 'min_amount', 'max_amount',
+            'percent', 'percent_basis', 'rule_meta', 'rule_display'
         )
 
     def get_amount(self, obj):
@@ -313,6 +339,48 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
 
     def get_min_charge(self, obj):
         return str(obj.min_charge) if obj.min_charge is not None else None
+
+    def get_rate(self, obj):
+        return str(obj.rate) if obj.rate is not None else None
+
+    def get_min_amount(self, obj):
+        return str(obj.min_amount) if obj.min_amount is not None else None
+
+    def get_max_amount(self, obj):
+        return str(obj.max_amount) if obj.max_amount is not None else None
+
+    def get_percent(self, obj):
+        return str(obj.percent) if obj.percent is not None else None
+
+    def get_rule_display(self, obj):
+        calc = (obj.calculation_type or "").lower()
+        rate = obj.rate if obj.rate is not None else obj.amount
+        unit_type = (obj.unit_type or "").lower()
+        min_amount = obj.min_amount if obj.min_amount is not None else obj.min_charge
+
+        unit_label_map = {
+            "kg": "kg",
+            "shipment": "shipment",
+            "awb": "awb",
+            "trip": "trip",
+            "set": "set",
+            "line": "line",
+            "man": "man",
+            "cbm": "cbm",
+            "rt": "rt",
+        }
+        unit_label = unit_label_map.get(unit_type, unit_type or "unit")
+
+        if calc == "min_or_per_unit" and min_amount is not None and rate is not None:
+            return f"{min_amount} min or {rate}/{unit_label}"
+        if calc == "per_unit" and rate is not None:
+            return f"{rate}/{unit_label}"
+        if calc == "flat" and rate is not None:
+            return f"{rate} flat"
+        if calc == "percent_of" and obj.percent is not None:
+            basis = obj.percent_basis or obj.percentage_basis or "basis"
+            return f"{obj.percent}% of {basis}"
+        return None
 
 
 class SPEAcknowledgementSerializer(serializers.ModelSerializer):

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useForm, useFieldArray, useWatch, UseFormReturn, Resolver } from "react-hook-form";
+import { useForm, useFieldArray, useWatch, Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 import { getContactsForCompany, validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api";
@@ -27,6 +27,36 @@ const mapCargoToSPECommodity = (cargoType: string): SPECommodity => {
         case 'General Cargo':
         default: return 'GCR';
     }
+};
+
+const AIRPORT_COUNTRY_MAP: Record<string, string> = {
+    POM: "PG",
+    LAE: "PG",
+    SIN: "SG",
+    HKG: "HK",
+    BNE: "AU",
+    SYD: "AU",
+    CNS: "AU",
+    NAN: "FJ",
+    HIR: "SB",
+    VLI: "VU",
+};
+
+const resolveCountryCode = (
+    location: LocationSearchResult | null,
+    airportCode?: string,
+): string => {
+    const explicit = (location?.country_code || "").trim().toUpperCase();
+    if (explicit) return explicit;
+
+    const displayName = location?.display_name || "";
+    const displayMatch = displayName.match(/,\s*([A-Z]{2})\s*$/i);
+    if (displayMatch?.[1]) {
+        return displayMatch[1].toUpperCase();
+    }
+
+    const code = (airportCode || location?.code || "").trim().toUpperCase();
+    return AIRPORT_COUNTRY_MAP[code] || "OTHER";
 };
 
 interface UseQuoteLogicProps {
@@ -201,14 +231,18 @@ export function useQuoteLogic({
             return;
         }
 
-        const originCountry = originLocation?.country_code || '';
-        const destCountry = destinationLocation?.country_code || '';
+        const originCode = (data.origin_airport || originLocation?.code || '').toUpperCase();
+        const destinationCode = (data.destination_airport || destinationLocation?.code || '').toUpperCase();
+        const originCountry = resolveCountryCode(originLocation, originCode);
+        const destCountry = resolveCountryCode(destinationLocation, destinationCode);
 
         try {
             // 1. Validate Scope
             const scopeResult = await validateSpotScope({
                 origin_country: originCountry,
                 destination_country: destCountry,
+                origin_code: originCode,
+                destination_code: destinationCode,
             });
 
             if (!scopeResult.is_valid) {
@@ -222,8 +256,8 @@ export function useQuoteLogic({
                 origin_country: originCountry,
                 destination_country: destCountry,
                 commodity,
-                origin_airport: data.origin_airport,
-                destination_airport: data.destination_airport,
+                origin_airport: originCode,
+                destination_airport: destinationCode,
                 has_valid_buy_rate: true,
                 service_scope: data.service_scope,
             });
@@ -233,8 +267,8 @@ export function useQuoteLogic({
                     shipment_context: {
                         origin_country: originCountry,
                         destination_country: destCountry,
-                        origin_code: data.origin_airport || '',
-                        destination_code: data.destination_airport || '',
+                        origin_code: originCode,
+                        destination_code: destinationCode,
                         commodity: commodity as SPECommodity,
                         total_weight_kg: cargoMetrics.chargeableWeight,
                         pieces: cargoMetrics.pieces,
@@ -251,8 +285,8 @@ export function useQuoteLogic({
                     const params = new URLSearchParams({
                         origin_country: originCountry,
                         dest_country: destCountry,
-                        origin_code: data.origin_airport || '',
-                        dest_code: data.destination_airport || '',
+                        origin_code: originCode,
+                        dest_code: destinationCode,
                         commodity,
                         weight: String(cargoMetrics.chargeableWeight),
                         pieces: String(cargoMetrics.pieces),

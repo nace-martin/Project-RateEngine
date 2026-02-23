@@ -364,6 +364,7 @@ class QuoteLine(models.Model):
         default=False,
         help_text="If True, this is a conditional charge shown as a note, not included in totals."
     )
+    conditional = models.BooleanField(default=False)
 
     # --- PNG GST Classification Fields ---
     GST_CATEGORY_SERVICE_IN_PNG = 'service_in_PNG'

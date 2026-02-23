@@ -138,6 +138,25 @@ class SPEChargeLineDB(models.Model):
         PER_TRIP = 'per_trip', _('Per Trip')
         PER_SET = 'per_set', _('Per Set')
         PER_MAN = 'per_man', _('Per Man')
+
+    class CalculationType(models.TextChoices):
+        FLAT = 'flat', _('Flat')
+        PER_UNIT = 'per_unit', _('Per Unit')
+        MIN_OR_PER_UNIT = 'min_or_per_unit', _('Min Or Per Unit')
+        PERCENT_OF = 'percent_of', _('Percent Of Basis')
+        PER_LINE_WITH_CAP = 'per_line_with_cap', _('Per Line With Cap')
+        MAX_OR_PER_UNIT = 'max_or_per_unit', _('Max Or Per Unit')
+
+    class UnitType(models.TextChoices):
+        KG = 'kg', _('Kilogram')
+        SHIPMENT = 'shipment', _('Shipment')
+        AWB = 'awb', _('AWB')
+        TRIP = 'trip', _('Trip')
+        SET = 'set', _('Set')
+        LINE = 'line', _('Line')
+        MAN = 'man', _('Man')
+        CBM = 'cbm', _('CBM')
+        RT = 'rt', _('Revenue Ton')
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -193,6 +212,61 @@ class SPEChargeLineDB(models.Model):
         blank=True, 
         null=True,
         help_text="What the percentage applies to (e.g., 'commercial_invoice')"
+    )
+
+    # === Canonical rule representation ===
+    calculation_type = models.CharField(
+        max_length=30,
+        choices=CalculationType.choices,
+        blank=True,
+        null=True,
+        help_text="Rule type for canonical evaluation"
+    )
+    unit_type = models.CharField(
+        max_length=20,
+        choices=UnitType.choices,
+        blank=True,
+        null=True,
+        help_text="Quantity basis for PER_UNIT style calculations"
+    )
+    rate = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Per-unit or flat rate in charge currency"
+    )
+    min_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Minimum amount for composite rules"
+    )
+    max_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Maximum amount for composite rules"
+    )
+    percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Percent value for percentage rules"
+    )
+    percent_basis = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Basis key for percentage calculation (e.g., 'freight')"
+    )
+    rule_meta = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Extensible rule params (e.g., cap thresholds)"
     )
     
     # === Original fields ===

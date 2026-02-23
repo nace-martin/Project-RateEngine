@@ -83,6 +83,45 @@ def _get_spe_or_404(user, envelope_id, queryset=None):
     return spe_db
 
 
+def _resolve_country_pair(
+    origin_country: Optional[str],
+    destination_country: Optional[str],
+    origin_code: Optional[str] = None,
+    destination_code: Optional[str] = None,
+) -> tuple[str, str]:
+    return ScopeValidator.normalize_countries(
+        origin_country=origin_country,
+        destination_country=destination_country,
+        origin_airport=origin_code,
+        destination_airport=destination_code,
+    )
+
+
+def _normalize_shipment_context(ctx: dict) -> dict:
+    normalized = dict(ctx or {})
+    origin_code = str(normalized.get("origin_code") or "").upper()
+    destination_code = str(normalized.get("destination_code") or "").upper()
+    origin_country, destination_country = _resolve_country_pair(
+        normalized.get("origin_country"),
+        normalized.get("destination_country"),
+        origin_code=origin_code,
+        destination_code=destination_code,
+    )
+    normalized["origin_code"] = origin_code
+    normalized["destination_code"] = destination_code
+    normalized["origin_country"] = origin_country
+    normalized["destination_country"] = destination_country
+    return normalized
+
+
+def _infer_shipment_type(origin_country: str, destination_country: str) -> str:
+    if origin_country == "PG" and destination_country == "PG":
+        return "DOMESTIC"
+    if origin_country == "PG":
+        return "EXPORT"
+    return "IMPORT"
+
+
 def _build_spe_from_db(
     spe_db: SpotPricingEnvelopeDB,
     status_override: Optional[str] = None,
@@ -120,11 +159,23 @@ def _build_spe_from_db(
             source_reference=cl.source_reference,
             entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
             entered_at=cl.entered_at,
+            min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
+            note=cl.note,
+            exclude_from_totals=cl.exclude_from_totals,
+            percentage_basis=cl.percentage_basis,
+            calculation_type=cl.calculation_type,
+            unit_type=cl.unit_type,
+            rate=float(cl.rate) if cl.rate is not None else None,
+            min_amount=float(cl.min_amount) if cl.min_amount is not None else None,
+            max_amount=float(cl.max_amount) if cl.max_amount is not None else None,
+            percent=float(cl.percent) if cl.percent is not None else None,
+            percent_basis=cl.percent_basis,
+            rule_meta=cl.rule_meta or {},
         )
         for cl in spe_db.charge_lines.all()
     ]
 
-    ctx = spe_db.shipment_context_json
+    ctx = _normalize_shipment_context(spe_db.shipment_context_json)
     status_value = status_override or spe_db.status
 
     return SpotPricingEnvelope(
@@ -176,8 +227,15 @@ class SpotScopeValidateAPIView(APIView):
     def post(self, request):
         origin = request.data.get('origin_country', '')
         destination = request.data.get('destination_country', '')
+        origin_code = request.data.get('origin_code', '')
+        destination_code = request.data.get('destination_code', '')
         
-        is_valid, error = ScopeValidator.validate(origin, destination)
+        is_valid, error = ScopeValidator.validate(
+            origin,
+            destination,
+            origin_airport=origin_code,
+            destination_airport=destination_code,
+        )
         
         return Response({
             'is_valid': is_valid,
@@ -223,20 +281,18 @@ class SpotTriggerEvaluateAPIView(APIView):
     
     def post(self, request):
         # Calculate direction
-        origin_country = request.data.get('origin_country', '')
-        destination_country = request.data.get('destination_country', '')
-        
-        if origin_country == 'PG' and destination_country == 'PG':
-            direction = 'DOMESTIC'
-        elif origin_country == 'PG':
-            direction = 'EXPORT'
-        else:
-            direction = 'IMPORT'
+        origin_airport = request.data.get('origin_airport', '')
+        destination_airport = request.data.get('destination_airport', '')
+        origin_country, destination_country = _resolve_country_pair(
+            request.data.get('origin_country', ''),
+            request.data.get('destination_country', ''),
+            origin_code=origin_airport,
+            destination_code=destination_airport,
+        )
+        direction = _infer_shipment_type(origin_country, destination_country)
         
         # Build component availability map from DB
         service_scope = request.data.get('service_scope', 'P2P')
-        origin_airport = request.data.get('origin_airport', '')
-        destination_airport = request.data.get('destination_airport', '')
         
         from quotes.spot_services import RateAvailabilityService
         component_availability = RateAvailabilityService.get_availability(
@@ -390,7 +446,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     )
             
             # Create DB record
-            ctx = data['shipment_context']
+            ctx = _normalize_shipment_context(data['shipment_context'])
             now = timezone.now()
             validity_hours = data.get('validity_hours', 72)
             
@@ -408,6 +464,10 @@ class SpotEnvelopeListCreateAPIView(APIView):
             # Create charge lines (optional)
             charges_data = data.get('charges', [])
             for charge in charges_data:
+                rate_val = charge.get('rate') if charge.get('rate') not in ("", None) else None
+                min_amount_val = charge.get('min_amount') if charge.get('min_amount') not in ("", None) else None
+                max_amount_val = charge.get('max_amount') if charge.get('max_amount') not in ("", None) else None
+                percent_val = charge.get('percent') if charge.get('percent') not in ("", None) else None
                 SPEChargeLineDB.objects.create(
                     envelope=spe_db,
                     code=charge['code'],
@@ -418,6 +478,18 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     bucket=charge['bucket'],
                     is_primary_cost=charge.get('is_primary_cost', False),
                     conditional=charge.get('conditional', False),
+                    min_charge=charge.get('min_charge'),
+                    note=charge.get('note') or "",
+                    exclude_from_totals=charge.get('exclude_from_totals', False),
+                    percentage_basis=charge.get('percentage_basis'),
+                    calculation_type=charge.get('calculation_type'),
+                    unit_type=charge.get('unit_type'),
+                    rate=rate_val,
+                    min_amount=min_amount_val,
+                    max_amount=max_amount_val,
+                    percent=percent_val,
+                    percent_basis=charge.get('percent_basis'),
+                    rule_meta=charge.get('rule_meta') or {},
                     source_reference=charge['source_reference'],
                     entered_by=request.user,
                     entered_at=now,
@@ -455,7 +527,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def _validate_spe(self, spe_db):
         """Validate SPE via Pydantic schemas."""
-        ctx = spe_db.shipment_context_json
+        ctx = _normalize_shipment_context(spe_db.shipment_context_json)
         charges = [
             SPEChargeLine(
                 code=cl.code,
@@ -469,6 +541,18 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 source_reference=cl.source_reference,
                 entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
                 entered_at=cl.entered_at,
+                min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
+                note=cl.note,
+                exclude_from_totals=cl.exclude_from_totals,
+                percentage_basis=cl.percentage_basis,
+                calculation_type=cl.calculation_type,
+                unit_type=cl.unit_type,
+                rate=float(cl.rate) if cl.rate is not None else None,
+                min_amount=float(cl.min_amount) if cl.min_amount is not None else None,
+                max_amount=float(cl.max_amount) if cl.max_amount is not None else None,
+                percent=float(cl.percent) if cl.percent is not None else None,
+                percent_basis=cl.percent_basis,
+                rule_meta=cl.rule_meta or {},
             )
             for cl in spe_db.charge_lines.all()
         ]
@@ -549,6 +633,18 @@ class SpotEnvelopeDetailAPIView(APIView):
                 min_charge_val = charge.get('min_charge')
                 if min_charge_val == "":
                     min_charge_val = None
+                rate_val = charge.get('rate')
+                if rate_val == "":
+                    rate_val = None
+                min_amount_val = charge.get('min_amount')
+                if min_amount_val == "":
+                    min_amount_val = None
+                max_amount_val = charge.get('max_amount')
+                if max_amount_val == "":
+                    max_amount_val = None
+                percent_val = charge.get('percent')
+                if percent_val == "":
+                    percent_val = None
 
                 # Map Special Units
                 unit_val = charge['unit']
@@ -569,6 +665,16 @@ class SpotEnvelopeDetailAPIView(APIView):
                     conditional=charge.get('conditional', False),
                     min_charge=min_charge_val,
                     note=charge.get('note') or "", # Correct field: note (singular)
+                    exclude_from_totals=charge.get('exclude_from_totals', False),
+                    percentage_basis=charge.get('percentage_basis'),
+                    calculation_type=charge.get('calculation_type'),
+                    unit_type=charge.get('unit_type'),
+                    rate=rate_val,
+                    min_amount=min_amount_val,
+                    max_amount=max_amount_val,
+                    percent=percent_val,
+                    percent_basis=charge.get('percent_basis'),
+                    rule_meta=charge.get('rule_meta') or {},
                     source_reference=charge['source_reference'],
                     entered_by=request.user,
                     entered_at=now,
@@ -767,7 +873,7 @@ class SpotEnvelopeComputeAPIView(APIView):
         
         # Build quote input from request
         quote_data = request.data.get('quote_request', {})
-        ctx = spe_db.shipment_context_json
+        ctx = _normalize_shipment_context(spe_db.shipment_context_json)
         
         try:
             origin_loc = Location.objects.get(code=ctx.get('origin_code'))
@@ -779,14 +885,13 @@ class SpotEnvelopeComputeAPIView(APIView):
             )
         
         # Determine shipment type
-        origin_country = ctx.get('origin_country')
-        dest_country = ctx.get('destination_country')
-        if origin_country == 'PG' and dest_country == 'PG':
-            shipment_type = 'DOMESTIC'
-        elif origin_country == 'PG':
-            shipment_type = 'EXPORT'
-        else:
-            shipment_type = 'IMPORT'
+        origin_country, dest_country = _resolve_country_pair(
+            ctx.get('origin_country'),
+            ctx.get('destination_country'),
+            origin_code=ctx.get('origin_code'),
+            destination_code=ctx.get('destination_code'),
+        )
+        shipment_type = _infer_shipment_type(origin_country, dest_country)
         
         from datetime import date
         
@@ -927,7 +1032,7 @@ class SpotReplyAnalysisAPIView(APIView):
         if spe_id:
             try:
                 spe_db = _get_spe_or_404(request.user, spe_id)
-                shipment_context = spe_db.shipment_context_json
+                shipment_context = _normalize_shipment_context(spe_db.shipment_context_json)
             except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
                 pass
             
@@ -943,14 +1048,13 @@ class SpotReplyAnalysisAPIView(APIView):
         direction = 'IMPORT'
         availability = None
         if shipment_context:
-            origin_country = shipment_context.get('origin_country', '')
-            destination_country = shipment_context.get('destination_country', '')
-            if origin_country == 'PG' and destination_country == 'PG':
-                direction = 'DOMESTIC'
-            elif origin_country == 'PG':
-                direction = 'EXPORT'
-            else:
-                direction = 'IMPORT'
+            origin_country, destination_country = _resolve_country_pair(
+                shipment_context.get('origin_country', ''),
+                shipment_context.get('destination_country', ''),
+                origin_code=shipment_context.get('origin_code'),
+                destination_code=shipment_context.get('destination_code'),
+            )
+            direction = _infer_shipment_type(origin_country, destination_country)
             
             from quotes.spot_services import RateAvailabilityService
             availability = RateAvailabilityService.get_availability(
@@ -998,7 +1102,8 @@ class SpotReplyAnalysisAPIView(APIView):
 
                 auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
                     result,
-                    source_reference="Agent reply (AI)"
+                    source_reference="Agent reply (AI)",
+                    shipment_context=shipment_context,
                 )
 
                 now = timezone.now()
@@ -1027,6 +1132,14 @@ class SpotReplyAnalysisAPIView(APIView):
                             note=charge.get("note") or "",
                             exclude_from_totals=charge.get("exclude_from_totals", False),
                             percentage_basis=charge.get("percentage_basis"),
+                            calculation_type=charge.get("calculation_type"),
+                            unit_type=charge.get("unit_type"),
+                            rate=_to_decimal(charge.get("rate")),
+                            min_amount=_to_decimal(charge.get("min_amount")),
+                            max_amount=_to_decimal(charge.get("max_amount")),
+                            percent=_to_decimal(charge.get("percent")),
+                            percent_basis=charge.get("percent_basis"),
+                            rule_meta=charge.get("rule_meta") or {},
                             source_reference=charge["source_reference"],
                             entered_by=request.user,
                             entered_at=now,
@@ -1076,7 +1189,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
             
         quote_data = request.data.get('quote_request', {})
-        ctx = spe_db.shipment_context_json
+        ctx = _normalize_shipment_context(spe_db.shipment_context_json)
         
         try:
             origin_loc = Location.objects.get(code=ctx.get('origin_code'))
@@ -1084,14 +1197,13 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         except Location.DoesNotExist as e:
             return Response({'error': f'Location not found: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
             
-        origin_country = ctx.get('origin_country')
-        dest_country = ctx.get('destination_country')
-        if origin_country == 'PG' and dest_country == 'PG':
-            shipment_type = 'DOMESTIC'
-        elif origin_country == 'PG':
-            shipment_type = 'EXPORT'
-        else:
-            shipment_type = 'IMPORT'
+        origin_country, dest_country = _resolve_country_pair(
+            ctx.get('origin_country'),
+            ctx.get('destination_country'),
+            origin_code=ctx.get('origin_code'),
+            destination_code=ctx.get('destination_code'),
+        )
+        shipment_type = _infer_shipment_type(origin_country, dest_country)
             
         origin_ref = LocationRef(
             id=origin_loc.id, code=origin_loc.code, name=origin_loc.name,

@@ -28,6 +28,7 @@ import hashlib
 import json
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from django.conf import settings
 
 
 # =============================================================================
@@ -286,6 +287,57 @@ class SPEChargeLine(BaseModel):
         default=None,
         description="What the percentage applies to (e.g., 'commercial_invoice', 'freight')"
     )
+
+    # === Canonical composite rule fields ===
+    calculation_type: Optional[Literal[
+        "flat",
+        "per_unit",
+        "min_or_per_unit",
+        "percent_of",
+        "per_line_with_cap",
+        "max_or_per_unit",
+    ]] = Field(
+        default=None,
+        description="Canonical calculation rule type"
+    )
+    unit_type: Optional[Literal[
+        "kg",
+        "shipment",
+        "awb",
+        "trip",
+        "set",
+        "line",
+        "man",
+        "cbm",
+        "rt",
+    ]] = Field(
+        default=None,
+        description="Canonical quantity basis for per-unit calculations"
+    )
+    rate: Optional[float] = Field(
+        default=None,
+        description="Per-unit or flat rate"
+    )
+    min_amount: Optional[float] = Field(
+        default=None,
+        description="Minimum amount in charge currency"
+    )
+    max_amount: Optional[float] = Field(
+        default=None,
+        description="Maximum amount in charge currency"
+    )
+    percent: Optional[float] = Field(
+        default=None,
+        description="Percent value for percentage rules"
+    )
+    percent_basis: Optional[str] = Field(
+        default=None,
+        description="Basis key for percentage calculations (e.g., freight)"
+    )
+    rule_meta: Optional[dict] = Field(
+        default_factory=dict,
+        description="Extensible parameters for rule-specific options"
+    )
     
     # === Original fields ===
     
@@ -296,6 +348,58 @@ class SPEChargeLine(BaseModel):
     
     entered_by_user_id: str
     entered_at: datetime
+
+    @field_validator("rule_meta", mode="before")
+    @classmethod
+    def coerce_rule_meta(cls, v):
+        """Accept null or invalid rule_meta and normalize to empty dict."""
+        if v is None:
+            return {}
+        if isinstance(v, dict):
+            return v
+        return {}
+
+    @model_validator(mode='after')
+    def normalize_rule_fields(self) -> 'SPEChargeLine':
+        """
+        Backward-compatible mapping from legacy amount/unit fields to canonical rule fields.
+        """
+        unit_to_unit_type = {
+            "per_kg": "kg",
+            "per_shipment": "shipment",
+            "flat": "shipment",
+            "per_awb": "awb",
+            "per_trip": "trip",
+            "per_set": "set",
+            "per_man": "man",
+            "percentage": "line",
+        }
+
+        if not self.unit_type:
+            self.unit_type = unit_to_unit_type.get(self.unit, "shipment")
+
+        if not self.calculation_type:
+            if self.unit == "percentage":
+                self.calculation_type = "percent_of"
+            elif self.min_charge is not None and self.unit in {"per_kg", "per_awb", "per_shipment", "per_trip", "per_set", "per_man"}:
+                self.calculation_type = "min_or_per_unit"
+            elif self.unit == "flat":
+                self.calculation_type = "flat"
+            else:
+                self.calculation_type = "per_unit"
+
+        if self.rate is None:
+            self.rate = self.amount
+        if self.min_amount is None and self.min_charge is not None:
+            self.min_amount = self.min_charge
+        if self.percent is None and self.unit == "percentage":
+            self.percent = self.amount
+        if self.percent_basis is None and self.percentage_basis:
+            self.percent_basis = self.percentage_basis
+        if self.rule_meta is None:
+            self.rule_meta = {}
+
+        return self
 
 
 class SPEConditions(BaseModel):
@@ -391,8 +495,13 @@ class SpotPricingEnvelope(BaseModel):
         """
         origin = self.shipment.origin_country
         dest = self.shipment.destination_country
-        
-        if origin != "PG" and dest != "PG":
+        lane_key = f"{self.shipment.origin_code}-{self.shipment.destination_code}".upper()
+        allowed_non_png_lanes = {
+            str(lane).upper()
+            for lane in getattr(settings, "SPOT_ALLOWED_NON_PNG_LANES", [])
+        }
+
+        if origin != "PG" and dest != "PG" and lane_key not in allowed_non_png_lanes:
             raise ValueError(
                 "Out of scope: RateEngine only supports shipments to or from "
                 "Papua New Guinea (PNG). This shipment cannot be quoted."

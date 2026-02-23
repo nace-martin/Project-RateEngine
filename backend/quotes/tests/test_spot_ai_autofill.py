@@ -1,4 +1,5 @@
 import uuid
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -98,7 +99,7 @@ def _acknowledge_spe(user, spe: SpotPricingEnvelopeDB):
     )
 
 
-def _quote_input(shipment_type: str, service_scope: str) -> QuoteInput:
+def _quote_input(shipment_type: str, service_scope: str, weight_kg: Decimal = Decimal("100")) -> QuoteInput:
     origin_ref = LocationRef(
         id=uuid.uuid4(),
         code="BNE",
@@ -126,7 +127,7 @@ def _quote_input(shipment_type: str, service_scope: str) -> QuoteInput:
                 length_cm=Decimal("10"),
                 width_cm=Decimal("10"),
                 height_cm=Decimal("10"),
-                gross_weight_kg=Decimal("100"),
+                gross_weight_kg=weight_kg,
             )
         ],
         service_scope=service_scope,
@@ -221,6 +222,80 @@ def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
     assert COMPONENT_ORIGIN_LOCAL in {c.code for c in charges}
     assert COMPONENT_DESTINATION_LOCAL in {c.code for c in charges}
     assert any(c.is_primary_cost for c in charges if c.bucket == "airfreight")
+
+
+def test_ai_rule_meta_null_is_accepted_and_persisted(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="P2P",
+        status="draft",
+    )
+
+    ai_payload = {
+        "analysis_text": "Confirmed freight charge",
+        "quote_currency": "USD",
+        "lines": [
+            {
+                "bucket": "FREIGHT",
+                "description": "Airfreight",
+                "amount": 5.0,
+                "rate_per_unit": 5.0,
+                "currency": "USD",
+                "unit_basis": "PER_KG",
+                "rule_meta": None,
+                "conditional": False,
+            }
+        ],
+    }
+
+    class _FakeModel:
+        def __init__(self, response_text: str):
+            self._response_text = response_text
+
+        def generate_content(self, _prompt, generation_config=None):
+            return type("Resp", (), {"text": self._response_text})()
+
+    class _FakeGenAI:
+        def __init__(self, response_text: str):
+            self._response_text = response_text
+
+        def GenerativeModel(self, _model_name):
+            return _FakeModel(self._response_text)
+
+    monkeypatch.setattr(
+        "quotes.ai_intake_service.get_gemini_client",
+        lambda: _FakeGenAI(json.dumps(ai_payload)),
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    analyze_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Airfreight USD 5/kg confirmed for this lane.",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+        },
+        format="json",
+    )
+    assert analyze_response.status_code == 200
+
+    spe.refresh_from_db()
+    charges = list(spe.charge_lines.all())
+    assert charges, "Expected AI auto-fill to persist at least one charge"
+    assert all((charge.rule_meta or {}) == {} for charge in charges)
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["charges"], "Expected charges in SPE detail payload"
+    assert all(charge["rule_meta"] == {} for charge in detail_payload["charges"])
 
 
 def test_percentage_only_charge_does_not_satisfy_required_component():
@@ -400,3 +475,120 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     assert compute_response.status_code == 200
     data = compute_response.json()
     assert data["is_complete"] is True
+
+
+def test_spot_min_or_per_unit_uses_minimum_amount():
+    user = get_user_model().objects.create_user(username="spotmin", password="testpass")
+    spe = _create_spe(
+        user=user,
+        origin_code="BNE",
+        dest_code="POM",
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="P2P",
+        status="ready",
+    )
+    _acknowledge_spe(user, spe)
+
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code="FREIGHT",
+        description="Airfreight min or per kg",
+        amount=Decimal("0.25"),
+        currency="USD",
+        unit="per_kg",
+        bucket="airfreight",
+        is_primary_cost=True,
+        min_charge=Decimal("35.00"),
+        calculation_type="min_or_per_unit",
+        unit_type="kg",
+        rate=Decimal("0.25"),
+        min_amount=Decimal("35.00"),
+        entered_at=timezone.now(),
+        source_reference="AI",
+    )
+
+    adapter = PricingServiceV4Adapter(
+        _quote_input("IMPORT", "P2P", weight_kg=Decimal("100")),
+        spot_envelope_id=spe.id,
+    )
+    lines = adapter._calculate_spot_lines()
+    freight = next(line for line in lines if line.bucket == "airfreight")
+    assert freight.cost_fcy == Decimal("35.00")
+
+
+def test_spot_min_or_per_unit_uses_rate_when_weight_exceeds_minimum():
+    user = get_user_model().objects.create_user(username="spotrate", password="testpass")
+    spe = _create_spe(
+        user=user,
+        origin_code="BNE",
+        dest_code="POM",
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="P2P",
+        status="ready",
+    )
+    _acknowledge_spe(user, spe)
+
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code="FREIGHT",
+        description="Airfreight min or per kg",
+        amount=Decimal("0.25"),
+        currency="USD",
+        unit="per_kg",
+        bucket="airfreight",
+        is_primary_cost=True,
+        min_charge=Decimal("35.00"),
+        calculation_type="min_or_per_unit",
+        unit_type="kg",
+        rate=Decimal("0.25"),
+        min_amount=Decimal("35.00"),
+        entered_at=timezone.now(),
+        source_reference="AI",
+    )
+
+    adapter = PricingServiceV4Adapter(
+        _quote_input("IMPORT", "P2P", weight_kg=Decimal("200")),
+        spot_envelope_id=spe.id,
+    )
+    lines = adapter._calculate_spot_lines()
+    freight = next(line for line in lines if line.bucket == "airfreight")
+    assert freight.cost_fcy == Decimal("50.00")
+
+
+def test_builder_maps_min_or_per_unit_fields_without_collapsing():
+    analysis = ReplyAnalysisResult(
+        raw_text="Terminal fee 35.00 min or 0.25 per KGS",
+        assertions=[
+            ExtractedAssertion(
+                text="Terminal fee 35.00 min or 0.25 per KGS",
+                category=AssertionCategory.DEST_CHARGES,
+                status=AssertionStatus.CONFIRMED,
+                confidence=0.9,
+                rate_amount=Decimal("35.00"),
+                rate_per_unit=Decimal("0.25"),
+                rate_currency="USD",
+                rate_unit="min_or_per_kg",
+            )
+        ],
+        summary=AnalysisSummary(has_rate=True, has_currency=True),
+        warnings=[],
+    )
+
+    charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+        analysis=analysis,
+        source_reference="AI",
+        shipment_context={
+            "origin_country": "AU",
+            "destination_country": "PG",
+            "service_scope": "A2D",
+        },
+    )
+
+    assert len(charges) == 1
+    charge = charges[0]
+    assert charge["calculation_type"] == "min_or_per_unit"
+    assert charge["unit_type"] == "kg"
+    assert charge["rate"] == "0.25"
+    assert charge["min_amount"] == "35.00"

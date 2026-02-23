@@ -17,6 +17,7 @@ SpotApprovalPolicy:
     Manager approval thresholds as policy, not if-statements.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -25,6 +26,8 @@ from typing import Optional, Tuple, List
 from uuid import uuid4
 
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 from quotes.spot_schemas import (
     SpotPricingEnvelope,
@@ -98,12 +101,90 @@ class ScopeValidator:
     
     # Papua New Guinea country code
     PNG_COUNTRY_CODE = "PG"
+    OTHER_COUNTRY_CODE = "OTHER"
+
+    # Fallback map for lanes where country is omitted but airport code is known.
+    DEFAULT_AIRPORT_COUNTRY_MAP = {
+        "POM": "PG",
+        "LAE": "PG",
+        "MTV": "PG",
+        "SIN": "SG",
+        "HKG": "HK",
+        "BNE": "AU",
+        "SYD": "AU",
+        "CNS": "AU",
+        "NAN": "FJ",
+        "HIR": "SB",
+        "VLI": "VU",
+    }
+
+    @classmethod
+    def _normalize_country_code(cls, country_code: Optional[str]) -> str:
+        code = (country_code or "").strip().upper()
+        return code or cls.OTHER_COUNTRY_CODE
+
+    @classmethod
+    def _lookup_country_by_airport(cls, airport_code: Optional[str]) -> Optional[str]:
+        code = (airport_code or "").strip().upper()
+        if len(code) != 3:
+            return None
+
+        try:
+            from core.models import Airport, Location
+
+            location = (
+                Location.objects.filter(code=code)
+                .select_related("country", "city__country", "airport__city__country")
+                .first()
+            )
+            if location:
+                if location.country and location.country.code:
+                    return location.country.code.upper()
+                if location.city and location.city.country and location.city.country.code:
+                    return location.city.country.code.upper()
+                if (
+                    location.airport
+                    and location.airport.city
+                    and location.airport.city.country
+                    and location.airport.city.country.code
+                ):
+                    return location.airport.city.country.code.upper()
+
+            airport = Airport.objects.select_related("city__country").filter(iata_code=code).first()
+            if airport and airport.city and airport.city.country and airport.city.country.code:
+                return airport.city.country.code.upper()
+        except Exception:
+            pass
+
+        settings_map = getattr(settings, "SPOT_AIRPORT_COUNTRY_MAP", {}) or {}
+        mapped = settings_map.get(code) or cls.DEFAULT_AIRPORT_COUNTRY_MAP.get(code)
+        return (mapped or "").upper() or None
+
+    @classmethod
+    def normalize_countries(
+        cls,
+        origin_country: Optional[str],
+        destination_country: Optional[str],
+        origin_airport: Optional[str] = None,
+        destination_airport: Optional[str] = None,
+    ) -> tuple[str, str]:
+        origin = cls._normalize_country_code(origin_country)
+        destination = cls._normalize_country_code(destination_country)
+
+        if origin == cls.OTHER_COUNTRY_CODE:
+            origin = cls._lookup_country_by_airport(origin_airport) or cls.OTHER_COUNTRY_CODE
+        if destination == cls.OTHER_COUNTRY_CODE:
+            destination = cls._lookup_country_by_airport(destination_airport) or cls.OTHER_COUNTRY_CODE
+
+        return origin, destination
     
     @classmethod
     def validate(
         cls,
         origin_country: str,
-        destination_country: str
+        destination_country: str,
+        origin_airport: Optional[str] = None,
+        destination_airport: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Validate shipment is within PNG scope.
@@ -117,6 +198,13 @@ class ScopeValidator:
             - (True, None) if valid
             - (False, "error message") if out of scope
         """
+        origin_country, destination_country = cls.normalize_countries(
+            origin_country=origin_country,
+            destination_country=destination_country,
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+        )
+
         if origin_country == cls.PNG_COUNTRY_CODE:
             return True, None
         
@@ -157,6 +245,11 @@ class SpotTriggerEvaluator:
         Determine deterministically whether a quote must enter SPOT mode.
         Based on service-scope rate coverage, not routing.
         """
+        origin_country, destination_country = ScopeValidator.normalize_countries(
+            origin_country=origin_country,
+            destination_country=destination_country,
+        )
+
         # 1️⃣ Scope Validation (Hard Stop)
         # Note: ScopeValidator.validate is already called at the request boundary,
         # but we keep this here for logic completeness.
@@ -1048,6 +1141,12 @@ class ReplyAnalysisService:
         if genai:
             # Call existing AI service with context to help it categorize
             ai_result = parse_rate_quote_text(raw_text, context=shipment_context)
+            logger.info(
+                "AI analysis result: success=%s lines=%s warnings=%s",
+                getattr(ai_result, "success", None),
+                len(getattr(ai_result, "lines", []) or []),
+                len(getattr(ai_result, "warnings", []) or []),
+            )
             if ai_result.success:
                 # Add global currency assertion if present
                 if ai_result.quote_currency:
@@ -1322,6 +1421,7 @@ class ReplyAnalysisService:
         cls,
         analysis: 'ReplyAnalysisResult',
         source_reference: str = "Agent reply",
+        shipment_context: Optional[dict] = None,
     ) -> List[dict]:
         """
         Convert analysis assertions to SPE charge line inputs.
@@ -1339,6 +1439,7 @@ class ReplyAnalysisService:
             COMPONENT_ORIGIN_LOCAL,
             COMPONENT_FREIGHT,
             COMPONENT_DESTINATION_LOCAL,
+            required_components,
         )
 
         charges: List[dict] = []
@@ -1348,6 +1449,16 @@ class ReplyAnalysisService:
             AssertionCategory.ORIGIN_CHARGES: (COMPONENT_ORIGIN_LOCAL, "origin_charges"),
             AssertionCategory.DEST_CHARGES: (COMPONENT_DESTINATION_LOCAL, "destination_charges"),
         }
+        unit_to_unit_type = {
+            "per_kg": "kg",
+            "flat": "shipment",
+            "per_shipment": "shipment",
+            "per_awb": "awb",
+            "per_trip": "trip",
+            "per_set": "set",
+            "per_man": "man",
+            "percentage": "line",
+        }
 
         def _parse_decimal(value) -> Optional[Decimal]:
             if value is None:
@@ -1356,6 +1467,30 @@ class ReplyAnalysisService:
                 return Decimal(str(value))
             except (InvalidOperation, ValueError, TypeError):
                 return None
+
+        def _normalize_scope(scope: Optional[str]) -> str:
+            if not scope:
+                return "A2A"
+            scope_up = str(scope).upper()
+            return "A2A" if scope_up == "P2P" else scope_up
+
+        def _shipment_type_from_context(ctx: dict) -> str:
+            origin_country = (ctx.get("origin_country") or "").upper()
+            dest_country = (ctx.get("destination_country") or "").upper()
+            if origin_country == "PG" and dest_country == "PG":
+                return "DOMESTIC"
+            if origin_country == "PG":
+                return "EXPORT"
+            return "IMPORT"
+
+        required_for_scope = None
+        shipment_type = None
+        if shipment_context:
+            shipment_type = _shipment_type_from_context(shipment_context)
+            required_for_scope = required_components(
+                shipment_type,
+                _normalize_scope(shipment_context.get("service_scope")),
+            )
 
         for a in analysis.assertions:
             # Skip missing or implicit assertions (AI-only population uses confirmed/conditional)
@@ -1367,16 +1502,30 @@ class ReplyAnalysisService:
 
             component_code, bucket = component_map[a.category]
 
+            # Scope guardrail: keep only components required for this quote context.
+            if required_for_scope is not None and component_code not in required_for_scope:
+                continue
+
             unit_raw = (a.rate_unit or "").lower().strip()
             default_unit = "per_kg" if a.category == AssertionCategory.RATE else "flat"
 
             min_charge = None
             exclude_from_totals = False
+            calculation_type = None
+            unit_type = None
+            rate = None
+            min_amount = None
+            max_amount = None
+            percent = None
+            percent_basis = None
+            rule_meta = {}
 
             # Normalize unit to SPE-supported values
             if unit_raw in {"per_kg", "per_shipment", "flat", "per_awb", "per_trip", "per_set", "per_man", "percentage"}:
                 unit = unit_raw
-            elif unit_raw in {"min_or_per_kg", "min-per-kg"}:
+            elif unit_raw.startswith("min_or_per_"):
+                unit = unit_raw.replace("min_or_per_", "per_")
+            elif unit_raw in {"min-per-kg"}:
                 unit = "per_kg"
             else:
                 unit = default_unit
@@ -1386,19 +1535,45 @@ class ReplyAnalysisService:
             rate_per_unit = _parse_decimal(a.rate_per_unit)
             value_amount = _parse_decimal(a.value)
 
-            if unit_raw in {"min_or_per_kg", "min-per-kg"}:
-                # Min OR per kg: use per-kg rate as amount, store minimum separately
+            if unit_raw.startswith("min_or_per_") or unit_raw in {"min-per-kg"}:
+                # Min OR per unit: keep both per-unit rate and minimum floor.
                 amount = rate_per_unit or rate_amount
                 min_charge = rate_amount
+                calculation_type = "min_or_per_unit"
+                unit_type = unit_to_unit_type.get(unit, "shipment")
+                rate = amount
+                min_amount = min_charge
             elif unit == "per_kg":
                 amount = rate_per_unit or rate_amount
+                calculation_type = "per_unit"
+                unit_type = "kg"
+                rate = amount
             elif unit == "percentage":
                 amount = rate_amount or rate_per_unit or value_amount
                 exclude_from_totals = True
+                calculation_type = "percent_of"
+                unit_type = "line"
+                percent = amount
+                percent_basis = "freight"
             else:
                 amount = rate_amount or value_amount
+                if unit == "flat":
+                    calculation_type = "flat"
+                    unit_type = "shipment"
+                    rate = amount
+                else:
+                    calculation_type = "per_unit"
+                    unit_type = unit_to_unit_type.get(unit, "shipment")
+                    rate = amount
 
             if amount is None or amount <= 0:
+                continue
+
+            # Contextual applicability guardrail for known opposite-direction taxes.
+            desc_lower = (a.text or "").lower()
+            if shipment_type == "EXPORT" and "import gst" in desc_lower:
+                continue
+            if shipment_type == "IMPORT" and "export declaration" in desc_lower:
                 continue
 
             charges.append({
@@ -1412,7 +1587,16 @@ class ReplyAnalysisService:
                 "conditional": a.status == AssertionStatus.CONDITIONAL,
                 "min_charge": str(min_charge) if min_charge else None,
                 "exclude_from_totals": exclude_from_totals,
+                "calculation_type": calculation_type,
+                "unit_type": unit_type,
+                "rate": str(rate) if rate is not None else None,
+                "min_amount": str(min_amount) if min_amount is not None else None,
+                "max_amount": str(max_amount) if max_amount is not None else None,
+                "percent": str(percent) if percent is not None else None,
+                "percent_basis": percent_basis,
+                "rule_meta": rule_meta,
                 "source_reference": source_reference,
             })
 
         return charges
+

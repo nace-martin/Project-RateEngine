@@ -101,6 +101,18 @@ class TestScopeValidation:
         assert is_valid is True
         assert error is None
 
+    def test_scope_valid_when_country_unknown_but_airports_identify_png_lane(self):
+        """Fallback should resolve POM->SIN from airport codes when countries are OTHER."""
+        is_valid, error = ScopeValidator.validate(
+            origin_country="OTHER",
+            destination_country="OTHER",
+            origin_airport="POM",
+            destination_airport="SIN",
+        )
+
+        assert is_valid is True
+        assert error is None
+
 
 # =============================================================================
 # SPOT TRIGGER TESTS

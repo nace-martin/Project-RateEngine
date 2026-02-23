@@ -51,6 +51,8 @@ export type SPECommodity =
 export interface ScopeValidateRequest {
     origin_country: string;
     destination_country: string;
+    origin_code?: string;
+    destination_code?: string;
 }
 
 /** Scope validation response */

@@ -240,7 +240,11 @@ EXTRACTION RULES:
    - **PER_SHIPMENT**: Flat fee per shipment. Use `amount` for the flat amount.
    - **PERCENTAGE**: Percentage of another charge. Use `percentage` and `percent_applies_to`.
    - **MIN_OR_PER_KG**: Dual pricing like "35.00 min or 0.25 per kg". Use BOTH `minimum` (the floor) AND `rate_per_unit` (the per-kg rate). The final charge is MAX(minimum, rate_per_unit * weight).
-4. For PERCENTAGE, specify what it applies to (e.g., "Commercial Invoice", "FREIGHT").
+4. Also populate canonical rule fields when possible:
+   - `calculation_type`: FLAT | PER_UNIT | MIN_OR_PER_UNIT | PERCENT_OF
+   - `unit_type`: KG | SHIPMENT | AWB | TRIP | SET | LINE | MAN | CBM | RT
+   - `rate`, `min_amount`, `max_amount`, `percent_basis`
+5. For PERCENTAGE, specify what it applies to (e.g., "Commercial Invoice", "FREIGHT").
 
 OUTPUT FORMAT (JSON):
 {{
@@ -254,10 +258,17 @@ OUTPUT FORMAT (JSON):
       "rate_per_unit": number | null (for PER_KG or MIN_OR_PER_KG per-kg rate),
       "currency": "3-letter code (optional if quote_currency is set)",
       "unit_basis": "PER_KG" | "PER_SHIPMENT" | "PERCENTAGE" | "MIN_OR_PER_KG",
+      "calculation_type": "FLAT" | "PER_UNIT" | "MIN_OR_PER_UNIT" | "PERCENT_OF" | null,
+      "unit_type": "KG" | "SHIPMENT" | "AWB" | "TRIP" | "SET" | "LINE" | "MAN" | "CBM" | "RT" | null,
+      "rate": number | null,
+      "min_amount": number | null,
+      "max_amount": number | null,
       "percentage": number | null (for PERCENTAGE only),
       "minimum": number | null (floor amount for MIN_OR_PER_KG),
       "maximum": number | null (ceiling if applicable),
       "percent_applies_to": "string" | null (for PERCENTAGE only),
+      "percent_basis": "string" | null,
+      "rule_meta": object | null,
       "conditional": boolean (true if charge is 'if applicable' or option)
     }}
   ]
@@ -304,11 +315,21 @@ def _validate_ai_response(
     
     for i, line_data in enumerate(lines_data):
         try:
+            # TEMP DEBUG: log raw AI payload for each line before any normalization.
+            logger.info("AI line_data[%s] raw: %r", i + 1, line_data)
+
             if line_data.get("currency"):
                 line_data["currency"] = _normalize_currency_value(line_data.get("currency"))
 
+            # Accept null/invalid rule_meta payloads from AI and normalize.
+            if line_data.get("rule_meta") is None:
+                line_data["rule_meta"] = {}
+            elif not isinstance(line_data.get("rule_meta"), dict):
+                warnings.append(f"Line {i+1}: Invalid rule_meta format")
+                line_data["rule_meta"] = {}
+
             # Convert string decimals or numbers to Decimal
-            for field in ["amount", "rate_per_unit", "percentage", "minimum", "maximum"]:
+            for field in ["amount", "rate_per_unit", "percentage", "minimum", "maximum", "rate", "min_amount", "max_amount"]:
                 if line_data.get(field) is not None:
                     try:
                         line_data[field] = Decimal(str(line_data[field]))
@@ -327,7 +348,16 @@ def _validate_ai_response(
         except Exception as e:
             warnings.append(f"Line {i+1} validation failed: {str(e)}")
             logger.warning(f"Failed to validate line {i+1}: {e}")
-    
+
+    logger.info(
+        "AI validation summary: %s/%s lines validated; warnings=%s",
+        len(validated_lines),
+        len(lines_data),
+        len(warnings),
+    )
+    if warnings:
+        logger.info("AI validation warnings detail: %s", warnings)
+
     return AIRateIntakeResponse(
         success=True,
         lines=validated_lines,

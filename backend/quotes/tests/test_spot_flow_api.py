@@ -30,6 +30,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
 
         self.create_url = reverse("quotes:spot-envelope-list-create")
+        self.scope_url = reverse("quotes:spot-validate-scope")
 
     def test_spot_envelope_flow_acknowledge_compute(self):
         create_payload = {
@@ -97,3 +98,54 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(payload["pricing_mode"], "SPOT")
         self.assertEqual(len(payload["lines"]), 1)
         self.assertNotEqual(payload["totals"]["total_sell_pgk"], "0")
+
+    def test_scope_validation_resolves_country_from_airport_codes(self):
+        response = self.client.post(
+            self.scope_url,
+            {
+                "origin_country": "OTHER",
+                "destination_country": "OTHER",
+                "origin_code": "POM",
+                "destination_code": "SIN",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertTrue(payload["is_valid"])
+        self.assertIsNone(payload["error"])
+
+    def test_create_spe_normalizes_country_codes_from_route(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "OTHER",
+                "destination_country": "OTHER",
+                "origin_code": "POM",
+                "destination_code": "SIN",
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Airfreight",
+                    "amount": 5,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        shipment = create_response.json()["shipment"]
+        self.assertEqual(shipment["origin_country"], "PG")
+        self.assertEqual(shipment["destination_country"], "SG")

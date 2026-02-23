@@ -238,6 +238,28 @@ SPOT_ROUTE_COVERAGE = {
     ],
 }
 
+# Fallback airport-country resolver for SPOT intake when country is missing in payload.
+SPOT_AIRPORT_COUNTRY_MAP = {
+    'POM': 'PG',
+    'LAE': 'PG',
+    'MTV': 'PG',
+    'SIN': 'SG',
+    'HKG': 'HK',
+    'BNE': 'AU',
+    'SYD': 'AU',
+    'CNS': 'AU',
+    'NAN': 'FJ',
+    'HIR': 'SB',
+    'VLI': 'VU',
+}
+
+# Optional non-PNG cross-trade allowlist, e.g. ["SYD-SIN"].
+# Empty by default to preserve PNG-only policy.
+_spot_non_png = os.environ.get('SPOT_ALLOWED_NON_PNG_LANES', '')
+SPOT_ALLOWED_NON_PNG_LANES = [
+    lane.strip().upper() for lane in _spot_non_png.split(',') if lane.strip()
+]
+
 # =============================================================================
 # LOGGING CONFIGURATION
 # =============================================================================

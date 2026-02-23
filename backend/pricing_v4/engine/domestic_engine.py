@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import date
 from pricing_v4.models import DomesticCOGS, DomesticSellRate, Surcharge
+from core.charge_rules import evaluate_charge_rule
 
 @dataclass
 class BillableCharge:
@@ -132,17 +133,30 @@ class DomesticPricingEngine:
 
     def _calc_surcharge_amount(self, surcharge: Surcharge) -> Decimal:
         amount = Decimal('0.00')
+        shipment_ctx = {
+            'chargeable_weight_kg': self.weight,
+            'shipment_count': Decimal('1'),
+        }
         
         if surcharge.rate_type == 'FLAT':
-            amount = surcharge.amount
+            amount = evaluate_charge_rule(
+                {'calculation_type': 'FLAT', 'rate': surcharge.amount, 'min_amount': surcharge.min_charge},
+                shipment_ctx,
+            )
         elif surcharge.rate_type == 'PER_KG':
-            amount = surcharge.amount * self.weight
+            calc_type = 'MIN_OR_PER_UNIT' if surcharge.min_charge else 'PER_UNIT'
+            amount = evaluate_charge_rule(
+                {
+                    'calculation_type': calc_type,
+                    'unit_type': 'KG',
+                    'rate': surcharge.amount,
+                    'min_amount': surcharge.min_charge,
+                },
+                shipment_ctx,
+            )
         elif surcharge.rate_type == 'PERCENT':
             # Not implemented for verified scenario yet (would need base amount)
             pass
-            
-        if surcharge.min_charge and amount < surcharge.min_charge:
-            amount = surcharge.min_charge
             
         return amount
 
@@ -160,9 +174,20 @@ class DomesticPricingEngine:
                     amount = self.weight * Decimal(str(tier.get('rate', 0)))
                     break
         elif rate_per_kg:
-            amount = rate_per_kg * self.weight
-        
-        if min_charge and amount < min_charge:
-            amount = min_charge
+            calc_type = 'MIN_OR_PER_UNIT' if min_charge else 'PER_UNIT'
+            amount = evaluate_charge_rule(
+                {
+                    'calculation_type': calc_type,
+                    'unit_type': 'KG',
+                    'rate': rate_per_kg,
+                    'min_amount': min_charge,
+                },
+                {'chargeable_weight_kg': self.weight},
+            )
+        elif min_charge:
+            amount = evaluate_charge_rule(
+                {'calculation_type': 'FLAT', 'rate': amount, 'min_amount': min_charge},
+                {'shipment_count': Decimal('1')},
+            )
         
         return amount

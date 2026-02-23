@@ -60,3 +60,15 @@ class CurrencyFallbackTest(TestCase):
         currency_warnings = [w for w in confirmations.warnings if "Rate currency is required" in w]
         self.assertEqual(len(currency_warnings), 0, "Should not warn about missing currency")
 
+    def test_spot_charge_line_coerces_null_rule_meta(self):
+        line = SpotChargeLine(
+            bucket="FREIGHT",
+            description="Airfreight",
+            rate_per_unit=Decimal("5.00"),
+            currency="USD",
+            unit_basis="PER_KG",
+            rule_meta=None,
+        )
+
+        self.assertEqual(line.rule_meta, {})
+
