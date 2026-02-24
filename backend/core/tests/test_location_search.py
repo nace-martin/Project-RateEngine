@@ -1,4 +1,5 @@
 from django.urls import reverse
+from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from core.models import Country, City, Airport, Location
@@ -6,6 +7,14 @@ from core.models import Country, City, Airport, Location
 
 class LocationSearchViewTests(APITestCase):
     def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username='locationsearchtester',
+            password='pass123',
+            email='locationsearchtester@example.com',
+        )
+        self.client.force_authenticate(user=self.user)
+
         self.country = Country.objects.create(code='AU', name='Australia')
         self.city = City.objects.create(name='Brisbane', country=self.country)
         self.airport = Airport.objects.create(

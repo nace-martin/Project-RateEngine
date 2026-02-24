@@ -199,8 +199,8 @@ class QuoteListV3APITest(APITestCase):
 
     def _create_simple_quote(self, index):
         customer = Company.objects.create(name=f"Customer {index}")
-        origin = Location.objects.create(name=f"Origin {index}", code=f"ORG{index}")
-        dest = Location.objects.create(name=f"Dest {index}", code=f"DST{index}")
+        origin = Location.objects.create(name=f"Origin {index}", code=f"O{index:02d}")
+        dest = Location.objects.create(name=f"Dest {index}", code=f"D{index:02d}")
         
         quote = Quote.objects.create(
             customer=customer,
