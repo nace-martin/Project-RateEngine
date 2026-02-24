@@ -51,6 +51,73 @@ export function SpotRateEntryForm({
     shipmentType = "EXPORT",
     serviceScope = "D2D",
 }: SpotRateEntryFormProps) {
+    const mapAssertionToCharge = (assertion: ExtractedAssertion): SPEChargeLine | null => {
+        const category = assertion.category;
+        let bucket: SPEChargeBucket | null = null;
+        let code = "MISC";
+
+        if (category === "rate") {
+            bucket = "airfreight";
+            code = "FREIGHT";
+        } else if (category === "origin_charges") {
+            bucket = "origin_charges";
+            code = "ORIGIN_LOCAL";
+        } else if (category === "dest_charges") {
+            bucket = "destination_charges";
+            code = "DESTINATION_LOCAL";
+        }
+
+        if (!bucket) return null;
+
+        const unitRaw = (assertion.rate_unit || "").toLowerCase();
+        const amountRaw = assertion.rate_per_unit ?? assertion.rate_amount ?? null;
+        const currency = (assertion.rate_currency || "USD").toUpperCase() as SPEChargeLine["currency"];
+        if (amountRaw == null) return null;
+
+        let unit: SPEChargeUnit = "flat";
+        let min_charge: string | undefined;
+        if (unitRaw === "per_kg") unit = "per_kg";
+        else if (unitRaw === "per_awb") unit = "per_awb";
+        else if (unitRaw === "per_shipment" || unitRaw === "shipment") unit = "per_shipment";
+        else if (unitRaw === "per_set") unit = "per_set";
+        else if (unitRaw === "per_trip") unit = "per_trip";
+        else if (unitRaw === "per_man") unit = "per_man";
+        else if (unitRaw === "percentage") unit = "percentage";
+        else if (unitRaw.startsWith("min_or_per_")) {
+            unit = "min_or_per_kg";
+            if (assertion.rate_amount != null) min_charge = String(assertion.rate_amount);
+        }
+
+        return {
+            code,
+            description: assertion.text,
+            amount: String(amountRaw),
+            currency,
+            unit,
+            bucket,
+            is_primary_cost: bucket === "airfreight",
+            conditional: assertion.status === "conditional",
+            source_reference: "AI / Analysis Suggestion",
+            min_charge,
+        };
+    };
+
+    const mergedCharges = useMemo(() => {
+        const merged: SPEChargeLine[] = [...initialCharges];
+        const seen = new Set(
+            merged.map((c) => `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`)
+        );
+
+        for (const assertion of suggestedCharges) {
+            const mapped = mapAssertionToCharge(assertion);
+            if (!mapped) continue;
+            const key = `${mapped.bucket}|${mapped.code.toUpperCase()}|${mapped.description.trim().toUpperCase()}`;
+            if (seen.has(key)) continue;
+            merged.push(mapped);
+            seen.add(key);
+        }
+        return merged;
+    }, [initialCharges, suggestedCharges]);
 
     const normalizeScope = (scope?: string) => {
         if (!scope) return "A2A";
@@ -99,7 +166,7 @@ export function SpotRateEntryForm({
 
         const buckets = new Set<SPEChargeBucket>(requiredBuckets);
 
-        initialCharges.forEach((charge) => buckets.add(charge.bucket));
+        mergedCharges.forEach((charge) => buckets.add(charge.bucket));
         suggestedCharges.forEach((assertion) => {
             const bucket = assertionToBucket(assertion);
             if (bucket) buckets.add(bucket);
@@ -110,12 +177,12 @@ export function SpotRateEntryForm({
         }
 
         return CHARGE_BUCKETS.filter(b => buckets.has(b.id));
-    }, [shipmentType, serviceScope, initialCharges, suggestedCharges]);
+    }, [shipmentType, serviceScope, mergedCharges, suggestedCharges]);
 
     // Initial values
-    const defaultValues: SpotFormInputValues = {
-        charges: initialCharges.length > 0
-            ? initialCharges.map(c => ({
+    const defaultValues = useMemo<SpotFormInputValues>(() => ({
+        charges: mergedCharges.length > 0
+            ? mergedCharges.map(c => ({
                 id: c.id,
                 code: c.code,
                 description: c.description,
@@ -130,13 +197,17 @@ export function SpotRateEntryForm({
                 note: c.note || "",
             }))
             : []
-    };
+    }), [mergedCharges]);
 
     const form = useForm<SpotFormInputValues, unknown, SpotFormSubmitValues>({
         resolver: zodResolver(spotFormSchema),
         defaultValues,
         mode: "onChange",
     });
+
+    useEffect(() => {
+        form.reset(defaultValues);
+    }, [form, defaultValues]);
 
     const { fields, append, remove } = useFieldArray({
         control: form.control,

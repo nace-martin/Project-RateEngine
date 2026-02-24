@@ -24,6 +24,7 @@ import {
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
 import type { ReplyAnalysisResult } from "@/lib/spot-types";
+import { getSpotStandardCharges } from "@/lib/api";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -69,6 +70,7 @@ export default function SpotRateEntryPage() {
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [showAckModal, setShowAckModal] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
+    const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
 
     const formatMissingComponents = (components?: string[]) => {
         if (!components || components.length === 0) return null;
@@ -104,6 +106,63 @@ export default function SpotRateEntryPage() {
             }
         }
     }, [state.spe, state.flowState]);
+
+    // Load hybrid standard DB charges (origin/freight/destination where coverage exists)
+    useEffect(() => {
+        const shipment = state.spe?.shipment;
+        if (!shipment || !state.spe?.id) return;
+
+        let cancelled = false;
+        const run = async () => {
+            try {
+                const derivedShipmentType =
+                    shipmentType ||
+                    (shipment.origin_country === "PG" && shipment.destination_country === "PG"
+                        ? "DOMESTIC"
+                        : shipment.origin_country === "PG"
+                            ? "EXPORT"
+                            : "IMPORT");
+
+                const charges = await getSpotStandardCharges({
+                    origin_code: shipment.origin_code,
+                    destination_code: shipment.destination_code,
+                    direction: derivedShipmentType,
+                    service_scope: shipment.service_scope || serviceScope || "D2D",
+                    weight_kg: shipment.total_weight_kg || weight || 100,
+                    commodity: shipment.commodity || commodity || "GCR",
+                });
+
+                if (!cancelled) {
+                    setStandardPrefillCharges(charges);
+                }
+            } catch (err) {
+                console.error("Failed to load standard SPOT charges:", err);
+                if (!cancelled) setStandardPrefillCharges([]);
+            }
+        };
+
+        run();
+        return () => {
+            cancelled = true;
+        };
+    }, [state.spe, shipmentType, serviceScope, weight, commodity]);
+
+    const mergedFormCharges = (() => {
+        const speCharges = state.spe?.charges || [];
+        if (!standardPrefillCharges.length) return speCharges;
+
+        const seen = new Set(
+            speCharges.map(c => `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`)
+        );
+        const merged = [...speCharges];
+        for (const c of standardPrefillCharges) {
+            const key = `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`;
+            if (seen.has(key)) continue;
+            merged.push(c);
+            seen.add(key);
+        }
+        return merged;
+    })();
 
     // Handle updating SPE with charges, auto-acknowledge, and auto-compute
     const handleSaveAndAcknowledge = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
@@ -358,7 +417,7 @@ export default function SpotRateEntryPage() {
                     <SpotRateEntryForm
                         onSubmit={handleSaveAndAcknowledge}
                         isLoading={state.isLoading}
-                        initialCharges={state.spe?.charges || []}
+                        initialCharges={mergedFormCharges}
                         suggestedCharges={analysisResult?.assertions}
                         shipmentType={shipmentType}
                         serviceScope={serviceScope}
@@ -406,6 +465,7 @@ export default function SpotRateEntryPage() {
                                 rawText={analysisResult?.raw_text || ""}
                                 extractedCharges={analysisResult?.assertions}
                                 initialCharges={state.spe?.charges || []}
+                                suggestedCharges={analysisResult?.assertions}
                                 onSubmit={handleSaveAndAcknowledge}
                                 isLoading={state.isLoading}
                                 shipmentType={shipmentType}

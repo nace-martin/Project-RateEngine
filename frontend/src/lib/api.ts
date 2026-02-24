@@ -1,7 +1,7 @@
 // frontend/src/lib/api.ts
 import axios from 'axios';
 import { API_BASE_URL } from './config';
-import { ReplyAnalysisResult, SPEChargeLine, SPEConditions } from './spot-types';
+import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
 import {
   LoginData,
   User,
@@ -1189,6 +1189,31 @@ export async function analyzeSpotReply(
   }
 
   return response.json();
+}
+
+export async function getSpotStandardCharges(request: {
+  origin_code: string;
+  destination_code: string;
+  direction: 'EXPORT' | 'IMPORT' | 'DOMESTIC';
+  service_scope: string;
+  weight_kg: number;
+  commodity: SPECommodity;
+}): Promise<SPEChargeLine[]> {
+  const url = API_BASE_URL + '/api/v3/spot/standard-charges/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch standard SPOT charges: ${detail}`);
+  }
+  const data = await response.json();
+  return Array.isArray(data?.charges) ? data.charges : [];
 }
 
 

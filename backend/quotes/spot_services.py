@@ -488,6 +488,7 @@ class StandardChargeService:
             QuoteInput, ShipmentDetails, LocationRef, Piece
         )
         from pricing_v4.adapter import PricingServiceV4Adapter
+        from pricing_v4.models import ExportCOGS, ImportCOGS
         
         # Check availability first
         availability = RateAvailabilityService.get_availability(
@@ -518,14 +519,22 @@ class StandardChargeService:
                 code=origin_code,
                 name=origin_loc.name,
                 country_code=origin_loc.country.code if origin_loc.country else "PG",
-                currency_code="PGK"
+                currency_code=(
+                    origin_loc.country.currency.code
+                    if origin_loc.country and getattr(origin_loc.country, "currency", None)
+                    else "PGK"
+                ),
             )
             dest_ref = LocationRef(
                 id=dest_loc.id,
                 code=destination_code,
                 name=dest_loc.name,
                 country_code=dest_loc.country.code if dest_loc.country else "XX",
-                currency_code="USD"
+                currency_code=(
+                    dest_loc.country.currency.code
+                    if dest_loc.country and getattr(dest_loc.country, "currency", None)
+                    else "USD"
+                ),
             )
             
             # Determine shipment type
@@ -563,6 +572,27 @@ class StandardChargeService:
             # Run V4 adapter to get standard lines
             adapter = PricingServiceV4Adapter(quote_input)
             standard_lines = adapter._calculate_standard_lines()
+
+            # Enrich with raw COGS rows where available so we can preserve rule metadata
+            # such as min_charge for MIN_OR_PER_KG rows.
+            cogs_by_code = {}
+            if direction in {"EXPORT", "IMPORT"}:
+                cogs_model = ExportCOGS if direction == "EXPORT" else ImportCOGS
+                active_cogs = (
+                    cogs_model.objects.filter(
+                        origin_airport=origin_code,
+                        destination_airport=destination_code,
+                        valid_from__lte=date.today(),
+                        valid_until__gte=date.today(),
+                        product_code__code__in=[l.service_component_code for l in standard_lines],
+                    )
+                    .select_related("product_code")
+                    .order_by("product_code__code")
+                )
+                for row in active_cogs:
+                    code = getattr(row.product_code, "code", None)
+                    if code and code not in cogs_by_code:
+                        cogs_by_code[code] = row
             
             # Convert to SPEChargeLine format
             result = []
@@ -579,15 +609,49 @@ class StandardChargeService:
                 }
                 bucket = bucket_map.get(line.bucket, "origin_charges")
                 
-                # Determine unit type
+                cogs_row = cogs_by_code.get(line.service_component_code)
+
+                # Default from already calculated line (fallback)
                 unit = "per_shipment"
-                if "per_kg" in line.cost_source.lower() or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
-                    unit = "per_kg"
-                
-                # Determine amount to show
                 amount = str(float(line.cost_fcy)) if line.cost_fcy else str(float(line.cost_pgk))
                 currency = line.cost_fcy_currency or "PGK"
-                
+                min_charge = None
+                calculation_type = None
+                unit_type = None
+                rate = None
+                min_amount = None
+
+                # Prefer raw COGS row metadata when available (preserves min-charge floors)
+                if cogs_row is not None:
+                    row_currency = getattr(cogs_row, "currency", None)
+                    if row_currency:
+                        currency = row_currency
+                    row_rate_per_kg = getattr(cogs_row, "rate_per_kg", None)
+                    row_rate_per_shipment = getattr(cogs_row, "rate_per_shipment", None)
+                    row_min_charge = getattr(cogs_row, "min_charge", None)
+
+                    if row_rate_per_kg is not None:
+                        amount = str(row_rate_per_kg)
+                        rate = str(row_rate_per_kg)
+                        if row_min_charge is not None:
+                            unit = "min_or_per_kg"
+                            min_charge = str(row_min_charge)
+                            min_amount = str(row_min_charge)
+                            calculation_type = "min_or_per_unit"
+                        else:
+                            unit = "per_kg"
+                            calculation_type = "per_unit"
+                        unit_type = "kg"
+                    elif row_rate_per_shipment is not None:
+                        amount = str(row_rate_per_shipment)
+                        unit = "per_shipment"
+                        rate = str(row_rate_per_shipment)
+                        calculation_type = "flat"
+                        unit_type = "shipment"
+                else:
+                    if "per_kg" in line.cost_source.lower() or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
+                        unit = "per_kg"
+
                 result.append({
                     "code": line.service_component_code,
                     "description": line.service_component_desc,
@@ -597,9 +661,18 @@ class StandardChargeService:
                     "bucket": bucket,
                     "is_primary_cost": line.service_component_code in ["FREIGHT", "AIRFREIGHT", "DOMESTIC_FREIGHT"],
                     "conditional": False,
+                    "min_charge": min_charge,
+                    "calculation_type": calculation_type,
+                    "unit_type": unit_type,
+                    "rate": rate,
+                    "min_amount": min_amount,
+                    "rule_meta": {},
                     "source_reference": f"Standard Rate ({line.cost_source})",
                 })
-            
+            logger.info(
+                "StandardChargeService prefill for %s %s->%s scope=%s returned %s charges",
+                direction, origin_code, destination_code, service_scope, len(result)
+            )
             return result
             
         except Exception as e:
@@ -1281,14 +1354,22 @@ class ReplyAnalysisService:
             if origin_country != 'PG' and r.product_code.category != ProductCode.CATEGORY_FREIGHT:
                 category = AssertionCategory.DEST_CHARGES
                 
+            rate_amount = r.rate_per_kg or r.rate_per_shipment
+            rate_per_unit = r.rate_per_kg if r.rate_per_kg is not None else None
+            rate_unit = "per_kg" if r.rate_per_kg else "flat"
+            if r.rate_per_kg is not None and r.min_charge is not None:
+                rate_amount = r.min_charge
+                rate_unit = "min_or_per_kg"
+
             suggestions.append(ExtractedAssertion(
                 text=f"Standard Rate: {r.product_code.description}",
                 category=category,
                 status=AssertionStatus.IMPLICIT,
                 confidence=0.8,
-                rate_amount=r.rate_per_kg or r.rate_per_shipment,
+                rate_amount=rate_amount,
+                rate_per_unit=rate_per_unit,
                 rate_currency=r.currency,
-            rate_unit="per_kg" if r.rate_per_kg else "flat",
+                rate_unit=rate_unit,
             ))
             
         # 3. Filter if availability metadata is provided
