@@ -43,4 +43,4 @@ xhtml2pdf>=0.2.11
 # AI Rate Intake dependencies
 pdfplumber>=0.10.0
 pymupdf>=1.23.0
-google-generativeai>=0.8.0
+google-genai

@@ -56,6 +56,57 @@ CURRENCY_SYMBOL_MAP = {
 }
 
 
+class _GenAIResponseAdapter:
+    """Normalize google.genai responses to the legacy `.text` interface."""
+
+    def __init__(self, raw_response):
+        self._raw_response = raw_response
+        self.text = self._extract_text(raw_response)
+
+    @staticmethod
+    def _extract_text(response) -> str:
+        text = getattr(response, "text", None)
+        if isinstance(text, str):
+            return text
+
+        # Defensive fallback if SDK response shape changes.
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                part_text = getattr(part, "text", None)
+                if isinstance(part_text, str) and part_text.strip():
+                    return part_text
+        return ""
+
+
+class _GenAIModelAdapter:
+    """Compatibility adapter exposing `generate_content(...)` like google.generativeai."""
+
+    def __init__(self, client, model_name: str):
+        self._client = client
+        self._model_name = model_name
+
+    def generate_content(self, prompt, generation_config=None):
+        response = self._client.models.generate_content(
+            model=self._model_name,
+            contents=prompt,
+            config=generation_config or {},
+        )
+        return _GenAIResponseAdapter(response)
+
+
+class _GenAIClientAdapter:
+    """Compatibility adapter exposing `.GenerativeModel(...)` over `google.genai.Client`."""
+
+    def __init__(self, sdk_module, api_key: str):
+        self._client = sdk_module.Client(api_key=api_key)
+
+    def GenerativeModel(self, model_name: str):
+        return _GenAIModelAdapter(self._client, model_name)
+
+
 def _normalize_currency_value(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -105,18 +156,17 @@ def _infer_quote_currency_from_text(text: str) -> Optional[str]:
 def get_gemini_client():
     """Get configured Gemini client. Returns None if not configured."""
     try:
-        import google.generativeai as genai
+        from google import genai as genai_sdk
     except ImportError:
-        logger.error("google-generativeai not installed")
+        logger.error("google-genai not installed")
         return None
     
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.error("GEMINI_API_KEY environment variable not set")
         return None
-    
-    genai.configure(api_key=api_key)
-    return genai
+
+    return _GenAIClientAdapter(genai_sdk, api_key)
 
 
 def parse_rate_quote_text(
