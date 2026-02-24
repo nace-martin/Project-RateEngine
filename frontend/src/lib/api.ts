@@ -315,6 +315,83 @@ export async function getQuoteV3(
   return response.json();
 }
 
+function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComputeResult {
+  const version = quote.latest_version;
+  const totals = version?.totals;
+  const lines = version?.lines ?? [];
+  const displayCurrency = totals?.currency || totals?.total_sell_fcy_currency || quote.output_currency || 'PGK';
+
+  const exchange_rates: Record<string, string> = {};
+  for (const line of lines) {
+    const rate = line.exchange_rate;
+    const ccy = (line.cost_fcy_currency || line.sell_fcy_currency || '').toUpperCase();
+    if (!rate || !ccy || ccy === 'PGK') continue;
+    exchange_rates[`${ccy}/PGK`] = rate;
+  }
+
+  return {
+    quote_id: quote.id,
+    quote_number: quote.quote_number,
+    buy_lines: [],
+    sell_lines: lines.map((line) => {
+      const sellCurrency = line.sell_fcy_currency || displayCurrency;
+      const lineGstAmount =
+        (sellCurrency || '').toUpperCase() !== 'PGK'
+          ? (parseFloat(line.sell_fcy_incl_gst || '0') - parseFloat(line.sell_fcy || '0'))
+          : (parseFloat(line.sell_pgk_incl_gst || '0') - parseFloat(line.sell_pgk || '0'));
+      return {
+        line_type: 'COMPONENT',
+        component: line.service_component?.code ?? null,
+        description: line.cost_source_description || line.service_component?.description || 'Charge',
+        leg: line.service_component?.leg || undefined,
+        cost_pgk: line.cost_pgk,
+        sell_pgk: line.sell_pgk,
+        sell_pgk_incl_gst: line.sell_pgk_incl_gst,
+        gst_amount: lineGstAmount.toFixed(2),
+        sell_fcy: line.sell_fcy,
+        sell_fcy_incl_gst: line.sell_fcy_incl_gst,
+        sell_currency: sellCurrency,
+        margin_percent: '0',
+        exchange_rate: line.exchange_rate || '0',
+        source: line.cost_source || 'stored_quote',
+        is_informational: false,
+      };
+    }),
+    totals: {
+      total_sell_ex_gst:
+        displayCurrency.toUpperCase() !== 'PGK'
+          ? (totals?.total_sell_fcy || totals?.total_sell_pgk || '0')
+          : (totals?.total_sell_pgk || '0'),
+      cost_pgk: totals?.total_cost_pgk || '0',
+      sell_pgk: totals?.total_sell_pgk || '0',
+      sell_pgk_incl_gst: totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0',
+      gst_amount: (
+        displayCurrency.toUpperCase() !== 'PGK'
+          ? (
+              (parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')) -
+              (parseFloat(totals?.total_sell_fcy || '0'))
+            )
+          : (
+              (parseFloat(totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0')) -
+              (parseFloat(totals?.total_sell_pgk || '0'))
+            )
+      ).toFixed(2),
+      caf_pgk: '0',
+      currency: displayCurrency,
+      total_sell_fcy: totals?.total_sell_fcy || totals?.total_sell_pgk || '0',
+      total_sell_fcy_incl_gst: totals?.total_sell_fcy_incl_gst || totals?.total_sell_pgk_incl_gst || '0',
+      total_quote_amount:
+        displayCurrency.toUpperCase() !== 'PGK'
+          ? (totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')
+          : (totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0'),
+      total_sell_fcy_currency: totals?.total_sell_fcy_currency || displayCurrency,
+    },
+    exchange_rates,
+    computation_date: version?.created_at || quote.updated_at || quote.created_at,
+    notes: totals?.notes ? [totals.notes] : [],
+  };
+}
+
 export async function getQuoteCompute(
   quoteId: string,
 ): Promise<QuoteComputeResult> {
@@ -324,6 +401,11 @@ export async function getQuoteCompute(
       Authorization: `Token ${resolveAuthToken()}`,
     },
   });
+
+  if (response.status === 404) {
+    const quote = await getQuoteV3(quoteId);
+    return mapQuoteDetailToComputeResult(quote);
+  }
 
   if (!response.ok) {
     const detail = await parseErrorResponse(response);
@@ -504,16 +586,19 @@ export interface RateCard {
 }
 
 export async function getRateCardsV3(): Promise<RateCard[]> {
-  const url = API_BASE_URL + '/api/v3/rate-cards/';
+  const url = API_BASE_URL + '/api/v3/ratecards/';
   const response = await fetch(url, {
     headers: { Authorization: `Token ${resolveAuthToken()}` },
   });
-  if (!response.ok) throw new Error('Failed to fetch rate cards');
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch rate cards: ${detail}`);
+  }
   return response.json();
 }
 
 export async function createRateCardV3(data: Partial<RateCard>): Promise<RateCard> {
-  const url = API_BASE_URL + '/api/v3/rate-cards/';
+  const url = API_BASE_URL + '/api/v3/ratecards/';
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -530,23 +615,21 @@ export async function createRateCardV3(data: Partial<RateCard>): Promise<RateCar
 }
 
 export async function importRateCardCSV(id: string, file: File): Promise<{ message: string; errors: string[] }> {
-  const url = API_BASE_URL + `/api/v3/rate-cards/${id}/import_csv/`;
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: formData,
-  });
-
-  if (!response.ok && response.status !== 207) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to import CSV: ${detail}`);
+  // Deprecated V3 helper kept for compatibility with legacy dialogs.
+  // Internally routes to the V4 bulk uploader endpoint.
+  void id;
+  try {
+    const result = await uploadV4RateCardCSV(file);
+    return { message: result.message, errors: [] };
+  } catch (error) {
+    if (error instanceof V4RateCardUploadValidationError) {
+      return {
+        message: error.message,
+        errors: Object.entries(error.errors).map(([rowKey, reason]) => `${rowKey}: ${reason}`),
+      };
+    }
+    throw error;
   }
-  return response.json();
 }
 
 // --- Spot Rates ---
@@ -688,7 +771,7 @@ export async function deleteSpotCharge(id: string): Promise<void> {
 }
 
 export async function getRateCardV3(id: string): Promise<RateCard> {
-  const url = API_BASE_URL + `/api/v3/rate-cards/${id}/`;
+  const url = API_BASE_URL + `/api/v3/ratecards/${id}/`;
   const response = await fetch(url, {
     headers: { Authorization: `Token ${resolveAuthToken()}` },
   });
@@ -1576,6 +1659,74 @@ export interface LogicalRateCard {
   line_count: number;
   currencies: string[];
   corridors: string[];
+}
+
+export interface V4RateCardUploadSuccessResponse {
+  success: true;
+  message: string;
+  processed_rows: number;
+  created_rows: number;
+  updated_rows: number;
+}
+
+export interface V4RateCardUploadErrorResponse {
+  success?: false;
+  message?: string;
+  errors?: Record<string, string>;
+}
+
+export class V4RateCardUploadValidationError extends Error {
+  readonly status: number;
+  readonly errors: Record<string, string>;
+
+  constructor(message: string, errors: Record<string, string>, status = 400) {
+    super(message);
+    this.name = 'V4RateCardUploadValidationError';
+    this.status = status;
+    this.errors = errors;
+  }
+}
+
+export async function uploadV4RateCardCSV(file: File): Promise<V4RateCardUploadSuccessResponse> {
+  const url = API_BASE_URL + '/api/v4/rates/upload/';
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: formData,
+  });
+
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (response.ok) {
+    return payload as V4RateCardUploadSuccessResponse;
+  }
+
+  if (response.status === 400 && payload && typeof payload === 'object') {
+    const data = payload as V4RateCardUploadErrorResponse;
+    throw new V4RateCardUploadValidationError(
+      data.message || 'CSV validation failed.',
+      data.errors && typeof data.errors === 'object' ? data.errors : {},
+      response.status,
+    );
+  }
+
+  const detail = payload && typeof payload === 'object'
+    ? ('message' in (payload as Record<string, unknown>) && typeof (payload as Record<string, unknown>).message === 'string'
+      ? String((payload as Record<string, unknown>).message)
+      : JSON.stringify(payload))
+    : (response.statusText || 'Unknown error');
+
+  throw new Error(`Failed to upload V4 rate card CSV: ${detail}`);
 }
 
 export async function getLogicalRateCards(): Promise<LogicalRateCard[]> {

@@ -37,6 +37,12 @@ export default function RateCardsPage() {
         <div className="container mx-auto py-10">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold">Rate Cards</h1>
+                <Link
+                    href="/pricing/rate-cards/upload"
+                    className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
+                >
+                    [ Upload CSV Rate Card ]
+                </Link>
             </div>
 
             <Card>

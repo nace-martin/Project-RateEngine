@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 from pathlib import Path
 import os
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -73,7 +74,6 @@ INSTALLED_APPS = [
     'quotes',
     'ratecards',
     'services',
-    'pricing_v3',
     'pricing_v4',  # Greenfield pricing engine
 ]
 
@@ -111,14 +111,26 @@ WSGI_APPLICATION = 'rate_engine.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
-# Uses DATABASE_URL environment variable if set, otherwise falls back to SQLite
+# Development may fall back to SQLite, but production must provide DATABASE_URL.
+_database_url = os.environ.get('DATABASE_URL', '').strip()
+if not DEBUG and not _database_url:
+    raise ImproperlyConfigured("DATABASE_URL must be set in production")
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+if _database_url:
+    _default_db = dj_database_url.parse(
+        _database_url,
         conn_max_age=600,
         conn_health_checks=True,
     )
+else:
+    _default_db = dj_database_url.parse(
+        f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
+
+DATABASES = {
+    'default': _default_db
 }
 
 
@@ -193,6 +205,10 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 REST_FRAMEWORK = {
+    # Secure-by-default: endpoints must explicitly opt out (e.g. public quote links).
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
     ],
@@ -325,11 +341,6 @@ LOGGING = {
             'propagate': False,
         },
         'quotes': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'pricing_v3': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

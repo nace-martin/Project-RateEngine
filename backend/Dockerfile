@@ -20,3 +20,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application's code
 COPY . /app/
+
+# Production startup wrapper (collectstatic + migrate + gunicorn)
+RUN chmod +x /app/entrypoint.prod.sh

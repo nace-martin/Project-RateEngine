@@ -2,6 +2,7 @@ import logging
 import copy
 from decimal import Decimal
 from dataclasses import replace
+from typing import Any
 
 from django.db import transaction
 from django.db.models import Q
@@ -17,8 +18,7 @@ from rest_framework.decorators import action
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
 from quotes.serializers import QuoteModelSerializerV3, QuoteListSerializerV3
 from services.models import ServiceComponent
-# from pricing_v2.pricing_service_v3 import PricingServiceV3
-from pricing_v4.adapter import PricingServiceV4Adapter as PricingServiceV3
+from pricing_v4.adapter import PricingServiceV4Adapter
 from core.dataclasses import QuoteInput, ManualOverride
 
 # RBAC permissions
@@ -59,7 +59,7 @@ def _serialize_overrides_for_payload(overrides):
     return serialized
 
 
-def _create_quote_version_from_service(quote: Quote, payload: dict, charges, service: PricingServiceV3, user):
+def _create_quote_version_from_service(quote: Quote, payload: dict, charges, service: PricingServiceV4Adapter, user):
     latest_version = quote.versions.order_by('-version_number').first()
     version_number = 1
     if latest_version:
@@ -331,6 +331,108 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+    @action(detail=True, methods=['get'], url_path='compute_v3')
+    def compute_v3(self, request, *args, **kwargs):
+        """
+        Compatibility endpoint for legacy frontend quote compute fetches.
+
+        Returns a QuoteComputeResult-shaped payload synthesized from the stored
+        latest quote version (which is now produced by the V4 engine).
+        """
+        quote = self.get_object()
+        latest_version = quote.versions.order_by('-version_number').first()
+        if not latest_version:
+            return Response(
+                {'detail': 'Quote has no computed version data.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        totals = getattr(latest_version, 'totals', None)
+        lines = list(latest_version.lines.select_related('service_component').all())
+        display_currency = (
+            getattr(quote, 'output_currency', None)
+            or getattr(totals, 'total_sell_fcy_currency', None)
+            or 'PGK'
+        )
+
+        exchange_rates: dict[str, str] = {}
+        sell_lines: list[dict[str, Any]] = []
+        for line in lines:
+            sc = getattr(line, 'service_component', None)
+            component_code = getattr(sc, 'code', None) or 'MANUAL'
+            leg = getattr(line, 'leg', None) or getattr(sc, 'leg', None) or 'MAIN'
+            sell_currency = line.sell_fcy_currency or display_currency or 'PGK'
+            if str(sell_currency).upper() != 'PGK':
+                line_gst_amount = (line.sell_fcy_incl_gst - line.sell_fcy).quantize(Decimal('0.01'))
+            else:
+                line_gst_amount = (line.sell_pgk_incl_gst - line.sell_pgk).quantize(Decimal('0.01'))
+            if line.exchange_rate and sell_currency and sell_currency.upper() != 'PGK':
+                exchange_rates[f"{sell_currency.upper()}/PGK"] = str(line.exchange_rate)
+
+            sell_lines.append({
+                'id': str(line.id),
+                'line_type': 'COMPONENT',
+                'component': component_code,
+                'description': line.cost_source_description or getattr(sc, 'description', '') or 'Charge',
+                'leg': leg,
+                'cost_pgk': str(line.cost_pgk),
+                'sell_pgk': str(line.sell_pgk),
+                'sell_pgk_incl_gst': str(line.sell_pgk_incl_gst),
+                'gst_amount': str(line_gst_amount),
+                'sell_fcy': str(line.sell_fcy),
+                'sell_fcy_incl_gst': str(line.sell_fcy_incl_gst),
+                'sell_currency': sell_currency,
+                'margin_percent': None,
+                'exchange_rate': str(line.exchange_rate or Decimal('1')),
+                'source': line.cost_source or 'stored_quote',
+                'is_rate_missing': bool(line.is_rate_missing),
+                'is_informational': bool(getattr(line, 'is_informational', False)),
+            })
+
+        notes: list[str] = []
+        if totals and totals.notes:
+            notes.append(str(totals.notes))
+        if totals and totals.has_missing_rates and not notes:
+            notes.append("Quote contains missing rates and may be incomplete.")
+
+        payload = {
+            'quote_id': str(quote.id),
+            'quote_number': quote.quote_number,
+            'buy_lines': [],
+            'sell_lines': sell_lines,
+            'totals': {
+                'total_sell_ex_gst': (
+                    str(totals.total_sell_fcy if display_currency != 'PGK' else totals.total_sell_pgk)
+                    if totals else '0.00'
+                ),
+                'cost_pgk': str(totals.total_cost_pgk if totals else Decimal('0.00')),
+                'sell_pgk': str(totals.total_sell_pgk if totals else Decimal('0.00')),
+                'sell_pgk_incl_gst': str(totals.total_sell_pgk_incl_gst if totals else Decimal('0.00')),
+                'gst_amount': (
+                    str(
+                        (totals.total_sell_fcy_incl_gst - totals.total_sell_fcy).quantize(Decimal('0.01'))
+                        if str(display_currency).upper() != 'PGK'
+                        else (totals.total_sell_pgk_incl_gst - totals.total_sell_pgk).quantize(Decimal('0.01'))
+                    )
+                    if totals else '0.00'
+                ),
+                'caf_pgk': '0.00',
+                'currency': display_currency,
+                'total_sell_fcy': str(totals.total_sell_fcy if totals else Decimal('0.00')),
+                'total_sell_fcy_incl_gst': str(totals.total_sell_fcy_incl_gst if totals else Decimal('0.00')),
+                'total_quote_amount': (
+                    str(totals.total_sell_fcy_incl_gst if str(display_currency).upper() != 'PGK' else totals.total_sell_pgk_incl_gst)
+                    if totals else '0.00'
+                ),
+                'total_sell_fcy_currency': str(totals.total_sell_fcy_currency if totals else display_currency),
+            },
+            'exchange_rates': exchange_rates,
+            'computation_date': latest_version.created_at.isoformat() if latest_version.created_at else timezone.now().isoformat(),
+            'routing': None,
+            'notes': notes,
+        }
+        return Response(payload)
+
 
 class QuoteTransitionAPIView(APIView):
     """
@@ -544,7 +646,7 @@ class QuoteVersionCreateAPIView(APIView):
 
     def post(self, request, *args, **kwargs):
         """
-        Creates a new QuoteVersion by re-running the PricingServiceV3 with manual overrides.
+        Creates a new QuoteVersion by re-running the PricingServiceV4Adapter with manual overrides.
         """
         quote_id = self.kwargs.get("quote_id")
         # SECURITY FIX: Enforce IDOR protection
@@ -598,7 +700,7 @@ class QuoteVersionCreateAPIView(APIView):
 
         # 4. Run the REAL Pricing Engine
         try:
-            service = PricingServiceV3(quote_input)
+            service = PricingServiceV4Adapter(quote_input)
             charges = service.calculate_charges()
         except Exception as e:
             logger.error(f"Pricing engine failed: {e}", exc_info=True)

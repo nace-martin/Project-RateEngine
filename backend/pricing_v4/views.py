@@ -1,11 +1,16 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, permissions
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError as DjangoValidationError
 
-from .serializers import QuoteRequestSerializerV4
+from .serializers import QuoteRequestSerializerV4, scrub_pricing_result_payload
 from .engine import PricingEngineFactory
 from .engine.export_engine import ExportPricingEngine
+from .services.csv_importer import (
+    V4RateCSVImportValidationError,
+    import_v4_rate_cards_csv,
+)
 
 import logging
 
@@ -17,6 +22,7 @@ class PricingEngineView(APIView):
     
     Path: /api/v4/quote/calculate/
     """
+    permission_classes = [permissions.IsAuthenticated]
     
     def post(self, request):
         serializer = QuoteRequestSerializerV4(data=request.data)
@@ -56,7 +62,7 @@ class PricingEngineView(APIView):
             # 3. Serialize Result
             # For now, just dumping the dataclass as dict
             # We might want a serializer for the response later
-            response_data = self._serialize_result(result)
+            response_data = self._serialize_result(result, request)
             
             # 4. Check for 'No Rate Found'
             # If total_sell is zero and we expected charges, or explicit error flags
@@ -82,7 +88,7 @@ class PricingEngineView(APIView):
             logger.exception("Pricing Engine Error")
             return Response({"error": "Internal Pricing Engine Error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def _serialize_result(self, result):
+    def _serialize_result(self, result, request):
         """
         Helper to convert Dataclasses to Dict.
         """
@@ -91,14 +97,19 @@ class PricingEngineView(APIView):
             
         # Recursive conversion or simple dict
         import dataclasses
-        return dataclasses.asdict(result)
+        raw_data = dataclasses.asdict(result)
+        include_internal_fields = IsManagerOrAdmin().has_permission(request, self)
+        return scrub_pricing_result_payload(
+            raw_data,
+            include_internal_fields=include_internal_fields,
+        )
 
 
 # =============================================================================
 # CUSTOMER DISCOUNT VIEWSET
 # =============================================================================
 
-from rest_framework import viewsets, permissions, filters
+from rest_framework import viewsets, filters
 from .models import CustomerDiscount, ProductCode
 from .serializers import CustomerDiscountSerializer, CustomerDiscountListSerializer, ProductCodeSerializer
 
@@ -116,6 +127,56 @@ class IsManagerOrAdmin(permissions.BasePermission):
         return getattr(request.user, 'role', None) in ['manager', 'admin']
 
 
+class V4RateCardUploadView(APIView):
+    """
+    Bulk import V4 SELL rate rows from CSV into Export/Import/Domestic rate tables.
+
+    Path: /api/v4/rates/upload/
+    """
+    permission_classes = [IsManagerOrAdmin]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        upload_file = request.FILES.get("file")
+        if not upload_file:
+            return Response(
+                {"success": False, "message": "CSV file is required (multipart field: file)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = import_v4_rate_cards_csv(upload_file)
+        except V4RateCSVImportValidationError as exc:
+            return Response(
+                {
+                    "success": False,
+                    "message": exc.message,
+                    "errors": exc.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception("V4 CSV bulk import failed")
+            return Response(
+                {
+                    "success": False,
+                    "message": "Bulk import failed due to an internal error. No rows were imported.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "success": True,
+                "message": "V4 rate CSV import completed successfully.",
+                "processed_rows": result.processed_rows,
+                "created_rows": result.created_rows,
+                "updated_rows": result.updated_rows,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class CustomerDiscountViewSet(viewsets.ModelViewSet):
     """
     API endpoint for managing customer-specific discounts.
@@ -126,10 +187,28 @@ class CustomerDiscountViewSet(viewsets.ModelViewSet):
     queryset = CustomerDiscount.objects.select_related(
         'customer', 'product_code'
     ).order_by('-created_at')
-    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['customer__name', 'product_code__code', 'product_code__description', 'notes']
     ordering_fields = ['created_at', 'valid_until', 'customer__name']
+
+    def get_permissions(self):
+        # Read requires auth; write requires manager/admin.
+        if self.request.method in permissions.SAFE_METHODS:
+            permission_classes = [permissions.IsAuthenticated]
+        else:
+            permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        role = getattr(self.request.user, 'role', None)
+
+        # Sales users must not enumerate commercial discount tables.
+        if role == 'sales':
+            return qs.none()
+
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':

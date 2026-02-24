@@ -149,7 +149,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 elif payload.service_scope == 'D2D' and payload.payment_term == 'PREPAID':
                     payload.incoterm = 'DAP'
 
-            # 2. Prepare input for PricingServiceV3
+            # 2. Prepare input for the pricing pipeline (V4-only dispatcher)
             quote_input = self._build_quote_input(
                 payload,
                 shipment_type,
@@ -162,7 +162,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             dispatcher = PricingDispatcher()
             result = dispatcher.calculate(quote_input)
             calculated_charges = result.charges
-            engine_version = result.engine_version
+            engine_version = 'V4'
             
             # Get derived values from the adapter (via charges)
             from pricing_v4.adapter import PricingServiceV4Adapter

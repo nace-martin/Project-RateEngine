@@ -11,8 +11,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-rateengine}
       POSTGRES_USER: ${POSTGRES_USER:-rateengine}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -25,8 +23,7 @@ services:
     build: ./backend
     container_name: rateengine_backend
     restart: unless-stopped
-    # Production: use Gunicorn with 4 workers
-    command: gunicorn rate_engine.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --access-logfile - --error-logfile -
+    entrypoint: ["/app/entrypoint.prod.sh"]
     volumes:
       - ./backend/staticfiles:/app/staticfiles
     ports:

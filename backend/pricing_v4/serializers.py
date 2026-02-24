@@ -1,9 +1,54 @@
+from typing import Any
+
 from rest_framework import serializers
 from .models import (
     ProductCode, DomesticCOGS, ExportCOGS, ImportCOGS,
     ComponentMargin, CustomerDiscount, Surcharge
 )
 from parties.models import Company
+
+
+def _is_internal_pricing_field(field_name: str) -> bool:
+    """
+    Identify internal/commercial-sensitive pricing fields that must not be
+    exposed to Sales users (or any non-manager/admin caller).
+    """
+    key = (field_name or "").lower()
+    if not key:
+        return False
+    if key.startswith("buy_"):
+        return True
+    if "cogs" in key or "margin" in key:
+        return True
+    # V4 engine payloads primarily expose COGS via cost_* / total_cost fields.
+    if key.startswith("cost") or "_cost" in key:
+        return True
+    return False
+
+
+def scrub_pricing_result_payload(payload: Any, include_internal_fields: bool = False) -> Any:
+    """
+    Recursively remove internal pricing fields (COGS / cost / buy / margin)
+    from a V4 pricing response unless explicitly allowed.
+    """
+    if include_internal_fields:
+        return payload
+
+    if isinstance(payload, dict):
+        sanitized = {}
+        for key, value in payload.items():
+            if _is_internal_pricing_field(str(key)):
+                continue
+            sanitized[key] = scrub_pricing_result_payload(value, include_internal_fields=False)
+        return sanitized
+
+    if isinstance(payload, list):
+        return [scrub_pricing_result_payload(item, include_internal_fields=False) for item in payload]
+
+    if isinstance(payload, tuple):
+        return tuple(scrub_pricing_result_payload(item, include_internal_fields=False) for item in payload)
+
+    return payload
 
 class ProductCodeSerializer(serializers.ModelSerializer):
     class Meta:

@@ -332,10 +332,12 @@ class ExportPricingEngine:
         pc = self._get_product_code(product_code_id)
         if pc and pc.category in LOCAL_CATEGORIES:
             payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
-            local = LocalSellRate.objects.filter(
+            local_rates = LocalSellRate.objects.filter(
                 product_code_id=product_code_id, location=self.origin, direction='EXPORT',
                 payment_term__in=[payment_term_value, 'ANY'], valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
-            ).order_by('payment_term').first()
+            )
+            # Priority: exact payment term first, then ANY fallback (matches import engine behavior)
+            local = local_rates.filter(payment_term=payment_term_value).first() or local_rates.filter(payment_term='ANY').first()
             if local: return local
         if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache: return self._sell_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'SELL'))
