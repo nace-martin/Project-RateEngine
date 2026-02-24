@@ -13,7 +13,7 @@ import { SmartMoneyInput } from "./SmartMoneyInput";
 interface ChargeBucketSectionProps {
     bucket: { id: SPEChargeBucket; label: string };
     control: Control<SpotFormValues>;
-    fields: FieldArrayWithId<SpotFormValues, "charges", "id">[];
+    fields: { field: FieldArrayWithId<SpotFormValues, "charges", "id">; index: number }[];
     onAdd: () => void;
     onRemove: UseFieldArrayRemove;
 }

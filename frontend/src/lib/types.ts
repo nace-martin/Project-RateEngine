@@ -133,6 +133,8 @@ export interface V3QuoteComputeRequest {
   is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];
   output_currency?: string;
+  origin_airport?: string;
+  destination_airport?: string;
   spot_rates?: Record<string, unknown>;
 }
 
@@ -150,6 +152,7 @@ export interface V3ServiceComponent {
 export interface V3QuoteLine {
   id: string; // UUID
   service_component: V3ServiceComponent;
+  leg?: string;
   cost_pgk: string;
   cost_fcy?: string | null;
   cost_fcy_currency?: string | null;
@@ -179,10 +182,18 @@ export interface V3QuoteTotal {
   total_cost_pgk?: string;
 
   // Sell totals in PGK
+  sell_pgk?: string;
+  sell_pgk_incl_gst?: string;
   total_sell_pgk?: string;
   total_sell_pgk_incl_gst?: string;
+  total_sell_ex_gst?: string;
+  total_quote_amount?: string;
+  total_gst?: string;
+  gst_pgk?: string;
 
   // Sell totals in FCY
+  sell_fcy?: string;
+  sell_fcy_incl_gst?: string;
   total_sell_fcy: string;
   total_sell_fcy_incl_gst: string;
   total_sell_fcy_currency: string;

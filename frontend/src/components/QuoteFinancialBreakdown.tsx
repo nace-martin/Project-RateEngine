@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { QuoteComputeResult, SellLine } from "@/lib/types";
+import { QuoteComputeResult, SellLine, V3QuoteComputeResponse } from "@/lib/types";
 import {
     Card,
     CardContent,
@@ -20,21 +20,20 @@ import { Separator } from "@/components/ui/separator";
 import { ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane } from "lucide-react";
 
 interface QuoteFinancialBreakdownProps {
-    result: QuoteComputeResult;
+    result: QuoteComputeResult | V3QuoteComputeResponse;
 }
 
-type BreakdownScalar = string | number | boolean | null | undefined;
-type BreakdownLine = SellLine & Record<string, BreakdownScalar>;
-type BreakdownTotals = Record<string, BreakdownScalar> & QuoteComputeResult["totals"];
+type LooseRecord = Record<string, unknown>;
+type BreakdownLine = SellLine & { sell_fcy_currency?: string };
 type BreakdownDataShape = {
     latest_version?: {
         sell_lines?: BreakdownLine[];
         lines?: BreakdownLine[];
-        totals?: BreakdownTotals;
+        totals?: LooseRecord;
     };
     sell_lines?: BreakdownLine[];
     lines?: BreakdownLine[];
-    totals?: BreakdownTotals;
+    totals?: LooseRecord;
 };
 
 // Simplified currency display without symbol (for cleaner table display)
@@ -60,11 +59,20 @@ function getBucket(line: SellLine): BucketType {
 // Calculate bucket subtotal
 function calculateBucketTotal(lines: BreakdownLine[], field: string): number {
     return lines.reduce((sum, line) => {
-        // Handle field aliases (e.g., sell_pgk vs total_sell_pgk)
-        const rawValue = line[field];
+        const rawValue = ((line as unknown) as Record<string, unknown>)[field];
         const value = parseFloat(String(rawValue ?? '0'));
         return sum + value;
     }, 0);
+}
+
+function readField(obj: unknown, key: string): unknown {
+    if (!obj || typeof obj !== "object") return undefined;
+    return (obj as Record<string, unknown>)[key];
+}
+
+function readStringField(obj: unknown, key: string): string | undefined {
+    const value = readField(obj, key);
+    return typeof value === "string" ? value : undefined;
 }
 
 
@@ -73,12 +81,12 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     // If we receive a full Quote object (V3), map its latest_version to the expected fields
     const normalizedResult = result as unknown as BreakdownDataShape;
     const data = normalizedResult.latest_version ?? normalizedResult;
-    const sell_lines: BreakdownLine[] = data.sell_lines || data.lines || [];
+    const sell_lines = ((data.sell_lines || data.lines || []) as unknown[]) as BreakdownLine[];
     const totals = data.totals;
 
     // Detect display currency and logic flags
     const firstLineCurrency = sell_lines[0]?.sell_fcy_currency || sell_lines[0]?.sell_currency || 'PGK';
-    const displayCurrency = totals?.currency || totals?.total_sell_fcy_currency || firstLineCurrency;
+    const displayCurrency = readStringField(totals, 'currency') || readStringField(totals, 'total_sell_fcy_currency') || firstLineCurrency;
     const isShowingFCY = displayCurrency !== 'PGK';
 
     // Separate informational (conditional) charges from priced lines
@@ -86,27 +94,27 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     const informationalLines = sell_lines.filter((line) => line.is_informational);
 
     // Group PRICED lines by bucket (not informational ones)
-    const buckets: Record<BucketType, SellLine[]> = {
+    const buckets: Record<BucketType, BreakdownLine[]> = {
         ORIGIN: [],
         FREIGHT: [],
         DESTINATION: [],
     };
 
-    pricedLines.forEach((line: SellLine) => {
+    pricedLines.forEach((line) => {
         const bucket = getBucket(line);
         buckets[bucket].push(line);
     });
 
     // 3. Robust Total Mapping - Exhaustive check of all possible backend field names
     const totalExGst = isShowingFCY
-        ? parseFloat(totals?.total_sell_ex_gst || totals?.total_sell_fcy || totals?.sell_fcy || '0')
-        : parseFloat(totals?.total_sell_pgk || totals?.sell_pgk || '0');
+        ? parseFloat(String(readField(totals, 'total_sell_ex_gst') ?? readField(totals, 'total_sell_fcy') ?? readField(totals, 'sell_fcy') ?? '0'))
+        : parseFloat(String(readField(totals, 'total_sell_pgk') ?? readField(totals, 'sell_pgk') ?? '0'));
         
-    const totalGst = parseFloat(totals?.gst_amount || totals?.total_gst || totals?.gst_pgk || '0');
+    const totalGst = parseFloat(String(readField(totals, 'gst_amount') ?? readField(totals, 'total_gst') ?? readField(totals, 'gst_pgk') ?? '0'));
     
     const totalIncGst = isShowingFCY
-        ? parseFloat(totals?.total_quote_amount || totals?.total_sell_fcy_incl_gst || totals?.sell_fcy_incl_gst || totals?.total_sell_fcy || '0')
-        : parseFloat(totals?.total_sell_pgk_incl_gst || totals?.sell_pgk_incl_gst || totals?.sell_pgk || '0');
+        ? parseFloat(String(readField(totals, 'total_quote_amount') ?? readField(totals, 'total_sell_fcy_incl_gst') ?? readField(totals, 'sell_fcy_incl_gst') ?? readField(totals, 'total_sell_fcy') ?? '0'))
+        : parseFloat(String(readField(totals, 'total_sell_pgk_incl_gst') ?? readField(totals, 'sell_pgk_incl_gst') ?? readField(totals, 'sell_pgk') ?? '0'));
 
 
 
@@ -119,7 +127,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                         Financial Breakdown
                     </CardTitle>
                     <span className="text-xs text-slate-400">
-                        Computed {result.computation_date}
+                        Computed {"computation_date" in result ? result.computation_date : result.latest_version?.created_at}
                     </span>
                 </div>
             </CardHeader>

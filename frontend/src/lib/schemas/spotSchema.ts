@@ -40,5 +40,7 @@ export const spotFormSchema = z.object({
     ),
 });
 
-export type SpotFormValues = z.infer<typeof spotFormSchema>;
-export type SpotChargeLineValues = z.infer<typeof chargeLineSchema>;
+export type SpotFormInputValues = z.input<typeof spotFormSchema>;
+export type SpotFormSubmitValues = z.output<typeof spotFormSchema>;
+export type SpotFormValues = SpotFormInputValues;
+export type SpotChargeLineValues = z.input<typeof chargeLineSchema>;

@@ -14,7 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Form } from "@/components/ui/form";
 
 import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion } from "@/lib/spot-types";
-import { spotFormSchema, type SpotFormValues } from "@/lib/schemas/spotSchema";
+import { spotFormSchema, type SpotFormInputValues, type SpotFormSubmitValues } from "@/lib/schemas/spotSchema";
 import { ChargeBucketSection } from "./ChargeBucketSection";
 
 interface SpotRateEntryFormProps {
@@ -113,7 +113,7 @@ export function SpotRateEntryForm({
     }, [shipmentType, serviceScope, initialCharges, suggestedCharges]);
 
     // Initial values
-    const defaultValues: SpotFormValues = {
+    const defaultValues: SpotFormInputValues = {
         charges: initialCharges.length > 0
             ? initialCharges.map(c => ({
                 id: c.id,
@@ -132,7 +132,7 @@ export function SpotRateEntryForm({
             : []
     };
 
-    const form = useForm<SpotFormValues>({
+    const form = useForm<SpotFormInputValues, unknown, SpotFormSubmitValues>({
         resolver: zodResolver(spotFormSchema),
         defaultValues,
         mode: "onChange",
@@ -143,7 +143,7 @@ export function SpotRateEntryForm({
         name: "charges",
     });
 
-    const handleFormSubmit = async (data: SpotFormValues) => {
+    const handleFormSubmit = async (data: SpotFormSubmitValues) => {
         const charges: Omit<SPEChargeLine, 'id'>[] = data.charges.map(l => {
             const isWeightBased = l.unit === "min_or_per_kg" || l.unit === "per_kg";
             return {
