@@ -508,8 +508,6 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
             
-            logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
-            
             serializer = SpotPricingEnvelopeSerializer(spe_db)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:

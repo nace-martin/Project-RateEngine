@@ -328,6 +328,12 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
+        # Dev server access logs (avoid duplicate emission via parent/root loggers)
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
         # Security-related logs (bad host headers, CSRF failures, etc.)
         'django.security': {
             'handlers': ['console'],
