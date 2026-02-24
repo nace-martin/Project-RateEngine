@@ -1,14 +1,14 @@
-from __future__ import annotations
-
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Dict, List
+import logging
 
 import requests
 from bs4 import BeautifulSoup
 
 from . import RateRow
 
+logger = logging.getLogger(__name__)
 
 def d(val) -> Decimal:
     if isinstance(val, Decimal):
@@ -30,9 +30,13 @@ class BspHtmlProvider:
             "User-Agent": "RateEngineFXBot/1.0 (+https://example.com)",
             "Accept": "text/html,application/xhtml+xml",
         }
-        resp = requests.get(self.url, headers=headers, timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.text
+        try:
+            resp = requests.get(self.url, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.text
+        except requests.exceptions.RequestException as e:
+            logger.error(f"BSP FX Scraper: Network request failed to {self.url}. Error: {e}")
+            raise RuntimeError(f"BSP Network Error: {e}")
 
     @staticmethod
     def _round4(x: Decimal) -> Decimal:
@@ -40,71 +44,90 @@ class BspHtmlProvider:
 
     @staticmethod
     def _parse_rates(html: str) -> Dict[str, Dict[str, Decimal]]:
-        soup = BeautifulSoup(html, "html.parser")
-        table = None
-        for t in soup.find_all("table"):
-            # Find header cells that look like TT Buy/Sell
-            headers = [th.get_text(strip=True) for th in t.find_all("th")]
-            normalized = [h.lower() for h in headers]
-            if any("tt buy" in h for h in normalized) and any("tt sell" in h for h in normalized):
-                table = t
-                break
-        if table is None:
-            raise RuntimeError("BSP FX: table not found")
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            table = None
+            for t in soup.find_all("table"):
+                # Find header cells that look like TT Buy/Sell
+                headers = [th.get_text(strip=True) for th in t.find_all("th")]
+                normalized = [h.lower() for h in headers]
+                if any("tt buy" in h for h in normalized) and any("tt sell" in h for h in normalized):
+                    table = t
+                    break
+            
+            if table is None:
+                logger.error("BSP FX Scraper: Required exchange rate table not found in HTML structure.")
+                raise AttributeError("Exchange rate table missing")
 
-        rates: Dict[str, Dict[str, Decimal]] = {}
-        # Expect rows with columns: Currency | Code | TT Buy | Notes Buy | A/M Buy | TT Sell | Notes Sell
-        for tr in table.find_all("tr"):
-            tds = tr.find_all(["td", "th"])
-            if len(tds) < 6:
-                continue
-            # Attempt to read code and tt values
-            code = tds[1].get_text(strip=True).upper()
-            # Some tables may put code in first column; fallback if secondary empty or not 3 letters
-            if not (len(code) == 3 and code.isalpha()):
-                code_primary = tds[0].get_text(strip=True).upper()
-                if len(code_primary) == 3 and code_primary.isalpha():
-                    code = code_primary
-            if len(code) != 3 or not code.isalpha() or code == "CODE":
-                continue
-            try:
-                tt_buy_txt = tds[2].get_text(strip=True).replace(",", "")
-                tt_sell_txt = tds[5].get_text(strip=True).replace(",", "")
-                tt_buy = d(tt_buy_txt)
-                tt_sell = d(tt_sell_txt)
-            except Exception:
-                continue
-            # Keep zeros; decision to skip is made per-direction in fetch()
-            rates[code] = {"TT_BUY": tt_buy, "TT_SELL": tt_sell}
-        return rates
+            rates: Dict[str, Dict[str, Decimal]] = {}
+            # Expect rows with columns: Currency | Code | TT Buy | Notes Buy | A/M Buy | TT Sell | Notes Sell
+            for tr in table.find_all("tr"):
+                tds = tr.find_all(["td", "th"])
+                if len(tds) < 6:
+                    continue
+                # Attempt to read code and tt values
+                code = tds[1].get_text(strip=True).upper()
+                # Some tables may put code in first column; fallback if secondary empty or not 3 letters
+                if not (len(code) == 3 and code.isalpha()):
+                    code_primary = tds[0].get_text(strip=True).upper()
+                    if len(code_primary) == 3 and code_primary.isalpha():
+                        code = code_primary
+                if len(code) != 3 or not code.isalpha() or code == "CODE":
+                    continue
+                try:
+                    tt_buy_txt = tds[2].get_text(strip=True).replace(",", "")
+                    tt_sell_txt = tds[5].get_text(strip=True).replace(",", "")
+                    tt_buy = d(tt_buy_txt)
+                    tt_sell = d(tt_sell_txt)
+                except (ValueError, TypeError, IndexError, InvalidOperation) as e:
+                    logger.warning(f"BSP FX Scraper: Failed to parse row for {code}. Error: {e}")
+                    continue
+                # Keep zeros; decision to skip is made per-direction in fetch()
+                rates[code] = {"TT_BUY": tt_buy, "TT_SELL": tt_sell}
+            return rates
+        except (AttributeError, TypeError) as e:
+            logger.error(f"BSP FX Scraper: HTML parsing failed. The site structure may have changed. Error: {e}")
+            raise RuntimeError(f"BSP Parse Error: {e}")
 
     def fetch(self, pairs: List[str]) -> List[RateRow]:
-        html = self._fetch_html()
-        table = self._parse_rates(html)
+        try:
+            html = self._fetch_html()
+            table = self._parse_rates(html)
+        except Exception as e:
+            # Re-raise to allow the management command/service to handle fallback
+            logger.error(f"BSP FX Scraper: Fetch failed. {e}")
+            raise
+
         as_of = datetime.now(timezone.utc)
         out: List[RateRow] = []
         for pair in pairs:
             if ":" not in pair:
                 continue
             base, quote = [p.strip().upper() for p in pair.split(":", 1)]
-            if base == "PGK" and quote in table:
-                raw_buy = table[quote]["TT_BUY"]; raw_sell = table[quote]["TT_SELL"]
-                if raw_buy != Decimal("0.0000"):
-                    out.append(RateRow(as_of, base, quote, self._round4(raw_buy), "BUY", "bsp_html"))
-                if raw_sell != Decimal("0.0000"):
-                    out.append(RateRow(as_of, base, quote, self._round4(raw_sell), "SELL", "bsp_html"))
-            elif quote == "PGK" and base in table:
-                # Invert rates and SWAP labels:
-                # BSP TT_BUY = rate when bank buys FCY from you (you SELL FCY) → becomes our SELL
-                # BSP TT_SELL = rate when bank sells FCY to you (you BUY FCY) → becomes our BUY
-                buy_raw = table[base]["TT_BUY"]
-                sell_raw = table[base]["TT_SELL"]
-                if sell_raw and sell_raw != Decimal("0.0000"):
-                    # Customer BUY rate = inverted BSP TT_SELL
-                    inv_buy = self._round4(Decimal(1) / sell_raw)
-                    out.append(RateRow(as_of, base, quote, inv_buy, "BUY", "bsp_html"))
-                if buy_raw and buy_raw != Decimal("0.0000"):
-                    # Customer SELL rate = inverted BSP TT_BUY
-                    inv_sell = self._round4(Decimal(1) / buy_raw)
-                    out.append(RateRow(as_of, base, quote, inv_sell, "SELL", "bsp_html"))
+            
+            try:
+                if base == "PGK" and quote in table:
+                    raw_buy = table[quote]["TT_BUY"]; raw_sell = table[quote]["TT_SELL"]
+                    if raw_buy != Decimal("0.0000"):
+                        out.append(RateRow(as_of, base, quote, self._round4(raw_buy), "BUY", "bsp_html"))
+                    if raw_sell != Decimal("0.0000"):
+                        out.append(RateRow(as_of, base, quote, self._round4(raw_sell), "SELL", "bsp_html"))
+                elif quote == "PGK" and base in table:
+                    # Invert rates and SWAP labels:
+                    # BSP TT_BUY = rate when bank buys FCY from you (you SELL FCY) → becomes our SELL
+                    # BSP TT_SELL = rate when bank sells FCY to you (you BUY FCY) → becomes our BUY
+                    buy_raw = table[base]["TT_BUY"]
+                    sell_raw = table[base]["TT_SELL"]
+                    if sell_raw and sell_raw != Decimal("0.0000"):
+                        # Customer BUY rate = inverted BSP TT_SELL
+                        inv_buy = self._round4(Decimal(1) / sell_raw)
+                        out.append(RateRow(as_of, base, quote, inv_buy, "BUY", "bsp_html"))
+                    if buy_raw and buy_raw != Decimal("0.0000"):
+                        # Customer SELL rate = inverted BSP TT_BUY
+                        inv_sell = self._round4(Decimal(1) / buy_raw)
+                        out.append(RateRow(as_of, base, quote, inv_sell, "SELL", "bsp_html"))
+            except Exception as e:
+                logger.error(f"BSP FX Scraper: Unexpected error processing pair {base}:{quote}. Error: {e}")
+                continue
+                
         return out

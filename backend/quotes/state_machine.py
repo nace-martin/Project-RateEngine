@@ -32,13 +32,68 @@ VALID_TRANSITIONS = {
     Quote.Status.EXPIRED: [],   # Terminal state
 }
 
-# States that block quote editing
-LOCKED_STATES = [Quote.Status.FINALIZED, Quote.Status.SENT]
+# Terminal quote outcome states (schema uses LOST as the "rejected" equivalent)
+TERMINAL_STATES = (
+    Quote.Status.ACCEPTED,
+    Quote.Status.LOST,
+    Quote.Status.EXPIRED,
+)
+
+# Non-terminal workflow states that remain mutable/transitional
+ACTIVE_STATES = (
+    Quote.Status.DRAFT,
+    Quote.Status.INCOMPLETE,
+    Quote.Status.FINALIZED,
+    Quote.Status.SENT,
+)
+
+# States that block quote editing/recalculation
+LOCKED_STATES = (
+    Quote.Status.FINALIZED,
+    Quote.Status.SENT,
+    Quote.Status.ACCEPTED,
+    Quote.Status.LOST,
+    Quote.Status.EXPIRED,
+)
 
 
 class QuoteStateError(Exception):
     """Raised when an invalid state transition is attempted."""
     pass
+
+
+class QuoteImmutableError(QuoteStateError):
+    """Raised when a terminal quote is modified or recalculated."""
+    pass
+
+
+def _log_terminal_quote_block(
+    quote: Quote,
+    action: str,
+    user: Optional[User] = None,
+    target_status: Optional[str] = None,
+) -> None:
+    logger.warning(
+        "Blocked terminal quote mutation attempt: quote_id=%s user_id=%s action=%s current_status=%s target_status=%s",
+        quote.id,
+        getattr(user, "id", None),
+        action,
+        quote.status,
+        target_status,
+    )
+
+
+def assert_quote_mutable_for_action(
+    quote: Quote,
+    action: str,
+    user: Optional[User] = None,
+) -> None:
+    """
+    Raise if the quote is in a terminal state and cannot be changed.
+    """
+    if quote.status in TERMINAL_STATES:
+        _log_terminal_quote_block(quote, action=action, user=user)
+        raise QuoteImmutableError("Cannot modify or recalculate a finalized quote.")
 
 
 class QuoteStateMachine:
@@ -73,6 +128,8 @@ class QuoteStateMachine:
     
     def can_transition_to(self, target_status: str) -> bool:
         """Check if transition to target status is valid."""
+        if self.current_state in TERMINAL_STATES:
+            return False
         return target_status in self.available_transitions
     
     def transition_to(
@@ -90,6 +147,19 @@ class QuoteStateMachine:
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
         """
+        if self.current_state in TERMINAL_STATES and target_status != self.current_state:
+            _log_terminal_quote_block(
+                self.quote,
+                action="transition_quote_status",
+                user=user,
+                target_status=target_status,
+            )
+            error = (
+                f"Cannot transition from terminal state {self.current_state} to {target_status}. "
+                "Final quote outcomes are immutable."
+            )
+            return False, error
+
         # Validate transition
         if not self.can_transition_to(target_status):
             current = self.current_state

@@ -15,6 +15,11 @@ from quotes.serializers import QuoteComputeRequestSerializer, QuoteModelSerializ
 from quotes.schemas import QuoteComputeRequest
 from accounts.permissions import QuoteAccessPermission
 from quotes.selectors import get_quote_for_user
+from quotes.state_machine import (
+    QuoteImmutableError,
+    assert_quote_mutable_for_action,
+    is_quote_editable,
+)
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
@@ -82,7 +87,19 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         if payload.quote_id:
             # SECURITY FIX: Enforce IDOR protection
             existing_quote = get_quote_for_user(request.user, payload.quote_id)
-            
+
+            try:
+                assert_quote_mutable_for_action(
+                    existing_quote,
+                    action="recalculate_quote",
+                    user=request.user,
+                )
+            except QuoteImmutableError as e:
+                return Response(
+                    {"detail": str(e)},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+             
             if existing_quote.is_archived:
                 if existing_quote.status in (Quote.Status.DRAFT, Quote.Status.INCOMPLETE):
                     return Response(
@@ -95,7 +112,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 )
 
             # Block recalculation for locked quotes (FINALIZED or SENT)
-            from quotes.state_machine import is_quote_editable
             if not is_quote_editable(existing_quote):
                 return Response(
                     {"detail": f"Cannot recalculate. Quote is {existing_quote.status} and locked for editing."},

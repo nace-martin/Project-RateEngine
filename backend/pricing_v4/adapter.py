@@ -703,21 +703,28 @@ class PricingServiceV4Adapter:
         return max(total_actual, total_volumetric)
 
     def _calculate_totals(self, lines: List[CalculatedChargeLine]) -> QuoteCharges:
-        # Filter out informational lines and conditional charges from final totals
+        """
+        Calculates final totals from individual charge lines with strict filtering.
+        Ensures that missing rates and informational lines do NOT bleed into the commercial totals.
+        """
+        # 1. STRICT FILTERING: Explicitly exclude 'informational' and 'missing' rates from financial totals.
+        # This prevents "Ghost Charges" or "Zero-Value placeholders" from distorting the Quote Amount.
         billable_lines = [
             l for l in lines 
-            if not getattr(l, "is_informational", False) and not getattr(l, "conditional", False)
+            if not getattr(l, "is_informational", False) 
+            and not getattr(l, "conditional", False)
+            and not getattr(l, "is_rate_missing", False)
         ]
 
-        # PRIMARY FIX: Sum from line-level values to ensure consistency
-        total_cost_pgk = sum(l.cost_pgk for l in billable_lines)
-        total_sell_pgk = sum(l.sell_pgk for l in billable_lines)
-        total_sell_pgk_incl_gst = sum(l.sell_pgk_incl_gst for l in billable_lines)
+        # 2. SUMMATION INTEGRITY: Sum from the strictly filtered billable lines only.
+        total_cost_pgk = sum((l.cost_pgk for l in billable_lines), Decimal('0.00'))
+        total_sell_pgk = sum((l.sell_pgk for l in billable_lines), Decimal('0.00'))
+        total_sell_pgk_incl_gst = sum((l.sell_pgk_incl_gst for l in billable_lines), Decimal('0.00'))
         
-        # Calculate FCY totals by summing converted line items directly
-        # This prevents rounding drift and ensures Total = Sum(Lines)
-        total_sell_fcy = sum(l.sell_fcy for l in billable_lines).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        total_sell_fcy_incl_gst = sum(l.sell_fcy_incl_gst for l in billable_lines).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        # Calculate FCY totals by summing converted line items directly.
+        # Currency Pipeline Verification: sell_fcy was calculated using TT SELL in the earlier conversion pass.
+        total_sell_fcy = sum((l.sell_fcy for l in billable_lines), Decimal('0.00')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        total_sell_fcy_incl_gst = sum((l.sell_fcy_incl_gst for l in billable_lines), Decimal('0.00')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         fx_rates = self._get_fx_rates_dict()
         output_currency = self.quote_input.output_currency or 'PGK'
@@ -727,28 +734,25 @@ class PricingServiceV4Adapter:
         service_scope = getattr(shipment, "service_scope", None)
         is_dg = getattr(shipment, "is_dangerous_goods", False)
         
-        # 1. Bucket-based completeness evaluation
+        # 3. COMPLETENESS EVALUATION (Safety Handlers)
         coverage = evaluate_from_lines(lines, shipment_type, service_scope)
         
-        # 2. Refined Greenfield Mandatory Validation
+        # Force 'has_missing_rates' flag if any mandatory line is unresolved.
+        # This ensures the UI remains in a "Warning" state even if we provide a partial sum.
         has_missing_rates = not coverage.is_complete
         
-        # Rule: If any mandatory line (even if billed at 0.00) is explicitly marked as missing, force flag
-        if any(getattr(l, "is_rate_missing", False) for l in billable_lines):
+        if any(getattr(l, "is_rate_missing", False) for l in lines):
             has_missing_rates = True
             
-        # Rule: Check if all mandatory IDs from engine are present in resolved lines
         mandatory_ids = []
         if shipment_type == 'EXPORT':
             mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
         elif shipment_type == 'IMPORT':
             mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
             
-        # Map ServiceComponent codes to ProductCode IDs for validation
         resolved_codes = {l.service_component_code for l in lines}
         resolved_ids = set()
         if mandatory_ids:
-            # Reverse lookup ProductCode IDs from codes in result
             resolved_ids = set(ProductCode.objects.filter(
                 code__in=resolved_codes
             ).values_list('id', flat=True))
@@ -757,7 +761,7 @@ class PricingServiceV4Adapter:
         if missing_mandatories:
             has_missing_rates = True
             missing_codes = list(ProductCode.objects.filter(id__in=missing_mandatories).values_list('code', flat=True))
-            logger.warning(f"Mandatory ProductCodes missing from result: {missing_codes} (IDs: {missing_mandatories})")
+            logger.warning(f"Mandatory ProductCodes missing: {missing_codes}")
 
         totals = CalculatedTotals(
             total_cost_pgk=total_cost_pgk,

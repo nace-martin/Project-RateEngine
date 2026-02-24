@@ -15,8 +15,11 @@ from rest_framework.test import APIClient
 
 from quotes.models import Quote, QuoteVersion
 from quotes.state_machine import (
+    QuoteImmutableError,
     QuoteStateMachine,
     QuoteStateError,
+    TERMINAL_STATES,
+    assert_quote_mutable_for_action,
     is_quote_editable,
     get_status_display_info,
     VALID_TRANSITIONS,
@@ -220,6 +223,19 @@ class TestQuoteStateMachine:
         draft_quote.refresh_from_db()
         assert draft_quote.status == Quote.Status.DRAFT  # Unchanged
 
+    def test_terminal_state_cannot_transition_back_to_draft(self, finalized_quote, user):
+        finalized_quote.status = Quote.Status.ACCEPTED
+        finalized_quote.save(update_fields=['status'])
+
+        machine = QuoteStateMachine(finalized_quote)
+        success, error = machine.transition_to(Quote.Status.DRAFT, user)
+
+        assert success is False
+        assert error is not None
+        assert 'terminal state' in error
+        finalized_quote.refresh_from_db()
+        assert finalized_quote.status == Quote.Status.ACCEPTED
+
 
 # --- Utility Function Tests ---
 
@@ -239,6 +255,24 @@ class TestUtilityFunctions:
         finalized_quote.refresh_from_db()
         
         assert is_quote_editable(finalized_quote) is False
+
+    def test_is_quote_editable_terminal_states(self, finalized_quote):
+        for terminal_status in TERMINAL_STATES:
+            finalized_quote.status = terminal_status
+            finalized_quote.save(update_fields=['status'])
+            finalized_quote.refresh_from_db()
+            assert is_quote_editable(finalized_quote) is False
+
+    def test_assert_quote_mutable_for_action_raises_for_terminal(self, finalized_quote, user):
+        finalized_quote.status = Quote.Status.EXPIRED
+        finalized_quote.save(update_fields=['status'])
+
+        with pytest.raises(QuoteImmutableError):
+            assert_quote_mutable_for_action(
+                finalized_quote,
+                action="recalculate_quote",
+                user=user,
+            )
     
     def test_get_status_display_info_draft(self):
         info = get_status_display_info(Quote.Status.DRAFT)
@@ -253,6 +287,9 @@ class TestUtilityFunctions:
     def test_locked_states_configuration(self):
         assert Quote.Status.FINALIZED in LOCKED_STATES
         assert Quote.Status.SENT in LOCKED_STATES
+        assert Quote.Status.ACCEPTED in LOCKED_STATES
+        assert Quote.Status.LOST in LOCKED_STATES
+        assert Quote.Status.EXPIRED in LOCKED_STATES
         assert Quote.Status.DRAFT not in LOCKED_STATES
 
 

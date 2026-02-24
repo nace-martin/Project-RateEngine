@@ -126,21 +126,24 @@ def get_png_gst_category(
     
     # EXPORT
     if shipment_type == 'EXPORT':
-        # Freight is always zero-rated for export
-        if leg == 'FREIGHT' or category == 'FREIGHT':
-            return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
-        
         # Destination services (performed offshore)
         if leg == 'DESTINATION':
             return (GST_CATEGORY_OFFSHORE_SERVICE, Decimal('0'))
         
         # Origin services (performed in PNG)
-        if leg == 'ORIGIN' or leg is None:
+        if leg == 'ORIGIN':
             # Check if ProductCode is zero-rated (export with evidence)
             if gst_treatment == 'ZERO_RATED':
                 return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
-            # Standard origin services attract GST
+            # Standard origin services attract GST (including reclassified surcharges)
             return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
+
+        # Freight is always zero-rated for export
+        if leg == 'FREIGHT' or category == 'FREIGHT':
+            return (GST_CATEGORY_EXPORT_SERVICE, Decimal('0'))
+        
+        # Fallback for origin
+        return (GST_CATEGORY_SERVICE_IN_PNG, PNG_GST_RATE_DECIMAL)
     
     # IMPORT
     if shipment_type == 'IMPORT':

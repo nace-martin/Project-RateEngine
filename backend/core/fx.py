@@ -27,6 +27,11 @@ def d(val) -> Decimal:
     return Decimal(str(val))
 
 
+class FxUnavailableError(Exception):
+    """Raised when FX rates cannot be retrieved from any source (primary or fallback)."""
+    pass
+
+
 @dataclass
 class MidRateResult:
     """Result from a mid rate lookup."""
