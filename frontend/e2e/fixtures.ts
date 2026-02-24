@@ -67,18 +67,18 @@ export const test = base.extend<{
     loginAs: (role: TestRole) => Promise<void>;
 }>({
     // Authenticated page fixture
-    authenticatedPage: async ({ page }, use) => {
+    authenticatedPage: async ({ page }, provide) => {
         // Default login as sales user
         await loginToApp(page, 'sales');
-        await use(page);
+        await provide(page);
     },
 
     // Login helper function
-    loginAs: async ({ page }, use) => {
+    loginAs: async ({ page }, provide) => {
         const login = async (role: TestRole) => {
             await loginToApp(page, role);
         };
-        await use(login);
+        await provide(login);
     },
 });
 

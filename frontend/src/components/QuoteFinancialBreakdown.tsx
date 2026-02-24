@@ -23,6 +23,20 @@ interface QuoteFinancialBreakdownProps {
     result: QuoteComputeResult;
 }
 
+type BreakdownScalar = string | number | boolean | null | undefined;
+type BreakdownLine = SellLine & Record<string, BreakdownScalar>;
+type BreakdownTotals = Record<string, BreakdownScalar> & QuoteComputeResult["totals"];
+type BreakdownDataShape = {
+    latest_version?: {
+        sell_lines?: BreakdownLine[];
+        lines?: BreakdownLine[];
+        totals?: BreakdownTotals;
+    };
+    sell_lines?: BreakdownLine[];
+    lines?: BreakdownLine[];
+    totals?: BreakdownTotals;
+};
+
 // Simplified currency display without symbol (for cleaner table display)
 const formatAmount = (amountStr: string | number | undefined, currency: string) => {
     const amount = typeof amountStr === 'number' ? amountStr : parseFloat(amountStr || "0");
@@ -44,10 +58,11 @@ function getBucket(line: SellLine): BucketType {
 }
 
 // Calculate bucket subtotal
-function calculateBucketTotal(lines: any[], field: string): number {
+function calculateBucketTotal(lines: BreakdownLine[], field: string): number {
     return lines.reduce((sum, line) => {
         // Handle field aliases (e.g., sell_pgk vs total_sell_pgk)
-        const value = parseFloat(line[field] || '0');
+        const rawValue = line[field];
+        const value = parseFloat(String(rawValue ?? '0'));
         return sum + value;
     }, 0);
 }
@@ -56,8 +71,9 @@ function calculateBucketTotal(lines: any[], field: string): number {
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
     // BACKWARD COMPATIBILITY FIX: 
     // If we receive a full Quote object (V3), map its latest_version to the expected fields
-    const data = (result as any).latest_version ? (result as any).latest_version : result;
-    const sell_lines = data.sell_lines || data.lines || [];
+    const normalizedResult = result as unknown as BreakdownDataShape;
+    const data = normalizedResult.latest_version ?? normalizedResult;
+    const sell_lines: BreakdownLine[] = data.sell_lines || data.lines || [];
     const totals = data.totals;
 
     // Detect display currency and logic flags
@@ -66,8 +82,8 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     const isShowingFCY = displayCurrency !== 'PGK';
 
     // Separate informational (conditional) charges from priced lines
-    const pricedLines = sell_lines.filter((line: any) => !line.is_informational);
-    const informationalLines = sell_lines.filter((line: any) => line.is_informational);
+    const pricedLines = sell_lines.filter((line) => !line.is_informational);
+    const informationalLines = sell_lines.filter((line) => line.is_informational);
 
     // Group PRICED lines by bucket (not informational ones)
     const buckets: Record<BucketType, SellLine[]> = {
@@ -215,7 +231,7 @@ function BucketSection({
     // colorClass prop is present in parent but ignored here to enforce standardized Blue theme
 }: {
     title: string;
-    lines: any[];
+    lines: BreakdownLine[];
     displayCurrency: string;
     isShowingFCY: boolean;
     icon: React.ReactNode;
@@ -282,7 +298,7 @@ function BucketSection({
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {lines.map((line: any, index: number) => (
+                                {lines.map((line, index: number) => (
                                     <ChargeRow
                                         key={index}
                                         line={line}
@@ -305,7 +321,7 @@ function ChargeRow({
     displayCurrency,
     isShowingFCY
 }: {
-    line: any;
+    line: BreakdownLine;
     displayCurrency: string;
     isShowingFCY: boolean;
 }) {

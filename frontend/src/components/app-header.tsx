@@ -27,15 +27,15 @@ import { useState } from 'react';
 
 export default function AppHeader() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, logout } = useAuth();
+  const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
+  const [open, setOpen] = useState(false);
 
   // Hide header on login page
   if (pathname === '/login') {
     return null;
   }
-  const router = useRouter();
-  const { user, logout } = useAuth();
-  const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
-  const [open, setOpen] = useState(false);
 
   // 1. Primary Navigation (Top Level)
   const navItems = [
