@@ -1485,12 +1485,16 @@ class ReplyAnalysisService:
 
         required_for_scope = None
         shipment_type = None
+        missing_components_set: set[str] = set()
         if shipment_context:
             shipment_type = _shipment_type_from_context(shipment_context)
             required_for_scope = required_components(
                 shipment_type,
                 _normalize_scope(shipment_context.get("service_scope")),
             )
+            raw_missing = shipment_context.get("missing_components") or []
+            if isinstance(raw_missing, (list, tuple, set)):
+                missing_components_set = {str(item).upper() for item in raw_missing if item}
 
         for a in analysis.assertions:
             # Skip missing assertions. For implicit assertions, allow DB-backed standard-rate
@@ -1500,17 +1504,46 @@ class ReplyAnalysisService:
             if a.status == AssertionStatus.IMPLICIT and not str(a.text or "").startswith("Standard Rate:"):
                 continue
 
-            if a.category not in component_map:
+            category = a.category
+
+            # Heuristic re-bucketing:
+            # AI may classify "import charges" style tables as destination charges based on wording,
+            # even when the quoted local charges are at the route origin (e.g. SIN->POM import into PG).
+            # When only one local side is missing, bias local-charge assertions to that missing side.
+            if shipment_type == "IMPORT":
+                if (
+                    category == AssertionCategory.DEST_CHARGES
+                    and "ORIGIN_LOCAL" in missing_components_set
+                    and "DESTINATION_LOCAL" not in missing_components_set
+                ):
+                    logger.info(
+                        "Reclassifying AI local charge to origin for IMPORT lane: %s",
+                        a.text,
+                    )
+                    category = AssertionCategory.ORIGIN_CHARGES
+            elif shipment_type == "EXPORT":
+                if (
+                    category == AssertionCategory.ORIGIN_CHARGES
+                    and "DESTINATION_LOCAL" in missing_components_set
+                    and "ORIGIN_LOCAL" not in missing_components_set
+                ):
+                    logger.info(
+                        "Reclassifying AI local charge to destination for EXPORT lane: %s",
+                        a.text,
+                    )
+                    category = AssertionCategory.DEST_CHARGES
+
+            if category not in component_map:
                 continue
 
-            component_code, bucket = component_map[a.category]
+            component_code, bucket = component_map[category]
 
             # Scope guardrail: keep only components required for this quote context.
             if required_for_scope is not None and component_code not in required_for_scope:
                 continue
 
             unit_raw = (a.rate_unit or "").lower().strip()
-            default_unit = "per_kg" if a.category == AssertionCategory.RATE else "flat"
+            default_unit = "per_kg" if category == AssertionCategory.RATE else "flat"
 
             min_charge = None
             exclude_from_totals = False
@@ -1586,7 +1619,7 @@ class ReplyAnalysisService:
                 "currency": (a.rate_currency or "USD").upper(),
                 "unit": unit,
                 "bucket": bucket,
-                "is_primary_cost": a.category == AssertionCategory.RATE,
+                "is_primary_cost": category == AssertionCategory.RATE,
                 "conditional": a.status == AssertionStatus.CONDITIONAL,
                 "min_charge": str(min_charge) if min_charge else None,
                 "exclude_from_totals": exclude_from_totals,
