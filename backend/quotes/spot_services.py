@@ -1493,8 +1493,11 @@ class ReplyAnalysisService:
             )
 
         for a in analysis.assertions:
-            # Skip missing or implicit assertions (AI-only population uses confirmed/conditional)
-            if a.status in (AssertionStatus.MISSING, AssertionStatus.IMPLICIT):
+            # Skip missing assertions. For implicit assertions, allow DB-backed standard-rate
+            # suggestions (tagged by the service with "Standard Rate:") to support hybrid prefill.
+            if a.status == AssertionStatus.MISSING:
+                continue
+            if a.status == AssertionStatus.IMPLICIT and not str(a.text or "").startswith("Standard Rate:"):
                 continue
 
             if a.category not in component_map:

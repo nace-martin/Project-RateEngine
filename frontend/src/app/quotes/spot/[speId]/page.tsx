@@ -141,8 +141,13 @@ export default function SpotRateEntryPage() {
     };
 
     // Handle analysis complete from intake step - move directly to review
-    const handleAnalysisComplete = (result: ReplyAnalysisResult) => {
+    const handleAnalysisComplete = async (result: ReplyAnalysisResult) => {
         setAnalysisResult(result);
+        if (speId && !isNew) {
+            // Backend persists auto-populated charges (AI + standard DB suggestions) into the SPE.
+            // Reload before entering review so the form displays the latest draft charges.
+            await loadSPE(speId);
+        }
         setCurrentStep("review");
     };
 
