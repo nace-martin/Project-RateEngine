@@ -273,6 +273,7 @@ export function useQuoteLogic({
                         total_weight_kg: cargoMetrics.chargeableWeight,
                         pieces: cargoMetrics.pieces,
                         service_scope: (data.service_scope || 'P2P').toLowerCase(),
+                        missing_components: triggerResult.trigger?.missing_components,
                     },
                     charges: [],
                     trigger_code: triggerResult.trigger.code,

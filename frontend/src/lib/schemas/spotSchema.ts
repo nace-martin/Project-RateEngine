@@ -17,6 +17,7 @@ export const chargeLineSchema = z.object({
     conditional: z.boolean().default(false),
     source_reference: z.string().min(1, "Source reference is required"),
     min_charge: z.string().optional().nullable(), // Form handles as string, converted later
+    percentage_basis: z.string().optional().nullable(),
     note: z.string().optional(),
 });
 

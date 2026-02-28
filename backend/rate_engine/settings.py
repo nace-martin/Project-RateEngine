@@ -232,6 +232,12 @@ try:
 except ValueError:
     PUBLIC_QUOTE_LINK_TTL_SECONDS = 60 * 60 * 24 * 7
 
+# AI intake model configuration (Gemini)
+GEMINI_MODEL_NAME = (
+    os.environ.get('GEMINI_MODEL_NAME', 'gemini-2.5-flash-lite').strip()
+    or 'gemini-2.5-flash-lite'
+)
+
 # Explicit SPOT coverage overrides for known lanes.
 SPOT_ROUTE_COVERAGE = {
     # Export D2A lanes we already have origin coverage for.

@@ -103,6 +103,7 @@ export interface SPEShipmentContext {
     pieces: number;
     volume_cbm?: number;
     service_scope?: string;
+    missing_components?: string[];
 }
 
 /** SPE charge line */
@@ -114,8 +115,8 @@ export interface SPEChargeLine {
     currency: 'SGD' | 'USD' | 'AUD' | 'PGK' | 'NZD' | 'HKD';
     unit: SPEChargeUnit;
     bucket: SPEChargeBucket;
-    is_primary_cost: boolean;
-    conditional: boolean;
+    is_primary_cost?: boolean;
+    conditional?: boolean;
     source_reference: string;
 
     // Extended fields
@@ -261,6 +262,7 @@ export interface ExtractedAssertion {
     rate_currency?: string | null;
     rate_unit?: string | null;
     validity_date?: string | null;
+    percentage_basis?: string;
 }
 
 /** Quick status check of analysis results */
@@ -298,6 +300,7 @@ export interface ManualAssertionInput {
     rate_currency?: string;
     rate_unit?: string;
     validity_date?: string;
+    percentage_basis?: string;
 }
 
 // =============================================================================

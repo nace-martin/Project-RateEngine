@@ -9,7 +9,7 @@
  * 3. Generate (Finalize) - View computed quote, finalize, generate PDF
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,6 +43,9 @@ const STEPS: { id: Step; label: string; description: string }[] = [
     { id: "generate", label: "3. Finalize", description: "Generate quote" },
 ];
 
+const EMPTY_COMPONENTS: string[] = [];
+const EMPTY_CHARGES: SPEChargeLine[] = [];
+
 export default function SpotRateEntryPage() {
     const params = useParams();
     const router = useRouter();
@@ -57,20 +60,49 @@ export default function SpotRateEntryPage() {
     const commodity = (searchParams.get("commodity") || "GCR") as SPECommodity;
     const weight = parseFloat(searchParams.get("weight") || "0");
     const pieces = parseInt(searchParams.get("pieces") || "1");
+    const originCountryParam = searchParams.get("origin_country") || "";
+    const destCountryParam = searchParams.get("dest_country") || "";
     const triggerCode = searchParams.get("trigger_code") || "";
     const triggerText = searchParams.get("trigger_text") || "";
     const serviceScope = searchParams.get("service_scope") || "";
     const paymentTerm = searchParams.get("payment_term") || "PREPAID";
     const outputCurrency = searchParams.get("output_currency") || "PGK";
-    const shipmentType = (searchParams.get("shipment_type") || "EXPORT") as "EXPORT" | "IMPORT" | "DOMESTIC";
-    const missingComponents = searchParams.get("missing_components")?.split(",") || [];
+    const shipmentTypeParam = searchParams.get("shipment_type") as "EXPORT" | "IMPORT" | "DOMESTIC" | null;
 
     const { state, actions } = useSpotMode();
+    const missingComponentsParam = searchParams.get("missing_components");
+    const missingComponentsFromQuery = useMemo(() => {
+        if (!missingComponentsParam) return null;
+        return missingComponentsParam
+            .split(",")
+            .map((component) => component.trim())
+            .filter(Boolean);
+    }, [missingComponentsParam]);
+    const missingComponents = useMemo(
+        () => missingComponentsFromQuery || state.spe?.shipment.missing_components || EMPTY_COMPONENTS,
+        [missingComponentsFromQuery, state.spe?.shipment.missing_components]
+    );
     const { loadSPE } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [showAckModal, setShowAckModal] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
+
+    const inferShipmentType = (originCountry?: string, destinationCountry?: string): "EXPORT" | "IMPORT" | "DOMESTIC" => {
+        if ((originCountry || "").toUpperCase() === "PG" && (destinationCountry || "").toUpperCase() === "PG") {
+            return "DOMESTIC";
+        }
+        if ((originCountry || "").toUpperCase() === "PG") {
+            return "EXPORT";
+        }
+        return "IMPORT";
+    };
+
+    const resolvedShipmentType =
+        shipmentTypeParam ||
+        (state.spe?.shipment
+            ? inferShipmentType(state.spe.shipment.origin_country, state.spe.shipment.destination_country)
+            : inferShipmentType(originCountryParam, destCountryParam));
 
     const formatMissingComponents = (components?: string[]) => {
         if (!components || components.length === 0) return null;
@@ -115,25 +147,24 @@ export default function SpotRateEntryPage() {
         let cancelled = false;
         const run = async () => {
             try {
-                const derivedShipmentType =
-                    shipmentType ||
-                    (shipment.origin_country === "PG" && shipment.destination_country === "PG"
-                        ? "DOMESTIC"
-                        : shipment.origin_country === "PG"
-                            ? "EXPORT"
-                            : "IMPORT");
-
                 const charges = await getSpotStandardCharges({
                     origin_code: shipment.origin_code,
                     destination_code: shipment.destination_code,
-                    direction: derivedShipmentType,
+                    direction: resolvedShipmentType,
                     service_scope: shipment.service_scope || serviceScope || "D2D",
                     weight_kg: shipment.total_weight_kg || weight || 100,
                     commodity: shipment.commodity || commodity || "GCR",
                 });
 
+                // Only keep standard charges for components that are actually missing (if we know what's missing)
+                const filteredCharges = charges.filter(c => {
+                    if (missingComponents.length === 0) return true;
+                    // c.code is FREIGHT, ORIGIN_LOCAL, DESTINATION_LOCAL
+                    return missingComponents.includes(c.code);
+                });
+
                 if (!cancelled) {
-                    setStandardPrefillCharges(charges);
+                    setStandardPrefillCharges(filteredCharges);
                 }
             } catch (err) {
                 console.error("Failed to load standard SPOT charges:", err);
@@ -145,10 +176,10 @@ export default function SpotRateEntryPage() {
         return () => {
             cancelled = true;
         };
-    }, [state.spe, shipmentType, serviceScope, weight, commodity]);
+    }, [state.spe, serviceScope, weight, commodity, resolvedShipmentType, missingComponents]);
 
-    const mergedFormCharges = (() => {
-        const speCharges = state.spe?.charges || [];
+    const mergedFormCharges = useMemo(() => {
+        const speCharges = state.spe?.charges || EMPTY_CHARGES;
         if (!standardPrefillCharges.length) return speCharges;
 
         const seen = new Set(
@@ -162,7 +193,7 @@ export default function SpotRateEntryPage() {
             seen.add(key);
         }
         return merged;
-    })();
+    }, [state.spe?.charges, standardPrefillCharges]);
 
     // Handle updating SPE with charges, auto-acknowledge, and auto-compute
     const handleSaveAndAcknowledge = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
@@ -418,9 +449,10 @@ export default function SpotRateEntryPage() {
                         onSubmit={handleSaveAndAcknowledge}
                         isLoading={state.isLoading}
                         initialCharges={mergedFormCharges}
-                        suggestedCharges={analysisResult?.assertions}
-                        shipmentType={shipmentType}
+                        suggestedCharges={isNew ? (analysisResult?.assertions || []) : []}
+                        shipmentType={resolvedShipmentType}
                         serviceScope={serviceScope}
+                        missingComponents={missingComponents}
                     />
 
                     {/* Acknowledgement checkbox */}
@@ -465,10 +497,9 @@ export default function SpotRateEntryPage() {
                                 rawText={analysisResult?.raw_text || ""}
                                 extractedCharges={analysisResult?.assertions}
                                 initialCharges={state.spe?.charges || []}
-                                suggestedCharges={analysisResult?.assertions}
                                 onSubmit={handleSaveAndAcknowledge}
                                 isLoading={state.isLoading}
-                                shipmentType={shipmentType}
+                                shipmentType={resolvedShipmentType}
                                 serviceScope={serviceScope}
                             />
                             <div className="flex justify-end gap-3">

@@ -279,6 +279,46 @@ class TestSPESchemaValidation:
             )
         
         assert "airfreight" in str(exc_info.value).lower()
+
+    def test_spe_allows_non_airfreight_when_scope_does_not_require_freight(self):
+        """A2D SPE can contain destination-only charges without airfreight."""
+        spe = SpotPricingEnvelope(
+            id=str(uuid4()),
+            status=SPEStatus.DRAFT,
+            shipment=SPEShipmentContext(
+                origin_country="AU",
+                destination_country="PG",
+                origin_code="BNE",
+                destination_code="POM",
+                commodity="GCR",
+                total_weight_kg=100.0,
+                pieces=1,
+                service_scope="a2d",
+            ),
+            charges=[
+                SPEChargeLine(
+                    code="DESTINATION_LOCAL",
+                    description="Destination handling",
+                    amount=75.0,
+                    currency="USD",
+                    unit="flat",
+                    bucket="destination_charges",
+                    is_primary_cost=False,
+                    source_reference="Agent quote",
+                    entered_by_user_id="user123",
+                    entered_at=datetime.now()
+                )
+            ],
+            conditions=SPEConditions(),
+            spot_trigger_reason_code="MISSING_SCOPE_RATES",
+            spot_trigger_reason_text="Missing destination local rates",
+            created_by_user_id="user123",
+            created_at=datetime.now(),
+            expires_at=datetime.now() + timedelta(hours=72)
+        )
+
+        assert len(spe.charges) == 1
+        assert spe.charges[0].bucket == "destination_charges"
     
     def test_spe_single_airfreight_rejects_multiple(self):
         """SPE rejects two airfreight/primary charges."""

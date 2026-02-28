@@ -1,7 +1,8 @@
 """
 AI Rate Intake Service
 
-Uses Google Gemini 2.0 Flash to parse unstructured rate quotes into structured charge lines.
+Uses Google Gemini (configurable model; defaults to Gemini 2.5 Flash Lite)
+to parse unstructured rate quotes into structured charge lines.
 
 Architecture Principles:
 - AI is input accelerator only — does NOT make pricing decisions
@@ -15,19 +16,35 @@ import logging
 import os
 import re
 from collections import Counter
-from decimal import Decimal, InvalidOperation
 from typing import Optional, List
 
+from pydantic import BaseModel, Field, ValidationError
+
 from .ai_intake_schemas import (
+    ExtractionAuditResult,
+    NormalizedCharge,
+    RawExtractedCharge,
     SpotChargeLine,
-    AIRateIntakeResponse,
     VALID_CURRENCIES,
 )
 
 logger = logging.getLogger(__name__)
 
 # Gemini model configuration
-GEMINI_MODEL = "gemini-2.0-flash-lite"
+DEFAULT_GEMINI_MODEL_NAME = "gemini-2.5-flash-lite"
+
+
+def _resolve_gemini_model_name() -> str:
+    """Read Gemini model name from Django settings with a safe fallback."""
+    try:
+        from django.conf import settings as django_settings
+        configured = getattr(django_settings, "GEMINI_MODEL_NAME", DEFAULT_GEMINI_MODEL_NAME)
+    except Exception:
+        configured = DEFAULT_GEMINI_MODEL_NAME
+    return str(configured).strip() or DEFAULT_GEMINI_MODEL_NAME
+
+
+GEMINI_MODEL = _resolve_gemini_model_name()
 MAX_RETRIES = 2
 
 CURRENCY_HINT_PATTERNS = [
@@ -56,12 +73,38 @@ CURRENCY_SYMBOL_MAP = {
 }
 
 
+class _RawExtractedChargesEnvelope(BaseModel):
+    charges: List[RawExtractedCharge] = Field(default_factory=list)
+
+
+class _NormalizedChargesEnvelope(BaseModel):
+    charges: List[NormalizedCharge] = Field(default_factory=list)
+
+
+class AIRateIntakePipelineResult(BaseModel):
+    """Service return shape kept compatible with existing API formatters."""
+
+    success: bool
+    lines: List[SpotChargeLine] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    raw_text_length: int = 0
+    source_type: str = "TEXT"
+    model_used: Optional[str] = None
+    analysis_text: Optional[str] = None
+    quote_currency: Optional[str] = None
+    raw_extracted_charges: List[RawExtractedCharge] = Field(default_factory=list)
+    normalized_charges: List[NormalizedCharge] = Field(default_factory=list)
+    extraction_audit: Optional[ExtractionAuditResult] = None
+
+
 class _GenAIResponseAdapter:
     """Normalize google.genai responses to the legacy `.text` interface."""
 
     def __init__(self, raw_response):
         self._raw_response = raw_response
         self.text = self._extract_text(raw_response)
+        self.parsed = self._extract_parsed(raw_response)
 
     @staticmethod
     def _extract_text(response) -> str:
@@ -79,6 +122,22 @@ class _GenAIResponseAdapter:
                 if isinstance(part_text, str) and part_text.strip():
                     return part_text
         return ""
+
+    @staticmethod
+    def _extract_parsed(response):
+        parsed = getattr(response, "parsed", None)
+        if parsed is not None:
+            return parsed
+
+        candidates = getattr(response, "candidates", None) or []
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) or []
+            for part in parts:
+                part_parsed = getattr(part, "parsed", None)
+                if part_parsed is not None:
+                    return part_parsed
+        return None
 
 
 class _GenAIModelAdapter:
@@ -173,254 +232,330 @@ def parse_rate_quote_text(
     text: str,
     source_type: str = "TEXT",
     context: Optional[dict] = None
-) -> AIRateIntakeResponse:
-    """
-    Parse unstructured rate quote text into structured charge lines and provide analysis.
-    
-    Args:
-        text: Extracted text from agent quote (email, PDF, etc.)
-        source_type: Source document type (TEXT, PDF, EMAIL)
-        context: Optional dictionary with quote details (origin, dest, weight, etc.)
-        
-    Returns:
-        AIRateIntakeResponse with validated charge lines and pricing analysis
-    """
-    
+) -> AIRateIntakePipelineResult:
+    """Parse unstructured rate quote text using a 3-step LLM pipeline."""
+
     if not text or len(text.strip()) < 10:
-        return AIRateIntakeResponse(
+        return AIRateIntakePipelineResult(
             success=False,
             error="Input text is too short to parse",
             raw_text_length=len(text) if text else 0,
-            source_type=source_type
+            source_type=source_type,
+            model_used=GEMINI_MODEL,
         )
-    
+
     genai = get_gemini_client()
     if not genai:
-        return AIRateIntakeResponse(
+        return AIRateIntakePipelineResult(
             success=False,
             error="Gemini API not configured. Set GEMINI_API_KEY environment variable.",
             raw_text_length=len(text),
-            source_type=source_type
+            source_type=source_type,
+            model_used=GEMINI_MODEL,
         )
-    
-    # Build the extraction prompt
-    prompt = _build_extraction_prompt(text, context)
-    
-    # Try extraction with retries
+
+    quote_currency = _infer_quote_currency_from_text(text)
+    warnings: List[str] = []
+
+    try:
+        model = genai.GenerativeModel(GEMINI_MODEL)
+
+        raw_charges = _extract_raw_charges(model, text, shipment_context=context)
+        normalized_charges = _normalize_charges(
+            model,
+            raw_charges,
+            shipment_context=context,
+            quote_currency_hint=quote_currency,
+        )
+        audit_result = _audit_extraction(model, text, normalized_charges)
+
+        lines, line_warnings = _build_final_spot_charge_lines(
+            normalized_charges=normalized_charges,
+            raw_charges=raw_charges,
+            quote_currency_hint=quote_currency,
+        )
+        warnings.extend(line_warnings)
+
+        if audit_result.missed_charges:
+            warnings.append("Audit flagged possible missed charges: " + "; ".join(audit_result.missed_charges))
+        if audit_result.hallucinations_detected:
+            warnings.append(
+                "Audit flagged possible hallucinations: "
+                + "; ".join(audit_result.hallucinations_detected)
+            )
+        if not raw_charges:
+            warnings.append("No raw charges extracted from input")
+        if raw_charges and not normalized_charges:
+            warnings.append("Raw charges were extracted but none were normalized")
+
+        return AIRateIntakePipelineResult(
+            success=audit_result.is_safe_to_proceed,
+            lines=lines,
+            warnings=warnings,
+            error=None if audit_result.is_safe_to_proceed else "Extraction audit marked result unsafe to proceed",
+            raw_text_length=len(text),
+            source_type=source_type,
+            model_used=GEMINI_MODEL,
+            analysis_text=_build_pipeline_analysis_text(raw_charges, normalized_charges, audit_result),
+            quote_currency=quote_currency,
+            raw_extracted_charges=raw_charges,
+            normalized_charges=normalized_charges,
+            extraction_audit=audit_result,
+        )
+    except Exception as e:
+        logger.exception("Multi-agent parse pipeline failed")
+        return AIRateIntakePipelineResult(
+            success=False,
+            error=f"Gemini multi-agent pipeline error: {str(e)}",
+            warnings=warnings,
+            raw_text_length=len(text),
+            source_type=source_type,
+            model_used=GEMINI_MODEL,
+            quote_currency=quote_currency,
+        )
+
+
+def _call_gemini_structured(model, prompt: str, response_schema: type[BaseModel], stage_name: str) -> BaseModel:
+    """Call Gemini with structured outputs and validate into a Pydantic model."""
+    last_error: Optional[Exception] = None
+
     for attempt in range(MAX_RETRIES + 1):
         try:
-            model = genai.GenerativeModel(GEMINI_MODEL)
             response = model.generate_content(
                 prompt,
                 generation_config={
-                    "temperature": 0.1,  # Low temperature for consistent output
+                    "temperature": 0.1,
                     "response_mime_type": "application/json",
-                }
+                    "response_schema": response_schema,
+                },
             )
-            
-            # Parse JSON response
-            json_text = response.text.strip()
-            parsed = json.loads(json_text)
-            
-            # Validate and convert to Pydantic models
-            return _validate_ai_response(parsed, text, source_type)
-            
-        except json.JSONDecodeError as e:
-            logger.warning(f"Attempt {attempt + 1}: JSON decode error: {e}")
-            if attempt == MAX_RETRIES:
-                return AIRateIntakeResponse(
-                    success=False,
-                    error=f"Failed to parse AI response as JSON after {MAX_RETRIES + 1} attempts",
-                    raw_text_length=len(text),
-                    source_type=source_type,
-                    model_used=GEMINI_MODEL
-                )
+            if response.parsed is not None:
+                return response_schema.model_validate(response.parsed)
+
+            json_text = (response.text or "").strip()
+            if not json_text:
+                raise ValueError(f"{stage_name}: empty Gemini response")
+            return response_schema.model_validate(json.loads(json_text))
+        except (json.JSONDecodeError, ValidationError, ValueError) as e:
+            last_error = e
+            logger.warning(
+                "%s attempt %s/%s structured parse error: %s",
+                stage_name,
+                attempt + 1,
+                MAX_RETRIES + 1,
+                e,
+            )
         except Exception as e:
-            logger.exception(f"Attempt {attempt + 1}: Gemini API error")
-            if attempt == MAX_RETRIES:
-                return AIRateIntakeResponse(
-                    success=False,
-                    error=f"Gemini API error: {str(e)}",
-                    raw_text_length=len(text),
-                    source_type=source_type,
-                    model_used=GEMINI_MODEL
-                )
-    
-    # Should not reach here
-    return AIRateIntakeResponse(
-        success=False,
-        error="Unexpected error in rate parsing",
-        raw_text_length=len(text),
-        source_type=source_type
+            last_error = e
+            logger.exception("%s attempt %s/%s Gemini error", stage_name, attempt + 1, MAX_RETRIES + 1)
+
+    raise RuntimeError(f"{stage_name} failed after {MAX_RETRIES + 1} attempts: {last_error}")
+
+
+def _extract_raw_charges(model, text: str, shipment_context: Optional[dict] = None) -> List[RawExtractedCharge]:
+    """Agent 1 (Extractor): prompt Gemini to extract verbatim raw charge candidates."""
+    prompt = _build_extractor_prompt(text=text, shipment_context=shipment_context)
+    envelope = _call_gemini_structured(model, prompt, _RawExtractedChargesEnvelope, "Extractor")
+    return envelope.charges
+
+
+def _normalize_charges(
+    model,
+    raw_charges: List[RawExtractedCharge],
+    shipment_context: Optional[dict] = None,
+    quote_currency_hint: Optional[str] = None,
+) -> List[NormalizedCharge]:
+    """Agent 2 (Normalizer): map raw charges to canonical V4 codes."""
+    prompt = _build_normalizer_prompt(
+        raw_charges=raw_charges,
+        shipment_context=shipment_context,
+        quote_currency_hint=quote_currency_hint,
     )
+    envelope = _call_gemini_structured(model, prompt, _NormalizedChargesEnvelope, "Normalizer")
+    return envelope.charges
 
 
-def _build_extraction_prompt(text: str, context: Optional[dict] = None) -> str:
-    """Build the prompt for Gemini to act as an Assistive Reviewer for agent rate replies."""
-    
-    context_str = ""
-    if context:
-        context_str = f"""
-SHIPMENT CONTEXT:
-- From: {context.get('origin', 'Unknown')} ({context.get('origin_code', 'Unknown')})
-- To: {context.get('destination', 'Unknown')} ({context.get('destination_code', 'Unknown')})
-- Weight: {context.get('weight', 'Unknown')} kg
-- Shipment Type: {context.get('shipment_type', 'Unknown')}
-- Incoterm: {context.get('incoterm', 'Unknown')}
-- Payment: {context.get('payment_term', 'Unknown')}
-- TARGET COMPONENTS (MISSING IN DB): {", ".join(context.get('missing_components', []))}
-"""
+def _audit_extraction(
+    model,
+    original_text: str,
+    normalized_charges: List[NormalizedCharge],
+) -> ExtractionAuditResult:
+    """Agent 3 (Critic): detect missed charges and hallucinations."""
+    prompt = _build_audit_prompt(original_text=original_text, normalized_charges=normalized_charges)
+    return _call_gemini_structured(model, prompt, ExtractionAuditResult, "Critic")
 
-    return f'''You are an expert Air Freight Assistive Reviewer. Your job is to interpret an agent's rate reply and identify the specific charges we are missing for this shipment.
 
-{context_str}
+def _build_extractor_prompt(text: str, shipment_context: Optional[dict] = None) -> str:
+    context_json = _dump_json(shipment_context or {})
+    return f"""You are Agent 1 (Extractor) in a multi-agent rate extraction pipeline.
 
-TASKS:
-1. **Identify Missing Charges**: We already have standard rates for some parts of this shipment. We are SPECIFICALLY looking for the "TARGET COMPONENTS" listed above.
-2. **Determine Applicability**: Based on the context, decide if the agent's charges apply to the ORIGIN or DESTINATION. 
-   - Example: If the agent is in Singapore (SIN) and SIN is the Destination, their local charges (Delivery, Clearance, Terminal) are DESTINATION charges.
-3. **Interpret Meaning**: Read the email/text to understand what is explicitly confirmed and what is conditional.
-4. **Structured Checklist**: Provide a 3-4 sentence "Analyst Review" that says exactly what was found and what is still missing.
+Rules:
+- ONLY extract data explicitly present in the email/text.
+- Preserve raw_label and raw_amount_string verbatim.
+- Do NOT normalize labels, map codes, infer buckets, or infer unit basis.
+- Set is_conditional=true only when the text indicates optional/conditional wording (e.g., if applicable, subject to, optional).
+- currency_hint is optional and should only be included if directly visible in the same charge text.
 
-EXTRACTION RULES:
-1. Extract individual charges into the `lines` array.
-2. Categorize into ORIGIN, FREIGHT, or DESTINATION.
-3. Identify unit_basis using these options:
-   - **PER_KG**: Simple per-kg rate. Use `rate_per_unit` for the per-kg rate.
-   - **PER_SHIPMENT**: Flat fee per shipment. Use `amount` for the flat amount.
-   - **PERCENTAGE**: Percentage of another charge. Use `percentage` and `percent_applies_to`.
-   - **MIN_OR_PER_KG**: Dual pricing like "35.00 min or 0.25 per kg". Use BOTH `minimum` (the floor) AND `rate_per_unit` (the per-kg rate). The final charge is MAX(minimum, rate_per_unit * weight).
-4. Also populate canonical rule fields when possible:
-   - `calculation_type`: FLAT | PER_UNIT | MIN_OR_PER_UNIT | PERCENT_OF
-   - `unit_type`: KG | SHIPMENT | AWB | TRIP | SET | LINE | MAN | CBM | RT
-   - `rate`, `min_amount`, `max_amount`, `percent_basis`
-5. For PERCENTAGE, specify what it applies to (e.g., "Commercial Invoice", "FREIGHT").
+Shipment context (reference only; do not infer values from it):
+{context_json}
 
-OUTPUT FORMAT (JSON):
-{{
-  "analysis_text": "✅ Confirmed: ... \\n⚠️ Conditional: ... \\n❌ Missing: ...",
-  "quote_currency": "Default currency code (e.g. SGD) if stated globally",
-  "lines": [
-    {{
-      "bucket": "ORIGIN" | "FREIGHT" | "DESTINATION",
-      "description": "string (charge name)",
-      "amount": number | null (for PER_SHIPMENT flat fees),
-      "rate_per_unit": number | null (for PER_KG or MIN_OR_PER_KG per-kg rate),
-      "currency": "3-letter code (optional if quote_currency is set)",
-      "unit_basis": "PER_KG" | "PER_SHIPMENT" | "PERCENTAGE" | "MIN_OR_PER_KG",
-      "calculation_type": "FLAT" | "PER_UNIT" | "MIN_OR_PER_UNIT" | "PERCENT_OF" | null,
-      "unit_type": "KG" | "SHIPMENT" | "AWB" | "TRIP" | "SET" | "LINE" | "MAN" | "CBM" | "RT" | null,
-      "rate": number | null,
-      "min_amount": number | null,
-      "max_amount": number | null,
-      "percentage": number | null (for PERCENTAGE only),
-      "minimum": number | null (floor amount for MIN_OR_PER_KG),
-      "maximum": number | null (ceiling if applicable),
-      "percent_applies_to": "string" | null (for PERCENTAGE only),
-      "percent_basis": "string" | null,
-      "rule_meta": object | null,
-      "conditional": boolean (true if charge is 'if applicable' or option)
-    }}
-  ]
-}}
+Return structured JSON matching the schema: {{ \"charges\": [RawExtractedCharge, ...] }}.
 
-EXAMPLES:
-- "Terminal Fee: 35.00 min or 0.25 per KGS" → unit_basis="MIN_OR_PER_KG", minimum=35.00, rate_per_unit=0.25
-- "Handling: 50.00 per shpt" → unit_basis="PER_SHIPMENT", amount=50.00
-- "Airfreight: 6.80/kg" → unit_basis="PER_KG", rate_per_unit=6.80
-- "GST: 9% of Commercial Invoice" → unit_basis="PERCENTAGE", percentage=9, percent_applies_to="Commercial Invoice"
-
-AGENT RATE REPLY TEXT:
+Source text:
 ---
 {text}
 ---
+"""
 
-Return ONLY valid JSON. Focus on accuracy and risk prevention. If the email is vague, flag it clearly in the analysis_text.'''
+
+def _build_normalizer_prompt(
+    raw_charges: List[RawExtractedCharge],
+    shipment_context: Optional[dict] = None,
+    quote_currency_hint: Optional[str] = None,
+) -> str:
+    context_payload = dict(shipment_context or {})
+    if quote_currency_hint:
+        context_payload["quote_currency_hint"] = quote_currency_hint
+    return f"""You are Agent 2 (Normalizer) in a multi-agent rate extraction pipeline.
+
+Task:
+- Convert each RawExtractedCharge into a NormalizedCharge.
+- Map to canonical v4 product codes and buckets.
+- Parse amount and currency from raw_amount_string.
+- Preserve row order and emit one normalized row per raw row.
+
+Critical confidence rule:
+- If you are not at least 90% confident in the v4 product mapping, set v4_product_code to UNMAPPED and confidence to LOW.
+- Prefer UNMAPPED over guessing.
+
+Additional rules:
+- EXACTLY categorise dual pricing (e.g. "min X or Y/kg", "35 min / 0.25 pkg") as MIN_OR_PER_KG.
+- EXACTLY categorise percentage fees (e.g. "10% of freight") as PERCENTAGE.
+- currency must be a 3-letter code. Use quote_currency_hint only when the charge text lacks an explicit currency.
+- amount must be numeric and non-negative.
+- For PERCENTAGE, set unit_basis to PERCENTAGE, populate `percentage` and `percent_applies_to` (and set `amount` to the same numeric percentage value).
+- For MIN_OR_PER_KG, set unit_basis to MIN_OR_PER_KG, populate both `rate_per_unit` and `minimum_amount` (and set `amount` equal to `rate_per_unit`).
+- confidence must be HIGH or LOW only.
+- CONTEXTUAL MAPPING: If `missing_components` is provided in the Context, you MUST prefer mapping charges to those buckets (e.g. DESTINATION_LOCAL -> DESTINATION, ORIGIN_LOCAL -> ORIGIN, FREIGHT -> FREIGHT). If only one component is present in `missing_components` (e.g. just DESTINATION_LOCAL), you MUST map ALL charges in the email to that single bucket, because we know the agent is strictly pricing that leg.
+
+Shipment context:
+{_dump_json(context_payload)}
+
+Raw charges:
+{_dump_json([c.model_dump(mode="json") for c in raw_charges])}
+
+Return structured JSON matching the schema: {{ \"charges\": [NormalizedCharge, ...] }}.
+"""
 
 
-def _validate_ai_response(
-    parsed: dict,
-    original_text: str,
-    source_type: str
-) -> AIRateIntakeResponse:
-    """Validate AI response and convert to Pydantic models."""
-    
+def _build_audit_prompt(original_text: str, normalized_charges: List[NormalizedCharge]) -> str:
+    return f"""You are Agent 3 (Critic) in a multi-agent rate extraction pipeline.
+
+Compare the original text against the normalized charges and audit for quality issues.
+
+Tasks:
+- List missed charges that appear in the text but are not represented.
+- List hallucinations_detected where normalized output is unsupported by the text.
+- Set is_safe_to_proceed=false if hallucinations are present or important charges are missing.
+- Be conservative and concise.
+
+Original text:
+---
+{original_text}
+---
+
+Normalized charges:
+{_dump_json([c.model_dump(mode="json") for c in normalized_charges])}
+
+Return structured JSON matching ExtractionAuditResult only.
+"""
+
+
+def _build_final_spot_charge_lines(
+    normalized_charges: List[NormalizedCharge],
+    raw_charges: List[RawExtractedCharge],
+    quote_currency_hint: Optional[str] = None,
+) -> tuple[List[SpotChargeLine], List[str]]:
+    """Convert normalized charges into final validated SpotChargeLine objects."""
     warnings: List[str] = []
-    validated_lines: List[SpotChargeLine] = []
-    
-    lines_data = parsed.get("lines", [])
-    analysis_text = parsed.get("analysis_text", "")
-    quote_currency = _normalize_currency_value(parsed.get("quote_currency"))
-    if not quote_currency:
-        quote_currency = _infer_quote_currency_from_text(original_text)
-    
-    if not isinstance(lines_data, list):
-        return AIRateIntakeResponse(
-            success=False,
-            error="AI response 'lines' is not an array",
-            raw_text_length=len(original_text),
-            source_type=source_type,
-            model_used=GEMINI_MODEL
-        )
-    
-    for i, line_data in enumerate(lines_data):
+    lines: List[SpotChargeLine] = []
+
+    raw_by_label: dict[str, List[RawExtractedCharge]] = {}
+    for raw in raw_charges:
+        raw_by_label.setdefault(raw.raw_label, []).append(raw)
+
+    for i, normalized in enumerate(normalized_charges, start=1):
+        candidates = raw_by_label.get(normalized.original_raw_label, [])
+        raw_match = candidates.pop(0) if candidates else None
+
+        payload = {
+            "bucket": normalized.v4_bucket,
+            "description": normalized.original_raw_label,
+            "original_raw_label": normalized.original_raw_label,
+            "v4_product_code": normalized.v4_product_code,
+            "v4_bucket": normalized.v4_bucket,
+            "unit_basis": normalized.unit_basis,
+            "currency": _normalize_currency_value(normalized.currency) or quote_currency_hint,
+            "conditional": raw_match.is_conditional if raw_match else False,
+            "normalization_confidence": normalized.confidence,
+            "confidence": 0.95 if normalized.confidence == "HIGH" else 0.35,
+        }
+
+        if normalized.unit_basis == "PER_SHIPMENT":
+            payload["amount"] = normalized.amount
+        elif normalized.unit_basis == "PER_KG":
+            payload["rate_per_unit"] = normalized.rate_per_unit or normalized.amount
+        elif normalized.unit_basis == "PERCENTAGE":
+            payload["percentage"] = normalized.percentage if normalized.percentage is not None else normalized.amount
+            payload["percent_applies_to"] = normalized.percent_applies_to or normalized.v4_bucket
+            if normalized.percent_applies_to is None:
+                warnings.append(
+                    f"Line {i}: percent_applies_to missing for '{normalized.original_raw_label}', defaulted to bucket"
+                )
+        elif normalized.unit_basis == "MIN_OR_PER_KG":
+            payload["rate_per_unit"] = normalized.rate_per_unit or normalized.amount
+            if normalized.minimum_amount is not None:
+                payload["minimum"] = normalized.minimum_amount
+            else:
+                warnings.append(
+                    f"Line {i}: minimum_amount missing for MIN_OR_PER_KG '{normalized.original_raw_label}'"
+                )
+
+        if normalized.v4_product_code == "UNMAPPED":
+            warnings.append(f"Line {i}: Unmapped charge '{normalized.original_raw_label}'")
+        if normalized.confidence == "LOW":
+            warnings.append(f"Line {i}: Low-confidence normalization for '{normalized.original_raw_label}'")
+
         try:
-            # TEMP DEBUG: log raw AI payload for each line before any normalization.
-            logger.info("AI line_data[%s] raw: %r", i + 1, line_data)
-
-            if line_data.get("currency"):
-                line_data["currency"] = _normalize_currency_value(line_data.get("currency"))
-
-            # Accept null/invalid rule_meta payloads from AI and normalize.
-            if line_data.get("rule_meta") is None:
-                line_data["rule_meta"] = {}
-            elif not isinstance(line_data.get("rule_meta"), dict):
-                warnings.append(f"Line {i+1}: Invalid rule_meta format")
-                line_data["rule_meta"] = {}
-
-            # Convert string decimals or numbers to Decimal
-            for field in ["amount", "rate_per_unit", "percentage", "minimum", "maximum", "rate", "min_amount", "max_amount"]:
-                if line_data.get(field) is not None:
-                    try:
-                        line_data[field] = Decimal(str(line_data[field]))
-                    except (InvalidOperation, ValueError):
-                        line_data[field] = None
-                        warnings.append(f"Line {i+1}: Invalid {field} format")
-            
-            # Validate with Pydantic
-            validated_line = SpotChargeLine(**line_data)
-            validated_lines.append(validated_line)
-            
-            # Collect any warnings from the line
-            line_warnings = validated_line.get_warnings()
-            warnings.extend(line_warnings)
-            
+            line = SpotChargeLine(**payload)
+            lines.append(line)
+            warnings.extend(line.get_warnings())
         except Exception as e:
-            warnings.append(f"Line {i+1} validation failed: {str(e)}")
-            logger.warning(f"Failed to validate line {i+1}: {e}")
+            warnings.append(f"Line {i} validation failed after normalization: {str(e)}")
+            logger.warning("Final SpotChargeLine validation failed on line %s: %s", i, e)
 
-    logger.info(
-        "AI validation summary: %s/%s lines validated; warnings=%s",
-        len(validated_lines),
-        len(lines_data),
-        len(warnings),
-    )
-    if warnings:
-        logger.info("AI validation warnings detail: %s", warnings)
+    return lines, warnings
 
-    return AIRateIntakeResponse(
-        success=True,
-        lines=validated_lines,
-        analysis_text=analysis_text,
-        warnings=warnings,
-        quote_currency=quote_currency,
-        raw_text_length=len(original_text),
-        source_type=source_type,
-        model_used=GEMINI_MODEL
+
+def _build_pipeline_analysis_text(
+    raw_charges: List[RawExtractedCharge],
+    normalized_charges: List[NormalizedCharge],
+    audit_result: ExtractionAuditResult,
+) -> str:
+    return (
+        f"Extractor={len(raw_charges)} raw charges. "
+        f"Normalizer={len(normalized_charges)} normalized charges. "
+        f"Critic safe_to_proceed={audit_result.is_safe_to_proceed}. "
+        f"Missed={len(audit_result.missed_charges)}. "
+        f"Hallucinations={len(audit_result.hallucinations_detected)}."
     )
 
 
-def parse_pdf_rate_quote(pdf_content: bytes, context: Optional[dict] = None) -> AIRateIntakeResponse:
+def _dump_json(value) -> str:
+    return json.dumps(value, ensure_ascii=True, indent=2, default=str)
+
+
+def parse_pdf_rate_quote(pdf_content: bytes, context: Optional[dict] = None) -> AIRateIntakePipelineResult:
     """
     Extract text from PDF and parse into charge lines.
     
@@ -432,11 +567,12 @@ def parse_pdf_rate_quote(pdf_content: bytes, context: Optional[dict] = None) -> 
     extraction_result = extract_text_from_pdf(pdf_content)
     
     if not extraction_result.success:
-        return AIRateIntakeResponse(
+        return AIRateIntakePipelineResult(
             success=False,
             error=extraction_result.error or "PDF extraction failed",
             raw_text_length=0,
-            source_type="PDF"
+            source_type="PDF",
+            model_used=GEMINI_MODEL,
         )
     
     # Step 2: Parse extracted text with AI

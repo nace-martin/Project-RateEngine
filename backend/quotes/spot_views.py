@@ -114,6 +114,65 @@ def _normalize_shipment_context(ctx: dict) -> dict:
     return normalized
 
 
+def _normalize_missing_components(raw_value) -> Optional[list[str]]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        raw_list = [item.strip() for item in raw_value.split(",")]
+    elif isinstance(raw_value, (list, tuple, set)):
+        raw_list = list(raw_value)
+    else:
+        return []
+    return [str(item).upper() for item in raw_list if str(item).strip()]
+
+
+def _derive_missing_components_from_context(ctx: dict) -> Optional[list[str]]:
+    origin_code = str(ctx.get("origin_code") or "").upper()
+    destination_code = str(ctx.get("destination_code") or "").upper()
+    if not origin_code or not destination_code:
+        return None
+
+    service_scope = str(ctx.get("service_scope") or "P2P")
+    origin_country, destination_country = _resolve_country_pair(
+        ctx.get("origin_country"),
+        ctx.get("destination_country"),
+        origin_code=origin_code,
+        destination_code=destination_code,
+    )
+    direction = _infer_shipment_type(origin_country, destination_country)
+
+    try:
+        from quotes.spot_services import RateAvailabilityService
+        from quotes.completeness import evaluate_from_availability
+
+        availability = RateAvailabilityService.get_availability(
+            origin_airport=origin_code,
+            destination_airport=destination_code,
+            direction=direction,
+            service_scope=service_scope,
+        )
+        coverage = evaluate_from_availability(
+            component_availability=availability,
+            shipment_type=direction,
+            service_scope=service_scope,
+        )
+        return coverage.missing_required
+    except Exception:
+        logger.exception(
+            "Failed deriving missing components for SPOT context %s->%s",
+            origin_code,
+            destination_code,
+        )
+        return None
+
+
+def _resolve_missing_components_for_context(ctx: dict) -> Optional[list[str]]:
+    normalized = _normalize_missing_components(ctx.get("missing_components"))
+    if normalized is not None:
+        return normalized
+    return _derive_missing_components_from_context(ctx)
+
+
 def _infer_shipment_type(origin_country: str, destination_country: str) -> str:
     if origin_country == "PG" and destination_country == "PG":
         return "DOMESTIC"
@@ -176,6 +235,7 @@ def _build_spe_from_db(
     ]
 
     ctx = _normalize_shipment_context(spe_db.shipment_context_json)
+    resolved_missing_components = _resolve_missing_components_for_context(ctx)
     status_value = status_override or spe_db.status
 
     return SpotPricingEnvelope(
@@ -190,6 +250,7 @@ def _build_spe_from_db(
             total_weight_kg=ctx.get('total_weight_kg', 1.0),
             pieces=ctx.get('pieces', 1),
             service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+            missing_components=resolved_missing_components,
         ),
         charges=charges,
         conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
@@ -447,6 +508,10 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             # Create DB record
             ctx = _normalize_shipment_context(data['shipment_context'])
+            if "missing_components" not in ctx:
+                resolved_missing_components = _resolve_missing_components_for_context(ctx)
+                if resolved_missing_components is not None:
+                    ctx["missing_components"] = resolved_missing_components
             now = timezone.now()
             validity_hours = data.get('validity_hours', 72)
             
@@ -526,6 +591,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
     def _validate_spe(self, spe_db):
         """Validate SPE via Pydantic schemas."""
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
+        resolved_missing_components = _resolve_missing_components_for_context(ctx)
         charges = [
             SPEChargeLine(
                 code=cl.code,
@@ -568,6 +634,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 total_weight_kg=ctx.get('total_weight_kg', 1.0),
                 pieces=ctx.get('pieces', 1),
                 service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+                missing_components=resolved_missing_components,
             ),
             charges=charges,
             conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
@@ -1106,8 +1173,9 @@ class SpotReplyAnalysisAPIView(APIView):
 
                 now = timezone.now()
                 if auto_charges:
-                    # Replace existing draft charges
-                    spe_db.charge_lines.all().delete()
+                    # Replace prior AI-extracted lines with fresh ones.
+                    # Non-AI lines (standard/manual) are left untouched.
+                    spe_db.charge_lines.filter(source_reference__startswith="Agent reply (AI)").delete()
 
                     for charge in auto_charges:
                         amount_val = _to_decimal(charge.get("amount"))
@@ -1144,7 +1212,7 @@ class SpotReplyAnalysisAPIView(APIView):
                         )
 
                     # Update conditional flag in SPE conditions
-                    if any(c.get("conditional") for c in auto_charges):
+                    if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():
                         conditions = spe_db.conditions_json or {}
                         conditions["conditional_charges_present"] = True
                         spe_db.conditions_json = conditions

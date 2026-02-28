@@ -5,7 +5,7 @@
  * Refactored to use reusable components
  */
 
-import { useState, useMemo, useEffect } from "react";
+import { useMemo, useEffect, useRef } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -24,6 +24,7 @@ interface SpotRateEntryFormProps {
     suggestedCharges?: ExtractedAssertion[];
     shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
     serviceScope?: string;
+    missingComponents?: string[];
 }
 
 const CHARGE_BUCKETS: { id: SPEChargeBucket; label: string }[] = [
@@ -50,6 +51,7 @@ export function SpotRateEntryForm({
     suggestedCharges = [],
     shipmentType = "EXPORT",
     serviceScope = "D2D",
+    missingComponents = [],
 }: SpotRateEntryFormProps) {
     const mapAssertionToCharge = (assertion: ExtractedAssertion): SPEChargeLine | null => {
         const category = assertion.category;
@@ -88,6 +90,11 @@ export function SpotRateEntryForm({
             if (assertion.rate_amount != null) min_charge = String(assertion.rate_amount);
         }
 
+        let percentage_basis: string | undefined;
+        if (unitRaw === "percentage" && assertion.percentage_basis) {
+            percentage_basis = assertion.percentage_basis;
+        }
+
         return {
             code,
             description: assertion.text,
@@ -99,6 +106,7 @@ export function SpotRateEntryForm({
             conditional: assertion.status === "conditional",
             source_reference: "AI / Analysis Suggestion",
             min_charge,
+            percentage_basis,
         };
     };
 
@@ -150,54 +158,29 @@ export function SpotRateEntryForm({
         return null;
     };
 
-    const assertionToBucket = (assertion: ExtractedAssertion): SPEChargeBucket | null => {
-        if (assertion.category === "rate") return "airfreight";
-        if (assertion.category === "origin_charges") return "origin_charges";
-        if (assertion.category === "dest_charges") return "destination_charges";
-        return null;
-    };
-
     // Determine visible buckets using REQUIRED COMPONENT model + existing data
     const visibleBuckets = useMemo(() => {
         const requiredComponents = getRequiredComponents(shipmentType, serviceScope);
-        const requiredBuckets = requiredComponents
+
+        let targetComponents: readonly string[] = requiredComponents;
+        if (missingComponents && missingComponents.length > 0) {
+            targetComponents = requiredComponents.filter(c => missingComponents.includes(c));
+        }
+
+        const requiredBuckets = targetComponents
             .map(componentToBucket)
             .filter((bucket): bucket is SPEChargeBucket => bucket !== null);
 
-        const buckets = new Set<SPEChargeBucket>(requiredBuckets);
-
-        mergedCharges.forEach((charge) => buckets.add(charge.bucket));
-        suggestedCharges.forEach((assertion) => {
-            const bucket = assertionToBucket(assertion);
-            if (bucket) buckets.add(bucket);
-        });
-
-        if (buckets.size === 0) {
-            CHARGE_BUCKETS.forEach((bucket) => buckets.add(bucket.id));
-        }
-
-        return CHARGE_BUCKETS.filter(b => buckets.has(b.id));
-    }, [shipmentType, serviceScope, mergedCharges, suggestedCharges]);
+        // Strictly enforce that we ONLY show required + missing buckets.
+        // We do NOT want AI hallucinations un-hiding a bucket (like Airfreight)
+        // that we already have DB rates for.
+        return requiredBuckets;
+    }, [shipmentType, serviceScope, missingComponents]);
 
     // Initial values
     const defaultValues = useMemo<SpotFormInputValues>(() => ({
-        charges: mergedCharges.length > 0
-            ? mergedCharges.map(c => ({
-                id: c.id,
-                code: c.code,
-                description: c.description,
-                amount: c.amount,
-                currency: c.currency,
-                unit: c.unit,
-                bucket: c.bucket,
-                is_primary_cost: c.is_primary_cost,
-                conditional: c.conditional,
-                source_reference: c.source_reference,
-                min_charge: c.min_charge ? c.min_charge.toString() : null,
-                note: c.note || "",
-            }))
-            : []
-    }), [mergedCharges]);
+        charges: []
+    }), []);
 
     const form = useForm<SpotFormInputValues, unknown, SpotFormSubmitValues>({
         resolver: zodResolver(spotFormSchema),
@@ -205,32 +188,89 @@ export function SpotRateEntryForm({
         mode: "onChange",
     });
 
+    const formattedVisibleCharges = useMemo<SpotFormInputValues["charges"]>(() => {
+        // Only visible buckets are editable in this form.
+        const filteredCharges = mergedCharges.filter(c => visibleBuckets.includes(c.bucket));
+
+        return filteredCharges.map((charge) => ({
+            id: charge.id,
+            code: charge.code,
+            description: charge.description,
+            amount: charge.amount ? String(charge.amount) : "",
+            currency: charge.currency,
+            unit: (charge.min_charge !== null && charge.min_charge !== undefined && charge.unit === 'per_kg') ? 'min_or_per_kg' : charge.unit,
+            bucket: charge.bucket,
+            is_primary_cost: charge.is_primary_cost,
+            conditional: charge.conditional,
+            source_reference: charge.source_reference,
+            min_charge: charge.min_charge ? String(charge.min_charge) : null,
+            note: charge.note || "",
+            percentage_basis: charge.percentage_basis || "",
+        }));
+    }, [mergedCharges, visibleBuckets]);
+
+    const resetSignature = useMemo(
+        () => JSON.stringify(formattedVisibleCharges),
+        [formattedVisibleCharges]
+    );
+    const lastResetSignatureRef = useRef<string>("");
+
     useEffect(() => {
-        form.reset(defaultValues);
-    }, [form, defaultValues]);
+        if (lastResetSignatureRef.current === resetSignature) {
+            return;
+        }
+        lastResetSignatureRef.current = resetSignature;
+        form.reset({ charges: formattedVisibleCharges });
+    }, [form, resetSignature, formattedVisibleCharges]);
+
+    const hiddenExistingCharges = useMemo(
+        () => initialCharges.filter(c => !visibleBuckets.includes(c.bucket)),
+        [initialCharges, visibleBuckets]
+    );
 
     const { fields, append, remove } = useFieldArray({
         control: form.control,
         name: "charges",
     });
 
+    const mapEditableLineToSubmitCharge = (line: SpotFormSubmitValues["charges"][number]): Omit<SPEChargeLine, 'id'> => {
+        const isWeightBased = line.unit === "min_or_per_kg" || line.unit === "per_kg";
+        return {
+            code: line.code || line.description.toUpperCase().replace(/\s+/g, "_").slice(0, 20),
+            description: line.description,
+            amount: line.amount,
+            currency: line.currency,
+            unit: isWeightBased ? "per_kg" : (line.unit as SPEChargeUnit),
+            min_charge: isWeightBased && line.min_charge ? parseFloat(line.min_charge) : undefined,
+            bucket: line.bucket,
+            is_primary_cost: line.is_primary_cost,
+            conditional: line.conditional,
+            source_reference: line.source_reference,
+            note: line.note,
+            percentage_basis: line.percentage_basis || undefined,
+        };
+    };
+
+    const mapHiddenChargeToSubmitCharge = (charge: SPEChargeLine): Omit<SPEChargeLine, 'id'> => ({
+        code: charge.code,
+        description: charge.description,
+        amount: String(charge.amount),
+        currency: charge.currency,
+        unit: charge.unit,
+        bucket: charge.bucket,
+        is_primary_cost: charge.is_primary_cost,
+        conditional: charge.conditional,
+        source_reference: charge.source_reference,
+        min_charge: charge.min_charge,
+        note: charge.note,
+        exclude_from_totals: charge.exclude_from_totals,
+        percentage_basis: charge.percentage_basis,
+    });
+
     const handleFormSubmit = async (data: SpotFormSubmitValues) => {
-        const charges: Omit<SPEChargeLine, 'id'>[] = data.charges.map(l => {
-            const isWeightBased = l.unit === "min_or_per_kg" || l.unit === "per_kg";
-            return {
-                code: l.code || l.description.toUpperCase().replace(/\s+/g, "_").slice(0, 20),
-                description: l.description,
-                amount: l.amount,
-                currency: l.currency,
-                unit: isWeightBased ? "per_kg" : (l.unit as SPEChargeUnit),
-                min_charge: isWeightBased && l.min_charge ? parseFloat(l.min_charge) : undefined,
-                bucket: l.bucket,
-                is_primary_cost: l.is_primary_cost,
-                conditional: l.conditional,
-                source_reference: l.source_reference,
-                note: l.note,
-            };
-        });
+        const editableCharges = data.charges.map(mapEditableLineToSubmitCharge);
+        const preservedHiddenCharges = hiddenExistingCharges.map(mapHiddenChargeToSubmitCharge);
+        const charges: Omit<SPEChargeLine, 'id'>[] = [...preservedHiddenCharges, ...editableCharges];
 
         await onSubmit(charges);
     };
@@ -275,7 +315,9 @@ export function SpotRateEntryForm({
                     </Alert>
                 )}
 
-                {visibleBuckets.map(bucket => {
+                {visibleBuckets.map(bucketId => {
+                    const bucket = CHARGE_BUCKETS.find(b => b.id === bucketId);
+                    if (!bucket) return null; // Should not happen if visibleBuckets are derived from CHARGE_BUCKETS
                     const bucketItems = getFieldsByBucket(bucket.id);
                     return (
                         <ChargeBucketSection

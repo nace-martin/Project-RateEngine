@@ -554,6 +554,7 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
           total_weight_kg: weightInfo.chargeableWeight,
           pieces: weightInfo.pieces,
           service_scope: (quote.service_scope || "P2P").toLowerCase(),
+          missing_components: triggerResult.trigger?.missing_components,
         },
         charges: [],
         trigger_code: triggerCode,
