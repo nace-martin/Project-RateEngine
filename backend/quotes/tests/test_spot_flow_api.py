@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from unittest.mock import patch
+from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -12,6 +13,7 @@ from quotes.completeness import (
     COMPONENT_ORIGIN_LOCAL,
     COMPONENT_DESTINATION_LOCAL,
 )
+from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
 
 
 class SpotEnvelopeFlowAPITest(APITestCase):
@@ -247,3 +249,60 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         shipment = create_response.json()["shipment"]
         self.assertEqual(shipment["origin_country"], "PG")
         self.assertEqual(shipment["destination_country"], "SG")
+
+    def test_acknowledge_ignores_legacy_zero_amount_charge_lines(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "AU",
+                "destination_country": "PG",
+                "origin_code": self.destination.code,
+                "destination_code": self.origin.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+                "service_scope": "a2d",
+                "missing_components": ["DESTINATION_LOCAL"],
+            },
+            "charges": [
+                {
+                    "code": "DESTINATION_LOCAL",
+                    "description": "Destination handling",
+                    "amount": 75,
+                    "currency": "USD",
+                    "unit": "flat",
+                    "bucket": "destination_charges",
+                    "is_primary_cost": False,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+
+        spe = SpotPricingEnvelopeDB.objects.get(id=spe_id)
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="LEGACY_ZERO",
+            description="Legacy zero line",
+            amount=0,
+            currency="USD",
+            unit="flat",
+            bucket="destination_charges",
+            is_primary_cost=False,
+            conditional=False,
+            source_reference="legacy",
+            entered_at=timezone.now(),
+        )
+
+        acknowledge_url = reverse(
+            "quotes:spot-envelope-acknowledge", kwargs={"envelope_id": spe_id}
+        )
+        acknowledge_response = self.client.post(acknowledge_url, format="json")
+        self.assertEqual(acknowledge_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(acknowledge_response.json()["status"], "ready")

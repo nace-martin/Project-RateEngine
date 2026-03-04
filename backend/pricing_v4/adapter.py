@@ -754,31 +754,33 @@ class PricingServiceV4Adapter:
         # 3. COMPLETENESS EVALUATION (Safety Handlers)
         coverage = evaluate_from_lines(lines, shipment_type, service_scope)
         
-        # Force 'has_missing_rates' flag if any mandatory line is unresolved.
-        # This ensures the UI remains in a "Warning" state even if we provide a partial sum.
+        # Base completeness signal: required components by scope.
         has_missing_rates = not coverage.is_complete
-        
-        if any(getattr(l, "is_rate_missing", False) for l in lines):
-            has_missing_rates = True
-            
-        mandatory_ids = []
-        if shipment_type == 'EXPORT':
-            mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
-        elif shipment_type == 'IMPORT':
-            mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
-            
-        resolved_codes = {l.service_component_code for l in lines}
-        resolved_ids = set()
-        if mandatory_ids:
-            resolved_ids = set(ProductCode.objects.filter(
-                code__in=resolved_codes
-            ).values_list('id', flat=True))
-        
-        missing_mandatories = [m for m in mandatory_ids if m not in resolved_ids]
-        if missing_mandatories:
-            has_missing_rates = True
-            missing_codes = list(ProductCode.objects.filter(id__in=missing_mandatories).values_list('code', flat=True))
-            logger.warning(f"Mandatory ProductCodes missing: {missing_codes}")
+
+        # SPOT mode should gate on required component coverage only.
+        # Missing non-required standard lines must not block finalization after SPOT completion.
+        if self.pricing_mode != PricingMode.SPOT:
+            if any(getattr(l, "is_rate_missing", False) for l in lines):
+                has_missing_rates = True
+
+            mandatory_ids = []
+            if shipment_type == 'EXPORT':
+                mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+            elif shipment_type == 'IMPORT':
+                mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+
+            resolved_codes = {l.service_component_code for l in lines}
+            resolved_ids = set()
+            if mandatory_ids:
+                resolved_ids = set(ProductCode.objects.filter(
+                    code__in=resolved_codes
+                ).values_list('id', flat=True))
+
+            missing_mandatories = [m for m in mandatory_ids if m not in resolved_ids]
+            if missing_mandatories:
+                has_missing_rates = True
+                missing_codes = list(ProductCode.objects.filter(id__in=missing_mandatories).values_list('code', flat=True))
+                logger.warning(f"Mandatory ProductCodes missing: {missing_codes}")
 
         totals = CalculatedTotals(
             total_cost_pgk=total_cost_pgk,
@@ -869,6 +871,14 @@ class PricingServiceV4Adapter:
         
         charges = []
         for cl in spe_db.charge_lines.all():
+            if cl.amount is None or cl.amount <= 0:
+                logger.warning(
+                    "Skipping invalid SPE charge line with non-positive amount: spe=%s line=%s amount=%s",
+                    spe_db.id,
+                    cl.id,
+                    cl.amount,
+                )
+                continue
             charges.append(SPEChargeLine(
                 code=cl.code,
                 description=cl.description,

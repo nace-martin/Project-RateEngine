@@ -177,7 +177,7 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                             </span>
                         </div>
                         <div className="flex justify-between w-full max-w-xs text-sm">
-                            <span className="text-slate-500">Total GST</span>
+                            <span className="text-slate-500">Total GST (10%)</span>
                             <span className="font-mono">
                                 {formatAmount(totalGst, displayCurrency)}
                             </span>

@@ -62,6 +62,7 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
 
     const handleSubmit = async () => {
         setError(null);
+        console.log("[SPOT ReplyPasteCard] handleSubmit called, text length:", text.length);
 
         if (!text.trim()) {
             setError("Please paste the agent reply text");
@@ -75,9 +76,12 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
 
         setInternalIsLoading(true);
         try {
+            console.log("[SPOT ReplyPasteCard] Calling analyzeSpotReply, speId:", speId);
             const result = await analyzeSpotReply(text, [], speId);
+            console.log("[SPOT ReplyPasteCard] Analysis result received:", JSON.stringify(result).substring(0, 200));
             onAnalysisComplete(result);
         } catch (err) {
+            console.error("[SPOT ReplyPasteCard] Analysis error:", err);
             setError(err instanceof Error ? err.message : "Failed to analyze reply");
         } finally {
             setInternalIsLoading(false);

@@ -205,34 +205,46 @@ def _build_spe_from_db(
             comment=mgr_db.comment,
         )
 
-    charges = [
-        SPEChargeLine(
-            code=cl.code,
-            description=cl.description,
-            amount=float(cl.amount),
-            currency=cl.currency,
-            unit=cl.unit,
-            bucket=cl.bucket,
-            is_primary_cost=cl.is_primary_cost,
-            conditional=cl.conditional,
-            source_reference=cl.source_reference,
-            entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
-            entered_at=cl.entered_at,
-            min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
-            note=cl.note,
-            exclude_from_totals=cl.exclude_from_totals,
-            percentage_basis=cl.percentage_basis,
-            calculation_type=cl.calculation_type,
-            unit_type=cl.unit_type,
-            rate=float(cl.rate) if cl.rate is not None else None,
-            min_amount=float(cl.min_amount) if cl.min_amount is not None else None,
-            max_amount=float(cl.max_amount) if cl.max_amount is not None else None,
-            percent=float(cl.percent) if cl.percent is not None else None,
-            percent_basis=cl.percent_basis,
-            rule_meta=cl.rule_meta or {},
+    charges = []
+    for cl in spe_db.charge_lines.all():
+        # Guard against legacy/invalid draft rows with zero amount.
+        # SPE schema requires amount > 0 and these rows should not block acknowledgement.
+        if cl.amount is None or cl.amount <= 0:
+            logger.warning(
+                "Skipping invalid SPE charge line with non-positive amount: spe=%s line=%s amount=%s",
+                spe_db.id,
+                cl.id,
+                cl.amount,
+            )
+            continue
+
+        charges.append(
+            SPEChargeLine(
+                code=cl.code,
+                description=cl.description,
+                amount=float(cl.amount),
+                currency=cl.currency,
+                unit=cl.unit,
+                bucket=cl.bucket,
+                is_primary_cost=cl.is_primary_cost,
+                conditional=cl.conditional,
+                source_reference=cl.source_reference,
+                entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
+                entered_at=cl.entered_at,
+                min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
+                note=cl.note,
+                exclude_from_totals=cl.exclude_from_totals,
+                percentage_basis=cl.percentage_basis,
+                calculation_type=cl.calculation_type,
+                unit_type=cl.unit_type,
+                rate=float(cl.rate) if cl.rate is not None else None,
+                min_amount=float(cl.min_amount) if cl.min_amount is not None else None,
+                max_amount=float(cl.max_amount) if cl.max_amount is not None else None,
+                percent=float(cl.percent) if cl.percent is not None else None,
+                percent_basis=cl.percent_basis,
+                rule_meta=cl.rule_meta or {},
+            )
         )
-        for cl in spe_db.charge_lines.all()
-    ]
 
     ctx = _normalize_shipment_context(spe_db.shipment_context_json)
     resolved_missing_components = _resolve_missing_components_for_context(ctx)
@@ -685,31 +697,37 @@ class SpotEnvelopeDetailAPIView(APIView):
             
         # Update charges (replace all)
         if 'charges' in data:
+            from decimal import Decimal, InvalidOperation
+
+            def _to_decimal(val):
+                if val is None or val == "":
+                    return None
+                try:
+                    return Decimal(str(val))
+                except (InvalidOperation, ValueError):
+                    return None
+
             # Delete existing
             spe_db.charge_lines.all().delete()
             
             # Create new
             for charge in data['charges']:
                 # Sanitize decimal fields
-                amount_val = charge.get('amount')
-                if amount_val == "":
-                    amount_val = None
+                amount_val = _to_decimal(charge.get('amount'))
+                if amount_val is None or amount_val <= 0:
+                    logger.warning(
+                        "Skipping non-positive SPE charge on PATCH: spe=%s code=%s amount=%s",
+                        spe_db.id,
+                        charge.get('code'),
+                        charge.get('amount'),
+                    )
+                    continue
                     
-                min_charge_val = charge.get('min_charge')
-                if min_charge_val == "":
-                    min_charge_val = None
-                rate_val = charge.get('rate')
-                if rate_val == "":
-                    rate_val = None
-                min_amount_val = charge.get('min_amount')
-                if min_amount_val == "":
-                    min_amount_val = None
-                max_amount_val = charge.get('max_amount')
-                if max_amount_val == "":
-                    max_amount_val = None
-                percent_val = charge.get('percent')
-                if percent_val == "":
-                    percent_val = None
+                min_charge_val = _to_decimal(charge.get('min_charge'))
+                rate_val = _to_decimal(charge.get('rate'))
+                min_amount_val = _to_decimal(charge.get('min_amount'))
+                max_amount_val = _to_decimal(charge.get('max_amount'))
+                percent_val = _to_decimal(charge.get('percent'))
 
                 # Map Special Units
                 unit_val = charge['unit']
@@ -1151,6 +1169,12 @@ class SpotReplyAnalysisAPIView(APIView):
                 shipment_context=shipment_context,
                 availability=availability
             )
+            logger.info(
+                "analyze-reply AI result: assertions=%d, warnings=%d, can_proceed=%s",
+                len(result.assertions), len(result.warnings), result.summary.can_proceed,
+            )
+            if not result.assertions:
+                logger.warning("analyze-reply returned 0 assertions for text of length %d", len(text))
         else:
             # Manual edit flow or fallback
             result = ReplyAnalysisService.analyze_manual(
@@ -1479,3 +1503,4 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             'quote_id': str(quote.id),
             'quote_number': quote.quote_number
         })
+

@@ -29,6 +29,7 @@ from .ai_intake_schemas import (
 )
 
 logger = logging.getLogger(__name__)
+_LEGACY_SDK_WARNING_EMITTED = False
 
 # Gemini model configuration
 DEFAULT_GEMINI_MODEL_NAME = "gemini-2.5-flash-lite"
@@ -214,18 +215,42 @@ def _infer_quote_currency_from_text(text: str) -> Optional[str]:
 
 def get_gemini_client():
     """Get configured Gemini client. Returns None if not configured."""
-    try:
-        from google import genai as genai_sdk
-    except ImportError:
-        logger.error("google-genai not installed")
-        return None
-    
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.error("GEMINI_API_KEY environment variable not set")
         return None
 
-    return _GenAIClientAdapter(genai_sdk, api_key)
+    try:
+        from google import genai as genai_sdk
+        return _GenAIClientAdapter(genai_sdk, api_key)
+    except ImportError as genai_import_error:
+        # Backward-compatibility fallback for environments that still have
+        # `google-generativeai` installed instead of `google-genai`.
+        try:
+            import google.generativeai as legacy_genai_sdk
+        except ImportError as legacy_import_error:
+            logger.error(
+                "Gemini SDK import failed (google-genai: %s, google-generativeai: %s)",
+                genai_import_error,
+                legacy_import_error,
+            )
+            return None
+
+        try:
+            legacy_genai_sdk.configure(api_key=api_key)
+        except Exception as config_error:
+            logger.error("Failed configuring google-generativeai client: %s", config_error)
+            return None
+
+        global _LEGACY_SDK_WARNING_EMITTED
+        if not _LEGACY_SDK_WARNING_EMITTED:
+            logger.warning(
+                "Using deprecated google-generativeai fallback. "
+                "Install `google-genai` for the preferred Gemini client."
+            )
+            _LEGACY_SDK_WARNING_EMITTED = True
+
+        return legacy_genai_sdk
 
 
 def parse_rate_quote_text(
@@ -248,7 +273,10 @@ def parse_rate_quote_text(
     if not genai:
         return AIRateIntakePipelineResult(
             success=False,
-            error="Gemini API not configured. Set GEMINI_API_KEY environment variable.",
+            error=(
+                "Gemini API not configured. Set GEMINI_API_KEY and install "
+                "`google-genai` (or `google-generativeai` as legacy fallback)."
+            ),
             raw_text_length=len(text),
             source_type=source_type,
             model_used=GEMINI_MODEL,

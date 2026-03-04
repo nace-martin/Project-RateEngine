@@ -58,9 +58,30 @@ export function SpotRateEntryForm({
     onSaveDraft,
 }: SpotRateEntryFormProps) {
     const mapAssertionToCharge = (assertion: ExtractedAssertion): SPEChargeLine | null => {
-        const category = assertion.category;
+        let category = assertion.category;
         let bucket: SPEChargeBucket | null = null;
         let code = "MISC";
+
+        // Re-bucketing heuristic (mirrors backend spot_services.py):
+        // When only one local side is missing, bias local-charge assertions to that missing side.
+        const missingSet = new Set(missingComponents.map(c => c.toUpperCase()));
+        if (shipmentType === "EXPORT") {
+            if (
+                category === "origin_charges" &&
+                missingSet.has("DESTINATION_LOCAL") &&
+                !missingSet.has("ORIGIN_LOCAL")
+            ) {
+                category = "dest_charges";
+            }
+        } else if (shipmentType === "IMPORT") {
+            if (
+                category === "dest_charges" &&
+                missingSet.has("ORIGIN_LOCAL") &&
+                !missingSet.has("DESTINATION_LOCAL")
+            ) {
+                category = "origin_charges";
+            }
+        }
 
         if (category === "rate") {
             bucket = "airfreight";
@@ -78,7 +99,7 @@ export function SpotRateEntryForm({
         const unitRaw = (assertion.rate_unit || "").toLowerCase();
         const amountRaw = assertion.rate_per_unit ?? assertion.rate_amount ?? null;
         const currency = (assertion.rate_currency || "USD").toUpperCase() as SPEChargeLine["currency"];
-        if (amountRaw == null) return null;
+        if (amountRaw == null || Number(amountRaw) <= 0) return null;
 
         let unit: SPEChargeUnit = "flat";
         let min_charge: string | undefined;
@@ -162,27 +183,30 @@ export function SpotRateEntryForm({
         return null;
     };
 
-    // Determine visible buckets: show ONLY genuinely missing components when known,
-    // otherwise fall back to the full required-component set for the route.
+    // Determine visible buckets:
+    // - If missing components are explicitly provided, show ONLY those buckets.
+    // - Otherwise (legacy fallback), include required buckets plus any data buckets.
     const visibleBuckets = useMemo(() => {
-        // When the backend tells us exactly which components are missing, restrict
-        // the form to only those buckets so the user isn't confused by empty
-        // sections for charges that already exist in the DB.
-        if (missingComponents.length > 0) {
-            const missingBuckets = missingComponents
+        const missingBuckets = missingComponents.length > 0
+            ? missingComponents
+                .map(componentToBucket)
+                .filter((bucket): bucket is SPEChargeBucket => bucket !== null)
+            : getRequiredComponents(shipmentType, serviceScope)
                 .map(componentToBucket)
                 .filter((bucket): bucket is SPEChargeBucket => bucket !== null);
-            return missingBuckets;
+
+        const orderedBuckets: SPEChargeBucket[] = ["airfreight", "origin_charges", "destination_charges"];
+        if (missingComponents.length > 0) {
+            const bucketSet = new Set(missingBuckets);
+            return orderedBuckets.filter(b => bucketSet.has(b));
         }
 
-        // Fallback: show all required buckets for this shipment type + scope
-        const requiredComponents = getRequiredComponents(shipmentType, serviceScope);
-        const requiredBuckets = requiredComponents
-            .map(componentToBucket)
-            .filter((bucket): bucket is SPEChargeBucket => bucket !== null);
-
-        return requiredBuckets;
-    }, [shipmentType, serviceScope, missingComponents]);
+        const bucketSet = new Set(missingBuckets);
+        for (const charge of mergedCharges) {
+            if (charge.bucket) bucketSet.add(charge.bucket);
+        }
+        return orderedBuckets.filter(b => bucketSet.has(b));
+    }, [shipmentType, serviceScope, missingComponents, mergedCharges]);
 
     // Initial values
     const defaultValues = useMemo<SpotFormInputValues>(() => ({
@@ -199,9 +223,15 @@ export function SpotRateEntryForm({
         // Only visible buckets are editable in this form.
         const filteredCharges = mergedCharges.filter(c => visibleBuckets.includes(c.bucket));
 
-        console.log("SpotRateEntryForm DEBUG visible pipeline:", {
+        console.log("SpotRateEntryForm DEBUG pipeline:", {
+            initialCharges: initialCharges.length,
+            initialBuckets: initialCharges.map(c => `${c.bucket}:${c.code}`),
+            suggestedCharges: suggestedCharges.length,
+            mergedCharges: mergedCharges.length,
+            mergedBuckets: mergedCharges.map(c => `${c.bucket}:${c.code}`),
             visibleBuckets: visibleBuckets.join(", "),
-            filtered: filteredCharges.length
+            missingComponents: missingComponents.join(", "),
+            filtered: filteredCharges.length,
         });
 
         return filteredCharges.map((charge) => ({
@@ -237,8 +267,12 @@ export function SpotRateEntryForm({
     }, [form, resetSignature, formattedVisibleCharges]);
 
     const hiddenExistingCharges = useMemo(
-        () => initialCharges.filter(c => !visibleBuckets.includes(c.bucket)),
-        [initialCharges, visibleBuckets]
+        () => {
+            // In strict missing-components mode, keep non-visible buckets out of SPE submit payload.
+            if (missingComponents.length > 0) return [];
+            return initialCharges.filter(c => !visibleBuckets.includes(c.bucket));
+        },
+        [initialCharges, visibleBuckets, missingComponents.length]
     );
 
     const { fields, append, remove } = useFieldArray({

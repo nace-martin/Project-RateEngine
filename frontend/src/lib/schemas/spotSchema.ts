@@ -4,8 +4,8 @@ export const chargeLineSchema = z.object({
     id: z.string().optional(),
     code: z.string().optional(),
     description: z.string().min(1, "Description is required"),
-    amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, {
-        message: "Amount must be a positive number",
+    amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
+        message: "Amount must be greater than 0",
     }),
     currency: z.enum(["SGD", "USD", "AUD", "PGK", "NZD", "HKD"]),
     unit: z.enum([

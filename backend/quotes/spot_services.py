@@ -688,11 +688,20 @@ class StandardChargeService:
                 
                 cogs_row = _choose_matching_cogs_row(line)
 
-                # Default from already calculated line (fallback):
-                # use SELL values in quote currency (PGK here), not COGS values.
+                # SPOT prefill must only carry raw costs. SELL-only lines are skipped.
+                cost_fcy = _as_decimal(getattr(line, "cost_fcy", None))
+                cost_pgk = _as_decimal(getattr(line, "cost_pgk", None))
+                if cost_fcy is not None and cost_fcy > 0:
+                    raw_amount = cost_fcy
+                    currency = str(getattr(line, "cost_fcy_currency", None) or "PGK").upper()
+                elif cost_pgk is not None and cost_pgk > 0:
+                    raw_amount = cost_pgk
+                    currency = "PGK"
+                else:
+                    continue
+
                 unit = "per_shipment"
-                amount = _to_amount_str(line.sell_pgk)
-                currency = "PGK"
+                amount = _to_amount_str(raw_amount)
                 min_charge = None
                 calculation_type = None
                 unit_type = None
@@ -723,7 +732,8 @@ class StandardChargeService:
                         unit_type = "shipment"
                         rate = amount
                 else:
-                    if "per_kg" in line.cost_source.lower() or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
+                    line_cost_source = str(getattr(line, "cost_source", "")).lower()
+                    if "per_kg" in line_cost_source or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
                         unit = "per_kg"
                         calculation_type = "per_unit"
                         unit_type = "kg"
@@ -732,10 +742,6 @@ class StandardChargeService:
                         calculation_type = "flat"
                         unit_type = "shipment"
                         rate = amount
-
-                parsed_amount = _as_decimal(amount)
-                if parsed_amount is None or parsed_amount <= 0:
-                    continue
 
                 result.append({
                     "code": line.service_component_code,

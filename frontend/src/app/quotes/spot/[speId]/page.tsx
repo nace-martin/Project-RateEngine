@@ -8,7 +8,7 @@
  * 2. Review (Confirm & Create) - Review charges, acknowledge, and create quote
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,11 +45,23 @@ const BUY_SIDE_SOURCE_MARKERS = ["COGS", "BUY"];
 
 const isBuySideCharge = (charge: SPEChargeLine) => {
     const source = (charge.source_reference || "").toUpperCase();
+    // Standard Rate charges are computed FROM COGS but are sell-side charges — don't filter them out
+    if (source.startsWith("STANDARD RATE")) return false;
+    // AI/Analysis suggestions are always user-facing
+    if (source.includes("AI") || source.includes("ANALYSIS") || source.includes("AGENT REPLY")) return false;
     return BUY_SIDE_SOURCE_MARKERS.some((marker) => source.includes(marker));
 };
 
 const isStandardRateCharge = (charge: SPEChargeLine) =>
     (charge.source_reference || "").toUpperCase().startsWith("STANDARD RATE");
+
+const componentToBucket = (component: string): SPEChargeLine["bucket"] | null => {
+    const normalized = (component || "").toUpperCase();
+    if (normalized === "FREIGHT") return "airfreight";
+    if (normalized === "ORIGIN_LOCAL") return "origin_charges";
+    if (normalized === "DESTINATION_LOCAL") return "destination_charges";
+    return null;
+};
 
 export default function SpotRateEntryPage() {
     const params = useParams();
@@ -87,11 +99,25 @@ export default function SpotRateEntryPage() {
         () => missingComponentsFromQuery || state.spe?.shipment.missing_components || EMPTY_COMPONENTS,
         [missingComponentsFromQuery, state.spe?.shipment.missing_components]
     );
+    const editableBuckets = useMemo(
+        () =>
+            Array.from(
+                new Set(
+                    missingComponents
+                        .map(componentToBucket)
+                        .filter((bucket): bucket is SPEChargeLine["bucket"] => bucket !== null)
+                )
+            ),
+        [missingComponents]
+    );
     const { loadSPE } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [showAckModal, setShowAckModal] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
+    // Guard ref: prevents the auto-detection useEffect from overriding
+    // an explicit step transition (e.g. after analysis completes).
+    const userAdvancedToReviewRef = useRef(false);
 
     const inferShipmentType = (originCountry?: string, destinationCountry?: string): "EXPORT" | "IMPORT" | "DOMESTIC" => {
         if ((originCountry || "").toUpperCase() === "PG" && (destinationCountry || "").toUpperCase() === "PG") {
@@ -128,8 +154,12 @@ export default function SpotRateEntryPage() {
         }
     }, [isNew, speId, loadSPE]);
 
-    // Determine current step from SPE state
+    // Determine current step from SPE state (only for initial load, not after explicit transitions)
     useEffect(() => {
+        // If the user has explicitly advanced to review (e.g. via Analyze Reply),
+        // do NOT let this effect reset back to intake.
+        if (userAdvancedToReviewRef.current) return;
+
         if (state.spe) {
             if (state.spe.charges.length > 0) {
                 // If we have charges, go to review step
@@ -158,10 +188,14 @@ export default function SpotRateEntryPage() {
                     commodity: shipment.commodity || commodity || "GCR",
                 });
 
-                // Keep standard charges for ALL components, not just missing ones,
-                // so the user can see existing DB rates combined with their SPOT quote.
                 if (!cancelled) {
-                    setStandardPrefillCharges(charges);
+                    // Review step must only show/edit components that are actually missing.
+                    if (editableBuckets.length > 0) {
+                        const editableBucketSet = new Set(editableBuckets);
+                        setStandardPrefillCharges(charges.filter((charge) => editableBucketSet.has(charge.bucket)));
+                    } else {
+                        setStandardPrefillCharges(charges);
+                    }
                 }
             } catch (err) {
                 console.error("Failed to load standard SPOT charges:", err);
@@ -173,7 +207,7 @@ export default function SpotRateEntryPage() {
         return () => {
             cancelled = true;
         };
-    }, [state.spe, serviceScope, weight, commodity, resolvedShipmentType]);
+    }, [state.spe, serviceScope, weight, commodity, resolvedShipmentType, editableBuckets]);
 
     const mergedFormCharges = useMemo(() => {
         const speCharges = state.spe?.charges || EMPTY_CHARGES;
@@ -200,12 +234,32 @@ export default function SpotRateEntryPage() {
         return Array.from(mergedMap.values());
     }, [state.spe?.charges, standardPrefillCharges]);
 
-    const reviewFormCharges = useMemo(
-        () => mergedFormCharges.filter((charge) => !isBuySideCharge(charge)),
-        [mergedFormCharges]
-    );
+    const reviewFormCharges = useMemo(() => {
+        // Review form should only contain SPOT-entered/manual rates.
+        // Exclude any DB standard-rate lines from the editable SPE payload.
+        const candidateCharges = mergedFormCharges.filter(
+            (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
+        );
+        if (editableBuckets.length === 0) return candidateCharges;
+        const editableBucketSet = new Set(editableBuckets);
+        return candidateCharges.filter((charge) => editableBucketSet.has(charge.bucket));
+    }, [mergedFormCharges, editableBuckets]);
 
-
+    // DEBUG: trace charge data flow
+    useEffect(() => {
+        console.log("[SPOT Page] Data flow debug:", {
+            "state.spe?.charges": state.spe?.charges?.length ?? "no spe",
+            "standardPrefillCharges": standardPrefillCharges.length,
+            "mergedFormCharges": mergedFormCharges.length,
+            "reviewFormCharges": reviewFormCharges.length,
+            "analysisResult?.assertions": analysisResult?.assertions?.length ?? "null",
+            "currentStep": currentStep,
+            "missingComponents": missingComponents,
+        });
+        if (reviewFormCharges.length > 0) {
+            console.log("[SPOT Page] reviewFormCharges buckets:", reviewFormCharges.map(c => `${c.bucket}:${c.code}`));
+        }
+    }, [state.spe?.charges, standardPrefillCharges, mergedFormCharges, reviewFormCharges, analysisResult, currentStep, missingComponents]);
 
     // Handle saving charges, acknowledging, and creating the final quote in one flow
     const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
@@ -262,12 +316,16 @@ export default function SpotRateEntryPage() {
 
     // Handle analysis complete from intake step - move directly to review
     const handleAnalysisComplete = async (result: ReplyAnalysisResult) => {
+        console.log("[SPOT] handleAnalysisComplete called, assertions:", result?.assertions?.length, "warnings:", result?.warnings?.length);
         setAnalysisResult(result);
+        // Set the guard BEFORE the async reload so the useEffect doesn't fight us
+        userAdvancedToReviewRef.current = true;
         if (speId && !isNew) {
             // Backend persists auto-populated charges (AI + standard DB suggestions) into the SPE.
             // Reload before entering review so the form displays the latest draft charges.
             await loadSPE(speId);
         }
+        console.log("[SPOT] Advancing to review step");
         setCurrentStep("review");
     };
 
@@ -433,7 +491,10 @@ export default function SpotRateEntryPage() {
                     {/* Back button */}
                     <Button
                         variant="outline"
-                        onClick={() => setCurrentStep("intake")}
+                        onClick={() => {
+                            userAdvancedToReviewRef.current = false;
+                            setCurrentStep("intake");
+                        }}
                         className="mb-4"
                     >
                         ← Back to Agent Reply
@@ -444,7 +505,7 @@ export default function SpotRateEntryPage() {
                         onSubmit={handleSaveAndCreateQuote}
                         isLoading={state.isLoading}
                         initialCharges={reviewFormCharges}
-                        suggestedCharges={isNew ? (analysisResult?.assertions || []) : []}
+                        suggestedCharges={analysisResult?.assertions || []}
                         shipmentType={resolvedShipmentType}
                         serviceScope={serviceScope}
                         missingComponents={missingComponents}

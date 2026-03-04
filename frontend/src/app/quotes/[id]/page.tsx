@@ -15,13 +15,10 @@ import {
 import {
   V3QuoteComputeResponse,
   QuoteComputeResult,
-  V3DimensionInput,
 } from "@/lib/types";
-import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
 
 import RoutingWarning from "@/components/RoutingWarning";
-import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDisplay";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -47,7 +44,6 @@ export default function QuoteDetailPage() {
   const [computeResult, setComputeResult] = useState<QuoteComputeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hasSpotCharges, setHasSpotCharges] = useState(false);
   const [pdfDownloading, setPdfDownloading] = useState(false);
 
   useEffect(() => {
@@ -59,11 +55,6 @@ export default function QuoteDetailPage() {
           // Use the new V3 API function
           const data = await getQuoteV3(id);
           setQuote(data);
-          const spotLines = data.latest_version?.lines || [];
-          const hasSpot =
-            !!data.spot_negotiation?.id ||
-            spotLines.some((line) => line.cost_source === "SPOT Envelope");
-          setHasSpotCharges(hasSpot);
 
           // Fetch compute result (ChargeEngine)
           try {
@@ -134,6 +125,8 @@ export default function QuoteDetailPage() {
     quote.latest_version?.totals?.total_sell_fcy_incl_gst ||
     quote.latest_version?.totals?.total_sell_pgk_incl_gst ||
     "0";
+  const shipmentMetrics = computeShipmentMetrics(quote);
+  const fxEntries = buildFxEntries(quote, computeResult);
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -273,57 +266,13 @@ export default function QuoteDetailPage() {
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
                 <div className="font-medium text-slate-900 text-xs">
-                  {(() => {
-                    const rates = computeResult?.exchange_rates || {};
-                    if (Object.keys(rates).length === 0) {
-                      return <span className="text-slate-400 italic">Base (PGK)</span>;
-                    }
-                    const relevantCurrencies = new Set<string>();
-
-                    const addCurrency = (c: string | null | undefined) => {
-                      if (c && c.toUpperCase() !== 'PGK' && c.trim() !== '') {
-                        relevantCurrencies.add(c.toUpperCase());
-                      }
-                    };
-
-                    addCurrency(quote.output_currency);
-                    addCurrency(quote.latest_version?.totals?.currency);
-                    addCurrency(computeResult?.totals?.currency);
-
-                    quote.latest_version?.lines?.forEach(line => {
-                      addCurrency(line.cost_fcy_currency);
-                      addCurrency(line.sell_fcy_currency);
-                    });
-
-                    computeResult?.buy_lines?.forEach(line => addCurrency(line.currency));
-                    computeResult?.sell_lines?.forEach(line => addCurrency(line.sell_currency));
-
-                    let ratesToShow = Object.entries(rates).filter(([key]) => {
-                      const upperKey = key.toUpperCase();
-                      if (relevantCurrencies.has(upperKey)) return true;
-
-                      for (const code of Array.from(relevantCurrencies)) {
-                        if (upperKey.includes(`${code}/`) || upperKey.includes(`/${code}`)) return true;
-                        if (upperKey.includes(code)) return true;
-                      }
-                      return false;
-                    });
-
-                    if (ratesToShow.length === 0 && relevantCurrencies.size > 0) {
-                      ratesToShow = Object.entries(rates).filter(([k]) => k.toUpperCase() !== 'PGK' && k !== 'base_currency');
-                    }
-
-                    if (ratesToShow.length === 0) {
-                      if (relevantCurrencies.size === 0) {
-                        return <span className="text-slate-400 italic">Base (PGK)</span>;
-                      }
-                      return <span className="text-slate-400 italic">None</span>;
-                    }
-
-                    return ratesToShow.sort().map(([currency, rate]) => (
-                      <div key={currency}>{currency}: {rate as string}</div>
-                    ));
-                  })()}
+                  {fxEntries.length > 0 ? (
+                    fxEntries.map(([currency, rate]) => (
+                      <div key={currency}>{currency}: {String(rate)}</div>
+                    ))
+                  ) : (
+                    <span className="text-slate-400 italic">Base (PGK)</span>
+                  )}
                 </div>
               </div>
 
@@ -331,16 +280,19 @@ export default function QuoteDetailPage() {
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Total Weight</p>
                 <p className="font-medium text-slate-900">
-                  {/* Calculate Gross Weight from payload */}
-                  {(() => {
-                    const dims = quote.latest_version?.payload_json?.dimensions || [];
-                    const totalKg = dims.reduce((sum: number, d: V3DimensionInput) => {
-                      const pcs = d.pieces || 1;
-                      const weight = parseFloat(d.gross_weight_kg || "0");
-                      return sum + (weight * pcs);
-                    }, 0);
-                    return totalKg > 0 ? `${totalKg.toLocaleString()} kg` : "0 kg";
-                  })()}
+                  {shipmentMetrics.totalWeightKg > 0
+                    ? `${shipmentMetrics.totalWeightKg.toLocaleString()} kg`
+                    : "0 kg"}
+                </p>
+              </div>
+
+              {/* Volumetric Weight */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Volumetric Weight</p>
+                <p className="font-medium text-slate-900">
+                  {shipmentMetrics.volumetricWeightKg > 0
+                    ? `${shipmentMetrics.volumetricWeightKg.toLocaleString()} kg`
+                    : "0 kg"}
                 </p>
               </div>
 
@@ -348,10 +300,9 @@ export default function QuoteDetailPage() {
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Chargeable Weight (CW)</p>
                 <p className="font-medium text-slate-900">
-                  {(() => {
-                    const cw = computeChargeableWeight(quote).chargeableWeight;
-                    return cw > 0 ? `${cw.toLocaleString()} kg` : "0 kg";
-                  })()}
+                  {shipmentMetrics.chargeableWeightKg > 0
+                    ? `${shipmentMetrics.chargeableWeightKg.toLocaleString()} kg`
+                    : "0 kg"}
                 </p>
               </div>
 
@@ -388,12 +339,10 @@ export default function QuoteDetailPage() {
         ) : (
           /* Full-width Layout for Finalized Quotes */
           <div className="space-y-6">
-            {hasSpotCharges ? (
-              <SpotChargeResultDisplay quote={quote} />
-            ) : computeResult ? (
+            {computeResult ? (
               <QuoteFinancialBreakdown result={computeResult} />
             ) : (
-              <QuoteResultDisplay quote={quote} />
+              <QuoteFinancialBreakdown result={quote} />
             )}
           </div>
         )}
@@ -701,12 +650,31 @@ function extractCountryCode(location?: string, iataCode?: string): string | unde
 }
 
 function computeChargeableWeight(quote: V3QuoteComputeResponse) {
-  const dims = quote.latest_version?.payload_json?.dimensions || [];
+  const shipmentMetrics = computeShipmentMetrics(quote);
+  const fallbackPieces = quote.latest_version?.payload_json && "pieces" in quote.latest_version.payload_json
+    ? Number((quote.latest_version.payload_json as Record<string, unknown>).pieces || 0)
+    : 0;
+
+  return {
+    pieces: shipmentMetrics.pieces > 0 ? shipmentMetrics.pieces : Math.max(fallbackPieces, 1),
+    chargeableWeight: shipmentMetrics.chargeableWeightKg > 0 ? shipmentMetrics.chargeableWeightKg : 1,
+  };
+}
+
+function computeShipmentMetrics(quote: V3QuoteComputeResponse) {
+  const payload = quote.latest_version?.payload_json as Record<string, unknown> | undefined;
+  const dimsRaw = Array.isArray(payload?.dimensions)
+    ? payload?.dimensions
+    : Array.isArray((payload?.shipment as Record<string, unknown> | undefined)?.pieces)
+      ? ((payload?.shipment as Record<string, unknown>).pieces as unknown[])
+      : [];
+
   let pieces = 0;
   let totalActual = 0;
   let totalVolumetric = 0;
 
-  for (const dim of dims) {
+  for (const piece of dimsRaw) {
+    const dim = piece as Record<string, unknown>;
     const pcs = Number(dim.pieces || 0);
     const l = Number(dim.length_cm || 0);
     const w = Number(dim.width_cm || 0);
@@ -720,10 +688,108 @@ function computeChargeableWeight(quote: V3QuoteComputeResponse) {
     }
   }
 
+  if (totalActual <= 0) {
+    const payloadTotal =
+      payload && "total_weight_kg" in payload
+        ? Number(payload.total_weight_kg || 0)
+        : payload && payload.shipment && typeof payload.shipment === "object" && "total_weight_kg" in (payload.shipment as Record<string, unknown>)
+          ? Number(((payload.shipment as Record<string, unknown>).total_weight_kg as string | number) || 0)
+          : 0;
+    const versionTotal = Number(quote.latest_version?.total_weight_kg || 0);
+    totalActual = Math.max(payloadTotal, versionTotal, 0);
+  }
+
   const chargeableWeight = Math.ceil(Math.max(totalActual, totalVolumetric, 0));
 
   return {
-    pieces: Math.max(pieces, 1),
-    chargeableWeight: chargeableWeight || 1,
+    pieces: Math.max(pieces, 0),
+    totalWeightKg: Math.ceil(totalActual),
+    volumetricWeightKg: Math.ceil(totalVolumetric),
+    chargeableWeightKg: chargeableWeight,
   };
+}
+
+function buildFxEntries(
+  quote: V3QuoteComputeResponse,
+  computeResult: QuoteComputeResult | null
+): Array<[string, string]> {
+  const relevantCurrencies = new Set<string>();
+  const addCurrency = (currency: string | null | undefined) => {
+    if (!currency) return;
+    const code = currency.toUpperCase().trim();
+    if (!code || code === "PGK") return;
+    relevantCurrencies.add(code);
+  };
+
+  addCurrency(quote.output_currency);
+  addCurrency(quote.latest_version?.totals?.currency);
+  addCurrency(computeResult?.totals?.currency);
+
+  quote.latest_version?.lines?.forEach((line) => {
+    addCurrency(line.cost_fcy_currency);
+    addCurrency(line.sell_fcy_currency);
+  });
+  computeResult?.buy_lines?.forEach((line) => addCurrency(line.currency));
+  computeResult?.sell_lines?.forEach((line) => addCurrency(line.sell_currency));
+
+  const rates: Record<string, string> = {
+    ...(computeResult?.exchange_rates || {}),
+  };
+
+  // Fallback for legacy/spot paths where compute_v3 returns empty exchange_rates.
+  if (Object.keys(rates).length === 0) {
+    for (const line of quote.latest_version?.lines || []) {
+      const rate = line.exchange_rate;
+      if (!rate) continue;
+      const ccy = (line.sell_fcy_currency || line.cost_fcy_currency || "").toUpperCase();
+      if (!ccy || ccy === "PGK") continue;
+      rates[`${ccy}/PGK`] = String(rate);
+    }
+  }
+
+  // Fallback when explicit FX lines are absent but quote is in non-PGK output.
+  if (Object.keys(rates).length === 0) {
+    const displayCurrency =
+      computeResult?.totals?.currency ||
+      quote.latest_version?.totals?.currency ||
+      quote.output_currency ||
+      "PGK";
+
+    const totalFcy = Number(
+      computeResult?.totals?.total_sell_fcy ||
+      quote.latest_version?.totals?.total_sell_fcy ||
+      0
+    );
+    const totalPgk = Number(
+      computeResult?.totals?.sell_pgk ||
+      quote.latest_version?.totals?.total_sell_pgk ||
+      0
+    );
+
+    if (displayCurrency.toUpperCase() !== "PGK" && totalFcy > 0 && totalPgk > 0) {
+      rates[`${displayCurrency.toUpperCase()}/PGK`] = (totalPgk / totalFcy).toFixed(6);
+    }
+  }
+
+  let visible = Object.entries(rates).filter(([key]) => {
+    const upper = key.toUpperCase();
+    if (relevantCurrencies.has(upper)) return true;
+    for (const code of Array.from(relevantCurrencies)) {
+      if (upper.includes(`${code}/`) || upper.includes(`/${code}`) || upper.includes(code)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  if (visible.length === 0 && relevantCurrencies.size > 0) {
+    visible = Object.entries(rates).filter(([key]) => {
+      const upper = key.toUpperCase();
+      return upper !== "PGK" && upper !== "BASE_CURRENCY";
+    });
+  }
+
+  const sorted = visible.sort((a, b) => a[0].localeCompare(b[0]));
+  if (sorted.length > 0) return sorted;
+  return [["PGK/PGK", "1.000000"]];
 }
