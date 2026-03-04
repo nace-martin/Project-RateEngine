@@ -19,6 +19,7 @@ export const chargeLineSchema = z.object({
     min_charge: z.string().optional().nullable(), // Form handles as string, converted later
     percentage_basis: z.string().optional().nullable(),
     note: z.string().optional(),
+    exclude_from_totals: z.boolean().optional(),
 });
 
 export const spotFormSchema = z.object({

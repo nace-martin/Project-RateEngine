@@ -368,13 +368,13 @@ function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComp
       gst_amount: (
         displayCurrency.toUpperCase() !== 'PGK'
           ? (
-              (parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')) -
-              (parseFloat(totals?.total_sell_fcy || '0'))
-            )
+            (parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')) -
+            (parseFloat(totals?.total_sell_fcy || '0'))
+          )
           : (
-              (parseFloat(totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0')) -
-              (parseFloat(totals?.total_sell_pgk || '0'))
-            )
+            (parseFloat(totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0')) -
+            (parseFloat(totals?.total_sell_pgk || '0'))
+          )
       ).toFixed(2),
       caf_pgk: '0',
       currency: displayCurrency,
@@ -1763,4 +1763,26 @@ export async function getLogicalRateCards(): Promise<LogicalRateCard[]> {
   return response.json();
 }
 
+export async function deleteQuoteV3(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v3/quotes/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete quote: ${detail}`);
+  }
+}
 
+export async function deleteSpotEnvelopeDraft(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete SPE draft: ${detail}`);
+  }
+}

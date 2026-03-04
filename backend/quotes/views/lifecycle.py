@@ -181,8 +181,8 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
     serializer_class = QuoteModelSerializerV3
     permission_classes = [IsAuthenticated]
     pagination_class = QuoteLimitOffsetPagination
-    # Limit write operations to update only
-    http_method_names = ['get', 'patch', 'head', 'options']
+    # Limit write operations to update and delete only
+    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -259,6 +259,19 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             'versions__lines__service_component',
             'versions__totals'
         )
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a quote. Only allowed if the quote implies DRAFT status.
+        """
+        instance = self.get_object()
+        if instance.status != Quote.Status.DRAFT:
+            return Response(
+                {'detail': f'Cannot delete quote with status "{instance.status}". Only DRAFT quotes can be deleted.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def retrieve(self, request, *args, **KWARGS):
         """

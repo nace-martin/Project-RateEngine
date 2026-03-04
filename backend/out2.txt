@@ -1,0 +1,11 @@
+SPE ID: 4fb74259-eb17-47ea-95d0-d8eda22d0acd
+Shipment Context: {'origin_country': 'PG', 'destination_country': 'HK', 'origin_code': 'POM', 'destination_code': 'HKG', 'commodity': 'GCR', 'total_weight_kg': 100, 'pieces': 1, 'service_scope': 'd2d', 'missing_components': ['DESTINATION_LOCAL']}
+Trigger Code: MISSING_SCOPE_RATES
+
+Charges:
+ - [destination_charges] DESTINATION_LOCAL: THC | 0.30 USD /per_kg (Source: Agent reply (AI))
+ - [destination_charges] DESTINATION_LOCAL: DOC | 30.00 USD /per_shipment (Source: Agent reply (AI))
+ - [destination_charges] DESTINATION_LOCAL: CUSTOM CLEARANCE | 50.00 USD /per_shipment (Source: Agent reply (AI))
+ - [destination_charges] DESTINATION_LOCAL: DELIVERY | 130.00 USD /per_shipment (Source: Agent reply (AI))
+ - [destination_charges] DESTINATION_LOCAL: GATE IN CHARGE | 60.00 USD /per_shipment (Source: Agent reply (AI))
+ - [destination_charges] DESTINATION_LOCAL: HANDLE | 50.00 USD /per_shipment (Source: Agent reply (AI))

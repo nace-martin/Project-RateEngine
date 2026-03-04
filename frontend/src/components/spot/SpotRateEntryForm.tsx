@@ -25,6 +25,8 @@ interface SpotRateEntryFormProps {
     shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
     serviceScope?: string;
     missingComponents?: string[];
+    submitLabel?: string;
+    onSaveDraft?: (charges: Omit<SPEChargeLine, 'id'>[]) => Promise<void>;
 }
 
 const CHARGE_BUCKETS: { id: SPEChargeBucket; label: string }[] = [
@@ -52,6 +54,8 @@ export function SpotRateEntryForm({
     shipmentType = "EXPORT",
     serviceScope = "D2D",
     missingComponents = [],
+    submitLabel,
+    onSaveDraft,
 }: SpotRateEntryFormProps) {
     const mapAssertionToCharge = (assertion: ExtractedAssertion): SPEChargeLine | null => {
         const category = assertion.category;
@@ -158,22 +162,25 @@ export function SpotRateEntryForm({
         return null;
     };
 
-    // Determine visible buckets using REQUIRED COMPONENT model + existing data
+    // Determine visible buckets: show ONLY genuinely missing components when known,
+    // otherwise fall back to the full required-component set for the route.
     const visibleBuckets = useMemo(() => {
-        const requiredComponents = getRequiredComponents(shipmentType, serviceScope);
-
-        let targetComponents: readonly string[] = requiredComponents;
-        if (missingComponents && missingComponents.length > 0) {
-            targetComponents = requiredComponents.filter(c => missingComponents.includes(c));
+        // When the backend tells us exactly which components are missing, restrict
+        // the form to only those buckets so the user isn't confused by empty
+        // sections for charges that already exist in the DB.
+        if (missingComponents.length > 0) {
+            const missingBuckets = missingComponents
+                .map(componentToBucket)
+                .filter((bucket): bucket is SPEChargeBucket => bucket !== null);
+            return missingBuckets;
         }
 
-        const requiredBuckets = targetComponents
+        // Fallback: show all required buckets for this shipment type + scope
+        const requiredComponents = getRequiredComponents(shipmentType, serviceScope);
+        const requiredBuckets = requiredComponents
             .map(componentToBucket)
             .filter((bucket): bucket is SPEChargeBucket => bucket !== null);
 
-        // Strictly enforce that we ONLY show required + missing buckets.
-        // We do NOT want AI hallucinations un-hiding a bucket (like Airfreight)
-        // that we already have DB rates for.
         return requiredBuckets;
     }, [shipmentType, serviceScope, missingComponents]);
 
@@ -192,8 +199,13 @@ export function SpotRateEntryForm({
         // Only visible buckets are editable in this form.
         const filteredCharges = mergedCharges.filter(c => visibleBuckets.includes(c.bucket));
 
+        console.log("SpotRateEntryForm DEBUG visible pipeline:", {
+            visibleBuckets: visibleBuckets.join(", "),
+            filtered: filteredCharges.length
+        });
+
         return filteredCharges.map((charge) => ({
-            id: charge.id,
+            // Omit charge.id because react-hook-form useFieldArray conflicts with existing 'id' fields
             code: charge.code,
             description: charge.description,
             amount: charge.amount ? String(charge.amount) : "",
@@ -205,6 +217,7 @@ export function SpotRateEntryForm({
             source_reference: charge.source_reference,
             min_charge: charge.min_charge ? String(charge.min_charge) : null,
             note: charge.note || "",
+            exclude_from_totals: charge.exclude_from_totals,
             percentage_basis: charge.percentage_basis || "",
         }));
     }, [mergedCharges, visibleBuckets]);
@@ -233,6 +246,10 @@ export function SpotRateEntryForm({
         name: "charges",
     });
 
+    useEffect(() => {
+        console.log("SpotRateEntryForm DEBUG fields length:", fields.length);
+    }, [fields.length]);
+
     const mapEditableLineToSubmitCharge = (line: SpotFormSubmitValues["charges"][number]): Omit<SPEChargeLine, 'id'> => {
         const isWeightBased = line.unit === "min_or_per_kg" || line.unit === "per_kg";
         return {
@@ -247,6 +264,7 @@ export function SpotRateEntryForm({
             conditional: line.conditional,
             source_reference: line.source_reference,
             note: line.note,
+            exclude_from_totals: line.exclude_from_totals,
             percentage_basis: line.percentage_basis || undefined,
         };
     };
@@ -300,6 +318,7 @@ export function SpotRateEntryForm({
             conditional: false,
             source_reference: "",
             min_charge: null,
+            exclude_from_totals: false,
         });
     };
 
@@ -317,7 +336,7 @@ export function SpotRateEntryForm({
 
                 {visibleBuckets.map(bucketId => {
                     const bucket = CHARGE_BUCKETS.find(b => b.id === bucketId);
-                    if (!bucket) return null; // Should not happen if visibleBuckets are derived from CHARGE_BUCKETS
+                    if (!bucket) return null;
                     const bucketItems = getFieldsByBucket(bucket.id);
                     return (
                         <ChargeBucketSection
@@ -331,14 +350,33 @@ export function SpotRateEntryForm({
                     );
                 })}
 
-                <Button
-                    type="submit"
-                    disabled={isLoading}
-                    size="lg"
-                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
-                >
-                    {isLoading ? "Saving..." : "Save & Proceed"}
-                </Button>
+                <div className="flex gap-3">
+                    {onSaveDraft && (
+                        <Button
+                            type="button"
+                            variant="outline"
+                            disabled={isLoading}
+                            size="lg"
+                            className="flex-1"
+                            onClick={() => {
+                                const data = form.getValues();
+                                const editableCharges = data.charges.map((line) => mapEditableLineToSubmitCharge(line as SpotFormSubmitValues["charges"][number]));
+                                const preservedHiddenCharges = hiddenExistingCharges.map(mapHiddenChargeToSubmitCharge);
+                                onSaveDraft([...preservedHiddenCharges, ...editableCharges]);
+                            }}
+                        >
+                            Save Draft
+                        </Button>
+                    )}
+                    <Button
+                        type="submit"
+                        disabled={isLoading}
+                        size="lg"
+                        className={`${onSaveDraft ? 'flex-1' : 'w-full'} bg-primary hover:bg-primary/90 text-primary-foreground font-semibold`}
+                    >
+                        {isLoading ? "Processing..." : (submitLabel || "Save & Proceed")}
+                    </Button>
+                </div>
             </form>
         </Form>
     );

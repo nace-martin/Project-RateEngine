@@ -34,7 +34,7 @@ from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
 
 # Categories that are location-based (not lane-based)
-LOCAL_CATEGORIES = ['CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING']
+LOCAL_CATEGORIES = ['CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'SURCHARGE', 'TERMINAL']
 
 
 class PaymentTerm(Enum):
@@ -198,6 +198,8 @@ class ExportPricingEngine:
         # Origin Clearance (D2A, D2D)
         if service_scope in ('D2A', 'D2D'):
             codes.append(1020)  # EXP-CLEAR - Customs Clearance (Origin)
+            codes.append(1071)  # EXP-VCH - Valuable Cargo Handling
+            codes.append(1072)  # EXP-LPC - Livestock Processing Fee
         
         # Deduplicate and sort
         return sorted(list(set(codes)))
@@ -302,8 +304,9 @@ class ExportPricingEngine:
                 if rate.currency == self.quote_currency: self._sell_rate_cache[pc_id] = rate
                 elif pc_id not in self._sell_rate_cache: self._sell_rate_cache[pc_id] = rate
             else:
-                if rate.currency == 'PGK': self._sell_rate_cache[pc_id] = rate
-                elif pc_id not in self._sell_rate_cache: self._sell_rate_cache[pc_id] = rate
+                # PREPAID export must use PGK sell rates only.
+                if rate.currency == 'PGK':
+                    self._sell_rate_cache[pc_id] = rate
         surcharges = Surcharge.objects.filter(
             product_code_id__in=product_code_ids, service_type__in=['EXPORT_AIR', 'EXPORT_ORIGIN', 'ALL'],
             is_active=True, valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
@@ -336,9 +339,25 @@ class ExportPricingEngine:
                 product_code_id=product_code_id, location=self.origin, direction='EXPORT',
                 payment_term__in=[payment_term_value, 'ANY'], valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
             )
-            # Priority: exact payment term first, then ANY fallback (matches import engine behavior)
+            preferred_currency = None
+            if self.payment_term == PaymentTerm.COLLECT:
+                preferred_currency = self.destination_currency or self.quote_currency
+            elif self.payment_term == PaymentTerm.PREPAID:
+                preferred_currency = self.quote_currency or 'PGK'
+
+            if preferred_currency:
+                rates = local_rates.filter(currency=preferred_currency)
+                local = rates.filter(payment_term=payment_term_value).first() or rates.filter(payment_term='ANY').first()
+                if local:
+                    return local
+                if self.payment_term == PaymentTerm.PREPAID:
+                    # PREPAID export must not silently fall back to non-PGK rows.
+                    return None
+
+            # Fallback: exact payment term first, then ANY term, in any currency.
             local = local_rates.filter(payment_term=payment_term_value).first() or local_rates.filter(payment_term='ANY').first()
-            if local: return local
+            if local:
+                return local
         if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache: return self._sell_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'SELL'))
         return None

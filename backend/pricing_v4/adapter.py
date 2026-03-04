@@ -242,21 +242,18 @@ class PricingServiceV4Adapter:
             # Get FX rates from snapshot
             fx_rates = self._get_fx_rates_dict()
             
-            # Determine quote currency for Export COLLECT
-            # If customer preference was provided in QuoteInput, honor it.
-            preferred_currency = self.quote_input.output_currency
-            if preferred_currency:
-                quote_currency = preferred_currency
-            else:
-                # Rule: AUD only if destination is Australia, otherwise USD
-                dest_country = None
-                if shipment.destination_location:
-                    dest_country = getattr(shipment.destination_location, 'country_code', None)
-                
-                if dest_country == 'AU':
-                    quote_currency = 'AUD'
-                else:
-                    quote_currency = 'USD'  # Default for all other international (SIN, HKG, etc.)
+            # Determine destination market currency.
+            # AUD only for AU lanes; USD for all other international lanes.
+            dest_country = None
+            if shipment.destination_location:
+                dest_country = getattr(shipment.destination_location, 'country_code', None)
+            destination_currency = 'AUD' if dest_country == 'AU' else 'USD'
+
+            # Convert payment term string to enum and enforce export currency rules:
+            # - PREPAID: always PGK
+            # - COLLECT: destination market currency
+            export_payment_term = ExportPaymentTerm(shipment.payment_term) if shipment.payment_term else ExportPaymentTerm.PREPAID
+            quote_currency = 'PGK' if export_payment_term == ExportPaymentTerm.PREPAID else destination_currency
             
             # Get TT rates for the quote currency
             fx_info = fx_rates.get(quote_currency, {})
@@ -272,9 +269,6 @@ class PricingServiceV4Adapter:
                 if self.policy.margin_pct is not None:
                     margin_rate = Decimal(str(self.policy.margin_pct))
             
-            # Convert payment term string to enum
-            export_payment_term = ExportPaymentTerm(shipment.payment_term) if shipment.payment_term else ExportPaymentTerm.PREPAID
-            
             engine = ExportPricingEngine(
                 quote_date=self.quote_input.quote_date,
                 origin=origin_code,
@@ -285,7 +279,7 @@ class PricingServiceV4Adapter:
                 tt_sell=tt_sell,
                 caf_rate=caf_rate,
                 margin_rate=margin_rate,
-                destination_currency=quote_currency,
+                destination_currency=destination_currency,
             )
         elif shipment.shipment_type == 'IMPORT':
             # Import Engine
@@ -424,6 +418,7 @@ class PricingServiceV4Adapter:
                     'leg': leg,
                     'sell_currency': sell_currency,
                     'cost_currency': cost_currency,
+                    'cost_source': getattr(line, 'cost_source', None),
                     'gst_category': getattr(line, 'gst_category', None),
                     'gst_rate': getattr(line, 'gst_rate', Decimal('0')),
                     'gst_amount': getattr(line, 'gst_amount', Decimal('0')),
@@ -479,7 +474,10 @@ class PricingServiceV4Adapter:
             currency = data.get('sell_currency', 'PGK')
             cost_currency = data.get('cost_currency', currency)
             agent_name = data.get('agent_name')
-            if isinstance(agent_name, str) and agent_name:
+            engine_cost_source = str(data.get('cost_source') or '').strip()
+            if engine_cost_source and engine_cost_source != 'N/A':
+                cost_source = engine_cost_source
+            elif isinstance(agent_name, str) and agent_name:
                 cost_source = agent_name
             elif agent_name:
                 cost_source = str(agent_name)
@@ -674,20 +672,39 @@ class PricingServiceV4Adapter:
         logger.warning("No FX SELL rate found for %s; using 1.0", currency)
         return Decimal('1')
 
-    def _convert_fcy_to_pgk(self, amount: Decimal, fx_rate: Decimal) -> Decimal:
+    def _convert_fcy_to_pgk(self, amount: Decimal, fx_rate: Decimal, caf_pct: Decimal = Decimal('0')) -> Decimal:
         """
-        Convert FCY to PGK using the stored FX rate.
-
-        The system stores rates as FCY per PGK (e.g., 0.3342 AUD per 1 PGK),
-        but may also contain PGK per FCY (>1). Use a safe heuristic:
-        - If rate >= 1, assume PGK per FCY: PGK = FCY * rate
-        - If rate < 1, assume FCY per PGK: PGK = FCY / rate
+        Convert FCY to PGK using the stored TT BUY rate.
+        CAF Rule: When using TT BUY to convert FCY -> PGK, subtract the CAF percentage.
         """
         if fx_rate <= 0:
             return amount
-        if fx_rate >= 1:
-            return amount * fx_rate
-        return amount / fx_rate
+            
+        rate = fx_rate * (Decimal('1') - caf_pct)
+        if rate <= 0:
+            return amount
+            
+        # The system usually stores rates as FCY per PGK (e.g., 0.3342 AUD per 1 PGK),
+        # but may also contain PGK per FCY (>1). Use a safe heuristic:
+        if rate >= 1:
+            return amount * rate
+        return amount / rate
+
+    def _convert_pgk_to_fcy(self, amount: Decimal, fx_rate: Decimal, caf_pct: Decimal = Decimal('0')) -> Decimal:
+        """
+        Convert PGK to FCY using the stored TT SELL rate.
+        CAF Rule: When using TT SELL to convert PGK -> FCY, add the CAF percentage.
+        """
+        if fx_rate <= 0:
+            return amount
+            
+        rate = fx_rate * (Decimal('1') + caf_pct)
+        if rate <= 0:
+            return amount
+            
+        if rate >= 1:
+            return amount / rate
+        return amount * rate
 
     def _calculate_chargeable_weight(self) -> Decimal:
         total_actual = Decimal('0')
@@ -1004,9 +1021,7 @@ class PricingServiceV4Adapter:
                 elif shipment_type == 'EXPORT':
                     caf_pct = Decimal(str(self.policy.caf_export_pct))
 
-            # Apply CAF to FX Rate (User Request)
             fx_buy = self._get_fx_buy_rate(charge.currency, fx_rates)
-            fx_buy_adjusted = fx_buy * (Decimal('1') + caf_pct)
             
             # Canonical rule evaluator (supports FLAT, PER_UNIT, MIN_OR_PER_UNIT, PERCENT_OF, etc.)
             rule = {
@@ -1028,8 +1043,8 @@ class PricingServiceV4Adapter:
             if cost_fcy < 0:
                 cost_fcy = Decimal("0")
                 
-            # Convert to PGK using Adjusted FX
-            cost_pgk = cost_fcy * fx_buy_adjusted
+            # Convert to PGK using TT BUY (subtracts CAF per hardcoded rule)
+            cost_pgk = self._convert_fcy_to_pgk(cost_fcy, fx_buy, caf_pct)
             
             # Apply margin for sell price
             sell_pgk = cost_pgk * (Decimal('1') + margin_pct)
@@ -1091,8 +1106,9 @@ class PricingServiceV4Adapter:
                 sell_fcy = sell_pgk
                 sell_fcy_incl_gst = sell_incl_gst
             else:
-                sell_fcy = sell_pgk / output_fx_sell
-                sell_fcy_incl_gst = sell_incl_gst / output_fx_sell
+                # Convert sell price to output currency using TT SELL (adds CAF per hardcoded rule)
+                sell_fcy = self._convert_pgk_to_fcy(sell_pgk, output_fx_sell, caf_pct)
+                sell_fcy_incl_gst = self._convert_pgk_to_fcy(sell_incl_gst, output_fx_sell, caf_pct)
             
             # Get ServiceComponent if exists
             sc = component_map.get(charge.code)

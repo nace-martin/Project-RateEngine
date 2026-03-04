@@ -19,7 +19,7 @@ import {
 } from "@/lib/types";
 import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
-import QuoteSettings from "@/components/QuoteSettings";
+
 import RoutingWarning from "@/components/RoutingWarning";
 import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDisplay";
 import { Button } from "@/components/ui/button";
@@ -234,7 +234,7 @@ export default function QuoteDetailPage() {
               INTERNAL USE ONLY
             </div>
 
-            <AlertDescription className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm mt-1">
+            <AlertDescription className="grid grid-cols-2 lg:grid-cols-5 gap-4 text-sm mt-1">
               {/* Customer */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Customer</p>
@@ -274,70 +274,60 @@ export default function QuoteDetailPage() {
                 <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
                 <div className="font-medium text-slate-900 text-xs">
                   {(() => {
-                    if (!computeResult?.exchange_rates) return <span className="text-slate-400 italic">N/A</span>;
-
+                    const rates = computeResult?.exchange_rates || {};
+                    if (Object.keys(rates).length === 0) {
+                      return <span className="text-slate-400 italic">Base (PGK)</span>;
+                    }
                     const relevantCurrencies = new Set<string>();
 
-                    // Helper to safely add currency
                     const addCurrency = (c: string | null | undefined) => {
                       if (c && c.toUpperCase() !== 'PGK' && c.trim() !== '') {
                         relevantCurrencies.add(c.toUpperCase());
                       }
                     };
 
-                    // 1. Output Currency
                     addCurrency(quote.output_currency);
                     addCurrency(quote.latest_version?.totals?.currency);
-                    addCurrency(computeResult.totals?.currency);
+                    addCurrency(computeResult?.totals?.currency);
 
-                    // 2. Lines from latest_version (Stored State)
                     quote.latest_version?.lines?.forEach(line => {
                       addCurrency(line.cost_fcy_currency);
                       addCurrency(line.sell_fcy_currency);
                     });
 
-                    // 3. Lines from computeResult (Calculated State)
-                    computeResult.buy_lines?.forEach(line => addCurrency(line.currency));
-                    computeResult.sell_lines?.forEach(line => addCurrency(line.sell_currency));
+                    computeResult?.buy_lines?.forEach(line => addCurrency(line.currency));
+                    computeResult?.sell_lines?.forEach(line => addCurrency(line.sell_currency));
 
-                    // Filter rates that match relevant currencies
-                    const ratesToShow = Object.entries(computeResult.exchange_rates).filter(([key]) => {
+                    let ratesToShow = Object.entries(rates).filter(([key]) => {
                       const upperKey = key.toUpperCase();
-                      // If key is exactly one of the relevant currencies (e.g. "AUD")
                       if (relevantCurrencies.has(upperKey)) return true;
 
-                      // If key is a pair containing one of the relevant currencies (e.g. "AUD/PGK")
                       for (const code of Array.from(relevantCurrencies)) {
                         if (upperKey.includes(`${code}/`) || upperKey.includes(`/${code}`)) return true;
-                        if (upperKey.includes(code)) return true; // Broad match fallback
+                        if (upperKey.includes(code)) return true;
                       }
                       return false;
                     });
 
+                    if (ratesToShow.length === 0 && relevantCurrencies.size > 0) {
+                      ratesToShow = Object.entries(rates).filter(([k]) => k.toUpperCase() !== 'PGK' && k !== 'base_currency');
+                    }
+
                     if (ratesToShow.length === 0) {
-                      // If we have rates but filtered them all out, it implies everything is PGK.
-                      // But usually we shouldn't be here if there are foreign currencies involved.
-                      // Check if we actually found relevant currencies
                       if (relevantCurrencies.size === 0) {
-                        // User feedback: "if app is converting AUD to PGK then I want that particular FX rate"
-                        // If we didn't find "AUD" in the lines, then we missed it.
-                        // Fallback: show ALL rates if no foreign currency detected but exchange rates exist?
-                        // No, user specifically said "not all".
-                        // Let's assume if it says "Base (PGK)" it's because the data doesn't have the currency tag.
                         return <span className="text-slate-400 italic">Base (PGK)</span>;
                       }
                       return <span className="text-slate-400 italic">None</span>;
                     }
 
-                    // Sort to put pairs first if possible, or just standard sort
                     return ratesToShow.sort().map(([currency, rate]) => (
-                      <div key={currency}>{currency}: {rate}</div>
+                      <div key={currency}>{currency}: {rate as string}</div>
                     ));
                   })()}
                 </div>
               </div>
 
-              {/* Chargeable Weight */}
+              {/* Total Weight */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Total Weight</p>
                 <p className="font-medium text-slate-900">
@@ -350,6 +340,36 @@ export default function QuoteDetailPage() {
                       return sum + (weight * pcs);
                     }, 0);
                     return totalKg > 0 ? `${totalKg.toLocaleString()} kg` : "0 kg";
+                  })()}
+                </p>
+              </div>
+
+              {/* Chargeable Weight (CW) */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Chargeable Weight (CW)</p>
+                <p className="font-medium text-slate-900">
+                  {(() => {
+                    const cw = computeChargeableWeight(quote).chargeableWeight;
+                    return cw > 0 ? `${cw.toLocaleString()} kg` : "0 kg";
+                  })()}
+                </p>
+              </div>
+
+              {/* Validity */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Validity</p>
+                <p className="font-medium text-slate-900">
+                  7 Days
+                </p>
+              </div>
+
+              {/* Payment Terms */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Payment Terms</p>
+                <p className="font-medium text-slate-900">
+                  {(() => {
+                    const term = (quote.payment_term || "Collect").toLowerCase();
+                    return term === 'credit' ? 'Credit (30 Days)' : term.charAt(0).toUpperCase() + term.slice(1);
                   })()}
                 </p>
               </div>
@@ -366,23 +386,15 @@ export default function QuoteDetailPage() {
         {isIncomplete ? (
           <SpotNegotiationCard quote={quote} />
         ) : (
-          /* Two-Column Layout for Finalized Quotes */
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Financial Breakdown (2/3 width) */}
-            <div className="lg:col-span-2 space-y-6">
-              {hasSpotCharges ? (
-                <SpotChargeResultDisplay quote={quote} />
-              ) : computeResult ? (
-                <QuoteFinancialBreakdown result={computeResult} />
-              ) : (
-                <QuoteResultDisplay quote={quote} />
-              )}
-            </div>
-
-            {/* Right Column - Document Preview & Settings (1/3 width) */}
-            <div className="space-y-6">
-              <QuoteSettings defaultPaymentTerm={quote.payment_term?.toLowerCase()} />
-            </div>
+          /* Full-width Layout for Finalized Quotes */
+          <div className="space-y-6">
+            {hasSpotCharges ? (
+              <SpotChargeResultDisplay quote={quote} />
+            ) : computeResult ? (
+              <QuoteFinancialBreakdown result={computeResult} />
+            ) : (
+              <QuoteResultDisplay quote={quote} />
+            )}
           </div>
         )}
       </div>

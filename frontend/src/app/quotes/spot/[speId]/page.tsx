@@ -3,23 +3,20 @@
 /**
  * SPOT Rate Entry Page
  * 
- * Streamlined 3-step flow:
+ * Streamlined 2-step flow:
  * 1. Intake (Submit) - Paste agent reply, AI analysis
- * 2. Review (Confirm) - Review assertions, fill missing fields, acknowledge
- * 3. Generate (Finalize) - View computed quote, finalize, generate PDF
+ * 2. Review (Confirm & Create) - Review charges, acknowledge, and create quote
  */
 
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSpotMode } from "@/hooks/use-spot-mode";
 import {
     ExpiredBanner,
     RejectedBanner,
     ReplyPasteCard,
-    QuoteVerificationPanel,
 } from "@/components/spot";
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
@@ -34,17 +31,25 @@ import {
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
-// Streamlined 3-step workflow
-type Step = "intake" | "review" | "generate";
+// Streamlined 2-step workflow
+type Step = "intake" | "review";
 
 const STEPS: { id: Step; label: string; description: string }[] = [
     { id: "intake", label: "1. Submit", description: "Paste agent reply" },
-    { id: "review", label: "2. Confirm", description: "Review & acknowledge" },
-    { id: "generate", label: "3. Finalize", description: "Generate quote" },
+    { id: "review", label: "2. Confirm & Create", description: "Review charges & create quote" },
 ];
 
 const EMPTY_COMPONENTS: string[] = [];
 const EMPTY_CHARGES: SPEChargeLine[] = [];
+const BUY_SIDE_SOURCE_MARKERS = ["COGS", "BUY"];
+
+const isBuySideCharge = (charge: SPEChargeLine) => {
+    const source = (charge.source_reference || "").toUpperCase();
+    return BUY_SIDE_SOURCE_MARKERS.some((marker) => source.includes(marker));
+};
+
+const isStandardRateCharge = (charge: SPEChargeLine) =>
+    (charge.source_reference || "").toUpperCase().startsWith("STANDARD RATE");
 
 export default function SpotRateEntryPage() {
     const params = useParams();
@@ -126,11 +131,8 @@ export default function SpotRateEntryPage() {
     // Determine current step from SPE state
     useEffect(() => {
         if (state.spe) {
-            // Simplified 3-step flow logic
-            if (state.flowState === "READY" || state.spe.acknowledgement) {
-                setCurrentStep("generate");
-            } else if (state.spe.charges.length > 0) {
-                // If we have charges, we're in review step
+            if (state.spe.charges.length > 0) {
+                // If we have charges, go to review step
                 setCurrentStep(prev => prev === "review" ? prev : "review");
             } else {
                 // Initial state - intake
@@ -156,15 +158,10 @@ export default function SpotRateEntryPage() {
                     commodity: shipment.commodity || commodity || "GCR",
                 });
 
-                // Only keep standard charges for components that are actually missing (if we know what's missing)
-                const filteredCharges = charges.filter(c => {
-                    if (missingComponents.length === 0) return true;
-                    // c.code is FREIGHT, ORIGIN_LOCAL, DESTINATION_LOCAL
-                    return missingComponents.includes(c.code);
-                });
-
+                // Keep standard charges for ALL components, not just missing ones,
+                // so the user can see existing DB rates combined with their SPOT quote.
                 if (!cancelled) {
-                    setStandardPrefillCharges(filteredCharges);
+                    setStandardPrefillCharges(charges);
                 }
             } catch (err) {
                 console.error("Failed to load standard SPOT charges:", err);
@@ -176,29 +173,44 @@ export default function SpotRateEntryPage() {
         return () => {
             cancelled = true;
         };
-    }, [state.spe, serviceScope, weight, commodity, resolvedShipmentType, missingComponents]);
+    }, [state.spe, serviceScope, weight, commodity, resolvedShipmentType]);
 
     const mergedFormCharges = useMemo(() => {
         const speCharges = state.spe?.charges || EMPTY_CHARGES;
         if (!standardPrefillCharges.length) return speCharges;
 
-        const seen = new Set(
-            speCharges.map(c => `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`)
-        );
-        const merged = [...speCharges];
-        for (const c of standardPrefillCharges) {
-            const key = `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`;
-            if (seen.has(key)) continue;
-            merged.push(c);
-            seen.add(key);
+        const keyFor = (c: SPEChargeLine) =>
+            `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`;
+        const mergedMap = new Map<string, SPEChargeLine>();
+
+        for (const charge of speCharges) {
+            mergedMap.set(keyFor(charge), charge);
         }
-        return merged;
+
+        for (const c of standardPrefillCharges) {
+            const key = keyFor(c);
+            const existing = mergedMap.get(key);
+            if (!existing || isStandardRateCharge(existing)) {
+                // Prefer fresh standard-prefill values for standard lines (e.g. stale envelopes
+                // may contain older COGS-based values for these same charges).
+                mergedMap.set(key, c);
+            }
+        }
+
+        return Array.from(mergedMap.values());
     }, [state.spe?.charges, standardPrefillCharges]);
 
-    // Handle updating SPE with charges, auto-acknowledge, and auto-compute
-    const handleSaveAndAcknowledge = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
+    const reviewFormCharges = useMemo(
+        () => mergedFormCharges.filter((charge) => !isBuySideCharge(charge)),
+        [mergedFormCharges]
+    );
+
+
+
+    // Handle saving charges, acknowledging, and creating the final quote in one flow
+    const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
         if (state.spe) {
-            // First update charges
+            // 1. Update charges
             const spe = await actions.updateSPE(state.spe.id, {
                 charges,
                 conditions: {
@@ -210,23 +222,41 @@ export default function SpotRateEntryPage() {
             });
 
             if (spe) {
-                // Auto-acknowledge
+                // 2. Auto-acknowledge
                 const success = await actions.submitAcknowledgement();
                 if (success) {
-                    // Auto-compute quote immediately (skip intermediate step)
-                    setCurrentStep("generate");
+                    // 3. Create the quote directly (backend handles compute internally)
                     const resolvedScope = serviceScope || "D2D";
                     const resolvedPaymentTerm = paymentTerm || "PREPAID";
                     const resolvedOutputCurrency = outputCurrency || "PGK";
-                    await actions.computeQuote({
-                        quote_request: {
-                            payment_term: resolvedPaymentTerm,
-                            service_scope: resolvedScope,
-                            output_currency: resolvedOutputCurrency,
-                        },
+
+                    const result = await actions.createQuote({
+                        payment_term: resolvedPaymentTerm,
+                        service_scope: resolvedScope,
+                        output_currency: resolvedOutputCurrency,
                     });
+
+                    if (result?.success && result.quote_id) {
+                        router.push(`/quotes/${result.quote_id}`);
+                    }
                 }
             }
+        }
+    };
+
+    // Handle saving draft without creating quote
+    const handleSaveDraft = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
+        if (state.spe) {
+            await actions.updateSPE(state.spe.id, {
+                charges,
+                conditions: {
+                    space_not_confirmed: true,
+                    airline_acceptance_not_confirmed: true,
+                    rate_validity_hours: 72,
+                    conditional_charges_present: charges.some(c => c.conditional),
+                }
+            });
+            router.push("/quotes");
         }
     };
 
@@ -241,42 +271,7 @@ export default function SpotRateEntryPage() {
         setCurrentStep("review");
     };
 
-    // Handle compute
-    const handleCompute = async () => {
-        const resolvedScope = serviceScope || "D2D";
-        const resolvedPaymentTerm = paymentTerm || "PREPAID";
-        const resolvedOutputCurrency = outputCurrency || "PGK";
-        const result = await actions.computeQuote({
-            quote_request: {
-                payment_term: resolvedPaymentTerm,
-                service_scope: resolvedScope,
-                output_currency: resolvedOutputCurrency,
-            },
-        });
 
-        if (result?.is_complete && result.spe_id) {
-            // Navigate to quote result
-            // For now, we'd need to integrate with actual quote creation
-            console.log("SPOT quote computed:", result);
-        }
-    };
-
-    // Handle create quote from SPE
-    const handleCreateQuote = async () => {
-        const resolvedScope = serviceScope || "D2D";
-        const resolvedPaymentTerm = paymentTerm || "PREPAID";
-        const resolvedOutputCurrency = outputCurrency || "PGK";
-
-        const result = await actions.createQuote({
-            payment_term: resolvedPaymentTerm,
-            service_scope: resolvedScope,
-            output_currency: resolvedOutputCurrency,
-        });
-
-        if (result?.success && result.quote_id) {
-            router.push(`/quotes/${result.quote_id}`);
-        }
-    };
 
     // Render step progress - clean, minimal design
     const renderProgress = () => (
@@ -446,13 +441,15 @@ export default function SpotRateEntryPage() {
 
                     {/* Rate Entry Form with AI-suggested charges */}
                     <SpotRateEntryForm
-                        onSubmit={handleSaveAndAcknowledge}
+                        onSubmit={handleSaveAndCreateQuote}
                         isLoading={state.isLoading}
-                        initialCharges={mergedFormCharges}
+                        initialCharges={reviewFormCharges}
                         suggestedCharges={isNew ? (analysisResult?.assertions || []) : []}
                         shipmentType={resolvedShipmentType}
                         serviceScope={serviceScope}
                         missingComponents={missingComponents}
+                        submitLabel="Confirm & Create Quote"
+                        onSaveDraft={handleSaveDraft}
                     />
 
                     {/* Acknowledgement checkbox */}
@@ -475,54 +472,8 @@ export default function SpotRateEntryPage() {
                 </div>
             )}
 
-            {/* Step 3: Generate - Quote Verification & Finalization */}
-            {currentStep === "generate" && (
-                <>
-                    {!state.quoteResult ? (
-                        <div className="max-w-4xl mx-auto py-12 text-center">
-                            <p className="text-lg font-semibold text-slate-900 mb-2">Processing Quote</p>
-                            <p className="text-slate-500 mb-6">Computing charges and applying rates...</p>
-                            <Button
-                                onClick={handleCompute}
-                                disabled={state.isLoading}
-                                className="bg-slate-900 hover:bg-slate-800"
-                                size="lg"
-                            >
-                                {state.isLoading ? "Computing..." : "Generate Quote"}
-                            </Button>
-                        </div>
-                    ) : (
-                        <div className="space-y-4">
-                            <QuoteVerificationPanel
-                                rawText={analysisResult?.raw_text || ""}
-                                extractedCharges={analysisResult?.assertions}
-                                initialCharges={state.spe?.charges || []}
-                                onSubmit={handleSaveAndAcknowledge}
-                                isLoading={state.isLoading}
-                                shipmentType={resolvedShipmentType}
-                                serviceScope={serviceScope}
-                            />
-                            <div className="flex justify-end gap-3">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => router.push("/quotes")}
-                                    disabled={state.isLoading}
-                                >
-                                    Save Draft
-                                </Button>
-                                <Button
-                                    onClick={handleCreateQuote}
-                                    disabled={state.isLoading}
-                                    className="bg-slate-900 hover:bg-slate-800"
-                                >
-                                    Create Quote
-                                </Button>
-                            </div>
-                        </div>
-                    )}
-                </>
-            )
-            }
+
         </div >
     );
 }
+

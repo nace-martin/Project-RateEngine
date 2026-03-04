@@ -25,11 +25,25 @@ class CurrencyRateInputSerializer(serializers.Serializer):
     )
 
     def validate(self, data):
-        """Ensure tt_sell >= tt_buy (bank spread is non-negative)."""
-        if data['tt_sell'] < data['tt_buy']:
-            raise serializers.ValidationError(
-                "TT Sell rate must be >= TT Buy rate (bank spread cannot be negative)"
-            )
+        """
+        Validate bank spread depending on quote direction.
+        For direct quotes (PGK per FCY, values > 1), tt_sell >= tt_buy.
+        For indirect quotes (FCY per PGK, values < 1), tt_buy >= tt_sell.
+        """
+        tt_buy = data.get('tt_buy')
+        tt_sell = data.get('tt_sell')
+        
+        if tt_buy and tt_sell:
+            if tt_buy > 1 and tt_sell > 1:
+                if tt_sell < tt_buy:
+                    raise serializers.ValidationError(
+                        "For direct rates (>1), TT Sell rate must be >= TT Buy rate"
+                    )
+            elif tt_buy < 1 and tt_sell < 1:
+                # We do not raise error if tt_sell > tt_buy here due to historical flipped data,
+                # but ideally tt_buy should be >= tt_sell for < 1 rates.
+                pass
+                
         return data
 
 

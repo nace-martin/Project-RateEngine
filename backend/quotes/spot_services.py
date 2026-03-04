@@ -481,7 +481,7 @@ class StandardChargeService:
         }
         """
         from datetime import date
-        from decimal import Decimal
+        from decimal import Decimal, ROUND_HALF_UP
         from uuid import uuid4
         
         from core.dataclasses import (
@@ -616,6 +616,12 @@ class StandardChargeService:
                 except Exception:
                     return None
 
+            def _to_amount_str(value):
+                dec = _as_decimal(value)
+                if dec is None:
+                    return "0.00"
+                return str(dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
             def _choose_matching_cogs_row(line):
                 candidates = cogs_by_code.get(line.service_component_code) or []
                 if not candidates:
@@ -668,6 +674,9 @@ class StandardChargeService:
                 # Skip lines with missing rates
                 if line.is_rate_missing:
                     continue
+                # DB-backed prefill only: exclude hardcoded default/fallback rates.
+                if str(getattr(line, "cost_source", "")).strip().lower() == "default":
+                    continue
                 
                 # Map bucket
                 bucket_map = {
@@ -679,28 +688,25 @@ class StandardChargeService:
                 
                 cogs_row = _choose_matching_cogs_row(line)
 
-                # Default from already calculated line (fallback)
+                # Default from already calculated line (fallback):
+                # use SELL values in quote currency (PGK here), not COGS values.
                 unit = "per_shipment"
-                amount = str(float(line.cost_fcy)) if line.cost_fcy else str(float(line.cost_pgk))
-                currency = line.cost_fcy_currency or "PGK"
+                amount = _to_amount_str(line.sell_pgk)
+                currency = "PGK"
                 min_charge = None
                 calculation_type = None
                 unit_type = None
                 rate = None
                 min_amount = None
 
-                # Prefer raw COGS row metadata when available (preserves min-charge floors)
+                # Prefer raw COGS row metadata only for unit/min-charge shape inference.
+                # Do not use COGS numeric values for amount/rate.
                 if cogs_row is not None:
-                    row_currency = getattr(cogs_row, "currency", None)
-                    if row_currency:
-                        currency = row_currency
                     row_rate_per_kg = getattr(cogs_row, "rate_per_kg", None)
                     row_rate_per_shipment = getattr(cogs_row, "rate_per_shipment", None)
                     row_min_charge = getattr(cogs_row, "min_charge", None)
 
                     if row_rate_per_kg is not None:
-                        amount = str(row_rate_per_kg)
-                        rate = str(row_rate_per_kg)
                         if row_min_charge is not None:
                             unit = "min_or_per_kg"
                             min_charge = str(row_min_charge)
@@ -710,15 +716,26 @@ class StandardChargeService:
                             unit = "per_kg"
                             calculation_type = "per_unit"
                         unit_type = "kg"
+                        rate = amount
                     elif row_rate_per_shipment is not None:
-                        amount = str(row_rate_per_shipment)
                         unit = "per_shipment"
-                        rate = str(row_rate_per_shipment)
                         calculation_type = "flat"
                         unit_type = "shipment"
+                        rate = amount
                 else:
                     if "per_kg" in line.cost_source.lower() or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
                         unit = "per_kg"
+                        calculation_type = "per_unit"
+                        unit_type = "kg"
+                        rate = amount
+                    else:
+                        calculation_type = "flat"
+                        unit_type = "shipment"
+                        rate = amount
+
+                parsed_amount = _as_decimal(amount)
+                if parsed_amount is None or parsed_amount <= 0:
+                    continue
 
                 result.append({
                     "code": line.service_component_code,
@@ -727,7 +744,7 @@ class StandardChargeService:
                     "currency": currency,
                     "unit": unit,
                     "bucket": bucket,
-                    "is_primary_cost": line.service_component_code in ["FREIGHT", "AIRFREIGHT", "DOMESTIC_FREIGHT"],
+                    "is_primary_cost": line.service_component_code in ["FREIGHT", "AIRFREIGHT", "DOMESTIC_FREIGHT", "EXP-FRT-AIR", "IMP-FRT-AIR"],
                     "conditional": False,
                     "min_charge": min_charge,
                     "calculation_type": calculation_type,

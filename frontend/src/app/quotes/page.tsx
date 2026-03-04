@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import ProtectedRoute from "@/components/protected-route";
-import { getQuotesV3, listSpotEnvelopes, transitionQuoteStatus } from "@/lib/api";
+import { getQuotesV3, listSpotEnvelopes, transitionQuoteStatus, deleteQuoteV3, deleteSpotEnvelopeDraft } from "@/lib/api";
 import { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
@@ -75,6 +75,21 @@ export default function QuotesPage() {
       await fetchData();
     } finally {
       setStatusUpdatingId(null);
+    }
+  };
+
+  const handleDeleteDraft = async (item: UnifiedQuote) => {
+    try {
+      if (item.type === "SPOT_DRAFT") {
+        await deleteSpotEnvelopeDraft(item.id);
+      } else {
+        await deleteQuoteV3(item.id);
+      }
+      await fetchData();
+    } catch (err) {
+      console.error("Failed to delete draft quote", err);
+      // Optional: Add a toast notification here if a toast library is available
+      alert("Failed to delete draft quote. Please try again.");
     }
   };
 
@@ -266,108 +281,126 @@ export default function QuotesPage() {
     {
       header: "",
       cell: (item: UnifiedQuote) => (
-        <Button
-          variant="outline"
-          size="sm"
-          asChild
-          className="w-20 border-slate-200 hover:bg-slate-50 text-slate-700 h-8"
-        >
-          <Link href={item.actionLink}>
-            {["DRAFT", "draft"].includes(item.rawStatus) ? "Resume" : "View"}
-          </Link>
-        </Button>
+        <div className="flex items-center justify-end gap-2">
+          {["DRAFT", "draft"].includes(item.rawStatus) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-20 border-red-200 hover:bg-red-50 hover:text-red-700 text-red-600 h-8"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (window.confirm("Are you sure you want to delete this draft quote?")) {
+                  handleDeleteDraft(item);
+                }
+              }}
+            >
+              Delete
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            className="w-20 border-slate-200 hover:bg-slate-50 text-slate-700 h-8"
+          >
+            <Link href={item.actionLink}>
+              {["DRAFT", "draft"].includes(item.rawStatus) ? "Resume" : "View"}
+            </Link>
+          </Button>
+        </div>
       ),
-      className: "text-right w-[100px]",
+      className: "text-right min-w-[120px]",
     }
   ];
 
   return (
     <ProtectedRoute>
       <StandardPageContainer>
-      <PageHeader
-        title={isFinance ? "Quotes Register" : "Quotes Dashboard"}
-        description="Manage and track all logistics quotes."
-      />
-
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search by quote #, customer, or route..."
-            className="pl-9 bg-background"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          <select
-            value={modeFilter}
-            onChange={(e) => setModeFilter(e.target.value)}
-            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <option value="all">All Modes</option>
-            <option value="AIR">Air Freight</option>
-            <option value="SEA">Sea Freight</option>
-            <option value="ROAD">Road/Inland</option>
-          </select>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            <option value="all">All Statuses</option>
-            <option value="DRAFT">Draft</option>
-            <option value="FINALIZED">Finalized</option>
-            <option value="SENT">Pending</option>
-            <option value="ACCEPTED">Accepted (Won)</option>
-            <option value="LOST">Lost</option>
-            <option value="EXPIRED">Expired</option>
-          </select>
-          <Button variant="outline" size="sm" className="h-9 gap-2 text-muted-foreground hover:text-primary">
-            <Save className="h-4 w-4" />
-            <span className="hidden sm:inline">Save View</span>
-          </Button>
-        </div>
-      </div>
-
-      <div className="text-sm text-muted-foreground">
-        Showing {tableData.length} of {activeQuotes.length + spotDrafts.length} quotes
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center p-12">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      ) : (
-        <DataTable
-          data={tableData}
-          columns={columns}
-          keyExtractor={(item) => item.id}
-          emptyState={
-            <EmptyState
-              title="No quotes found"
-              description={searchQuery ? "No quotes match your search criteria." : "You haven't created any quotes yet."}
-              icon={FileText}
-              actionLabel={searchQuery ? "Clear Search" : "Create New Quote"}
-              onAction={searchQuery ? () => setSearchQuery("") : () => router.push("/quotes/new")}
-              className="py-12 border-none"
-            />
-          }
-          onRowClick={(item) => {
-            setSelectedQuote(item);
-            setIsQuickLookOpen(true);
-          }}
+        <PageHeader
+          title={isFinance ? "Quotes Register" : "Quotes Dashboard"}
+          description="Manage and track all logistics quotes."
         />
-      )}
 
-      {/* Quick Look Drawer */}
-      <QuoteQuickLook
-        open={isQuickLookOpen}
-        onOpenChange={setIsQuickLookOpen}
-        quote={selectedQuote}
-      />
+        <div className="flex items-center gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search by quote #, customer, or route..."
+              className="pl-9 bg-background"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-muted-foreground" />
+            <select
+              value={modeFilter}
+              onChange={(e) => setModeFilter(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="all">All Modes</option>
+              <option value="AIR">Air Freight</option>
+              <option value="SEA">Sea Freight</option>
+              <option value="ROAD">Road/Inland</option>
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="all">All Statuses</option>
+              <option value="DRAFT">Draft</option>
+              <option value="FINALIZED">Finalized</option>
+              <option value="SENT">Pending</option>
+              <option value="ACCEPTED">Accepted (Won)</option>
+              <option value="LOST">Lost</option>
+              <option value="EXPIRED">Expired</option>
+            </select>
+            <Button variant="outline" size="sm" className="h-9 gap-2 text-muted-foreground hover:text-primary">
+              <Save className="h-4 w-4" />
+              <span className="hidden sm:inline">Save View</span>
+            </Button>
+          </div>
+        </div>
+
+        <div className="text-sm text-muted-foreground">
+          Showing {tableData.length} of {activeQuotes.length + spotDrafts.length} quotes
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center p-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : (
+          <DataTable
+            data={tableData}
+            columns={columns}
+            keyExtractor={(item) => item.id}
+            emptyState={
+              <EmptyState
+                title="No quotes found"
+                description={searchQuery ? "No quotes match your search criteria." : "You haven't created any quotes yet."}
+                icon={FileText}
+                actionLabel={searchQuery ? "Clear Search" : "Create New Quote"}
+                onAction={searchQuery ? () => setSearchQuery("") : () => router.push("/quotes/new")}
+                className="py-12 border-none"
+              />
+            }
+            onRowClick={(item) => {
+              setSelectedQuote(item);
+              setIsQuickLookOpen(true);
+            }}
+          />
+        )}
+
+        {/* Quick Look Drawer */}
+        <QuoteQuickLook
+          open={isQuickLookOpen}
+          onOpenChange={setIsQuickLookOpen}
+          quote={selectedQuote}
+        />
       </StandardPageContainer>
     </ProtectedRoute>
   );

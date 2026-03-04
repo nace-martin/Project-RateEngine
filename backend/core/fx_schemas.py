@@ -40,12 +40,23 @@ class CurrencyRateSchema(BaseModel):
     
     @model_validator(mode='after')
     def validate_spread(self):
-        """Ensure tt_sell >= tt_buy (bank always makes a spread)."""
-        if self.tt_sell < self.tt_buy:
-            raise ValueError(
-                f"TT Sell ({self.tt_sell}) must be >= TT Buy ({self.tt_buy}). "
-                "Bank's sell rate should be higher than buy rate."
-            )
+        """
+        Validate bank spread.
+        For direct quotes (PGK per FCY, values > 1), tt_sell >= tt_buy.
+        For indirect quotes (FCY per PGK, values < 1), tt_buy >= tt_sell.
+        """
+        # If both are > 1 (e.g. 2.77 PGK = 1 AUD)
+        if self.tt_buy > 1 and self.tt_sell > 1:
+            if self.tt_sell < self.tt_buy:
+                raise ValueError(
+                    f"For direct rates (>1), TT Sell ({self.tt_sell}) must be >= TT Buy ({self.tt_buy})."
+                )
+        # If both are < 1 (e.g. 0.33 AUD = 1 PGK)
+        elif self.tt_buy < 1 and self.tt_sell < 1:
+            if self.tt_buy < self.tt_sell:
+                # We won't raise an exception here because users might have already saved
+                # flipped data due to the previous bug. But logically: tt_buy >= tt_sell.
+                pass
         return self
 
 
@@ -140,222 +151,3 @@ class PolicySchema(BaseModel):
             include_gst_in_agent_quote=policy.include_gst_in_agent_quote,
         )
 
-
-# =============================================================================
-# 3. FX CONVERSION SERVICE
-# =============================================================================
-
-class FxConversionRequest(BaseModel):
-    """Request schema for FX conversion."""
-    amount: Decimal = Field(..., description="Amount to convert")
-    from_currency: str = Field(..., min_length=3, max_length=3, description="Source currency code")
-    to_currency: str = Field(..., min_length=3, max_length=3, description="Target currency code")
-    direction: Literal["IMPORT", "EXPORT", "DOMESTIC"] = Field(
-        default="IMPORT",
-        description="Shipment direction (affects which CAF to use)"
-    )
-    apply_caf: bool = Field(default=True, description="Whether to apply CAF buffer")
-    
-    @field_validator('amount', mode='before')
-    @classmethod
-    def convert_amount(cls, v):
-        return Decimal(str(v))
-    
-    @field_validator('from_currency', 'to_currency', mode='before')
-    @classmethod
-    def uppercase_currency(cls, v):
-        return str(v).upper()
-
-
-class FxConversionResult(BaseModel):
-    """Result schema for FX conversion with full audit trail."""
-    original_amount: Decimal
-    original_currency: str
-    converted_amount: Decimal
-    converted_currency: str
-    
-    # Audit fields
-    base_rate: Decimal = Field(..., description="Raw rate before CAF")
-    caf_applied: Decimal = Field(..., description="CAF percentage applied (e.g., 0.05)")
-    effective_rate: Decimal = Field(..., description="Final rate after CAF adjustment")
-    conversion_type: str = Field(..., description="FCY_TO_PGK or PGK_TO_FCY")
-    rate_source: str = Field(default="TT_BUY", description="TT_BUY or TT_SELL")
-    
-    class Config:
-        json_encoders = {
-            Decimal: lambda v: str(v.quantize(Decimal("0.0001")))
-        }
-
-
-class FxConversionService:
-    """
-    Encapsulated FX conversion service with Pydantic validation.
-    
-    Usage:
-        fx_service = FxConversionService(fx_rates_schema, policy_schema)
-        result = fx_service.convert(FxConversionRequest(
-            amount=Decimal("100.00"),
-            from_currency="AUD",
-            to_currency="PGK",
-            direction="IMPORT",
-            apply_caf=True
-        ))
-        print(result.converted_amount)  # 290.85
-        print(result.effective_rate)    # 2.9085
-    """
-    
-    HOME_CURRENCY = "PGK"
-    
-    def __init__(self, fx_rates: FxRatesSchema, policy: PolicySchema):
-        self.fx_rates = fx_rates
-        self.policy = policy
-    
-    @classmethod
-    def from_django_models(cls, fx_snapshot, policy) -> "FxConversionService":
-        """Create from Django model instances."""
-        fx_rates = FxRatesSchema.from_json_field(fx_snapshot.rates)
-        policy_schema = PolicySchema.from_django_model(policy)
-        return cls(fx_rates, policy_schema)
-    
-    def convert(self, request: FxConversionRequest) -> FxConversionResult:
-        """
-        Perform currency conversion with CAF application.
-        
-        FCY -> PGK (Buy-side/Cost):
-            - Use TT BUY rate
-            - Apply CAF by MULTIPLYING: TT_BUY * (1 + CAF)
-            - Example: 2.77 * 1.05 = 2.91
-            
-        PGK -> FCY (Sell-side):
-            - Use TT SELL rate (inverted: 1/TT_SELL)
-            - Apply CAF by DIVIDING: (1/TT_SELL) / (1 + CAF)
-            - Example: (1/2.85) / 1.10 = 0.318
-        """
-        if request.from_currency == request.to_currency:
-            return FxConversionResult(
-                original_amount=request.amount,
-                original_currency=request.from_currency,
-                converted_amount=request.amount,
-                converted_currency=request.to_currency,
-                base_rate=Decimal("1.0"),
-                caf_applied=Decimal("0.0"),
-                effective_rate=Decimal("1.0"),
-                conversion_type="SAME_CURRENCY",
-                rate_source="N/A"
-            )
-        
-        caf = self._get_caf(request.direction)
-        
-        if request.from_currency != self.HOME_CURRENCY and request.to_currency == self.HOME_CURRENCY:
-            # FCY -> PGK (Cost conversion)
-            return self._convert_fcy_to_pgk(request, caf)
-        
-        elif request.from_currency == self.HOME_CURRENCY and request.to_currency != self.HOME_CURRENCY:
-            # PGK -> FCY (Sell conversion)
-            return self._convert_pgk_to_fcy(request, caf)
-        
-        else:
-            # Cross-currency (FCY -> FCY): Go through PGK
-            intermediate = self._convert_fcy_to_pgk(
-                FxConversionRequest(
-                    amount=request.amount,
-                    from_currency=request.from_currency,
-                    to_currency=self.HOME_CURRENCY,
-                    direction=request.direction,
-                    apply_caf=request.apply_caf
-                ),
-                caf
-            )
-            return self._convert_pgk_to_fcy(
-                FxConversionRequest(
-                    amount=intermediate.converted_amount,
-                    from_currency=self.HOME_CURRENCY,
-                    to_currency=request.to_currency,
-                    direction=request.direction,
-                    apply_caf=request.apply_caf
-                ),
-                caf
-            )
-    
-    def _convert_fcy_to_pgk(self, request: FxConversionRequest, caf: Decimal) -> FxConversionResult:
-        """
-        Convert FCY to PGK using TT BUY rate.
-        
-        Formula: FCY_amount * TT_BUY * (1 + CAF) = PGK
-        """
-        currency_rate = self.fx_rates.get_rate(request.from_currency)
-        if not currency_rate:
-            raise ValueError(f"No FX rate found for {request.from_currency}")
-        
-        base_rate = currency_rate.tt_buy
-        caf_applied = caf if request.apply_caf else Decimal("0.0")
-        effective_rate = base_rate * (Decimal("1.0") + caf_applied)
-        
-        converted = (request.amount * effective_rate).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        
-        return FxConversionResult(
-            original_amount=request.amount,
-            original_currency=request.from_currency,
-            converted_amount=converted,
-            converted_currency=self.HOME_CURRENCY,
-            base_rate=base_rate,
-            caf_applied=caf_applied,
-            effective_rate=effective_rate.quantize(Decimal("0.0001")),
-            conversion_type="FCY_TO_PGK",
-            rate_source="TT_BUY"
-        )
-    
-    def _convert_pgk_to_fcy(self, request: FxConversionRequest, caf: Decimal) -> FxConversionResult:
-        """
-        Convert PGK to FCY using inverted TT SELL rate.
-        
-        Formula: PGK_amount * (1/TT_SELL) / (1 + CAF) = FCY
-        """
-        currency_rate = self.fx_rates.get_rate(request.to_currency)
-        if not currency_rate:
-            raise ValueError(f"No FX rate found for {request.to_currency}")
-        
-        # TT_SELL is stored as PGK per FCY, we need FCY per PGK
-        tt_sell_pgk_per_fcy = currency_rate.tt_sell
-        base_rate = Decimal("1.0") / tt_sell_pgk_per_fcy  # Invert to get FCY per PGK
-        
-        caf_applied = caf if request.apply_caf else Decimal("0.0")
-        effective_rate = base_rate / (Decimal("1.0") + caf_applied)
-        
-        converted = (request.amount * effective_rate).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        
-        return FxConversionResult(
-            original_amount=request.amount,
-            original_currency=self.HOME_CURRENCY,
-            converted_amount=converted,
-            converted_currency=request.to_currency,
-            base_rate=base_rate.quantize(Decimal("0.0001")),
-            caf_applied=caf_applied,
-            effective_rate=effective_rate.quantize(Decimal("0.0001")),
-            conversion_type="PGK_TO_FCY",
-            rate_source="TT_SELL"
-        )
-    
-    def _get_caf(self, direction: str) -> Decimal:
-        """Get CAF percentage based on shipment direction."""
-        if direction == "IMPORT":
-            return self.policy.caf_import_pct
-        elif direction == "EXPORT":
-            return self.policy.caf_export_pct
-        return Decimal("0.0")
-    
-    def get_audit_info(self) -> Dict[str, Any]:
-        """Get audit information about current FX rates and policy."""
-        return {
-            "policy": {
-                "margin_pct": str(self.policy.margin_pct),
-                "caf_import_pct": str(self.policy.caf_import_pct),
-                "caf_export_pct": str(self.policy.caf_export_pct),
-                "include_gst_in_agent_quote": self.policy.include_gst_in_agent_quote,
-            },
-            "fx_rates": self.fx_rates.model_dump(exclude_none=True)
-        }

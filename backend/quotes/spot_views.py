@@ -750,7 +750,18 @@ class SpotEnvelopeDetailAPIView(APIView):
         serializer = SpotPricingEnvelopeSerializer(spe_db)
         return Response(serializer.data)
 
-
+    def delete(self, request, envelope_id):
+        """Delete a DRAFT SPE."""
+        spe_db = _get_spe_or_404(request.user, envelope_id)
+        
+        if spe_db.status != 'draft':
+            return Response(
+                {'error': f"Cannot delete SPE in status '{spe_db.status}'"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        spe_db.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SpotEnvelopeAcknowledgeAPIView(APIView):
@@ -1441,7 +1452,13 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 cost_source=line_data.cost_source,
                 cost_source_description=line_data.cost_source_description,
                 is_rate_missing=line_data.is_rate_missing,
-                is_informational=getattr(line_data, 'is_informational', False)
+                is_informational=getattr(line_data, 'is_informational', False),
+                leg=getattr(line_data, 'leg', None),
+                bucket=getattr(line_data, 'bucket', None),
+                gst_category=getattr(line_data, 'gst_category', None),
+                gst_rate=getattr(line_data, 'gst_rate', 0),
+                gst_amount=getattr(line_data, 'gst_amount', 0),
+                conditional=getattr(line_data, 'conditional', False),
             )
 
         # --- 5. Save Totals ---
