@@ -7,7 +7,7 @@ Rule 9: One corridor must work end-to-end before expanding.
 Verification checklist:
 ✓ Rate selection (correct rates found)
 ✓ Margin (positive, reasonable)
-✓ Currency (PGK for Export Prepaid)
+✓ Currency (AUD for Export Prepaid POM->BNE)
 ✓ GST (zero for Export)
 """
 
@@ -116,10 +116,10 @@ class Command(BaseCommand):
             all_passed = False
         
         # Check 3: Currency
-        if result.currency == 'PGK':
-            self.stdout.write(self.style.SUCCESS(f"✓ Currency: {result.currency} (correct for Export Prepaid)"))
+        if result.currency == 'AUD':
+            self.stdout.write(self.style.SUCCESS(f"✓ Currency: {result.currency} (correct for Export Prepaid POM→BNE)"))
         else:
-            self.stdout.write(self.style.ERROR(f"✗ Currency: {result.currency} (expected PGK)"))
+            self.stdout.write(self.style.ERROR(f"✗ Currency: {result.currency} (expected AUD)"))
             all_passed = False
         
         # Check 4: GST (Export = 0)

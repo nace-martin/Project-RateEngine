@@ -3,12 +3,15 @@ from decimal import Decimal
 
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from quotes.models import Quote, QuoteLine, QuoteTotal
 from quotes.public_links import get_public_quote_id_from_token
+
+VALID_SERVICE_SCOPES = {"D2D", "D2A", "A2D", "A2A", "P2P"}
+
 
 def _format_decimal(value: Decimal | None) -> str:
     if value is None:
@@ -17,29 +20,116 @@ def _format_decimal(value: Decimal | None) -> str:
 
 
 def _parse_location_label(location) -> tuple[str, str]:
-    """Parse location into code and simplified city name (no airport names)."""
+    """Parse location into display code/name without dropping airport references."""
     if not location:
         return "N/A", "Unknown"
 
-    loc_str = str(location)
-    
-    # Try to find IATA code in parentheses like "Brisbane (BNE), AU"
-    match = re.search(r'\(([A-Z]{3})\)', loc_str)
+    code = getattr(location, "code", None)
+    name = getattr(location, "name", None)
+    if code and name:
+        return str(code).upper(), str(name)
+
+    loc_str = str(location).strip()
+
+    # Match "CODE - Name" (Location.__str__).
+    if " - " in loc_str:
+        left, right = loc_str.split(" - ", 1)
+        if len(left) == 3 and left.isalpha():
+            return left.upper(), right.strip() or left.upper()
+
+    # Match "Name (CODE)".
+    match = re.search(r"\(([A-Z]{3})\)", loc_str)
     if match:
-        code = match.group(1)
-        # Remove code and clean up
-        name = re.sub(r'\s*\([A-Z]{3}\)', '', loc_str).strip()
-        # Remove country suffix like ", AU"
-        name = re.sub(r',\s*[A-Z]{2}$', '', name).strip()
-        # Remove airport name suffix (after a hyphen or common airport words)
-        name = re.sub(r'\s*[-–]\s*.*$', '', name).strip()
-        name = re.sub(r'\s+(International|Intl|Airport|Changi|Jacksons|Kingsford Smith).*$', '', name, flags=re.IGNORECASE).strip()
-        return code, name if name else code
+        parsed_code = match.group(1)
+        parsed_name = re.sub(r"\s*\([A-Z]{3}\)", "", loc_str).strip()
+        return parsed_code, parsed_name or parsed_code
 
-    if len(loc_str) == 3 and loc_str.isupper():
-        return loc_str, loc_str
+    if len(loc_str) == 3 and loc_str.isalpha():
+        return loc_str.upper(), loc_str.upper()
 
-    return loc_str[:3].upper() if len(loc_str) >= 3 else loc_str, loc_str
+    guessed_code = loc_str[:3].upper() if len(loc_str) >= 3 else loc_str.upper()
+    return guessed_code, loc_str
+
+
+def _normalize_service_scope(raw_value) -> str | None:
+    if raw_value is None:
+        return None
+
+    value = str(raw_value).strip().upper()
+    if not value:
+        return None
+
+    if value == "P2P":
+        return "A2A"
+
+    return value if value in VALID_SERVICE_SCOPES else None
+
+
+def _extract_service_scope(payload: dict | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    quote_request = payload.get("quote_request") if isinstance(payload.get("quote_request"), dict) else {}
+    shipment = payload.get("shipment") if isinstance(payload.get("shipment"), dict) else {}
+    shipment_context = payload.get("shipment_context") if isinstance(payload.get("shipment_context"), dict) else {}
+
+    candidates = [
+        payload.get("service_scope"),
+        quote_request.get("service_scope"),
+        shipment.get("service_scope"),
+        shipment_context.get("service_scope"),
+    ]
+
+    for candidate in candidates:
+        normalized = _normalize_service_scope(candidate)
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _resolve_service_scope(quote: Quote, version) -> str | None:
+    return (
+        _normalize_service_scope(quote.service_scope)
+        or _extract_service_scope(getattr(version, "payload_json", None))
+        or _extract_service_scope(quote.request_details_json)
+    )
+
+
+def _normalize_bucket(raw_bucket) -> str | None:
+    value = str(raw_bucket or "").strip().lower()
+    if value == "origin_charges":
+        return "ORIGIN"
+    if value == "airfreight":
+        return "MAIN"
+    if value == "destination_charges":
+        return "DESTINATION"
+    return None
+
+
+def _normalize_leg(raw_leg) -> str | None:
+    value = str(raw_leg or "").strip().upper()
+    if value in {"ORIGIN", "DESTINATION"}:
+        return value
+    if value in {"MAIN", "FREIGHT"}:
+        return "MAIN"
+    return None
+
+
+def _resolve_bucket_key(line) -> str:
+    """
+    Resolve public bucket from persisted quote-line mapping.
+    QuoteLine.bucket/leg is authoritative; component metadata is not.
+    """
+    return _normalize_bucket(getattr(line, "bucket", None)) or _normalize_leg(getattr(line, "leg", None)) or "MAIN"
+
+
+def _resolve_line_sell_value(line, quote_currency: str) -> Decimal:
+    if quote_currency != "PGK":
+        line_currency = str(getattr(line, "sell_fcy_currency", "") or "").upper()
+        if line_currency == quote_currency and getattr(line, "sell_fcy", None) is not None:
+            return line.sell_fcy
+    return line.sell_pgk or Decimal("0")
 
 
 def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
@@ -50,24 +140,16 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
     }
 
     for line in lines:
+        leg = _resolve_bucket_key(line)
         if line.service_component:
-            leg = getattr(line.service_component, 'leg', 'MAIN')
             description = line.cost_source_description or line.service_component.description
-            source = line.cost_source or ''
         else:
-            leg = 'MAIN'
             description = line.cost_source_description or 'Manual Charge'
-            source = ''
+        source = line.cost_source or ''
 
         if leg not in buckets:
             leg = 'MAIN'
-
-        if currency != 'PGK' and line.sell_fcy:
-            sell = line.sell_fcy
-        else:
-            sell = line.sell_pgk
-
-        sell_value = sell or Decimal('0')
+        sell_value = _resolve_line_sell_value(line, currency)
         line_data = {
             'description': description,
             'source': source[:20] if source else '-',
@@ -170,6 +252,7 @@ class QuotePublicDetailAPIView(APIView):
         currency = quote.output_currency or 'PGK'
         origin_code, origin_name = _parse_location_label(quote.origin_location)
         destination_code, destination_name = _parse_location_label(quote.destination_location)
+        resolved_service_scope = _resolve_service_scope(quote, version)
 
         response_data = {
             'quote_number': quote.quote_number,
@@ -183,6 +266,7 @@ class QuotePublicDetailAPIView(APIView):
             'shipment': {
                 'mode': quote.mode,
                 'direction': quote.shipment_type,
+                'service_scope': resolved_service_scope,
                 'incoterm': quote.incoterm,
                 'payment_term': quote.payment_term,
             },

@@ -30,6 +30,7 @@ from quotes.spot_schemas import (
 from quotes.spot_services import (
     ScopeValidator,
     SpotTriggerEvaluator,
+    RateAvailabilityService,
     SpotEnvelopeService,
     SpotTriggerReason,
 )
@@ -192,6 +193,109 @@ class TestSpotTriggerEvaluation:
         )
         
         assert is_spot is False
+
+
+class TestRateAvailabilityService:
+    """Rate availability detection against V4 rate tables."""
+
+    def test_import_d2d_origin_local_detected_from_destination_fallback(self):
+        """
+        IMPORT D2D compatibility:
+        if ORIGIN local rows were migrated under destination location,
+        availability must still mark ORIGIN_LOCAL=True.
+        """
+        from datetime import date, timedelta
+        from pricing_v4.models import ProductCode, Agent, ImportCOGS, LocalCOGSRate
+
+        valid_from = date.today() - timedelta(days=1)
+        valid_until = date.today() + timedelta(days=30)
+
+        agent = Agent.objects.create(
+            code="SPOT-AU",
+            name="Spot AU Agent",
+            country_code="AU",
+            agent_type="ORIGIN",
+        )
+
+        pc_freight = ProductCode.objects.create(
+            id=2901,
+            code="IMP-FRT-AIR-SPOTTEST",
+            description="Import Air Freight (SPOT test)",
+            domain="IMPORT",
+            category="FREIGHT",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="KG",
+        )
+        pc_origin = ProductCode.objects.create(
+            id=2902,
+            code="IMP-ORIGIN-HANDLING-SPOTTEST",
+            description="Import Origin Handling (SPOT test)",
+            domain="IMPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4200",
+            gl_cost_code="5200",
+            default_unit="SHIPMENT",
+        )
+        pc_destination = ProductCode.objects.create(
+            id=2903,
+            code="IMP-CARTAGE-DEST-SPOTTEST",
+            description="Import Destination Cartage (SPOT test)",
+            domain="IMPORT",
+            category="CARTAGE",
+            is_gst_applicable=True,
+            gl_revenue_code="4300",
+            gl_cost_code="5300",
+            default_unit="SHIPMENT",
+        )
+
+        ImportCOGS.objects.create(
+            product_code=pc_freight,
+            origin_airport="BNE",
+            destination_airport="POM",
+            agent=agent,
+            currency="AUD",
+            rate_per_kg=Decimal("4.50"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+
+        # Legacy migrated shape: origin local row stored under destination station.
+        LocalCOGSRate.objects.create(
+            product_code=pc_origin,
+            location="POM",
+            direction="IMPORT",
+            agent=agent,
+            currency="AUD",
+            rate_type="FIXED",
+            amount=Decimal("75.00"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+        LocalCOGSRate.objects.create(
+            product_code=pc_destination,
+            location="POM",
+            direction="IMPORT",
+            agent=agent,
+            currency="PGK",
+            rate_type="FIXED",
+            amount=Decimal("120.00"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+
+        availability = RateAvailabilityService.get_availability(
+            origin_airport="BNE",
+            destination_airport="POM",
+            direction="IMPORT",
+            service_scope="D2D",
+        )
+
+        assert availability[COMPONENT_FREIGHT] is True
+        assert availability[COMPONENT_ORIGIN_LOCAL] is True
+        assert availability[COMPONENT_DESTINATION_LOCAL] is True
 
 
 # =============================================================================

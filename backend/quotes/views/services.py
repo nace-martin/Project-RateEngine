@@ -3,10 +3,12 @@ import re
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -19,6 +21,7 @@ from quotes.models import Quote
 
 # RBAC permissions
 from accounts.permissions import CanUseAIIntake, QuoteAccessPermission
+from accounts.permissions import IsAdmin
 from quotes.selectors import get_quote_for_user
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,16 @@ def _decode_station_identifier(identifier: int) -> str:
 
 class CustomerDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    VALID_AUDIENCE_TYPES = {
+        Company.AUDIENCE_LOCAL_PNG,
+        Company.AUDIENCE_OVERSEAS_AU,
+        Company.AUDIENCE_OVERSEAS_NON_AU,
+    }
+
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsAdmin()]
 
     def get(self, request, customer_id):
         company = self._get_company(customer_id)
@@ -58,24 +71,75 @@ class CustomerDetailAPIView(APIView):
     def put(self, request, customer_id):
         company = self._get_company(customer_id)
         data = request.data
-        with transaction.atomic():
-            name = data.get('company_name')
-            if name:
-                company.name = name
-                company.save(update_fields=['name'])
-            self._sync_contact(company, data)
-            self._sync_primary_address(company, data.get('primary_address'))
+        audience_type = data.get('audience_type')
+        if audience_type is not None and audience_type not in self.VALID_AUDIENCE_TYPES:
+            return Response(
+                {
+                    'error': (
+                        "audience_type must be one of "
+                        "LOCAL_PNG_CUSTOMER, OVERSEAS_PARTNER_AU, OVERSEAS_PARTNER_NON_AU"
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                name = data.get('company_name')
+                if name:
+                    company.name = name
+                if audience_type is not None:
+                    company.audience_type = audience_type
+                if data.get('address_description') is not None:
+                    company.address_description = (data.get('address_description') or '').strip()
+                company.save(update_fields=['name', 'audience_type', 'address_description'])
+                self._sync_contact(company, data)
+                self._sync_primary_address(company, data.get('primary_address'))
+        except ValidationError as exc:
+            return Response({'error': str(exc.detail)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self._serialize_customer(company))
 
+    def patch(self, request, customer_id):
+        company = self._get_company(customer_id)
+        is_active = request.data.get('is_active')
+        if not isinstance(is_active, bool):
+            return Response(
+                {'error': 'is_active is required and must be boolean'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        company.is_active = is_active
+        company.save(update_fields=['is_active'])
+        return Response(self._serialize_customer(company))
+
+    def delete(self, request, customer_id):
+        company = self._get_company(customer_id)
+        try:
+            company.delete()
+        except ProtectedError as exc:
+            protected_models = sorted({
+                obj.__class__.__name__
+                for obj in exc.protected_objects
+            })
+            model_list = ", ".join(protected_models) if protected_models else "related records"
+            return Response(
+                {
+                    "error": (
+                        "Cannot delete customer because it is referenced by existing records. "
+                        f"Protected by: {model_list}."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     def _get_company(self, company_id):
-        return get_object_or_404(
-            Company.objects.prefetch_related('contacts', 'addresses__city__country'),
-            pk=company_id,
-            company_type='CUSTOMER',
+        queryset = Company.objects.prefetch_related('contacts', 'addresses__city__country').filter(
+            Q(is_customer=True) | Q(company_type='CUSTOMER')
         )
+        return get_object_or_404(queryset, pk=company_id)
 
     def _serialize_customer(self, company: Company) -> dict:
-        contact = company.contacts.order_by('-is_primary', 'last_name').first()
+        contact = company.contacts.filter(is_active=True).order_by('-is_primary', 'last_name').first()
         address = company.addresses.filter(is_primary=True).select_related(
             'city__country'
         ).first()
@@ -84,10 +148,12 @@ class CustomerDetailAPIView(APIView):
             primary_address = {
                 'address_line_1': address.address_line_1,
                 'address_line_2': address.address_line_2,
+                'city_id': str(address.city.id) if address.city else '',
                 'city': address.city.name if address.city else '',
                 'state_province': '',
                 'postcode': address.postal_code,
                 'country': address.country.code if address.country else '',
+                'country_name': address.country.name if address.country else '',
             }
 
         contact_name = None
@@ -97,10 +163,11 @@ class CustomerDetailAPIView(APIView):
         return {
             'id': str(company.id),
             'company_name': company.name,
-            'audience_type': 'LOCAL_PNG_CUSTOMER',
-            'address_description': '',
+            'is_active': company.is_active,
+            'audience_type': company.audience_type,
+            'address_description': company.address_description,
             'primary_address': primary_address,
-            'contact_person_name': contact_name,
+            'contact_person_name': contact_name or '',
             'contact_person_email': contact.email if contact else '',
             'contact_person_phone': contact.phone if contact else '',
         }
@@ -113,7 +180,7 @@ class CustomerDetailAPIView(APIView):
             return
 
         first_name, last_name = (name, '') if ' ' not in name else name.split(' ', 1)
-        contact = company.contacts.order_by('-is_primary', 'last_name').first()
+        contact = company.contacts.filter(is_active=True).order_by('-is_primary', 'last_name').first()
         if not contact:
             contact = Contact(company=company)
 
@@ -131,22 +198,31 @@ class CustomerDetailAPIView(APIView):
         if not payload:
             return
         line1 = (payload.get('address_line_1') or '').strip()
-        city_name = (payload.get('city') or '').strip()
         country_code = (payload.get('country') or '').strip()
-        if not (line1 and city_name and country_code):
+        city_id = (payload.get('city_id') or '').strip()
+        city_name = (payload.get('city') or '').strip()
+        if not (line1 and (city_id or city_name) and country_code):
             return
 
         country_code = country_code.upper()
         if len(country_code) != 2:
-            country_code = country_code[:2].upper().ljust(2, 'X')
-        country, _ = Country.objects.get_or_create(
-            code=country_code,
-            defaults={'name': country_code},
-        )
-        city, _ = City.objects.get_or_create(
-            name=city_name,
-            country=country,
-        )
+            raise ValidationError({'primary_address.country': 'Country must be a 2-letter ISO code'})
+
+        country = Country.objects.filter(code=country_code).first()
+        if not country:
+            raise ValidationError({'primary_address.country': 'Country not found in reference data'})
+
+        city = None
+        if city_id:
+            city = City.objects.select_related('country').filter(pk=city_id).first()
+            if not city:
+                raise ValidationError({'primary_address.city_id': 'City not found in reference data'})
+            if city.country_id != country.code:
+                raise ValidationError({'primary_address.city_id': 'City does not belong to selected country'})
+        else:
+            city = City.objects.filter(name=city_name, country=country).first()
+            if not city:
+                raise ValidationError({'primary_address.city': 'City not found in reference data'})
 
         address = company.addresses.filter(is_primary=True).first()
         if not address:

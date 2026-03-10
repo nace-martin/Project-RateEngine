@@ -24,18 +24,11 @@ from pricing_v4.models import (
     ImportCOGS, ImportSellRate, ProductCode,
     LocalSellRate, LocalCOGSRate
 )
+from pricing_v4.category_rules import is_local_rate_category
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
 
 logger = logging.getLogger(__name__)
-
-# Categories that are location-based (not lane-based) for destination services
-# NOTE: Do NOT include origin-only surcharges (e.g., IMP-FSC-PICKUP) here.
-LOCAL_DEST_CATEGORIES = [
-    'CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING',
-    'AGENCY', 'SURCHARGE',
-]
-
 
 class PaymentTerm(Enum):
     COLLECT = "COLLECT"
@@ -173,12 +166,14 @@ class ImportPricingEngine:
         """
         Payment Term determines quote currency.
         Import COLLECT = PGK (consignee in PNG pays)
-        Import PREPAID = FCY (shipper abroad pays)
+        Import PREPAID = FCY (shipper abroad pays), default USD.
+
+        Note: In production flow, adapter/view passes explicit quote_currency
+        derived from canonical country/payment rules.
         """
         if self.payment_term == PaymentTerm.COLLECT:
             return 'PGK'
-        else:  # PREPAID
-            return 'AUD'  # Or could be determined by origin country
+        return 'USD'
     
     def _get_active_legs(self) -> List[str]:
         """
@@ -667,7 +662,7 @@ class ImportPricingEngine:
         Get destination sell rate.
         Routes to LocalSellRate for local categories, ImportSellRate for freight.
         """
-        if pc.category in LOCAL_DEST_CATEGORIES:
+        if is_local_rate_category(pc.category):
             return self._get_local_sell_rate(pc)
         
         # Lane-based lookup for FREIGHT
@@ -697,8 +692,8 @@ class ImportPricingEngine:
         Get COGS for a product code.
         Routes to LocalCOGSRate for local categories, ImportCOGS for freight.
         """
-        if leg == 'DESTINATION' and pc.category in LOCAL_DEST_CATEGORIES:
-            return self._get_local_cogs(pc)
+        if leg in {'ORIGIN', 'DESTINATION'} and is_local_rate_category(pc.category):
+            return self._get_local_cogs(pc, leg)
         
         # Lane-based lookup for FREIGHT
         return ImportCOGS.objects.filter(
@@ -724,43 +719,36 @@ class ImportPricingEngine:
             valid_until__gte=self.quote_date
         ).first()
     
-    def _get_local_cogs(self, pc: ProductCode):
+    def _get_local_cogs(self, pc: ProductCode, leg: str):
         """
-        Lookup local COGS from centralized table (by destination, direction=IMPORT).
-        Falls back to legacy ImportCOGS table if no LocalCOGSRate is found.
+        Lookup local COGS from centralized table for IMPORT.
+
+        Lookup order:
+        - DESTINATION leg: destination station first.
+        - ORIGIN leg: origin station first.
+        - Compatibility fallback for legacy migrated datasets: destination station.
         """
-        # Try new LocalCOGSRate table first
-        local_rate = LocalCOGSRate.objects.filter(
-            product_code=pc,
-            location=self.destination,
-            direction='IMPORT',
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).first()
-        
-        if local_rate:
-            return local_rate
-        
-        # Fallback: Check legacy ImportCOGS table (lane-based)
-        # This ensures backward compatibility during migration
-        base_qs = ImportCOGS.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).select_related('agent')
-        
-        # Prefer PGK for local destination costs in PNG
-        cogs = base_qs.filter(currency='PGK').first()
-        if cogs:
-            return cogs
-        return base_qs.first()
+        if leg == 'ORIGIN':
+            location_candidates = [self.origin, self.destination]
+        else:
+            location_candidates = [self.destination]
+
+        for location in location_candidates:
+            local_rate = LocalCOGSRate.objects.filter(
+                product_code=pc,
+                location=location,
+                direction='IMPORT',
+                valid_from__lte=self.quote_date,
+                valid_until__gte=self.quote_date
+            ).first()
+            if local_rate:
+                return local_rate
+
+        return None
     
     def _get_local_sell_rate(self, pc: ProductCode):
         """
         Lookup local sell rate from centralized table.
-        Falls back to legacy ImportSellRate table if no LocalSellRate is found.
         
         Priority: Exact payment_term match first, then fallback to 'ANY'.
         
@@ -780,6 +768,14 @@ class ImportPricingEngine:
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
         )
+        # Enforce rate-type compatibility for percentage ProductCodes.
+        if pc.default_unit == ProductCode.UNIT_PERCENT:
+            base_qs = base_qs.filter(
+                rate_type='PERCENT',
+                percent_of_product_code__isnull=False,
+            )
+        else:
+            base_qs = base_qs.exclude(rate_type='PERCENT')
 
         # Priority 1: Match quote currency + exact payment term
         rates = base_qs.filter(currency=self.quote_currency)
@@ -801,33 +797,5 @@ class ImportPricingEngine:
         any_any = base_qs.filter(payment_term='ANY').first()
         if any_any:
             return any_any
-        
-        # Fallback: Check legacy ImportSellRate table (lane-based)
-        # This ensures backward compatibility during migration
-        base_qs = ImportSellRate.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        )
-        
-        # Priority 1: Match quote currency
-        sell_rate = base_qs.filter(currency=self.quote_currency).first()
-        if sell_rate:
-            return sell_rate
-        
-        # Priority 2: Payment term specific fallback
-        if self.payment_term == PaymentTerm.PREPAID:
-            # PREPAID: shipper abroad pays, try PGK if FCY not found
-            pgk = base_qs.filter(currency='PGK').first()
-            if pgk:
-                return pgk
-        elif self.payment_term == PaymentTerm.COLLECT:
-            # COLLECT: consignee in PNG pays - need PGK, use FCY as last resort
-            fcy = base_qs.exclude(currency='PGK').first()
-            if fcy:
-                return fcy
-        
-        # Last resort: any available rate
-        return base_qs.first()
+
+        return None

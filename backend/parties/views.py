@@ -3,10 +3,11 @@ V3 API views for the parties app.
 """
 
 from django.shortcuts import get_object_or_404
+from django.db.models import Prefetch, Q
 from rest_framework import generics, permissions, viewsets
 from rest_framework.permissions import BasePermission
 
-from .models import Company, Contact
+from .models import Company, Contact, Address
 from .serializers import (
     CustomerV3Serializer,
     CompanySearchV3Serializer,
@@ -51,10 +52,24 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "put", "patch"]
 
     def get_queryset(self):
+        customer_filter = Q(is_customer=True) | Q(company_type="CUSTOMER")
         return (
-            Company.objects.filter(is_customer=True)
+            Company.objects.filter(customer_filter, is_active=True)
             .order_by("name")
-            .prefetch_related("contacts")
+            .prefetch_related(
+                Prefetch(
+                    "contacts",
+                    queryset=Contact.objects.filter(is_active=True).order_by(
+                        "-is_primary", "last_name", "first_name"
+                    ),
+                ),
+                Prefetch(
+                    "addresses",
+                    queryset=Address.objects.select_related("city__country", "country").order_by(
+                        "-is_primary", "id"
+                    ),
+                ),
+            )
         )
 
     def perform_create(self, serializer):
@@ -76,7 +91,11 @@ class CompanyV3SearchView(generics.ListAPIView):
         query = self.request.query_params.get("q", "").strip()
         if len(query) < 2:
             return Company.objects.none()
-        return Company.objects.filter(name__icontains=query, is_customer=True).order_by("name")[:20]
+        return (
+            Company.objects.filter(name__icontains=query, is_active=True)
+            .filter(Q(is_customer=True) | Q(company_type="CUSTOMER"))
+            .order_by("name")[:20]
+        )
 
 
 class CompanyContactListV3View(generics.ListAPIView):
@@ -90,4 +109,4 @@ class CompanyContactListV3View(generics.ListAPIView):
     def get_queryset(self):
         company_id = self.kwargs.get("company_id")
         company = get_object_or_404(Company, pk=company_id)
-        return company.contacts.all().order_by("last_name", "first_name")
+        return company.contacts.filter(is_active=True).order_by("last_name", "first_name")

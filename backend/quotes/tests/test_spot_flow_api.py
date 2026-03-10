@@ -39,6 +39,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
 
         self.create_url = reverse("quotes:spot-envelope-list-create")
         self.scope_url = reverse("quotes:spot-validate-scope")
+        self.evaluate_url = reverse("quotes:spot-evaluate-trigger")
 
     def test_spot_envelope_flow_acknowledge_compute(self):
         create_payload = {
@@ -122,6 +123,47 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         payload = response.json()
         self.assertTrue(payload["is_valid"])
         self.assertIsNone(payload["error"])
+
+    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
+    def test_evaluate_trigger_requires_payment_term(self, mock_availability):
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "AU",
+                "destination_country": "PG",
+                "origin_airport": "BNE",
+                "destination_airport": "POM",
+                "service_scope": "A2D",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("payment_term", response.json().get("error", ""))
+        mock_availability.assert_not_called()
+
+    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
+    def test_evaluate_trigger_passes_payment_term_to_availability(self, mock_availability):
+        mock_availability.return_value = {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: True,
+        }
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "AU",
+                "destination_country": "PG",
+                "origin_airport": "SIN",
+                "destination_airport": "POM",
+                "service_scope": "A2D",
+                "payment_term": "COLLECT",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.json()["is_spot_required"])
+        kwargs = mock_availability.call_args.kwargs
+        self.assertEqual(kwargs["payment_term"], "COLLECT")
 
     def test_acknowledge_allows_a2d_destination_only_charge_without_airfreight(self):
         create_payload = {

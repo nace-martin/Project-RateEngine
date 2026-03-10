@@ -179,6 +179,53 @@ class QuoteRetrieveV3APITest(APITestCase):
             str(second_envelope.id),
         )
 
+    def test_rate_provider_ignores_internal_source_labels(self):
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=None,
+            sell_pgk=Decimal("10.00"),
+            sell_pgk_incl_gst=Decimal("10.00"),
+            sell_fcy=Decimal("3.00"),
+            sell_fcy_incl_gst=Decimal("3.00"),
+            sell_fcy_currency="USD",
+            cost_source="10.0000% of COGS",
+            is_rate_missing=False,
+        )
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=None,
+            sell_pgk=Decimal("10.00"),
+            sell_pgk_incl_gst=Decimal("10.00"),
+            sell_fcy=Decimal("3.00"),
+            sell_fcy_incl_gst=Decimal("3.00"),
+            sell_fcy_currency="USD",
+            cost_source="Default",
+            is_rate_missing=False,
+        )
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["rate_provider"], "Internal")
+
+    def test_rate_provider_returns_real_provider_name(self):
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=None,
+            sell_pgk=Decimal("10.00"),
+            sell_pgk_incl_gst=Decimal("10.00"),
+            sell_fcy=Decimal("3.00"),
+            sell_fcy_incl_gst=Decimal("3.00"),
+            sell_fcy_currency="USD",
+            cost_source="SPOT-MATRIX-AGENT",
+            is_rate_missing=False,
+        )
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["rate_provider"], "SPOT-MATRIX-AGENT")
+
 
 class QuoteListV3APITest(APITestCase):
     def setUp(self):

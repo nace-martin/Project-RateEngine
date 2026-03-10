@@ -1,7 +1,7 @@
 from django.test import TestCase
 from decimal import Decimal
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from quotes.pdf_service import generate_quote_pdf
+from quotes.pdf_service import generate_quote_pdf, _get_chargeable_weight, _get_location_country_code
 from parties.models import Company
 from core.models import Location, Country, City
 
@@ -46,3 +46,71 @@ class QuotePDFExportTest(TestCase):
         pdf_bytes = generate_quote_pdf(str(quote.id))
         self.assertTrue(len(pdf_bytes) > 0)
         self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_chargeable_weight_uses_nested_shipment_pieces_payload(self):
+        """Chargeable weight should resolve from shipment.pieces payload structure."""
+        quote = Quote.objects.create(
+            customer=self.customer,
+            origin_location=self.origin,
+            destination_location=self.dest,
+            quote_number='TEST-PDF-CW-NESTED',
+            status='DRAFT',
+            mode='AIR',
+            shipment_type='EXPORT',
+            request_details_json={
+                "shipment": {
+                    "pieces": [
+                        {
+                            "pieces": 1,
+                            "length_cm": "0",
+                            "width_cm": "0",
+                            "height_cm": "0",
+                            "gross_weight_kg": "100.0",
+                        }
+                    ]
+                }
+            },
+        )
+        version = QuoteVersion.objects.create(
+            quote=quote,
+            version_number=1,
+            payload_json={
+                "shipment": {
+                    "pieces": [
+                        {
+                            "pieces": 1,
+                            "length_cm": "0",
+                            "width_cm": "0",
+                            "height_cm": "0",
+                            "gross_weight_kg": "100.0",
+                        }
+                    ]
+                }
+            },
+        )
+
+        self.assertEqual(_get_chargeable_weight(quote, version), "100.0")
+
+    def test_location_country_code_uses_quote_location_country(self):
+        """Shipment bar country labels must come from quote locations."""
+        country_hk = Country.objects.create(code='HK', name='Hong Kong')
+        city_hk = City.objects.create(name='Hong Kong', country=country_hk)
+        origin_hk = Location.objects.create(
+            code='HKG',
+            name='Hong Kong Intl',
+            city=city_hk,
+            country=country_hk,
+        )
+
+        quote = Quote.objects.create(
+            customer=self.customer,
+            origin_location=origin_hk,
+            destination_location=self.dest,
+            quote_number='TEST-PDF-COUNTRY-CODE',
+            status='DRAFT',
+            mode='AIR',
+            shipment_type='IMPORT',
+        )
+
+        self.assertEqual(_get_location_country_code(quote, 'origin'), 'HK')
+        self.assertEqual(_get_location_country_code(quote, 'destination'), 'PG')

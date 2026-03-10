@@ -1,8 +1,8 @@
 # backend/pricing_v4/management/commands/seed_export_sell_fcy.py
 """
-Seeds Export SELL Rates in FCY (USD/AUD) for Export Collect scenarios.
+Seeds Export SELL Rates in FCY (USD/AUD) for Export Prepaid scenarios.
 
-Based on the "EXPORT SELL - PREPAID D2A" rate card (which is actually used for Collect quotes).
+Based on the "EXPORT SELL - PREPAID D2A" rate card.
 
 Currency Rules:
 - USD: All non-AU destinations (SIN, HKG, MNL, etc.)
@@ -16,7 +16,7 @@ from pricing_v4.models import ProductCode, ExportSellRate
 
 
 class Command(BaseCommand):
-    help = 'Seeds Export SELL Rates in USD/AUD for Export Collect quotes'
+    help = 'Seeds Export SELL Rates in USD/AUD for Export Prepaid quotes'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -29,7 +29,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.year = options['year']
         self.stdout.write("=" * 60)
-        self.stdout.write(f"Seeding Export Collect FCY Sell Rates (USD/AUD) for {self.year}")
+        self.stdout.write(f"Seeding Export Prepaid FCY Sell Rates (USD/AUD) for {self.year}")
         self.stdout.write("=" * 60)
         
         # Air Freight Rates from spreadsheet

@@ -20,6 +20,7 @@ from quotes.state_machine import (
     assert_quote_mutable_for_action,
     is_quote_editable,
 )
+from quotes.currency_rules import determine_quote_currency
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
@@ -155,7 +156,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 shipment_type,
                 origin_location,
                 destination_location,
-                customer
             )
             
             # 3. Call the pricing dispatcher (single entry point)
@@ -221,7 +221,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Re-raise so Django's exception handler can do its job (or return generic 500)
             raise
 
-    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location, customer: Company):
+    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location):
         """Helper to convert Pydantic model to PricingService dataclasses."""
 
         origin_ref = self._location_to_ref(origin_location)
@@ -247,7 +247,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             data.payment_term,
             origin_location,
             destination_location,
-            customer
         )
 
         return QuoteInput(
@@ -274,42 +273,16 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             currency_code=currency_code,
         )
 
-    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location, customer: Company) -> str:
-        """
-        Determine the correct output currency based on customer preference or shipment type.
-        
-        Priority:
-        1. Customer Preferred Currency (if set in Commercial Profile)
-        2. Standard Logic (based on shipment terms)
-        """
-        # 1. Customer Preference Override (ignore PGK since it's the default)
-        if hasattr(customer, 'commercial_profile') and customer.commercial_profile.preferred_quote_currency:
-            preferred_code = customer.commercial_profile.preferred_quote_currency.code
-            if preferred_code and preferred_code != 'PGK':
-                return preferred_code
-
-        # 2. Standard Logic
-        if shipment_type == Quote.ShipmentType.IMPORT:
-            if payment_term == Quote.PaymentTerm.PREPAID:
-                if origin_location.country and origin_location.country.currency:
-                    return origin_location.country.currency.code
-                return 'AUD'  # Fallback FCY for prepaid imports
-            return 'PGK'
-        
-        if shipment_type == Quote.ShipmentType.EXPORT:
-            if payment_term == Quote.PaymentTerm.COLLECT:
-                # Export Collect: Customer (consignee) pays overseas
-                # AUD only if destination is Australia, otherwise USD
-                if destination_location.country:
-                    if destination_location.country.code == 'AU':
-                        return 'AUD'
-                    else:
-                        return 'USD'  # Default for all other international destinations
-                return 'USD'  # Fallback
-            return 'PGK'  # Export PREPAID: Customer pays in PNG
-        
-        # Domestic: Always PGK
-        return 'PGK'
+    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location) -> str:
+        """Determine output currency using global shipment/payment/country rules only."""
+        origin_country_code = origin_location.country.code if origin_location.country else None
+        destination_country_code = destination_location.country.code if destination_location.country else None
+        return determine_quote_currency(
+            shipment_type=shipment_type,
+            payment_term=payment_term,
+            origin_country_code=origin_country_code,
+            destination_country_code=destination_country_code,
+        )
 
     @transaction.atomic
     def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None, engine_version: str = 'V4'):

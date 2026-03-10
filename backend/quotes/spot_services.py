@@ -26,6 +26,7 @@ from typing import Optional, Tuple, List
 from uuid import uuid4
 
 from django.conf import settings
+from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +292,7 @@ class RateAvailabilityService:
         destination_airport: str,
         direction: str,
         service_scope: str,
+        payment_term: Optional[str] = None,
     ) -> dict[str, bool]:
         """
         Build component availability map by querying V4 tables.
@@ -303,15 +305,90 @@ class RateAvailabilityService:
             ProductCode,
             DomesticCOGS,
             LocalCOGSRate,
+            LocalSellRate,
         )
         from datetime import date
         
+        origin_airport = (origin_airport or "").strip().upper()
+        destination_airport = (destination_airport or "").strip().upper()
+        direction = (direction or "").strip().upper()
+        payment_term_normalized = (payment_term or "").strip().upper()
+        if payment_term_normalized not in {"PREPAID", "COLLECT"}:
+            payment_term_normalized = None
+
         today = date.today()
         availability = {
             COMPONENT_FREIGHT: False,
             COMPONENT_ORIGIN_LOCAL: False,
             COMPONENT_DESTINATION_LOCAL: False,
         }
+
+        def surcharge_exists(
+            service_type: str,
+            *,
+            origin: Optional[str] = None,
+            destination: Optional[str] = None,
+        ) -> bool:
+            qs = Surcharge.objects.filter(
+                service_type=service_type,
+                rate_side='COGS',
+                is_active=True,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            )
+            if origin is not None:
+                qs = qs.filter(
+                    Q(origin_filter=origin) | Q(origin_filter__isnull=True) | Q(origin_filter='')
+                )
+            if destination is not None:
+                qs = qs.filter(
+                    Q(destination_filter=destination) | Q(destination_filter__isnull=True) | Q(destination_filter='')
+                )
+            return qs.exists()
+
+        def apply_payment_term_gate(
+            *,
+            component: str,
+            direction_value: str,
+            locations: list[str],
+            classifier,
+        ) -> None:
+            """
+            Enforce payment-term specificity for local SELL tariffs when provided.
+
+            Rule:
+            - If no payment term is supplied, do not gate.
+            - If component is already unavailable, no-op.
+            - If local sell rows exist for that component+location but none match
+              requested term (or ANY), mark component unavailable.
+            """
+            if not payment_term_normalized or not availability.get(component):
+                return
+            candidate_locations = [loc for loc in locations if loc]
+            if not candidate_locations:
+                return
+
+            rows = LocalSellRate.objects.filter(
+                direction=direction_value,
+                location__in=candidate_locations,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).values_list("payment_term", "product_code__code", "product_code__category")
+
+            has_component_rows = False
+            has_term_match = False
+            for row_payment_term, code, category in rows:
+                row_component = classifier(code, category)
+                if row_component != component:
+                    continue
+                has_component_rows = True
+                row_payment_term_value = (row_payment_term or "").upper()
+                if row_payment_term_value in {payment_term_normalized, "ANY"}:
+                    has_term_match = True
+                    break
+
+            if has_component_rows and not has_term_match:
+                availability[component] = False
         
         # 1. Freight Coverage (AIRFREIGHT)
         if direction == 'DOMESTIC':
@@ -378,21 +455,12 @@ class RateAvailabilityService:
             ).exists():
                 availability[COMPONENT_ORIGIN_LOCAL] = True
 
-            if Surcharge.objects.filter(
-                service_type='EXPORT_ORIGIN',
-                origin_filter=origin_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            if surcharge_exists('EXPORT_ORIGIN', origin=origin_airport):
                 availability[COMPONENT_ORIGIN_LOCAL] = True
 
-            if Surcharge.objects.filter(
-                service_type='EXPORT_DEST',
-                destination_filter=destination_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            if surcharge_exists('EXPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True
+
         else:
             import_codes = ImportCOGS.objects.filter(
                 origin_airport=origin_airport,
@@ -403,31 +471,45 @@ class RateAvailabilityService:
             for code, category in import_codes:
                 availability[classify_import_component(code, category)] = True
 
-            if LocalCOGSRate.objects.filter(
-                location=destination_airport,
+            # Import local rates can include both ORIGIN and DESTINATION components.
+            # Classify rows by ProductCode, then map by station. Keep a compatibility
+            # fallback so legacy migrated ORIGIN rows stored at destination station
+            # still satisfy ORIGIN_LOCAL coverage checks.
+            origin_code = (origin_airport or "").upper()
+            destination_code = (destination_airport or "").upper()
+            origin_local_fallback_at_destination = False
+            local_location_candidates = [loc for loc in [origin_airport, destination_airport] if loc]
+
+            import_local_rows = LocalCOGSRate.objects.filter(
+                location__in=local_location_candidates,
                 direction='IMPORT',
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).exists():
-                availability[COMPONENT_DESTINATION_LOCAL] = True
+            ).values_list('location', 'product_code__code', 'product_code__category')
 
-            if Surcharge.objects.filter(
-                service_type='IMPORT_ORIGIN',
-                origin_filter=origin_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            for location, code, category in import_local_rows:
+                component = classify_import_component(code, category)
+                location_code = (location or "").upper()
+
+                if component == COMPONENT_ORIGIN_LOCAL:
+                    if location_code == origin_code:
+                        availability[COMPONENT_ORIGIN_LOCAL] = True
+                    elif location_code == destination_code:
+                        origin_local_fallback_at_destination = True
+                elif component == COMPONENT_DESTINATION_LOCAL and location_code == destination_code:
+                    availability[COMPONENT_DESTINATION_LOCAL] = True
+
+            if not availability[COMPONENT_ORIGIN_LOCAL] and origin_local_fallback_at_destination:
                 availability[COMPONENT_ORIGIN_LOCAL] = True
 
-            if Surcharge.objects.filter(
-                service_type='IMPORT_DEST',
-                destination_filter=destination_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            if surcharge_exists('IMPORT_ORIGIN', origin=origin_airport):
+                availability[COMPONENT_ORIGIN_LOCAL] = True
+
+            if surcharge_exists('IMPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True
+
             
-        lane_key = f"{origin_airport.upper()}-{destination_airport.upper()}"
+        lane_key = f"{origin_airport}-{destination_airport}"
         config = getattr(settings, 'SPOT_ROUTE_COVERAGE', {})
         export_d2a_lanes = set(config.get('export_d2a_lanes', []))
         import_d2a_lanes = set(config.get('import_d2a_lanes', []))
@@ -442,6 +524,23 @@ class RateAvailabilityService:
                 availability[COMPONENT_DESTINATION_LOCAL] = True
             if lane_key in import_d2a_lanes:
                 availability[COMPONENT_FREIGHT] = True
+
+        # Apply payment-term gate after config overrides so term-specific
+        # mismatches cannot be masked by coarse lane/global switches.
+        if direction == 'EXPORT':
+            apply_payment_term_gate(
+                component=COMPONENT_ORIGIN_LOCAL,
+                direction_value="EXPORT",
+                locations=[origin_airport],
+                classifier=classify_export_component,
+            )
+        elif direction == 'IMPORT':
+            apply_payment_term_gate(
+                component=COMPONENT_DESTINATION_LOCAL,
+                direction_value="IMPORT",
+                locations=[destination_airport],
+                classifier=classify_import_component,
+            )
 
         return availability
 
@@ -464,6 +563,7 @@ class StandardChargeService:
         service_scope: str,
         weight_kg: float,
         commodity: str = "GCR",
+        payment_term: str = "PREPAID",
     ) -> list[dict]:
         """
         Get standard charges for a lane where DB coverage exists.
@@ -496,6 +596,7 @@ class StandardChargeService:
             destination_airport=destination_code,
             direction=direction,
             service_scope=service_scope,
+            payment_term=payment_term,
         )
         
         # If no standard coverage at all, return empty
@@ -546,7 +647,7 @@ class StandardChargeService:
                 mode="AIR",
                 shipment_type=shipment_type,
                 incoterm="EXW" if direction == "EXPORT" else "DDU",
-                payment_term="PREPAID",
+                payment_term=str(payment_term or "PREPAID").upper(),
                 is_dangerous_goods=(commodity == "DG"),
                 pieces=[Piece(
                     pieces=1,

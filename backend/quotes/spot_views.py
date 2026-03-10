@@ -55,6 +55,7 @@ from quotes.spot_models import (
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer
 from quotes.selectors import get_quote_for_user
+from quotes.currency_rules import determine_quote_currency
 
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,26 @@ def _normalize_shipment_context(ctx: dict) -> dict:
     normalized["destination_code"] = destination_code
     normalized["origin_country"] = origin_country
     normalized["destination_country"] = destination_country
+    payment_term = str(normalized.get("payment_term") or "").strip().upper()
+    if payment_term in {"PREPAID", "COLLECT"}:
+        normalized["payment_term"] = payment_term
+    elif "payment_term" in normalized:
+        normalized.pop("payment_term", None)
     return normalized
+
+
+def _resolve_output_currency_for_shipment(
+    shipment_type: str,
+    payment_term: str,
+    origin_location,
+    destination_location,
+) -> str:
+    return determine_quote_currency(
+        shipment_type=shipment_type,
+        payment_term=payment_term,
+        origin_country_code=getattr(origin_location, "country_code", None),
+        destination_country_code=getattr(destination_location, "country_code", None),
+    )
 
 
 def _normalize_missing_components(raw_value) -> Optional[list[str]]:
@@ -133,6 +153,7 @@ def _derive_missing_components_from_context(ctx: dict) -> Optional[list[str]]:
         return None
 
     service_scope = str(ctx.get("service_scope") or "P2P")
+    payment_term = str(ctx.get("payment_term") or "").upper() or None
     origin_country, destination_country = _resolve_country_pair(
         ctx.get("origin_country"),
         ctx.get("destination_country"),
@@ -150,6 +171,7 @@ def _derive_missing_components_from_context(ctx: dict) -> Optional[list[str]]:
             destination_airport=destination_code,
             direction=direction,
             service_scope=service_scope,
+            payment_term=payment_term,
         )
         coverage = evaluate_from_availability(
             component_availability=availability,
@@ -247,6 +269,8 @@ def _build_spe_from_db(
         )
 
     ctx = _normalize_shipment_context(spe_db.shipment_context_json)
+    if not ctx.get("payment_term") and getattr(spe_db, "quote", None) and getattr(spe_db.quote, "payment_term", None):
+        ctx["payment_term"] = str(spe_db.quote.payment_term).upper()
     resolved_missing_components = _resolve_missing_components_for_context(ctx)
     status_value = status_override or spe_db.status
 
@@ -262,6 +286,7 @@ def _build_spe_from_db(
             total_weight_kg=ctx.get('total_weight_kg', 1.0),
             pieces=ctx.get('pieces', 1),
             service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+            payment_term=(str(ctx.get('payment_term')).lower() if ctx.get('payment_term') else None),
             missing_components=resolved_missing_components,
         ),
         charges=charges,
@@ -366,13 +391,20 @@ class SpotTriggerEvaluateAPIView(APIView):
         
         # Build component availability map from DB
         service_scope = request.data.get('service_scope', 'P2P')
+        payment_term = str(request.data.get('payment_term') or '').upper()
+        if payment_term not in {'PREPAID', 'COLLECT'}:
+            return Response(
+                {'error': "payment_term is required and must be PREPAID or COLLECT"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         from quotes.spot_services import RateAvailabilityService
         component_availability = RateAvailabilityService.get_availability(
             origin_airport=origin_airport,
             destination_airport=destination_airport,
             direction=direction,
-            service_scope=service_scope
+            service_scope=service_scope,
+            payment_term=payment_term,
         )
 
         is_spot, trigger = SpotTriggerEvaluator.evaluate(
@@ -410,6 +442,7 @@ class StandardChargesAPIView(APIView):
             "destination_code": "SIN",
             "direction": "EXPORT",
             "service_scope": "D2D",
+            "payment_term": "PREPAID",
             "weight_kg": 100,
             "commodity": "GCR"
         }
@@ -440,6 +473,12 @@ class StandardChargesAPIView(APIView):
         destination_code = request.data.get("destination_code", "").upper()
         direction = request.data.get("direction", "EXPORT").upper()
         service_scope = request.data.get("service_scope", "D2D").upper()
+        payment_term = str(request.data.get("payment_term") or "").upper()
+        if payment_term not in {"PREPAID", "COLLECT"}:
+            return Response(
+                {"error": "payment_term is required and must be PREPAID or COLLECT"},
+                status=400
+            )
         weight_kg = float(request.data.get("weight_kg", 100))
         commodity = request.data.get("commodity", "GCR").upper()
         
@@ -456,6 +495,7 @@ class StandardChargesAPIView(APIView):
             service_scope=service_scope,
             weight_kg=weight_kg,
             commodity=commodity,
+            payment_term=payment_term,
         )
         
         return Response({"charges": charges})
@@ -485,17 +525,12 @@ class SpotEnvelopeListCreateAPIView(APIView):
 
         spes = spe_qs.order_by('-created_at')[:20]
         
-        spes = spe_qs.order_by('-created_at')[:20]
-        
         serializer = SpotPricingEnvelopeSerializer(spes, many=True)
         return Response(serializer.data)
     
     @transaction.atomic
     def post(self, request):
         """Create new SPE in DRAFT status."""
-        with open("debug_spe.log", "a") as f:
-            f.write(f"\n--- {timezone.now()} --- POST to envelopes ---\n")
-            f.write(f"Data: {request.data}\n")
         try:
             data = request.data
             quote = None
@@ -520,6 +555,12 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             # Create DB record
             ctx = _normalize_shipment_context(data['shipment_context'])
+            if (
+                not ctx.get("payment_term")
+                and quote is not None
+                and getattr(quote, "payment_term", None)
+            ):
+                ctx["payment_term"] = str(quote.payment_term).upper()
             if "missing_components" not in ctx:
                 resolved_missing_components = _resolve_missing_components_for_context(ctx)
                 if resolved_missing_components is not None:
@@ -589,10 +630,6 @@ class SpotEnvelopeListCreateAPIView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.exception("Unexpected error creating SPE")
-            with open("debug_spe.log", "a") as f:
-                import traceback
-                f.write(f"ERROR: {str(e)}\n")
-                f.write(traceback.format_exc())
             return Response(
                 {'error': f"Internal Server Error: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -603,6 +640,8 @@ class SpotEnvelopeListCreateAPIView(APIView):
     def _validate_spe(self, spe_db):
         """Validate SPE via Pydantic schemas."""
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
+        if not ctx.get("payment_term") and getattr(spe_db, "quote", None) and getattr(spe_db.quote, "payment_term", None):
+            ctx["payment_term"] = str(spe_db.quote.payment_term).upper()
         resolved_missing_components = _resolve_missing_components_for_context(ctx)
         charges = [
             SPEChargeLine(
@@ -646,6 +685,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 total_weight_kg=ctx.get('total_weight_kg', 1.0),
                 pieces=ctx.get('pieces', 1),
                 service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+                payment_term=(str(ctx.get('payment_term')).lower() if ctx.get('payment_term') else None),
                 missing_components=resolved_missing_components,
             ),
             charges=charges,
@@ -1023,13 +1063,20 @@ class SpotEnvelopeComputeAPIView(APIView):
             origin_location=origin_ref,
             destination_location=dest_ref,
         )
+
+        resolved_output_currency = _resolve_output_currency_for_shipment(
+            shipment_type=shipment.shipment_type,
+            payment_term=shipment.payment_term,
+            origin_location=origin_ref,
+            destination_location=dest_ref,
+        )
         
         quote_input = QuoteInput(
             customer_id=getattr(spe_db.quote, 'customer_id', None) or uuid.uuid4(),
             contact_id=getattr(spe_db.quote, 'contact_id', None) or uuid.uuid4(),
             shipment=shipment,
             quote_date=date.today(),
-            output_currency=quote_data.get('output_currency', 'PGK'),
+            output_currency=resolved_output_currency,
         )
         
         # Call adapter with spot_envelope_id
@@ -1127,6 +1174,13 @@ class SpotReplyAnalysisAPIView(APIView):
             try:
                 spe_db = _get_spe_or_404(request.user, spe_id)
                 shipment_context = _normalize_shipment_context(spe_db.shipment_context_json)
+                if (
+                    shipment_context is not None
+                    and not shipment_context.get("payment_term")
+                    and getattr(spe_db, "quote", None)
+                    and getattr(spe_db.quote, "payment_term", None)
+                ):
+                    shipment_context["payment_term"] = str(spe_db.quote.payment_term).upper()
             except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
                 pass
             
@@ -1155,7 +1209,8 @@ class SpotReplyAnalysisAPIView(APIView):
                 origin_airport=shipment_context.get('origin_code', ''),
                 destination_airport=shipment_context.get('destination_code', ''),
                 direction=direction,
-                service_scope=shipment_context.get('service_scope', 'P2P')
+                service_scope=shipment_context.get('service_scope', 'P2P'),
+                payment_term=shipment_context.get('payment_term'),
             )
             
             # Enrich context with missing status to guide AI
@@ -1332,6 +1387,13 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             origin_location=origin_ref,
             destination_location=dest_ref,
         )
+
+        resolved_output_currency = _resolve_output_currency_for_shipment(
+            shipment_type=shipment.shipment_type,
+            payment_term=shipment.payment_term,
+            origin_location=origin_ref,
+            destination_location=dest_ref,
+        )
         
         # Ensure customer/contact logic
         cust_id = None
@@ -1342,16 +1404,35 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             cont_id = spe_db.quote.contact_id
 
         if not cust_id:
-             req_cust = request.data.get('customer_id')
+             req_cust = (
+                 request.data.get('customer_id')
+                 or quote_data.get('customer_id')
+             )
              if req_cust:
-                 cust_id = UUID(req_cust)
-             else:
-                 # Last resort: Try "Cash Customer" or similar
-                 cust = Company.objects.first()
-                 if cust: cust_id = cust.id
+                 try:
+                     cust_id = UUID(str(req_cust))
+                 except (TypeError, ValueError):
+                     return Response(
+                         {'error': f'Invalid customer_id: {req_cust}'},
+                         status=status.HTTP_400_BAD_REQUEST
+                     )
+
+        # Backward compatibility for older envelopes without explicit customer_id:
+        # resolve by customer_name from shipment context if available.
+        if not cust_id:
+            customer_name = str(ctx.get('customer_name') or '').strip()
+            if customer_name:
+                cust = Company.objects.filter(name__iexact=customer_name).first()
+                if not cust:
+                    cust = Company.objects.filter(name__icontains=customer_name).first()
+                if cust:
+                    cust_id = cust.id
         
         if not cust_id:
-            return Response({'error': 'Customer required to create quote'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Customer is required to create quote. Provide customer_id or link SPE to an existing quote.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Create QuoteInput
         # Note: If QuoteInput enforces contact_id is not None, we might need to fake it if cont_id is None.
@@ -1365,7 +1446,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             contact_id=qi_contact_id, 
             shipment=shipment,
             quote_date=date.today(),
-            output_currency=quote_data.get('output_currency', 'PGK'),
+            output_currency=resolved_output_currency,
         )
         
         adapter = PricingServiceV4Adapter(quote_input=quote_input, spot_envelope_id=UUID(str(spe_db.id)))

@@ -137,7 +137,6 @@ def _build_quote_input_from_payload(payload: dict):
     
     from .calculation import _classify_shipment_type, QuoteComputeV3APIView
     from quotes.schemas import QuoteComputeRequest
-    from parties.models import Company
     from core.models import Location
     from pydantic import ValidationError
 
@@ -148,8 +147,6 @@ def _build_quote_input_from_payload(payload: dict):
 
     origin_location = get_object_or_404(Location, pk=validated.origin_location_id, is_active=True)
     destination_location = get_object_or_404(Location, pk=validated.destination_location_id, is_active=True)
-    customer = get_object_or_404(Company, id=validated.customer_id)
-    
     shipment_type = _classify_shipment_type(
         validated.mode,
         origin_location,
@@ -166,7 +163,6 @@ def _build_quote_input_from_payload(payload: dict):
         shipment_type,
         origin_location,
         destination_location,
-        customer,
     )
     return quote_input, validated
 
@@ -549,95 +545,124 @@ class QuoteCloneAPIView(APIView):
     permission_classes = [CanEditQuotes]  # Sales/Manager/Admin can clone
     
     def post(self, request, quote_id):
-        
         # Get source quote
         # SECURITY FIX: Enforce IDOR protection
         source_quote = get_quote_for_user(request.user, quote_id)
         
-        # Validate source quote status - only allow cloning FINALIZED or SENT quotes
-        allowed_statuses = [Quote.Status.FINALIZED, Quote.Status.SENT]
+        # Validate source quote status.
+        # Keep in sync with frontend Clone button visibility rules.
+        allowed_statuses = [Quote.Status.FINALIZED, Quote.Status.SENT, Quote.Status.EXPIRED]
         if source_quote.status not in allowed_statuses:
             return Response(
-                {'detail': f'Cannot clone quote with status "{source_quote.status}". Only FINALIZED or SENT quotes can be cloned.'},
+                {'detail': f'Cannot clone quote with status "{source_quote.status}". Only FINALIZED, SENT, or EXPIRED quotes can be cloned.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         with transaction.atomic():
-            # Create new quote with copied fields
+            source_latest_version = source_quote.versions.order_by('-version_number').first()
+            clone_payload = copy.deepcopy(
+                (source_latest_version.payload_json if source_latest_version else None)
+                or source_quote.request_details_json
+                or {}
+            )
+
+            # Create new draft with currently supported Quote fields only.
             new_quote = Quote.objects.create(
                 customer=source_quote.customer,
                 contact=source_quote.contact,
                 mode=source_quote.mode,
+                shipment_type=source_quote.shipment_type,
                 service_scope=source_quote.service_scope,
                 incoterm=source_quote.incoterm,
                 payment_term=source_quote.payment_term,
+                output_currency=source_quote.output_currency,
                 origin_location=source_quote.origin_location,
                 destination_location=source_quote.destination_location,
-                pickup_suburb=source_quote.pickup_suburb, # Pickup suburb might be property of location? Original field?
-                delivery_suburb=source_quote.delivery_suburb, # Original field?
-                # Check for suburb fields in model (refactored model didn't show them, but original code used them)
-                # If they were removed in refactor, we should skip.
-                # Looking at original `models.py` content shown in Step 93, fields `pickup_suburb`/`delivery_suburb` are NOT in `Quote`.
-                # They were removed in V3 Refactor.
-                # I should remove them here too.
-                # gross_weight_kg, chargeable_weight_kg, pieces, dimensions_json: Also NOT in `Quote`. 
-                # They are inside `request_details_json` or calculated.
-                # `Quote` model in Step 93 has `request_details_json`.
-                # The cloning logic above seems to refer to fields that might have existed in V2 or were assumed.
-                # Wait, scanning Step 93 `models.py`:
-                # Quote fields: `id`, `quote_number`, `customer`, `contact`, `mode`, `shipment_type`, `incoterm`, `payment_term`, `service_scope`, `output_currency`, `valid_until`, `origin_location`, `destination_location`, `policy`, `fx_snapshot`, `is_dangerous_goods`, `status`, `request_details_json`, `created_at`, `created_by`...
-                # NO `pickup_suburb`, `gross_weight_kg`.
-                # So this cloning logic in `views.py` (lines 1165+) must be legacy or referring to fields I missed?
-                # Ah, I missed looking at the FULL `models.py` or maybe the view code I copied (lines 1191+) has errors or refers to fields I didn't see.
-                # The view code I read (lines 1191+) DOES create with `pickup_suburb`, `gross_weight_kg`.
-                # This suggests `Quote` model DOES have them, or `views.py` is out of sync with `models.py`.
-                # Given I am REFACTORING (moving code), I should move it AS IS.
-                # If it errors, it errors. But if `views.py` was working, then `models.py` must have those fields.
-                # Re-checking `models.py` output in Step 93...
-                # It shows `Quote` class starts at line 20.
-                # Fields listed: `customer` (47), `contact`, `mode`, `shipment_type`, `incoterm`, `payment_term`, `service_scope`, `output_currency`, `valid_until`, `origin_location`, `destination_location`, `policy`, `fx_snapshot`, `is_dangerous_goods`, `status`.
-                # It DOES NOT show `gross_weight_kg`.
-                # Maybe I missed scrolling?
-                # No, I saw "Showing lines 1 to 662" and file has 662 lines.
-                # So `models.py` is V3 refactored.
-                # But `views.py` has `QuoteCloneAPIView` using fields that don't exist?
-                # That implies `views.py` might be broken or I am misreading.
-                # `QuoteCloneAPIView` lines 1191-1214.
-                # `pickup_suburb=source_quote.pickup_suburb`
-                # If these fields don't exist, this code will fail.
-                # Since I am refactoring, I should copy the code. If it's broken, it's broken.
-                # But "Do not delete original files" constraint helps.
-                # I'll comment out the suspicious fields with a TODO or just copy them.
-                # User said "Codebase Refactoring", "Move logic".
-                # I will create the file as is, but maybe wrap likely failures in `getattr(source_quote, 'field', None)`?
-                # No, kwargs for `create` must be valid.
-                # I will comment them out if I am sure they don't exist, or just leave them and risk it (since I can't verify 100% without running).
-                # But I verified `models.py` content. They ARE NOT THERE.
-                # So `views.py` must be outdated or I missed something fundamental.
-                # BUT wait, maybe `Quote` inherits? No.
-                # I'll omit the fields that I know are missing to avoid immediate 500s.
-                # Missing fields: `pickup_suburb`, `delivery_suburb`, `gross_weight_kg`, `chargeable_weight_kg`, `pieces`, `dimensions_json`.
-                # These are likely from `QuoteInput` or payload.
-                
-                # UPDATE: I'll stick to what is in `views.py` but I'll comment them out to be safe, adding a note.
-                
-                # pickup_suburb=source_quote.pickup_suburb,
-                # delivery_suburb=source_quote.delivery_suburb,
-                # gross_weight_kg=source_quote.gross_weight_kg,
-                # chargeable_weight_kg=source_quote.chargeable_weight_kg,
-                # pieces=source_quote.pieces,
-                # dimensions_json=source_quote.dimensions_json,
                 is_dangerous_goods=source_quote.is_dangerous_goods,
-                shipment_type=source_quote.shipment_type,
-                output_currency=source_quote.output_currency,
-                request_details_json=source_quote.request_details_json,
+                # Draft clones must not carry source quote expiry.
+                valid_until=None,
+                policy=source_quote.policy,
+                fx_snapshot=source_quote.fx_snapshot,
+                request_details_json=clone_payload,
                 status=Quote.Status.DRAFT,  # New quote starts as DRAFT
                 created_by=request.user,
                 # Note: quote_number is auto-generated on save
             )
-            
-            # Attach a placeholder latest_version for serialization
-            new_quote.latest_version = None
+
+            # Seed baseline version so cloned quotes always have editable payload context.
+            new_version = QuoteVersion.objects.create(
+                quote=new_quote,
+                version_number=1,
+                payload_json=clone_payload,
+                policy=(source_latest_version.policy if source_latest_version else source_quote.policy),
+                fx_snapshot=(source_latest_version.fx_snapshot if source_latest_version else source_quote.fx_snapshot),
+                status=Quote.Status.DRAFT,
+                reason=f"Cloned from {source_quote.quote_number}",
+                created_by=request.user,
+                engine_version=(source_latest_version.engine_version if source_latest_version else 'V4'),
+            )
+
+            spot_charges_copied = 0
+            if source_latest_version:
+                source_lines = list(source_latest_version.lines.select_related('service_component').all())
+                cloned_lines = []
+                for line in source_lines:
+                    if line.service_component and line.service_component.code.startswith('SPOT'):
+                        spot_charges_copied += 1
+                    cloned_lines.append(QuoteLine(
+                        quote_version=new_version,
+                        service_component=line.service_component,
+                        cost_pgk=line.cost_pgk,
+                        cost_fcy=line.cost_fcy,
+                        cost_fcy_currency=line.cost_fcy_currency,
+                        sell_pgk=line.sell_pgk,
+                        sell_pgk_incl_gst=line.sell_pgk_incl_gst,
+                        sell_fcy=line.sell_fcy,
+                        sell_fcy_incl_gst=line.sell_fcy_incl_gst,
+                        sell_fcy_currency=line.sell_fcy_currency,
+                        exchange_rate=line.exchange_rate,
+                        leg=line.leg,
+                        bucket=line.bucket,
+                        cost_source=line.cost_source,
+                        cost_source_description=line.cost_source_description,
+                        is_rate_missing=line.is_rate_missing,
+                        is_informational=line.is_informational,
+                        conditional=line.conditional,
+                        gst_category=line.gst_category,
+                        gst_rate=line.gst_rate,
+                        gst_amount=line.gst_amount,
+                    ))
+                if cloned_lines:
+                    QuoteLine.objects.bulk_create(cloned_lines)
+
+                source_totals = getattr(source_latest_version, 'totals', None)
+                if source_totals:
+                    QuoteTotal.objects.create(
+                        quote_version=new_version,
+                        total_cost_pgk=source_totals.total_cost_pgk,
+                        total_sell_pgk=source_totals.total_sell_pgk,
+                        total_sell_pgk_incl_gst=source_totals.total_sell_pgk_incl_gst,
+                        total_sell_fcy=source_totals.total_sell_fcy,
+                        total_sell_fcy_incl_gst=source_totals.total_sell_fcy_incl_gst,
+                        total_sell_fcy_currency=source_totals.total_sell_fcy_currency,
+                        has_missing_rates=source_totals.has_missing_rates,
+                        notes=source_totals.notes,
+                        engine_version=source_totals.engine_version,
+                    )
+                else:
+                    QuoteTotal.objects.create(
+                        quote_version=new_version,
+                        total_sell_fcy_currency=new_quote.output_currency or 'PGK',
+                        notes='Cloned without source totals; baseline totals initialized.',
+                    )
+            else:
+                QuoteTotal.objects.create(
+                    quote_version=new_version,
+                    total_sell_fcy_currency=new_quote.output_currency or 'PGK',
+                    notes='Cloned baseline version from request payload.',
+                )
+
+            new_quote.latest_version = new_version
             
             logger.info(f"Quote {source_quote.quote_number} cloned to {new_quote.quote_number} by {request.user}")
         
@@ -649,7 +674,7 @@ class QuoteCloneAPIView(APIView):
                 'id': str(source_quote.id),
                 'quote_number': source_quote.quote_number,
             },
-            'spot_charges_copied': 0,
+            'spot_charges_copied': spot_charges_copied,
             'created_at': new_quote.created_at.isoformat(),
         }, status=status.HTTP_201_CREATED)
 

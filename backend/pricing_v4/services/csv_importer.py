@@ -10,10 +10,12 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 
 from core.models import Currency, Location
+from pricing_v4.category_rules import is_local_rate_category
 from pricing_v4.models import (
     DomesticSellRate,
     ExportSellRate,
     ImportSellRate,
+    LocalSellRate,
     ProductCode,
 )
 
@@ -42,6 +44,7 @@ PRODUCT_DOMAIN_BY_RATE_TYPE = {
 }
 
 AMOUNT_BASIS_CHOICES = {"PER_SHIPMENT", "PER_KG", "PERCENT"}
+PAYMENT_TERM_CHOICES = {"PREPAID", "COLLECT", "ANY"}
 TRUE_VALUES = {"1", "true", "t", "yes", "y"}
 FALSE_VALUES = {"0", "false", "f", "no", "n", ""}
 
@@ -71,6 +74,9 @@ class V4RateCSVImportResult:
 def import_v4_rate_cards_csv(uploaded_file) -> V4RateCSVImportResult:
     """
     Parse, validate, and bulk import V4 SELL rate rows from CSV.
+
+    Local charge categories for EXPORT/IMPORT are automatically written to
+    LocalSellRate (location-based) rather than lane-based tables.
 
     The import is all-or-nothing: if any row is invalid, no database writes occur.
     """
@@ -225,6 +231,14 @@ def _validate_and_prepare_rows(rows: list[tuple[int, dict[str, str]]]) -> list[P
                 f"ProductCode '{product.code}' belongs to domain '{product.domain}', not '{PRODUCT_DOMAIN_BY_RATE_TYPE[rate_type]}'."
             )
 
+        use_local_sell_rate = bool(
+            product
+            and rate_type in {"EXPORT", "IMPORT"}
+            and is_local_rate_category(product.category)
+        )
+        if use_local_sell_rate:
+            model_cls = LocalSellRate
+
         amount = _parse_decimal(row.get("amount"))
         if amount is None:
             row_errors.append(f"Invalid amount '{row.get('amount')}'.")
@@ -257,6 +271,25 @@ def _validate_and_prepare_rows(rows: list[tuple[int, dict[str, str]]]) -> list[P
         is_additive = _parse_bool(row.get("is_additive"))
         if row.get("is_additive") is not None and row.get("is_additive", "").strip() and is_additive is None:
             row_errors.append(f"Invalid is_additive '{row.get('is_additive')}'. Use true/false.")
+        additive_flat_amount_raw = row.get("additive_flat_amount")
+        additive_flat_amount = _parse_optional_decimal(additive_flat_amount_raw)
+        if additive_flat_amount_raw and additive_flat_amount is None:
+            row_errors.append(f"Invalid additive_flat_amount '{additive_flat_amount_raw}'.")
+        if is_additive and amount_basis != "PER_KG":
+            row_errors.append("is_additive=true is only valid when amount_basis=PER_KG.")
+
+        payment_term = None
+        if use_local_sell_rate:
+            payment_term_raw = (row.get("payment_term") or "").strip().upper()
+            if payment_term_raw:
+                if payment_term_raw not in PAYMENT_TERM_CHOICES:
+                    row_errors.append(
+                        f"Invalid payment_term '{row.get('payment_term')}'. Expected PREPAID, COLLECT, or ANY."
+                    )
+                else:
+                    payment_term = payment_term_raw
+            else:
+                payment_term = "ANY" if rate_type == "EXPORT" else "COLLECT"
 
         weight_breaks = None
         weight_breaks_raw = row.get("weight_breaks") or row.get("weight_breaks_json") or ""
@@ -286,20 +319,36 @@ def _validate_and_prepare_rows(rows: list[tuple[int, dict[str, str]]]) -> list[P
             min_charge=min_charge,
             max_charge=max_charge,
             is_additive=(False if is_additive is None else is_additive),
+            additive_flat_amount=additive_flat_amount,
             weight_breaks=weight_breaks,
+            use_local_sell_rate=use_local_sell_rate,
+            payment_term=payment_term,
         )
 
-        dedupe_key = (
-            rate_type,
-            product.id,
-            origin_code,
-            destination_code,
-            currency,
-            valid_from.isoformat(),
-        )
+        if use_local_sell_rate:
+            local_direction = 'EXPORT' if rate_type == 'EXPORT' else 'IMPORT'
+            local_location = origin_code if local_direction == 'EXPORT' else destination_code
+            dedupe_key = (
+                "LOCAL_SELL",
+                product.id,
+                local_direction,
+                local_location,
+                payment_term,
+                currency,
+                valid_from.isoformat(),
+            )
+        else:
+            dedupe_key = (
+                rate_type,
+                product.id,
+                origin_code,
+                destination_code,
+                currency,
+                valid_from.isoformat(),
+            )
         if dedupe_key in seen_keys:
             errors[row_key] = [
-                "Duplicate row detected in CSV for the same rate key (rate_type, product_code, route, currency, valid_from)."
+                "Duplicate row detected in CSV for the same rate key."
             ]
             continue
         seen_keys.add(dedupe_key)
@@ -353,10 +402,41 @@ def _build_model_payload(
     min_charge: Decimal | None,
     max_charge: Decimal | None,
     is_additive: bool,
+    additive_flat_amount: Decimal | None,
     weight_breaks: list | None,
+    use_local_sell_rate: bool,
+    payment_term: str | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if use_local_sell_rate:
+        local_direction = 'EXPORT' if rate_type == 'EXPORT' else 'IMPORT'
+        local_location = origin_code if local_direction == 'EXPORT' else destination_code
+        local_rate_type = "FIXED"
+        if amount_basis == "PER_KG":
+            local_rate_type = "PER_KG"
+        elif amount_basis == "PERCENT":
+            local_rate_type = "PERCENT"
+
+        defaults = {
+            "rate_type": local_rate_type,
+            "amount": amount,
+            "is_additive": is_additive,
+            "additive_flat_amount": additive_flat_amount,
+            "min_charge": min_charge,
+            "max_charge": max_charge,
+            "weight_breaks": weight_breaks,
+            "valid_until": valid_until,
+        }
+        lookup = {
+            "product_code": product,
+            "location": local_location,
+            "direction": local_direction,
+            "payment_term": payment_term or ("ANY" if local_direction == "EXPORT" else "COLLECT"),
+            "currency": currency,
+            "valid_from": valid_from,
+        }
+        return lookup, defaults
+
     defaults: dict[str, Any] = {
-        "currency": currency,
         "rate_per_kg": None,
         "rate_per_shipment": None,
         "percent_rate": None,
@@ -369,6 +449,8 @@ def _build_model_payload(
 
     if amount_basis == "PER_KG":
         defaults["rate_per_kg"] = amount
+        if is_additive and additive_flat_amount is not None:
+            defaults["rate_per_shipment"] = additive_flat_amount
     elif amount_basis == "PERCENT":
         defaults["percent_rate"] = amount
     else:
@@ -383,6 +465,7 @@ def _build_model_payload(
             "valid_from": valid_from,
         }
     else:
+        defaults["currency"] = currency
         # Domestic unique_together excludes currency, but we still persist the provided currency.
         lookup = {
             "product_code": product,

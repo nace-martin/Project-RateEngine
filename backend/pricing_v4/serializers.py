@@ -1,6 +1,7 @@
 from typing import Any
 
 from rest_framework import serializers
+from pricing_v4.category_rules import is_local_rate_category
 from .models import (
     ProductCode, DomesticCOGS, ExportCOGS, ImportCOGS,
     ComponentMargin, CustomerDiscount, Surcharge
@@ -178,6 +179,11 @@ class QuoteRequestSerializerV4(serializers.Serializer):
         default='A2A',
         help_text="Service Scope (e.g. A2A=Airport-to-Airport)"
     )
+    is_dg = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Set true for dangerous goods shipments."
+    )
     
     # Cargo
     cargo_details = CargoDetailsSerializer()
@@ -221,6 +227,15 @@ class ExportSellRateSerializer(serializers.ModelSerializer):
             'valid_from', 'valid_until', 'created_at', 'updated_at'
         ]
 
+    def validate_product_code(self, value):
+        if value.domain != ProductCode.DOMAIN_EXPORT:
+            raise serializers.ValidationError("Export sell rates must use Export ProductCodes (1xxx).")
+        if is_local_rate_category(value.category):
+            raise serializers.ValidationError(
+                f"{value.code} is a local charge. Create it in Local Sell Rates, not Export lane rates."
+            )
+        return value
+
 
 class ImportSellRateSerializer(serializers.ModelSerializer):
     """Serializer for Import Sell Rates."""
@@ -236,6 +251,15 @@ class ImportSellRateSerializer(serializers.ModelSerializer):
             'percent_rate', 'weight_breaks', 'is_additive',
             'valid_from', 'valid_until', 'created_at', 'updated_at'
         ]
+
+    def validate_product_code(self, value):
+        if value.domain != ProductCode.DOMAIN_IMPORT:
+            raise serializers.ValidationError("Import sell rates must use Import ProductCodes (2xxx).")
+        if is_local_rate_category(value.category):
+            raise serializers.ValidationError(
+                f"{value.code} is a local charge. Create it in Local Sell Rates, not Import lane rates."
+            )
+        return value
 
 
 class DomesticSellRateSerializer(serializers.ModelSerializer):
@@ -277,6 +301,23 @@ class LocalSellRateSerializer(serializers.ModelSerializer):
             'valid_from', 'valid_until', 'created_at', 'updated_at'
         ]
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        product_code = attrs.get('product_code') or getattr(self.instance, 'product_code', None)
+        direction = attrs.get('direction') or getattr(self.instance, 'direction', None)
+
+        if product_code and not is_local_rate_category(product_code.category):
+            raise serializers.ValidationError(
+                {'product_code': f"{product_code.code} is lane-based and must be created in lane rate tables."}
+            )
+
+        if product_code and direction == 'EXPORT' and product_code.domain != ProductCode.DOMAIN_EXPORT:
+            raise serializers.ValidationError({'product_code': 'EXPORT local rates require Export ProductCodes (1xxx).'})
+        if product_code and direction == 'IMPORT' and product_code.domain != ProductCode.DOMAIN_IMPORT:
+            raise serializers.ValidationError({'product_code': 'IMPORT local rates require Import ProductCodes (2xxx).'})
+
+        return attrs
+
 
 class LocalCOGSRateSerializer(serializers.ModelSerializer):
     """Serializer for Local COGS Rates (centralized origin/destination costs)."""
@@ -295,3 +336,25 @@ class LocalCOGSRateSerializer(serializers.ModelSerializer):
             'percent_of_product_code',
             'valid_from', 'valid_until', 'created_at', 'updated_at'
         ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        product_code = attrs.get('product_code') or getattr(self.instance, 'product_code', None)
+        direction = attrs.get('direction') or getattr(self.instance, 'direction', None)
+        agent = attrs.get('agent') if 'agent' in attrs else getattr(self.instance, 'agent', None)
+        carrier = attrs.get('carrier') if 'carrier' in attrs else getattr(self.instance, 'carrier', None)
+
+        if bool(agent) == bool(carrier):
+            raise serializers.ValidationError({'agent': 'Select exactly one counterparty: either agent or carrier.'})
+
+        if product_code and not is_local_rate_category(product_code.category):
+            raise serializers.ValidationError(
+                {'product_code': f"{product_code.code} is lane-based and must be created in lane COGS tables."}
+            )
+
+        if product_code and direction == 'EXPORT' and product_code.domain != ProductCode.DOMAIN_EXPORT:
+            raise serializers.ValidationError({'product_code': 'EXPORT local COGS rates require Export ProductCodes (1xxx).'})
+        if product_code and direction == 'IMPORT' and product_code.domain != ProductCode.DOMAIN_IMPORT:
+            raise serializers.ValidationError({'product_code': 'IMPORT local COGS rates require Import ProductCodes (2xxx).'})
+
+        return attrs

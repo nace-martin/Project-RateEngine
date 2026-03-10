@@ -10,7 +10,9 @@ Design Principles:
 AMENDMENTS:
 - Security Screening: is_additive=True means rate_per_kg + rate_per_shipment are ADDED
 - FSC: percent_rate field for percentage-based surcharges
-- Payment Terms: PREPAID quotes in PGK, COLLECT quotes in FCY (destination currency)
+- Payment Terms:
+  - PREPAID quotes in destination FCY (AUD for AU, otherwise USD)
+  - COLLECT quotes in PGK
 - PNG GST: Proper classification using get_png_gst_category()
 - Global Surcharges: Support for Surcharge table fallbacks
 - Customs Brokerage: Default PGK 300.00 if rate missing
@@ -30,12 +32,9 @@ from pricing_v4.models import (
     ProductCode, ExportCOGS, ExportSellRate,
     LocalSellRate, LocalCOGSRate, Surcharge
 )
+from pricing_v4.category_rules import is_local_rate_category
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
-
-# Categories that are location-based (not lane-based)
-LOCAL_CATEGORIES = ['CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING', 'AGENCY', 'SURCHARGE', 'TERMINAL']
-
 
 class PaymentTerm(Enum):
     COLLECT = "COLLECT"
@@ -155,7 +154,7 @@ class ExportPricingEngine:
         self.caf_rate = caf_rate if caf_rate is not None else self.DEFAULT_CAF
         self.margin_rate = margin_rate if margin_rate is not None else self.DEFAULT_MARGIN
         
-        # Destination currency for COLLECT quotes
+        # Destination currency for PREPAID quotes
         self.destination_currency = destination_currency
         
         # Determine quote currency based on payment term
@@ -166,14 +165,20 @@ class ExportPricingEngine:
         self._cost_cache: Dict[int, Decimal] = {}
     
     def _determine_quote_currency(self) -> str:
-        if self.payment_term == PaymentTerm.COLLECT:
+        if self.payment_term == PaymentTerm.PREPAID:
             return self.destination_currency
         return 'PGK'
     
     def _convert_pgk_to_fcy(self, amount: Decimal) -> Decimal:
         effective_rate = self.tt_sell * (Decimal('1') + self.caf_rate)
-        if effective_rate == 0: return amount
-        fcy = amount / effective_rate
+        if effective_rate <= 0:
+            return amount
+        # FX snapshots may store either FCY/PGK (<1) or PGK/FCY (>1).
+        # Use the same orientation heuristic as the adapter conversion helpers.
+        if effective_rate >= 1:
+            fcy = amount / effective_rate
+        else:
+            fcy = amount * effective_rate
         return fcy.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _apply_margin(self, amount: Decimal) -> Decimal:
@@ -277,9 +282,9 @@ class ExportPricingEngine:
             total_gst=total_gst, total_sell_incl_gst=total_sell_incl_gst,
             currency=self.quote_currency, quote_currency=self.quote_currency,
             payment_term=self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term),
-            fx_rate_used=self.tt_sell if self.payment_term == PaymentTerm.COLLECT else None,
-            effective_fx_rate=self._get_effective_fx_rate() if self.payment_term == PaymentTerm.COLLECT else None,
-            caf_rate=self.caf_rate if self.payment_term == PaymentTerm.COLLECT else None,
+            fx_rate_used=self.tt_sell if self.payment_term == PaymentTerm.PREPAID else None,
+            effective_fx_rate=self._get_effective_fx_rate() if self.payment_term == PaymentTerm.PREPAID else None,
+            caf_rate=self.caf_rate if self.payment_term == PaymentTerm.PREPAID else None,
         )
     
     def _prefetch_rates(self, product_code_ids: List[int]):
@@ -300,11 +305,11 @@ class ExportPricingEngine:
         )
         for rate in sell_qs:
             pc_id = rate.product_code_id
-            if self.payment_term == PaymentTerm.COLLECT:
+            if self.payment_term == PaymentTerm.PREPAID:
                 if rate.currency == self.quote_currency: self._sell_rate_cache[pc_id] = rate
                 elif pc_id not in self._sell_rate_cache: self._sell_rate_cache[pc_id] = rate
             else:
-                # PREPAID export must use PGK sell rates only.
+                # COLLECT export must use PGK sell rates only.
                 if rate.currency == 'PGK':
                     self._sell_rate_cache[pc_id] = rate
         surcharges = Surcharge.objects.filter(
@@ -321,28 +326,40 @@ class ExportPricingEngine:
     
     def _get_cogs(self, product_code_id: int) -> Optional[any]:
         pc = self._get_product_code(product_code_id)
-        if pc and pc.category in LOCAL_CATEGORIES:
+        if pc and is_local_rate_category(pc.category):
             local = LocalCOGSRate.objects.filter(
                 product_code_id=product_code_id, location=self.origin, direction='EXPORT',
                 valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
             ).first()
-            if local: return local
+            if local:
+                return local
+            return None
         if hasattr(self, '_cogs_rate_cache') and product_code_id in self._cogs_rate_cache: return self._cogs_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'COGS'))
         return None
     
     def _get_sell_rate(self, product_code_id: int) -> Optional[any]:
         pc = self._get_product_code(product_code_id)
-        if pc and pc.category in LOCAL_CATEGORIES:
+        if pc and is_local_rate_category(pc.category):
             payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
             local_rates = LocalSellRate.objects.filter(
                 product_code_id=product_code_id, location=self.origin, direction='EXPORT',
                 payment_term__in=[payment_term_value, 'ANY'], valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
             )
+            # Enforce rate-type compatibility to avoid selecting placeholder FIXED rows
+            # for percent-based ProductCodes (e.g., EXP-FSC-PICKUP).
+            if pc.default_unit == ProductCode.UNIT_PERCENT:
+                local_rates = local_rates.filter(
+                    rate_type='PERCENT',
+                    percent_of_product_code__isnull=False,
+                )
+            else:
+                local_rates = local_rates.exclude(rate_type='PERCENT')
+
             preferred_currency = None
-            if self.payment_term == PaymentTerm.COLLECT:
+            if self.payment_term == PaymentTerm.PREPAID:
                 preferred_currency = self.destination_currency or self.quote_currency
-            elif self.payment_term == PaymentTerm.PREPAID:
+            elif self.payment_term == PaymentTerm.COLLECT:
                 preferred_currency = self.quote_currency or 'PGK'
 
             if preferred_currency:
@@ -350,14 +367,15 @@ class ExportPricingEngine:
                 local = rates.filter(payment_term=payment_term_value).first() or rates.filter(payment_term='ANY').first()
                 if local:
                     return local
-                if self.payment_term == PaymentTerm.PREPAID:
-                    # PREPAID export must not silently fall back to non-PGK rows.
+                if self.payment_term == PaymentTerm.COLLECT:
+                    # COLLECT export must not silently fall back to non-PGK rows.
                     return None
 
             # Fallback: exact payment term first, then ANY term, in any currency.
             local = local_rates.filter(payment_term=payment_term_value).first() or local_rates.filter(payment_term='ANY').first()
             if local:
                 return local
+            return None
         if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache: return self._sell_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'SELL'))
         return None
@@ -408,7 +426,7 @@ class ExportPricingEngine:
         
         fx_applied, caf_applied, margin_applied = False, False, False
         rate_is_fcy = (sell_rate.currency == self.quote_currency)
-        if self.payment_term == PaymentTerm.COLLECT:
+        if self.payment_term == PaymentTerm.PREPAID:
             if rate_is_fcy: sell_amount = sell_amount_base
             else:
                 sell_with_margin = self._apply_margin(sell_amount_base)
@@ -419,7 +437,7 @@ class ExportPricingEngine:
             sell_amount = sell_amount_base
         
         margin_cost_base = cost_amount
-        if self.payment_term == PaymentTerm.COLLECT and rate_is_fcy and cost_amount > 0:
+        if self.payment_term == PaymentTerm.PREPAID and rate_is_fcy and cost_amount > 0:
             margin_cost_base = self._convert_pgk_to_fcy(cost_amount)
             
         margin_amount = sell_amount - margin_cost_base
@@ -440,13 +458,17 @@ class ExportPricingEngine:
         )
 
     def _create_default_line(self, pc: ProductCode, sell_amount: Decimal, notes: str) -> ChargeLineResult:
+        sell_currency = 'PGK'
+        if self.quote_currency != 'PGK':
+            sell_amount = self._convert_pgk_to_fcy(sell_amount)
+            sell_currency = self.quote_currency
         gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
         gst_amount = (sell_amount * gst_rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         return ChargeLineResult(
             product_code_id=pc.id, product_code=pc.code, description=pc.description,
             category=pc.category, cost_amount=Decimal('0'), cost_currency='PGK',
             cost_source='Default', agent_name=None, sell_amount=sell_amount,
-            sell_currency='PGK', margin_amount=sell_amount,
+            sell_currency=sell_currency, margin_amount=sell_amount,
             margin_percent=Decimal('100.00'), gst_amount=gst_amount, sell_incl_gst=sell_amount+gst_amount,
             is_rate_missing=False, notes=notes,
         )
@@ -469,7 +491,7 @@ class ExportPricingEngine:
             description=f"{pc.description} ({sell_rate.percent_rate}% of {base_pc.code})",
             category=pc.category, cost_amount=cost_amount, cost_currency='PGK',
             cost_source=f'{sell_rate.percent_rate}% of COGS', sell_amount=sell_amount,
-            sell_currency=sell_rate.currency, margin_amount=margin_amount, margin_percent=margin_percent,
+            sell_currency=self.quote_currency, margin_amount=margin_amount, margin_percent=margin_percent,
             gst_category=gst_category, gst_rate=gst_rate, gst_amount=gst_amount, sell_incl_gst=sell_amount+gst_amount,
             is_rate_missing=False, notes=f'Based on {base_pc.code}: K{base_sell}', agent_name=None,
         )

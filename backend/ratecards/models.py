@@ -4,6 +4,7 @@ import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from core.models import City, Airport, Port
 from parties.models import Company
 from services.models import ServiceComponent, UNIT_CHOICES as SERVICE_UNIT_CHOICES
@@ -326,122 +327,41 @@ class PartnerRate(models.Model):
 
 
 # ##############################################################################
-# A2D DAP RATE CARD MODEL (PASSTHROUGH PRICING)
+# A2D DAP LEGACY ARCHIVE
 # ##############################################################################
 
-class A2DDAPRate(models.Model):
+class A2DDAPRateArchive(models.Model):
     """
-    Rate card for A2D DAP (Airport to Door, Delivered at Place) quotes.
-    
-    These rates are used for Import A2D DAP quotes:
-    - PREPAID: Partner agent quote - passthrough in FCY (no FX, no margin)
-    - COLLECT: Local customer quote - convert to PGK with FX and margin
-    
-    Rates are stored per currency (AUD for AU origin, USD for others).
+    Immutable archive of decommissioned A2DDAPRate rows.
+
+    This table is populated by migration 0012 before removing the live
+    A2DDAPRate table to preserve historical configuration evidence.
     """
-    
-    CURRENCY_CHOICES = [
-        ('AUD', 'Australian Dollar'),
-        ('USD', 'US Dollar'),
-        ('PGK', 'Papua New Guinea Kina'),  # For COLLECT passthrough
-    ]
-    
-    PAYMENT_TERM_CHOICES = [
-        ('PREPAID', 'Prepaid (Partner Agent - FCY)'),
-        ('COLLECT', 'Collect (Local Customer - PGK)'),
-    ]
-    
-    UNIT_BASIS_CHOICES = [
-        ('AWB', 'Per AWB/Shipment'),
-        ('KG', 'Per Kilogram'),
-        ('PERCENTAGE', 'Percentage of Component'),
-    ]
-    
-    # Payment term determines pricing behavior
-    payment_term = models.CharField(
-        max_length=10,
-        choices=PAYMENT_TERM_CHOICES,
-        default='PREPAID',
-        db_index=True,
-        help_text="PREPAID = FCY passthrough for partner agents, COLLECT = PGK with FX for local customers"
-    )
-    
-    # Currency determines which rate card this belongs to
-    currency = models.CharField(
-        max_length=3,
-        choices=CURRENCY_CHOICES,
-        db_index=True,
-        help_text="Currency for this rate (AUD for AU origin, USD for others)"
-    )
-    
-    # Link to service component
-    service_component = models.ForeignKey(
-        ServiceComponent,
-        on_delete=models.CASCADE,
-        related_name="a2d_dap_rates",
-        help_text="The service component this rate is for"
-    )
-    
-    # Rate configuration
-    unit_basis = models.CharField(
-        max_length=20,
-        choices=UNIT_BASIS_CHOICES,
-        default='AWB',
-        help_text="How this rate is calculated"
-    )
-    
-    rate = models.DecimalField(
-        max_digits=10,
-        decimal_places=4,
-        help_text="Rate amount (flat fee for AWB, per-kg rate, or percentage)"
-    )
-    
-    min_charge = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Minimum charge (for per-kg rates)"
-    )
-    
-    max_charge = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="Maximum charge (cap for per-kg rates)"
-    )
-    
-    # For percentage-based charges (e.g., FSC = 10% of Cartage)
-    percent_of_component = models.ForeignKey(
-        ServiceComponent,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="a2d_dap_dependent_rates",
-        help_text="Component this percentage is based on (for PERCENTAGE unit)"
-    )
-    
-    # Display order
-    display_order = models.PositiveIntegerField(
-        default=0,
-        help_text="Order for display in UI"
-    )
-    
-    # Active flag
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Whether this rate is currently active"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
+
+    source_rate_id = models.BigIntegerField(unique=True, db_index=True)
+    payment_term = models.CharField(max_length=10, db_index=True)
+    currency = models.CharField(max_length=3, db_index=True)
+    service_component_code = models.CharField(max_length=50, db_index=True)
+    unit_basis = models.CharField(max_length=20)
+    rate = models.DecimalField(max_digits=10, decimal_places=4)
+    min_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    max_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    percent_of_component_code = models.CharField(max_length=50, null=True, blank=True)
+    display_order = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    source_created_at = models.DateTimeField(null=True, blank=True)
+    source_updated_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(default=timezone.now, db_index=True)
+    snapshot = models.JSONField(default=dict, blank=True)
+
     def __str__(self):
-        return f"{self.service_component.code} - {self.currency} {self.payment_term} ({self.rate})"
-    
+        return (
+            f"Archived A2D DAP #{self.source_rate_id} "
+            f"{self.payment_term}/{self.currency}/{self.service_component_code}"
+        )
+
     class Meta:
-        verbose_name = "A2D DAP Rate"
-        verbose_name_plural = "A2D DAP Rates"
-        unique_together = [['payment_term', 'currency', 'service_component']]
-        ordering = ['payment_term', 'currency', 'display_order', 'service_component__code']
+        db_table = 'a2d_dap_rate_archive'
+        verbose_name = "A2D DAP Rate Archive"
+        verbose_name_plural = "A2D DAP Rate Archive"
+        ordering = ['-archived_at', 'source_rate_id']

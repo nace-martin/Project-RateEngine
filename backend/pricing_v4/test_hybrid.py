@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 from datetime import datetime, timedelta
 from django.utils import timezone
+from types import SimpleNamespace
 
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
 from core.dataclasses import CalculatedChargeLine, QuoteInput
@@ -165,6 +166,8 @@ class HybridPricingTest(TestCase):
         # 1. Setup Adapter for Import Prepaid
         self.quote_input.shipment.shipment_type = 'IMPORT'
         self.quote_input.shipment.payment_term = 'PREPAID'
+        self.quote_input.shipment.origin_location = SimpleNamespace(country_code='AU')
+        self.quote_input.shipment.destination_location = SimpleNamespace(country_code='PG')
         self.quote_input.output_currency = 'AUD'
         
         adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)

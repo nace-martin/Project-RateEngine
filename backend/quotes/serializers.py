@@ -1,6 +1,7 @@
 # backend/quotes/serializers.py
 
 from decimal import Decimal
+import re
 from rest_framework import serializers
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
@@ -233,11 +234,34 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         # Optimization: This relies on lines being prefetched in the viewset query
         lines = obj.latest_version.lines.all()
         providers = set()
-        ignored_sources = {'V4 Engine', 'SPOT Envelope', 'N/A (Sell Only)', 'COGS', 'N/A', None, ''}
+        ignored_exact = {
+            'V4 ENGINE',
+            'SPOT ENVELOPE',
+            'N/A (SELL ONLY)',
+            'COGS',
+            'N/A',
+            'BASE_COST',
+            'DEFAULT',
+            'AGENT REPLY (AI)',
+            'SYSTEM',
+            '',
+        }
         
         for line in lines:
-            if line.cost_source and line.cost_source not in ignored_sources:
-                providers.add(line.cost_source)
+            source = str(line.cost_source or '').strip()
+            if not source:
+                continue
+
+            source_upper = source.upper()
+            # Internal/system markers should never be shown as "Rate Provider".
+            if source_upper in ignored_exact:
+                continue
+            if source_upper.startswith('DEFAULT '):
+                continue
+            if re.search(r'\b\d+(?:\.\d+)?%\s+OF\s+COGS\b', source_upper):
+                continue
+
+            providers.add(source)
         
         if not providers:
             return "Internal"
@@ -259,7 +283,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version', 'spot_negotiation',
+            'status', 'valid_until', 'created_at', 'latest_version', 'request_details_json', 'spot_negotiation',
             'created_by', 'rate_provider'
         )
 
@@ -433,6 +457,10 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     def get_customer_name(self, obj):
         if obj.quote and obj.quote.customer:
             return obj.quote.customer.name
+        shipment_ctx = getattr(obj, "shipment_context_json", None) or {}
+        customer_name = shipment_ctx.get("customer_name")
+        if customer_name:
+            return str(customer_name)
         return None
 
     def get_has_acknowledgement(self, obj):

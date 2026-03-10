@@ -203,6 +203,7 @@ class SPEShipmentContext(BaseModel):
     
     origin_code: str = Field(min_length=3, max_length=3)
     destination_code: str = Field(min_length=3, max_length=3)
+    customer_name: Optional[str] = Field(default=None, max_length=255)
     
     commodity: Literal["GCR", "SCR", "DG", "AVI", "PER", "HVC", "HUM", "OOG", "VUL", "TTS", "OTHER"]
     
@@ -210,6 +211,7 @@ class SPEShipmentContext(BaseModel):
     volume_cbm: Optional[float] = Field(default=None, description="Total Volume in CBM")
     pieces: int = Field(default=1, description="Number of pieces")
     service_scope: Literal['p2p', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
+    payment_term: Optional[Literal['prepaid', 'collect']] = Field(default=None, description="Payment term")
     missing_components: Optional[List[str]] = Field(default=None, description="Components explicitly missing rates")
     
     @property
@@ -224,9 +226,11 @@ class SPEShipmentContext(BaseModel):
             "destination_country": self.destination_country,
             "origin_code": self.origin_code,
             "destination_code": self.destination_code,
+            "customer_name": self.customer_name or "",
             "commodity": self.commodity,
             "total_weight_kg": self.total_weight_kg,
             "pieces": self.pieces,
+            "payment_term": self.payment_term,
         }, sort_keys=True)
         return hashlib.sha256(normalized.encode()).hexdigest()
 

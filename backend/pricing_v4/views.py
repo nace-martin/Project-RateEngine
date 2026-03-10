@@ -48,7 +48,7 @@ class PricingEngineView(APIView):
                 # Retrieve applicable product codes
                 # Assumption: ExportEngine.get_product_codes handles string scope 'P2P', 'D2A', 'D2D'
                 product_codes = ExportPricingEngine.get_product_codes(
-                    is_dg=False, # TODO: Add is_dg to request
+                    is_dg=payload.get('is_dg', False),
                     service_scope=scope
                 )
                 result = engine.calculate_quote(product_codes)
@@ -235,8 +235,14 @@ class ProductCodeListViewSet(viewsets.ReadOnlyModelViewSet):
 # =============================================================================
 
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import ExportSellRate, ImportSellRate, DomesticSellRate
-from .serializers import ExportSellRateSerializer, ImportSellRateSerializer, DomesticSellRateSerializer
+from .models import ExportSellRate, ImportSellRate, DomesticSellRate, LocalSellRate, LocalCOGSRate
+from .serializers import (
+    ExportSellRateSerializer,
+    ImportSellRateSerializer,
+    DomesticSellRateSerializer,
+    LocalSellRateSerializer,
+    LocalCOGSRateSerializer,
+)
 
 
 class ExportSellRateViewSet(viewsets.ModelViewSet):
@@ -288,6 +294,40 @@ class DomesticSellRateViewSet(viewsets.ModelViewSet):
     filterset_fields = ['origin_zone', 'destination_zone', 'product_code', 'currency']
     search_fields = ['product_code__code', 'product_code__description', 'origin_zone', 'destination_zone']
     ordering_fields = ['product_code__code', 'origin_zone', 'destination_zone', 'valid_from']
+
+
+class LocalSellRateViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for local Origin/Destination sell tariffs.
+
+    Path: /api/v4/rates/local-sell/
+    """
+    queryset = LocalSellRate.objects.select_related('product_code').order_by(
+        'location', 'direction', 'product_code__code'
+    )
+    serializer_class = LocalSellRateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['location', 'direction', 'payment_term', 'product_code', 'currency']
+    search_fields = ['product_code__code', 'product_code__description', 'location']
+    ordering_fields = ['product_code__code', 'location', 'direction', 'payment_term', 'valid_from']
+
+
+class LocalCOGSRateViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for local Origin/Destination buy tariffs.
+
+    Path: /api/v4/rates/local-cogs/
+    """
+    queryset = LocalCOGSRate.objects.select_related('product_code', 'agent', 'carrier').order_by(
+        'location', 'direction', 'product_code__code'
+    )
+    serializer_class = LocalCOGSRateSerializer
+    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['location', 'direction', 'product_code', 'currency', 'agent', 'carrier']
+    search_fields = ['product_code__code', 'product_code__description', 'location', 'agent__name', 'carrier__name']
+    ordering_fields = ['product_code__code', 'location', 'direction', 'valid_from']
 
 
 # =============================================================================

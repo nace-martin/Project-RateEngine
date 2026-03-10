@@ -8,8 +8,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Airport, Location
-from .serializers import LocationSearchSerializer, AirportSearchSerializer
+from .models import Airport, City, Country, Location
+from .serializers import (
+    LocationSearchSerializer,
+    AirportSearchSerializer,
+    CountryOptionSerializer,
+    CityOptionSerializer,
+)
 
 def _format_location_display(location: Location, code: str) -> str:
     """
@@ -116,3 +121,38 @@ class AirportSearchAPIView(generics.ListAPIView):
         Optimize the query by pre-fetching the related city and country.
         """
         return Airport.objects.select_related('city__country').all()
+
+
+class CountryListAPIView(generics.ListAPIView):
+    """
+    Provides a searchable country reference list.
+    Usage: /api/v3/core/countries/?q=au
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = CountryOptionSerializer
+
+    def get_queryset(self):
+        query = (self.request.query_params.get('q') or '').strip()
+        queryset = Country.objects.all().order_by('name')
+        if query:
+            queryset = queryset.filter(Q(name__icontains=query) | Q(code__icontains=query))
+        return queryset[:250]
+
+
+class CityListAPIView(generics.ListAPIView):
+    """
+    Provides a searchable city reference list, optionally scoped by country.
+    Usage: /api/v3/core/cities/?country=PG&q=port
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = CityOptionSerializer
+
+    def get_queryset(self):
+        query = (self.request.query_params.get('q') or '').strip()
+        country_code = (self.request.query_params.get('country') or '').strip().upper()
+        queryset = City.objects.select_related('country').all()
+        if country_code:
+            queryset = queryset.filter(country__code=country_code)
+        if query:
+            queryset = queryset.filter(name__icontains=query)
+        return queryset.order_by('name')[:250]

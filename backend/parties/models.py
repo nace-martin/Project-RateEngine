@@ -7,8 +7,24 @@ from django.conf import settings # For AUTH_USER_MODEL
 from decimal import Decimal # Import Decimal
 
 class Company(models.Model):
+    AUDIENCE_LOCAL_PNG = 'LOCAL_PNG_CUSTOMER'
+    AUDIENCE_OVERSEAS_AU = 'OVERSEAS_PARTNER_AU'
+    AUDIENCE_OVERSEAS_NON_AU = 'OVERSEAS_PARTNER_NON_AU'
+    AUDIENCE_TYPE_CHOICES = [
+        (AUDIENCE_LOCAL_PNG, 'Local PNG Customer'),
+        (AUDIENCE_OVERSEAS_AU, 'Overseas Partner (AU)'),
+        (AUDIENCE_OVERSEAS_NON_AU, 'Overseas Partner (Non-AU)'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255, unique=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    audience_type = models.CharField(
+        max_length=32,
+        choices=AUDIENCE_TYPE_CHOICES,
+        default=AUDIENCE_LOCAL_PNG,
+    )
+    address_description = models.CharField(max_length=255, blank=True, default='')
     
     # New flags replacing company_type
     is_customer = models.BooleanField(default=False)
@@ -48,6 +64,7 @@ class Contact(models.Model):
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=50, blank=True)
     is_primary = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True, db_index=True)
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} ({self.company.name})"

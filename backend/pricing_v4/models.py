@@ -21,6 +21,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 from django.core.exceptions import ValidationError
+from pricing_v4.category_rules import is_local_rate_category
 
 
 # =============================================================================
@@ -315,6 +316,10 @@ class ExportCOGS(models.Model):
             raise ValidationError("Cannot set both carrier and agent. Choose one.")
         if not self.carrier and not self.agent:
             raise ValidationError("Must set either carrier or agent.")
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalCOGSRate, not ExportCOGS."
+            )
     
     def __str__(self):
         counterparty = self.carrier or self.agent
@@ -376,6 +381,12 @@ class ExportSellRate(models.Model):
         ordering = ['product_code', 'origin_airport', 'destination_airport']
         verbose_name = 'Export Sell Rate'
         verbose_name_plural = 'Export Sell Rates'
+
+    def clean(self):
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalSellRate, not ExportSellRate."
+            )
     
     def __str__(self):
         return f"SELL: {self.product_code.code} {self.origin_airport}→{self.destination_airport}"
@@ -470,6 +481,10 @@ class ImportCOGS(models.Model):
             raise ValidationError("Cannot set both carrier and agent. Choose one.")
         if not self.carrier and not self.agent:
             raise ValidationError("Must set either carrier or agent.")
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalCOGSRate, not ImportCOGS."
+            )
     
     def __str__(self):
         counterparty = self.carrier or self.agent
@@ -528,6 +543,12 @@ class ImportSellRate(models.Model):
         ordering = ['product_code', 'origin_airport', 'destination_airport']
         verbose_name = 'Import Sell Rate'
         verbose_name_plural = 'Import Sell Rates'
+
+    def clean(self):
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalSellRate, not ImportSellRate."
+            )
     
     def __str__(self):
         return f"SELL: {self.product_code.code} {self.origin_airport}→{self.destination_airport}"
@@ -1038,7 +1059,6 @@ class LocalSellRate(models.Model):
     Replaces:
     - Local portions of ExportSellRate (Origin charges)
     - Local portions of ImportSellRate (Destination charges)
-    - A2DDAPRate (Passthrough pricing)
     
     Design:
     - location: Single IATA code (origin for EXPORT, destination for IMPORT)
@@ -1164,6 +1184,16 @@ class LocalSellRate(models.Model):
     
     def __str__(self):
         return f"SELL: {self.product_code.code} @ {self.location} ({self.direction}, {self.payment_term})"
+
+    def clean(self):
+        if self.product_code and not is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is lane-based and must be stored in ExportSellRate/ImportSellRate."
+            )
+        if self.product_code and self.direction == 'EXPORT' and self.product_code.domain != ProductCode.DOMAIN_EXPORT:
+            raise ValidationError("EXPORT local rates must reference Export ProductCodes (1xxx).")
+        if self.product_code and self.direction == 'IMPORT' and self.product_code.domain != ProductCode.DOMAIN_IMPORT:
+            raise ValidationError("IMPORT local rates must reference Import ProductCodes (2xxx).")
 
     # Compatibility helpers for shared pricing logic
     @property
@@ -1337,6 +1367,14 @@ class LocalCOGSRate(models.Model):
             raise ValidationError("Cannot set both carrier and agent. Choose one.")
         if not self.carrier and not self.agent:
             raise ValidationError("Must set either carrier or agent.")
+        if self.product_code and not is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is lane-based and must be stored in ExportCOGS/ImportCOGS."
+            )
+        if self.product_code and self.direction == 'EXPORT' and self.product_code.domain != ProductCode.DOMAIN_EXPORT:
+            raise ValidationError("EXPORT local COGS rates must reference Export ProductCodes (1xxx).")
+        if self.product_code and self.direction == 'IMPORT' and self.product_code.domain != ProductCode.DOMAIN_IMPORT:
+            raise ValidationError("IMPORT local COGS rates must reference Import ProductCodes (2xxx).")
     
     def __str__(self):
         counterparty = self.carrier or self.agent

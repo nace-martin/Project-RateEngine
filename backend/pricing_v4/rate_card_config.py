@@ -23,22 +23,22 @@ LOGICAL_RATE_CARDS = [
     {
         'id': 'export-prepaid-d2a',
         'name': 'Export Prepaid D2A',
-        'description': 'Origin, Clearance, Collection charges + Freight (PGK)',
+        'description': 'Origin, Clearance, Collection charges + Freight (FCY)',
         'service_scope': 'D2A',
         'domain': 'EXPORT',
         'rate_table': 'ExportSellRate',
-        'currency_filter': ['PGK'],
+        'currency_filter': FCY_CURRENCIES,
         'origin_filter': None,  # All PNG origins
         'destination_filter': None,  # All destinations
     },
     {
         'id': 'export-collect-d2a',
         'name': 'Export Collect D2A',
-        'description': 'Origin, Clearance, Collection charges + Freight (FCY)',
+        'description': 'Origin, Clearance, Collection charges + Freight (PGK)',
         'service_scope': 'D2A',
         'domain': 'EXPORT',
         'rate_table': 'ExportSellRate',
-        'currency_filter': FCY_CURRENCIES,
+        'currency_filter': ['PGK'],
         'origin_filter': None,
         'destination_filter': None,
     },

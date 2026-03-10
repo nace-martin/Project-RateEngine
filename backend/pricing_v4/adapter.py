@@ -18,6 +18,7 @@ from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.models import ProductCode, CustomerDiscount
 from services.models import ServiceComponent
 from quotes.completeness import evaluate_from_lines
+from quotes.currency_rules import determine_quote_currency
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class PricingServiceV4Adapter:
     def __init__(self, quote_input: QuoteInput, spot_envelope_id: Optional[UUID] = None):
         self.quote_input = quote_input
         self.spot_envelope_id = spot_envelope_id
-        self.pricing_mode = PricingMode.NORMAL
+        self.pricing_mode = PricingMode.SPOT if spot_envelope_id else PricingMode.NORMAL
         
         # Fetch Policy and FX just like V3 did, so views can save them to Quote
         try:
@@ -109,6 +110,18 @@ class PricingServiceV4Adapter:
         discounts = self._get_customer_discounts()
         if not discounts:
             return lines
+
+        fx_rates = self._get_fx_rates_dict()
+
+        def discount_amount_to_pgk(amount: Decimal, currency: Optional[str]) -> Decimal:
+            curr = (currency or 'PGK').upper()
+            if curr == 'PGK':
+                return amount
+            fx_sell = self._get_fx_sell_rate(curr, fx_rates)
+            if fx_sell <= 0:
+                logger.warning("Invalid FX sell rate for discount currency %s; using 1.0", curr)
+                fx_sell = Decimal('1')
+            return amount * fx_sell
         
         # Build a mapping from ServiceComponent code to ProductCode ID
         sc_codes = [l.service_component_code for l in lines]
@@ -133,12 +146,12 @@ class PricingServiceV4Adapter:
                     discounted_sell = original_sell * (Decimal('1') - discount_pct)
                     
                 elif discount.discount_type == CustomerDiscount.TYPE_FLAT_AMOUNT:
-                    # TODO: Handle currency conversion if discount.currency != 'PGK'
-                    discounted_sell = max(Decimal('0'), original_sell - discount.discount_value)
+                    discount_amount_pgk = discount_amount_to_pgk(discount.discount_value, discount.currency)
+                    discounted_sell = max(Decimal('0'), original_sell - discount_amount_pgk)
                     
                 elif discount.discount_type == CustomerDiscount.TYPE_FIXED_CHARGE:
-                    # Replace the entire sell price with fixed charge
-                    discounted_sell = discount.discount_value
+                    # Replace the entire sell price with fixed charge (normalized to PGK).
+                    discounted_sell = discount_amount_to_pgk(discount.discount_value, discount.currency)
                     
                 elif discount.discount_type == CustomerDiscount.TYPE_RATE_REDUCTION:
                     # Rate reduction requires weight context - log warning and skip
@@ -241,19 +254,15 @@ class PricingServiceV4Adapter:
             # Export Engine - now supports payment term and FCY conversion
             # Get FX rates from snapshot
             fx_rates = self._get_fx_rates_dict()
-            
-            # Determine destination market currency.
-            # AUD only for AU lanes; USD for all other international lanes.
-            dest_country = None
-            if shipment.destination_location:
-                dest_country = getattr(shipment.destination_location, 'country_code', None)
-            destination_currency = 'AUD' if dest_country == 'AU' else 'USD'
 
-            # Convert payment term string to enum and enforce export currency rules:
-            # - PREPAID: always PGK
-            # - COLLECT: destination market currency
+            # Convert payment term string to enum and enforce resolved currency rules:
+            # - STANDARD mode: country-based rule output (AUD/USD/PGK)
+            # - SPOT mode: PGK
             export_payment_term = ExportPaymentTerm(shipment.payment_term) if shipment.payment_term else ExportPaymentTerm.PREPAID
-            quote_currency = 'PGK' if export_payment_term == ExportPaymentTerm.PREPAID else destination_currency
+            quote_currency = self.get_output_currency()
+            # Keep engine quote currency aligned with resolved output currency.
+            # This is critical for SPOT mode where output is forced to PGK.
+            destination_currency = quote_currency
             
             # Get TT rates for the quote currency
             fx_info = fx_rates.get(quote_currency, {})
@@ -291,7 +300,7 @@ class PricingServiceV4Adapter:
             fx_rates = self._get_fx_rates_dict()
             # PRIORITY: Use the currency already determined by the View/User (Customer Preference)
             # If not set, fallback to adapter logic
-            quote_currency = self.quote_input.output_currency or self.get_output_currency()
+            quote_currency = self.get_output_currency()
             
             fx_info = fx_rates.get(quote_currency, {})
             # Use defaults if missing (same as Export)
@@ -588,59 +597,23 @@ class PricingServiceV4Adapter:
         return lines
 
     def get_output_currency(self):
-        """
-        Determine the output currency for the quote based on payment terms.
-        
-        Currency Rules:
-        - AUD: Only used when dealing with Australia (Export to AU, Import from AU)
-        - USD: Default for all other international quotes
-        - PGK: For domestic and when customer pays in PNG
-        
-        Specific Rules:
-        - Import Prepaid: AUD if origin is AU, otherwise USD
-        - Import Collect: PGK (customer pays in PNG)
-        - Export Prepaid: PGK (customer pays in PNG)
-        - Export Collect: AUD if destination is AU, otherwise USD
-        - Domestic: Always PGK
-        """
+        """Determine output currency using global shipment/payment-country rules."""
         shipment = self.quote_input.shipment
 
-        preferred_currency = self.quote_input.output_currency
-        if preferred_currency:
-            return preferred_currency
-        
-        if shipment.shipment_type == 'IMPORT':
-            if shipment.payment_term == 'PREPAID':
-                # Import Prepaid: Customer pays shipper overseas
-                # AUD only if origin is Australia, otherwise USD
-                origin_country = None
-                if shipment.origin_location:
-                    origin_country = getattr(shipment.origin_location, 'country_code', None)
-                
-                if origin_country == 'AU':
-                    return 'AUD'
-                else:
-                    return 'USD'  # Default for all other international origins
-            # Import Collect: Customer pays in PNG -> PGK
-            return 'PGK'
-        
-        elif shipment.shipment_type == 'EXPORT':
-            if shipment.payment_term == 'COLLECT':
-                # Export Collect: Customer (consignee) pays overseas
-                # AUD only if destination is Australia, otherwise USD
-                dest_country = None
-                if shipment.destination_location:
-                    dest_country = getattr(shipment.destination_location, 'country_code', None)
-                
-                if dest_country == 'AU':
-                    return 'AUD'
-                else:
-                    return 'USD'  # Default for all other international destinations
-            # Export Prepaid: Customer pays in PNG -> PGK
-            return 'PGK'
-        
-        # Domestic: Always PGK
-        return self.quote_input.output_currency or 'PGK'
+        origin_country = None
+        if shipment.origin_location:
+            origin_country = getattr(shipment.origin_location, 'country_code', None)
+
+        destination_country = None
+        if shipment.destination_location:
+            destination_country = getattr(shipment.destination_location, 'country_code', None)
+
+        return determine_quote_currency(
+            shipment_type=shipment.shipment_type,
+            payment_term=shipment.payment_term,
+            origin_country_code=origin_country,
+            destination_country_code=destination_country,
+        )
 
     def _get_fx_rates_dict(self) -> dict:
         if not self.fx_snapshot:
@@ -744,7 +717,7 @@ class PricingServiceV4Adapter:
         total_sell_fcy_incl_gst = sum((l.sell_fcy_incl_gst for l in billable_lines), Decimal('0.00')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         fx_rates = self._get_fx_rates_dict()
-        output_currency = self.quote_input.output_currency or 'PGK'
+        output_currency = self.get_output_currency()
         
         shipment = getattr(self.quote_input, "shipment", None)
         shipment_type = getattr(shipment, "shipment_type", None)
@@ -972,7 +945,7 @@ class PricingServiceV4Adapter:
         lines: List[CalculatedChargeLine] = []
         
         fx_rates = self._get_fx_rates_dict()
-        output_currency = self.quote_input.output_currency or 'PGK'
+        output_currency = self.get_output_currency()
         output_fx_sell = self._get_fx_sell_rate(output_currency, fx_rates)
         chargeable_weight = self._calculate_chargeable_weight()
 
