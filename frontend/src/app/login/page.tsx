@@ -11,8 +11,7 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  CardDescription,
-  CardFooter
+  CardDescription
 } from '@/components/ui/card';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/context/toast-context';

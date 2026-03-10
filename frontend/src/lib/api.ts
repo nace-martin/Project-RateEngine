@@ -9,6 +9,8 @@ import {
   Contact,
   AirportSearchResult,
   LocationSearchResult,
+  CountryOption,
+  CityOption,
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
   Customer,
@@ -424,7 +426,7 @@ export async function getQuoteCompute(
 
 export async function getCustomer(tokenOverride: string | null | undefined, customerId: string): Promise<Customer> {
   const token = resolveAuthToken(tokenOverride);
-  const url = API_BASE_URL + `/api/v3/customers/${customerId}/`;
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
   const response = await fetch(url, {
     headers: {
       Authorization: `Token ${token}`,
@@ -445,7 +447,7 @@ export async function updateCustomer(
   payload: Partial<Customer>,
 ): Promise<Customer> {
   const token = resolveAuthToken(tokenOverride);
-  const url = API_BASE_URL + `/api/v3/customers/${customerId}/`;
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -458,6 +460,91 @@ export async function updateCustomer(
   if (!response.ok) {
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to update customer: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function listCountries(query?: string): Promise<CountryOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v3/core/countries/');
+  if (query && query.trim()) {
+    url.searchParams.append('q', query.trim());
+  }
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch countries');
+  }
+
+  return response.json();
+}
+
+export async function listCities(params?: {
+  country_code?: string;
+  query?: string;
+}): Promise<CityOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v3/core/cities/');
+  if (params?.country_code) {
+    url.searchParams.append('country', params.country_code);
+  }
+  if (params?.query && params.query.trim()) {
+    url.searchParams.append('q', params.query.trim());
+  }
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch cities');
+  }
+
+  return response.json();
+}
+
+export async function deleteCustomer(
+  tokenOverride: string | null | undefined,
+  customerId: string,
+): Promise<void> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Token ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete customer: ${detail}`);
+  }
+}
+
+export async function setCustomerArchived(
+  tokenOverride: string | null | undefined,
+  customerId: string,
+  archived: boolean,
+): Promise<Customer> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${token}`,
+    },
+    body: JSON.stringify({ is_active: !archived }),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to ${archived ? 'archive' : 'restore'} customer: ${detail}`);
   }
 
   return response.json();
@@ -1196,6 +1283,7 @@ export async function getSpotStandardCharges(request: {
   destination_code: string;
   direction: 'EXPORT' | 'IMPORT' | 'DOMESTIC';
   service_scope: string;
+  payment_term: 'PREPAID' | 'COLLECT';
   weight_kg: number;
   commodity: SPECommodity;
 }): Promise<SPEChargeLine[]> {

@@ -26,6 +26,7 @@ type PublicQuoteResponse = {
   shipment: {
     mode: string;
     direction: string;
+    service_scope: string | null;
     incoterm: string | null;
     payment_term: string | null;
   };
@@ -59,6 +60,18 @@ const formatMoney = (currency: string, value: string | number | null) => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+};
+
+const scopeLabel = (scope?: string | null) => {
+  const normalized = (scope || "").toUpperCase();
+  const labels: Record<string, string> = {
+    D2D: "Door-to-Door",
+    D2A: "Door-to-Airport",
+    A2D: "Airport-to-Door",
+    A2A: "Airport-to-Airport",
+    P2P: "Airport-to-Airport",
+  };
+  return labels[normalized] || "N/A";
 };
 
 type PublicQuotePageProps = {
@@ -117,6 +130,8 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
   }
 
   const data = (await response.json()) as PublicQuoteResponse;
+  const normalizedScope = (data.shipment.service_scope || "").toUpperCase();
+  const showAirportReferences = ["A2D", "D2A", "A2A", "P2P"].includes(normalizedScope);
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -153,6 +168,9 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
               <p className="text-sm text-slate-500">
                 Payment: {data.shipment.payment_term || "N/A"}
               </p>
+              <p className="text-sm text-slate-500">
+                Scope of Service: {scopeLabel(data.shipment.service_scope)}
+              </p>
               {data.shipment.incoterm && (
                 <p className="text-sm text-slate-500">Incoterm: {data.shipment.incoterm}</p>
               )}
@@ -165,12 +183,16 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
           <div className="mt-4 flex flex-col items-center gap-4 text-center md:flex-row md:justify-between">
             <div>
               <p className="text-3xl font-semibold text-slate-900">{data.route.origin_code}</p>
-              <p className="text-sm text-slate-500">{data.route.origin_name}</p>
+              {showAirportReferences && (
+                <p className="text-sm text-slate-500">{data.route.origin_name}</p>
+              )}
             </div>
             <div className="text-sm font-semibold uppercase tracking-[0.3em] text-rose-500">to</div>
             <div>
               <p className="text-3xl font-semibold text-slate-900">{data.route.destination_code}</p>
-              <p className="text-sm text-slate-500">{data.route.destination_name}</p>
+              {showAirportReferences && (
+                <p className="text-sm text-slate-500">{data.route.destination_name}</p>
+              )}
             </div>
           </div>
         </section>

@@ -66,6 +66,7 @@ export interface TriggerEvaluateRequest {
     origin_country: string;
     destination_country: string;
     commodity: SPECommodity;
+    payment_term: 'PREPAID' | 'COLLECT';
     origin_airport?: string;
     destination_airport?: string;
     has_valid_buy_rate?: boolean;
@@ -98,11 +99,13 @@ export interface SPEShipmentContext {
     destination_country: string;
     origin_code: string;
     destination_code: string;
+    customer_name?: string;
     commodity: SPECommodity;
     total_weight_kg: number;
     pieces: number;
     volume_cbm?: number;
     service_scope?: string;
+    payment_term?: 'prepaid' | 'collect';
     missing_components?: string[];
 }
 

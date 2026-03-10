@@ -12,7 +12,7 @@ import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Search, Plus, Filter, Loader2, FileText, Save } from "lucide-react";
+import { Search, Filter, Loader2, FileText, Save } from "lucide-react";
 import { StandardPageContainer, PageHeader } from "@/components/layout/standard-page";
 import { DataTable } from "@/components/ui/data-table-wrapper";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,7 +25,7 @@ import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCu
 
 export default function QuotesPage() {
   const { user } = useAuth();
-  const { canEditQuotes, isFinance } = usePermissions();
+  const { isFinance } = usePermissions();
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
@@ -136,6 +136,11 @@ export default function QuotesPage() {
     spotDrafts.forEach(d => {
       // Create a prettier ID display - use "SQ-" (Spot Quote) + first 6 chars for consistency with QT-
       const shortId = d.id.substring(0, 6).toUpperCase();
+      const params = new URLSearchParams({
+        customer_name: d.customer_name || "",
+        service_scope: (d.shipment.service_scope || "D2D").toUpperCase(),
+        payment_term: (d.shipment.payment_term || "prepaid").toUpperCase(),
+      });
 
       unified.push({
         id: d.id,
@@ -150,7 +155,7 @@ export default function QuotesPage() {
         status: "Draft",
         rawStatus: "DRAFT",
         total: calculateSpotTotal(d),
-        actionLink: `/quotes/spot/${d.id}`,
+        actionLink: `/quotes/spot/${d.id}?${params.toString()}`,
         mode: "AIR", // Implicitly AIR
         serviceType: "Spot Request",
         incoterms: "-",

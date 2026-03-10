@@ -41,22 +41,66 @@ const buttonVariants = cva(
   }
 )
 
+const isPromiseLike = (value: unknown): value is Promise<unknown> =>
+  !!value &&
+  (typeof value === "object" || typeof value === "function") &&
+  "then" in (value as Record<string, unknown>) &&
+  typeof (value as { then?: unknown }).then === "function"
+
 function Button({
   className,
   variant,
   size,
   asChild = false,
+  onClick,
+  disabled,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
   }) {
+  const [isPendingClick, setIsPendingClick] = React.useState(false)
+  const clickLockRef = React.useRef(false)
   const Comp = asChild ? Slot : "button"
+
+  const handleClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (disabled || clickLockRef.current) {
+      event.preventDefault()
+      return
+    }
+
+    const result = onClick?.(event)
+    if (isPromiseLike(result)) {
+      clickLockRef.current = true
+      setIsPendingClick(true)
+      void result.finally(() => {
+        clickLockRef.current = false
+        setIsPendingClick(false)
+      })
+    }
+  }, [disabled, onClick])
+
+  if (asChild) {
+    return (
+      <Comp
+        data-slot="button"
+        className={cn(buttonVariants({ variant, size, className }))}
+        onClick={onClick}
+        disabled={disabled}
+        {...props}
+      />
+    )
+  }
+
+  const resolvedDisabled = Boolean(disabled || isPendingClick)
 
   return (
     <Comp
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      onClick={handleClick}
+      disabled={resolvedDisabled}
+      aria-busy={isPendingClick || undefined}
       {...props}
     />
   )

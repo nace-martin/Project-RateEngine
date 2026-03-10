@@ -5,7 +5,7 @@
  * 
  * Streamlined 2-step flow:
  * 1. Intake (Submit) - Paste agent reply, AI analysis
- * 2. Review (Confirm & Create) - Review charges, acknowledge, and create quote
+ * 2. Review (Confirm & Create) - Review charges and create quote
  */
 
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -83,6 +83,8 @@ export default function SpotRateEntryPage() {
     const triggerText = searchParams.get("trigger_text") || "";
     const serviceScope = searchParams.get("service_scope") || "";
     const paymentTerm = searchParams.get("payment_term") || "PREPAID";
+    const customerIdParam = searchParams.get("customer_id") || "";
+    const customerNameParam = searchParams.get("customer_name") || "";
     const outputCurrency = searchParams.get("output_currency") || "PGK";
     const shipmentTypeParam = searchParams.get("shipment_type") as "EXPORT" | "IMPORT" | "DOMESTIC" | null;
 
@@ -112,7 +114,6 @@ export default function SpotRateEntryPage() {
     );
     const { loadSPE } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
-    const [showAckModal, setShowAckModal] = useState(false);
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
     // Guard ref: prevents the auto-detection useEffect from overriding
@@ -147,6 +148,28 @@ export default function SpotRateEntryPage() {
         return Array.from(new Set(friendly));
     };
 
+    const displayCustomerName = useMemo(() => {
+        const candidate = (
+            state.spe?.customer_name ||
+            state.spe?.shipment?.customer_name ||
+            customerNameParam ||
+            ""
+        ).trim();
+        return candidate || "Spot Request";
+    }, [state.spe?.customer_name, state.spe?.shipment?.customer_name, customerNameParam]);
+
+    const displayServiceScope = useMemo(() => {
+        const scope = String(state.spe?.shipment.service_scope || serviceScope || "D2D").toUpperCase();
+        return scope || "N/A";
+    }, [state.spe?.shipment.service_scope, serviceScope]);
+
+    const displayPaymentTerm = useMemo(() => {
+        const rawTerm = String(state.spe?.shipment.payment_term || paymentTerm || "PREPAID").toUpperCase();
+        if (rawTerm === "COLLECT") return "Collect";
+        if (rawTerm === "PREPAID") return "Prepaid";
+        return rawTerm || "N/A";
+    }, [state.spe?.shipment.payment_term, paymentTerm]);
+
     // Load existing SPE
     useEffect(() => {
         if (speId && !isNew) {
@@ -179,11 +202,17 @@ export default function SpotRateEntryPage() {
         let cancelled = false;
         const run = async () => {
             try {
+                const rawPaymentTerm =
+                    (shipment.payment_term || paymentTerm || "PREPAID").toUpperCase();
+                const normalizedPaymentTerm: "PREPAID" | "COLLECT" =
+                    rawPaymentTerm === "COLLECT" ? "COLLECT" : "PREPAID";
+
                 const charges = await getSpotStandardCharges({
                     origin_code: shipment.origin_code,
                     destination_code: shipment.destination_code,
                     direction: resolvedShipmentType,
                     service_scope: shipment.service_scope || serviceScope || "D2D",
+                    payment_term: normalizedPaymentTerm,
                     weight_kg: shipment.total_weight_kg || weight || 100,
                     commodity: shipment.commodity || commodity || "GCR",
                 });
@@ -207,7 +236,7 @@ export default function SpotRateEntryPage() {
         return () => {
             cancelled = true;
         };
-    }, [state.spe, serviceScope, weight, commodity, resolvedShipmentType, editableBuckets]);
+    }, [state.spe, serviceScope, paymentTerm, weight, commodity, resolvedShipmentType, editableBuckets]);
 
     const mergedFormCharges = useMemo(() => {
         const speCharges = state.spe?.charges || EMPTY_CHARGES;
@@ -245,22 +274,6 @@ export default function SpotRateEntryPage() {
         return candidateCharges.filter((charge) => editableBucketSet.has(charge.bucket));
     }, [mergedFormCharges, editableBuckets]);
 
-    // DEBUG: trace charge data flow
-    useEffect(() => {
-        console.log("[SPOT Page] Data flow debug:", {
-            "state.spe?.charges": state.spe?.charges?.length ?? "no spe",
-            "standardPrefillCharges": standardPrefillCharges.length,
-            "mergedFormCharges": mergedFormCharges.length,
-            "reviewFormCharges": reviewFormCharges.length,
-            "analysisResult?.assertions": analysisResult?.assertions?.length ?? "null",
-            "currentStep": currentStep,
-            "missingComponents": missingComponents,
-        });
-        if (reviewFormCharges.length > 0) {
-            console.log("[SPOT Page] reviewFormCharges buckets:", reviewFormCharges.map(c => `${c.bucket}:${c.code}`));
-        }
-    }, [state.spe?.charges, standardPrefillCharges, mergedFormCharges, reviewFormCharges, analysisResult, currentStep, missingComponents]);
-
     // Handle saving charges, acknowledging, and creating the final quote in one flow
     const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
         if (state.spe) {
@@ -288,6 +301,7 @@ export default function SpotRateEntryPage() {
                         payment_term: resolvedPaymentTerm,
                         service_scope: resolvedScope,
                         output_currency: resolvedOutputCurrency,
+                        customer_id: customerIdParam || undefined,
                     });
 
                     if (result?.success && result.quote_id) {
@@ -316,7 +330,6 @@ export default function SpotRateEntryPage() {
 
     // Handle analysis complete from intake step - move directly to review
     const handleAnalysisComplete = async (result: ReplyAnalysisResult) => {
-        console.log("[SPOT] handleAnalysisComplete called, assertions:", result?.assertions?.length, "warnings:", result?.warnings?.length);
         setAnalysisResult(result);
         // Set the guard BEFORE the async reload so the useEffect doesn't fight us
         userAdvancedToReviewRef.current = true;
@@ -325,7 +338,6 @@ export default function SpotRateEntryPage() {
             // Reload before entering review so the form displays the latest draft charges.
             await loadSPE(speId);
         }
-        console.log("[SPOT] Advancing to review step");
         setCurrentStep("review");
     };
 
@@ -429,7 +441,11 @@ export default function SpotRateEntryPage() {
                     <CardTitle className="text-base font-semibold">Shipment Summary</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="grid grid-cols-4 gap-6 text-sm">
+                    <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4 xl:grid-cols-7">
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Customer</span>
+                            <span className="font-bold text-slate-900">{displayCustomerName}</span>
+                        </div>
                         <div className="flex flex-col gap-1">
                             <span className="text-muted-foreground font-medium">Route</span>
                             <span className="font-bold text-slate-900">
@@ -447,6 +463,14 @@ export default function SpotRateEntryPage() {
                         <div className="flex flex-col gap-1">
                             <span className="text-muted-foreground font-medium">Pieces</span>
                             <span className="font-bold text-slate-900">{pieces || state.spe?.shipment.pieces}</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Service Scope</span>
+                            <span className="font-bold text-slate-900">{displayServiceScope}</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <span className="text-muted-foreground font-medium">Payment Terms</span>
+                            <span className="font-bold text-slate-900">{displayPaymentTerm}</span>
                         </div>
                     </div>
                 </CardContent>
@@ -485,7 +509,7 @@ export default function SpotRateEntryPage() {
                 />
             )}
 
-            {/* Step 2: Review - Rate entry form with AI suggestions, acknowledge */}
+            {/* Step 2: Review - Rate entry form with AI suggestions */}
             {currentStep === "review" && (
                 <div className="space-y-6">
                     {/* Back button */}
@@ -513,21 +537,12 @@ export default function SpotRateEntryPage() {
                         onSaveDraft={handleSaveDraft}
                     />
 
-                    {/* Acknowledgement checkbox */}
-                    <Card>
+                    {/* Static disclaimer (acknowledgement is recorded on submit in backend flow) */}
+                    <Card className="border-amber-200 bg-amber-50/60">
                         <CardContent className="pt-4">
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="checkbox"
-                                    id="ack-checkbox"
-                                    className="h-5 w-5 rounded border-gray-300"
-                                    checked={showAckModal}
-                                    onChange={(e) => setShowAckModal(e.target.checked)}
-                                />
-                                <label htmlFor="ack-checkbox" className="text-sm text-muted-foreground">
-                                    I acknowledge this is a conditional SPOT quote and rates are not guaranteed until confirmed by carrier.
-                                </label>
-                            </div>
+                            <p className="text-sm text-amber-900">
+                                Conditional SPOT disclaimer: rates are not guaranteed until carrier and space are confirmed.
+                            </p>
                         </CardContent>
                     </Card>
                 </div>

@@ -1,7 +1,5 @@
 "use client";
 
-// src/components/ui/combobox.tsx
-
 import * as React from "react";
 import { Check, ChevronsUpDown } from "lucide-react";
 
@@ -39,7 +37,7 @@ type ComboboxProps = {
 
 export function Combobox({
   options,
-  placeholder = "Search…",
+  placeholder = "Search...",
   emptyMessage = "No results found.",
   value,
   onChange,
@@ -58,14 +56,14 @@ export function Combobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className={cn("w-full justify-between", buttonClassName)}
+          className={cn("h-9 w-full justify-between rounded-md", buttonClassName)}
           disabled={disabled}
         >
-          {selected ? selected.label : "Select…"}
+          <span className="truncate">{selected ? selected.label : "Select..."}</span>
           <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className={cn("w-[--radix-popover-trigger-width] p-0", className)}>
+      <PopoverContent className={cn("w-[var(--radix-popover-trigger-width)] p-0", className)}>
         <Command>
           <CommandInput placeholder={placeholder} />
           <CommandList>

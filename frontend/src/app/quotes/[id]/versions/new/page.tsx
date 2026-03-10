@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createQuoteVersion, getQuoteV3 } from "@/lib/api";
 import type {
@@ -50,6 +50,7 @@ export default function NewQuoteVersionPage() {
   const [loadingQuote, setLoadingQuote] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submitLockRef = useRef(false);
 
   const defaultCurrency = useMemo(() => {
     if (!quote) {
@@ -172,6 +173,8 @@ export default function NewQuoteVersionPage() {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (submitLockRef.current) return;
+
     if (!quotationId) {
       setError("Quote id is missing.");
       return;
@@ -210,6 +213,7 @@ export default function NewQuoteVersionPage() {
     };
 
     setIsSubmitting(true);
+    submitLockRef.current = true;
     setError(null);
     try {
       await createQuoteVersion(token, quotationId, payload);
@@ -220,6 +224,7 @@ export default function NewQuoteVersionPage() {
       setError(message);
     } finally {
       setIsSubmitting(false);
+      submitLockRef.current = false;
     }
   };
 

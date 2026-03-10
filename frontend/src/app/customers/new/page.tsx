@@ -1,23 +1,28 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Combobox } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { API_BASE_URL } from "@/lib/config";
+import { apiClient, listCities, listCountries, updateCustomer } from "@/lib/api";
+import { useAuth } from "@/context/auth-context";
+import { CityOption, CountryOption } from "@/lib/types";
 
 type CustomerFormData = {
   company_name: string;
   primary_address: {
     address_line_1: string;
     address_line_2: string;
+    city_id: string;
     city: string;
     state_province: string;
     postcode: string;
     country: string;
+    country_name: string;
   };
   contact_person_name: string;
   contact_person_email: string;
@@ -32,15 +37,22 @@ type CustomerSubmissionData = Omit<CustomerFormData, 'primary_address'> & {
 
 export default function NewCustomerPage() {
   const router = useRouter();
+  const { token } = useAuth();
+  const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [cities, setCities] = useState<CityOption[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     company_name: '',
     primary_address: {
       address_line_1: '',
       address_line_2: '',
+      city_id: '',
       city: '',
       state_province: '',
       postcode: '',
       country: '',
+      country_name: '',
     },
     contact_person_name: '',
     contact_person_email: '',
@@ -62,13 +74,85 @@ export default function NewCustomerPage() {
     }
   };
 
+  useEffect(() => {
+    if (!token) return;
+    const loadCountries = async () => {
+      try {
+        const data = await listCountries();
+        setCountries(data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    loadCountries();
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || !formData.primary_address.country) {
+      setCities([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadCities = async () => {
+      try {
+        const data = await listCities({
+          country_code: formData.primary_address.country,
+        });
+        if (!cancelled) {
+          setCities(data);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    loadCities();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, formData.primary_address.country]);
+
   const handleSelectChange = (value: string) => {
     setFormData({ ...formData, audience_type: value });
   };
 
+  const handleCountryChange = (countryCode: string) => {
+    const selectedCountry = countries.find((country) => country.code === countryCode);
+    setFormData((prev) => ({
+      ...prev,
+      primary_address: {
+        ...prev.primary_address,
+        country: countryCode,
+        country_name: selectedCountry?.name || '',
+        city_id: '',
+        city: '',
+      },
+    }));
+  };
+
+  const handleCityChange = (cityId: string) => {
+    const selectedCity = cities.find((city) => city.id === cityId);
+    if (!selectedCity) return;
+    setFormData((prev) => ({
+      ...prev,
+      primary_address: {
+        ...prev.primary_address,
+        city_id: selectedCity.id,
+        city: selectedCity.name,
+        country: selectedCity.country_code,
+        country_name: selectedCity.country_name,
+      },
+    }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const token = localStorage.getItem('authToken');
+    if (!token) {
+      setError('Authentication token not available.');
+      return;
+    }
+    setError(null);
+    setIsSaving(true);
 
     const submissionData: CustomerSubmissionData = {
       ...formData,
@@ -76,25 +160,39 @@ export default function NewCustomerPage() {
         formData.audience_type === 'LOCAL_PNG_CUSTOMER' ? null : formData.primary_address,
     };
 
-    const res = await fetch(`${API_BASE_URL}/api/v3/customers/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Token ${token}`,
-      },
-      body: JSON.stringify(submissionData),
-    });
+    try {
+      // Step 1: create base customer row
+      const createPayload = {
+        company_name: submissionData.company_name,
+        audience_type: submissionData.audience_type,
+        address_description: submissionData.address_description,
+      };
+      const createRes = await apiClient.post('/api/v3/customers/', createPayload);
+      const customerId = createRes?.data?.id as string | undefined;
+      if (!customerId) {
+        throw new Error('Customer created but no ID returned.');
+      }
 
-    if (res.ok) {
+      // Step 2: persist contact + address through customer-details endpoint
+      await updateCustomer(token, customerId, submissionData);
       router.push('/customers');
-    } else {
-      // Handle error
-      const errorData = await res.json();
-      console.error('Failed to create customer:', errorData);
+    } catch (submitError) {
+      console.error('Failed to create customer:', submitError);
+      if (submitError instanceof Error) {
+        setError(submitError.message || 'Failed to create customer.');
+      } else {
+        setError('Failed to create customer.');
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const isLocalPngCustomer = formData.audience_type === 'LOCAL_PNG_CUSTOMER';
+  const cityOptions = cities.map((city) => ({
+    value: city.id,
+    label: city.display_name,
+  }));
 
   return (
     <Card>
@@ -139,7 +237,14 @@ export default function NewCustomerPage() {
               </div>
               <div>
                 <Label htmlFor="primary_address.city">City</Label>
-                <Input id="primary_address.city" value={formData.primary_address.city} onChange={handleChange} />
+                <Combobox
+                  value={formData.primary_address.city_id}
+                  onChange={handleCityChange}
+                  options={cityOptions}
+                  placeholder="Search city..."
+                  emptyMessage={formData.primary_address.country ? "No city found." : "Select country first."}
+                  disabled={!formData.primary_address.country}
+                />
               </div>
               <div>
                 <Label htmlFor="primary_address.state_province">State / Province</Label>
@@ -151,7 +256,18 @@ export default function NewCustomerPage() {
               </div>
               <div>
                 <Label htmlFor="primary_address.country">Country</Label>
-                <Input id="primary_address.country" value={formData.primary_address.country} onChange={handleChange} />
+                <Select value={formData.primary_address.country} onValueChange={handleCountryChange}>
+                  <SelectTrigger id="primary_address.country">
+                    <SelectValue placeholder="Select country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {countries.map((country) => (
+                      <SelectItem key={country.code} value={country.code}>
+                        {country.code} - {country.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </>
           )}
@@ -168,7 +284,8 @@ export default function NewCustomerPage() {
             <Label htmlFor="contact_person_phone">Contact Person Phone</Label>
             <Input id="contact_person_phone" value={formData.contact_person_phone} onChange={handleChange} required />
           </div>
-          <Button type="submit">Save Customer</Button>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <Button type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Customer'}</Button>
         </form>
       </CardContent>
     </Card>

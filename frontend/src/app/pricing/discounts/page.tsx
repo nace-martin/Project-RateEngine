@@ -1,12 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Card,
     CardContent,
-    CardDescription,
     CardHeader,
-    CardTitle,
 } from "@/components/ui/card";
 import {
     Table,
@@ -71,7 +69,7 @@ export default function DiscountsPage() {
     const canManage = isAdmin || isManager;
     const { toast } = useToast();
 
-    const fetchDiscounts = async () => {
+    const fetchDiscounts = useCallback(async () => {
         setLoading(true);
         try {
             const data = await getCustomerDiscounts(
@@ -85,11 +83,11 @@ export default function DiscountsPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [searchQuery]);
 
     useEffect(() => {
         fetchDiscounts();
-    }, [searchQuery]);
+    }, [fetchDiscounts]);
 
     // Summary statistics
     const stats = useMemo(() => {

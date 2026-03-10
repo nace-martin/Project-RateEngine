@@ -16,7 +16,6 @@ interface SmartMoneyInputProps {
 
 export function SmartMoneyInput({
     control,
-    index,
     currencyName,
     amountName,
     unit,

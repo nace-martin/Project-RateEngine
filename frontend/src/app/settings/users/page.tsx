@@ -121,7 +121,7 @@ export default function UsersPage() {
         } finally {
             setLoading(false);
         }
-    }, [token, searchQuery]);
+    }, [token, searchQuery, toast]);
 
     useEffect(() => {
         fetchUsers();

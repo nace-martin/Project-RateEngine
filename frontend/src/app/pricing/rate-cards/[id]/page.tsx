@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { getRateCardV3, RateCard, RateLine } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
     Table,
@@ -82,7 +81,6 @@ function WeightBreakGrid({ breaks }: { breaks: { id: string; from_value: number;
             {sortedBreaks.map((b, idx) => {
                 const stepLabel = idx === 0 ? 'M' : `+${b.from_value}`;
                 const isFirst = idx === 0;
-                const isLast = idx === sortedBreaks.length - 1;
 
                 return (
                     <div
@@ -257,8 +255,10 @@ export default function RateCardDetailPage() {
         setIsDialogOpen(true);
     };
 
-    const handleDeleteLine = async (line: RateLine) => {
-        console.log('Delete line:', line.id);
+    const handleDeleteLine = async (_line: RateLine) => {
+        void _line;
+        // Delete endpoint is not wired in this screen yet.
+        return;
     };
 
     const handleSaveLine = () => {
@@ -387,7 +387,7 @@ export default function RateCardDetailPage() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {rateCard.lines?.map((line, idx) => (
+                                        {rateCard.lines?.map((line) => (
                                             <TableRow
                                                 key={line.id}
                                                 className="group hover:bg-blue-50/50 transition-all duration-150 border-b border-slate-100 last:border-0"

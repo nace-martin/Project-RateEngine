@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -160,51 +160,61 @@ export function QuoteStatusActions({
     const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
     const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
     const [pendingOutcome, setPendingOutcome] = useState<"mark_won" | "mark_lost" | null>(null);
+    const transitionLockRef = useRef(false);
+    const cloneLockRef = useRef(false);
 
     const { toast } = useToast();
 
     const handleTransition = async (action: "finalize" | "send" | "cancel" | "mark_won" | "mark_lost" | "mark_expired") => {
+        if (transitionLockRef.current) return;
+
+        transitionLockRef.current = true;
         setLoading(true);
         setError(null);
 
-        const result = await transitionQuoteStatus(quoteId, action);
+        try {
+            const result = await transitionQuoteStatus(quoteId, action);
 
-        if (result.success) {
-            setDialogOpen(false);
-            setSendDialogOpen(false);
-            setCancelDialogOpen(false);
-            setOutcomeDialogOpen(false);
+            if (result.success) {
+                setDialogOpen(false);
+                setSendDialogOpen(false);
+                setCancelDialogOpen(false);
+                setOutcomeDialogOpen(false);
 
-            const messages: Record<string, { title: string; description: string }> = {
-                finalize: { title: 'Quote Finalized', description: 'Quote has been locked.' },
-                send: { title: 'Quote Sent', description: 'Quote marked as sent.' },
-                cancel: { title: 'Draft Deleted', description: 'Draft quote has been permanently deleted.' },
-                mark_won: { title: 'Quote Won!', description: 'Quote marked as accepted.' },
-                mark_lost: { title: 'Quote Lost', description: 'Quote marked as lost.' },
-                mark_expired: { title: 'Quote Expired', description: 'Quote marked as expired.' },
-            };
+                const messages: Record<string, { title: string; description: string }> = {
+                    finalize: { title: 'Quote Finalized', description: 'Quote has been locked.' },
+                    send: { title: 'Quote Sent', description: 'Quote marked as sent.' },
+                    cancel: { title: 'Draft Deleted', description: 'Draft quote has been permanently deleted.' },
+                    mark_won: { title: 'Quote Won!', description: 'Quote marked as accepted.' },
+                    mark_lost: { title: 'Quote Lost', description: 'Quote marked as lost.' },
+                    mark_expired: { title: 'Quote Expired', description: 'Quote marked as expired.' },
+                };
 
-            toast({
-                title: messages[action]?.title || 'Status Updated',
-                description: messages[action]?.description || 'Quote status updated.',
-                variant: action === 'mark_won' ? 'success' : (action === 'cancel' || action === 'mark_lost' || action === 'mark_expired' ? 'default' : 'success')
-            });
+                toast({
+                    title: messages[action]?.title || 'Status Updated',
+                    description: messages[action]?.description || 'Quote status updated.',
+                    variant: action === 'mark_won' ? 'success' : (action === 'cancel' || action === 'mark_lost' || action === 'mark_expired' ? 'default' : 'success')
+                });
 
-            if (action === "cancel") {
-                setLoading(false);
-                router.push("/quotes");
-                return;
+                if (action === "cancel") {
+                    router.push("/quotes");
+                    return;
+                }
+
+                onStatusChange?.();
+            } else {
+                setError(result.error || "Failed to update status");
             }
-
-            onStatusChange?.();
-        } else {
-            setError(result.error || "Failed to update status");
+        } finally {
+            transitionLockRef.current = false;
+            setLoading(false);
         }
-
-        setLoading(false);
     };
 
     const handleClone = async () => {
+        if (cloneLockRef.current) return;
+
+        cloneLockRef.current = true;
         setCloning(true);
         setError(null);
 
@@ -222,9 +232,10 @@ export function QuoteStatusActions({
             router.push(`/quotes/${result.id}`);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to clone quote");
+        } finally {
+            cloneLockRef.current = false;
+            setCloning(false);
         }
-
-        setCloning(false);
     };
 
     // FINALIZED and SENT quotes can be cloned

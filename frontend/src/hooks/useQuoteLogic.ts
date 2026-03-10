@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, useFieldArray, useWatch, Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
@@ -88,6 +88,7 @@ export function useQuoteLogic({
     const [internalError, setInternalError] = useState<string | null>(null);
     const [originLocation, setOriginLocation] = useState<LocationSearchResult | null>(initialOrigin || null);
     const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(initialDestination || null);
+    const submitLockRef = useRef(false);
 
     const form = useForm<QuoteFormSchemaV3>({
         resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -218,98 +219,114 @@ export function useQuoteLogic({
     // --- Handlers ---
 
     const handleFormSubmit = async (data: QuoteFormSchemaV3) => {
+        if (submitLockRef.current) return;
+
+        submitLockRef.current = true;
         setInternalError(null);
 
-        if (!user) {
-            setInternalError("Authentication token not available. Please log in.");
-            return;
-        }
-
-        // Skip SPOT validation when editing existing quotes
-        if (isEditMode) {
-            await onSubmit(data);
-            return;
-        }
-
-        const originCode = (data.origin_airport || originLocation?.code || '').toUpperCase();
-        const destinationCode = (data.destination_airport || destinationLocation?.code || '').toUpperCase();
-        const originCountry = resolveCountryCode(originLocation, originCode);
-        const destCountry = resolveCountryCode(destinationLocation, destinationCode);
-
         try {
-            // 1. Validate Scope
-            const scopeResult = await validateSpotScope({
-                origin_country: originCountry,
-                destination_country: destCountry,
-                origin_code: originCode,
-                destination_code: destinationCode,
-            });
-
-            if (!scopeResult.is_valid) {
-                setInternalError(scopeResult.error || "Shipment out of scope - only PNG routes supported");
+            if (!user) {
+                setInternalError("Authentication token not available. Please log in.");
                 return;
             }
 
-            // 2. Evaluate Trigger
-            const commodity = mapCargoToSPECommodity(data.cargo_type);
-            const triggerResult = await evaluateSpotTrigger({
-                origin_country: originCountry,
-                destination_country: destCountry,
-                commodity,
-                origin_airport: originCode,
-                destination_airport: destinationCode,
-                has_valid_buy_rate: true,
-                service_scope: data.service_scope,
-            });
+            // Skip SPOT validation when editing existing quotes
+            if (isEditMode) {
+                await onSubmit(data);
+                return;
+            }
 
-            if (triggerResult.is_spot_required && triggerResult.trigger) {
-                const spe = await createSpotEnvelope({
-                    shipment_context: {
-                        origin_country: originCountry,
-                        destination_country: destCountry,
-                        origin_code: originCode,
-                        destination_code: destinationCode,
-                        commodity: commodity as SPECommodity,
-                        total_weight_kg: cargoMetrics.chargeableWeight,
-                        pieces: cargoMetrics.pieces,
-                        service_scope: (data.service_scope || 'P2P').toLowerCase(),
-                        missing_components: triggerResult.trigger?.missing_components,
-                    },
-                    charges: [],
-                    trigger_code: triggerResult.trigger.code,
-                    trigger_text: triggerResult.trigger.text,
-                    conditions: { rate_validity_hours: 72 }
+            const originCode = (data.origin_airport || originLocation?.code || '').toUpperCase();
+            const destinationCode = (data.destination_airport || destinationLocation?.code || '').toUpperCase();
+            const originCountry = resolveCountryCode(originLocation, originCode);
+            const destCountry = resolveCountryCode(destinationLocation, destinationCode);
+
+            try {
+                // 1. Validate Scope
+                const scopeResult = await validateSpotScope({
+                    origin_country: originCountry,
+                    destination_country: destCountry,
+                    origin_code: originCode,
+                    destination_code: destinationCode,
                 });
 
-                if (spe) {
-                    const shipmentType = originCountry === 'PG' && destCountry === 'PG' ? 'DOMESTIC' : (originCountry === 'PG' ? 'EXPORT' : 'IMPORT');
+                if (!scopeResult.is_valid) {
+                    setInternalError(scopeResult.error || "Shipment out of scope - only PNG routes supported");
+                    return;
+                }
+
+                // 2. Evaluate Trigger
+                const commodity = mapCargoToSPECommodity(data.cargo_type);
+                const paymentTermUpper: 'PREPAID' | 'COLLECT' =
+                    data.payment_term === 'COLLECT' ? 'COLLECT' : 'PREPAID';
+                const paymentTermLower: 'prepaid' | 'collect' =
+                    paymentTermUpper === 'COLLECT' ? 'collect' : 'prepaid';
+                const triggerResult = await evaluateSpotTrigger({
+                    origin_country: originCountry,
+                    destination_country: destCountry,
+                    commodity,
+                    origin_airport: originCode,
+                    destination_airport: destinationCode,
+                    has_valid_buy_rate: true,
+                    service_scope: data.service_scope,
+                    payment_term: paymentTermUpper,
+                });
+
+                if (triggerResult.is_spot_required && triggerResult.trigger) {
+                    const spe = await createSpotEnvelope({
+                        shipment_context: {
+                            origin_country: originCountry,
+                            destination_country: destCountry,
+                            origin_code: originCode,
+                            destination_code: destinationCode,
+                            customer_name: selectedCustomer?.name || undefined,
+                            commodity: commodity as SPECommodity,
+                            total_weight_kg: cargoMetrics.chargeableWeight,
+                            pieces: cargoMetrics.pieces,
+                            service_scope: (data.service_scope || 'P2P').toLowerCase(),
+                            payment_term: paymentTermLower,
+                            missing_components: triggerResult.trigger?.missing_components,
+                        },
+                        charges: [],
+                        trigger_code: triggerResult.trigger.code,
+                        trigger_text: triggerResult.trigger.text,
+                        conditions: { rate_validity_hours: 72 }
+                    });
+
+                    if (spe) {
+                        const shipmentType = originCountry === 'PG' && destCountry === 'PG' ? 'DOMESTIC' : (originCountry === 'PG' ? 'EXPORT' : 'IMPORT');
                     const params = new URLSearchParams({
                         origin_country: originCountry,
                         dest_country: destCountry,
                         origin_code: originCode,
                         dest_code: destinationCode,
+                        customer_id: data.customer_id,
+                        customer_name: selectedCustomer?.name || "",
                         commodity,
                         weight: String(cargoMetrics.chargeableWeight),
                         pieces: String(cargoMetrics.pieces),
-                        trigger_code: triggerResult.trigger.code,
-                        trigger_text: triggerResult.trigger.text,
-                        service_scope: data.service_scope,
-                        payment_term: data.payment_term,
-                        output_currency: data.output_currency || 'PGK',
-                        shipment_type: shipmentType,
-                    });
-                    if (triggerResult.trigger?.missing_components && triggerResult.trigger.missing_components.length > 0) {
-                        params.append('missing_components', triggerResult.trigger.missing_components.join(','));
+                            trigger_code: triggerResult.trigger.code,
+                            trigger_text: triggerResult.trigger.text,
+                            service_scope: data.service_scope,
+                            payment_term: data.payment_term,
+                            output_currency: data.output_currency || 'PGK',
+                            shipment_type: shipmentType,
+                        });
+                        if (triggerResult.trigger?.missing_components && triggerResult.trigger.missing_components.length > 0) {
+                            params.append('missing_components', triggerResult.trigger.missing_components.join(','));
+                        }
+                        router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
+                        return;
                     }
-                    router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
-                    return;
                 }
+            } catch (e) {
+                console.error("Spot/Trigger logic error", e);
             }
-        } catch (e) {
-            console.error("Spot/Trigger logic error", e);
-        }
 
-        await onSubmit(data);
+            await onSubmit(data);
+        } finally {
+            submitLockRef.current = false;
+        }
     };
 
     const setLocationFields = (

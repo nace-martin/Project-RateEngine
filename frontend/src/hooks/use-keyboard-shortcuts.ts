@@ -16,10 +16,6 @@ export function useKeyboardShortcuts(shortcuts: KeyCombo[]) {
         const handleKeyDown = (event: KeyboardEvent) => {
             shortcuts.forEach(({ key, ctrl, meta, shift, alt, action }) => {
                 const matchesKey = event.key.toLowerCase() === key.toLowerCase();
-                const matchesCtrl = ctrl ? (event.ctrlKey) : true;
-                const matchesMeta = meta ? (event.metaKey) : true;
-                const matchesShift = shift ? (event.shiftKey) : true;
-                const matchesAlt = alt ? (event.altKey) : true;
 
                 // Flexible modifier check:
                 // If modifier is explicitly requested (true), it MUST be pressed.

@@ -9,7 +9,7 @@
  * - Submit to analysis
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Mail, ArrowRight, FileText } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
     const [text, setText] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [internalIsLoading, setInternalIsLoading] = useState(false);
+    const submitLockRef = useRef(false);
 
     const isLoading = externalIsLoading || internalIsLoading;
 
@@ -61,8 +62,11 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
     };
 
     const handleSubmit = async () => {
+        if (submitLockRef.current || isLoading) {
+            return;
+        }
+
         setError(null);
-        console.log("[SPOT ReplyPasteCard] handleSubmit called, text length:", text.length);
 
         if (!text.trim()) {
             setError("Please paste the agent reply text");
@@ -74,17 +78,17 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
             return;
         }
 
+        submitLockRef.current = true;
         setInternalIsLoading(true);
         try {
-            console.log("[SPOT ReplyPasteCard] Calling analyzeSpotReply, speId:", speId);
             const result = await analyzeSpotReply(text, [], speId);
-            console.log("[SPOT ReplyPasteCard] Analysis result received:", JSON.stringify(result).substring(0, 200));
             onAnalysisComplete(result);
         } catch (err) {
             console.error("[SPOT ReplyPasteCard] Analysis error:", err);
             setError(err instanceof Error ? err.message : "Failed to analyze reply");
         } finally {
             setInternalIsLoading(false);
+            submitLockRef.current = false;
         }
     };
 

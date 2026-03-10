@@ -1,4 +1,4 @@
-import { UnifiedQuote, formatDate, formatCurrency } from "@/lib/quote-helpers";
+import { UnifiedQuote, formatDate } from "@/lib/quote-helpers";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,7 +9,7 @@ import {
     SheetTitle,
     SheetFooter,
 } from "@/components/ui/sheet";
-import { ArrowRight, Box, Calendar, MapPin, Scale, User, Plane, Ship, Truck } from "lucide-react";
+import { ArrowRight, Box, MapPin, Scale, User, Plane, Ship, Truck } from "lucide-react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 

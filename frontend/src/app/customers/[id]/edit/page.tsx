@@ -6,11 +6,13 @@ import { useRouter, useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Combobox } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/auth-context";
+import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
-import { Customer } from "@/lib/types";
+import { CityOption, CountryOption, Customer } from "@/lib/types";
 
 type ErrorWithResponse = {
   response?: {
@@ -31,10 +33,17 @@ export default function EditCustomerPage() {
   // Use our strong types instead of 'any'
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [cities, setCities] = useState<CityOption[]>([]);
+  const [isLoadingCities, setIsLoadingCities] = useState(false);
   const router = useRouter();
   const params = useParams();
   const { id } = params;
   const { token } = useAuth();
+  const { isAdmin } = usePermissions();
 
   useEffect(() => {
     if (id && token) {
@@ -44,7 +53,7 @@ export default function EditCustomerPage() {
           // Ensure primary_address is not null for the form
           if (!customerData.primary_address) {
             customerData.primary_address = {
-              address_line_1: "", city: "", state_province: "", postcode: "", country: "",
+              address_line_1: "", city_id: "", city: "", state_province: "", postcode: "", country: "", country_name: "",
             };
           }
           setCustomer(customerData);
@@ -56,6 +65,50 @@ export default function EditCustomerPage() {
       fetchCustomer();
     }
   }, [id, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    const loadCountries = async () => {
+      try {
+        const data = await api.listCountries();
+        setCountries(data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    loadCountries();
+  }, [token]);
+
+  const selectedCountryCode = customer?.primary_address?.country?.toUpperCase() || '';
+
+  useEffect(() => {
+    if (!token || !selectedCountryCode) {
+      setCities([]);
+      return;
+    }
+    let cancelled = false;
+    const loadCities = async () => {
+      try {
+        setIsLoadingCities(true);
+        const data = await api.listCities({
+          country_code: selectedCountryCode,
+        });
+        if (!cancelled) {
+          setCities(data);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (!cancelled) {
+          setIsLoadingCities(false);
+        }
+      }
+    };
+    loadCities();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, selectedCountryCode]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -69,10 +122,12 @@ export default function EditCustomerPage() {
 
       const currentAddress = prev.primary_address || {
         address_line_1: "",
+        city_id: "",
         city: "",
         state_province: "",
         postcode: "",
         country: "",
+        country_name: "",
       };
 
       return {
@@ -89,6 +144,58 @@ export default function EditCustomerPage() {
     setCustomer((prev) => (prev ? { ...prev, audience_type: value } : null));
   };
 
+  const handleCountryChange = (countryCode: string) => {
+    setCustomer((prev) => {
+      if (!prev) return null;
+      const currentAddress = prev.primary_address || {
+        address_line_1: "",
+        city_id: "",
+        city: "",
+        state_province: "",
+        postcode: "",
+        country: "",
+        country_name: "",
+      };
+      const selectedCountry = countries.find((country) => country.code === countryCode);
+      return {
+        ...prev,
+        primary_address: {
+          ...currentAddress,
+          country: countryCode,
+          country_name: selectedCountry?.name || "",
+          city_id: "",
+          city: "",
+        },
+      };
+    });
+  };
+
+  const handleCityChange = (cityId: string) => {
+    const selectedCity = cities.find((city) => city.id === cityId);
+    setCustomer((prev) => {
+      if (!prev || !selectedCity) return prev;
+      const currentAddress = prev.primary_address || {
+        address_line_1: "",
+        city_id: "",
+        city: "",
+        state_province: "",
+        postcode: "",
+        country: "",
+        country_name: "",
+      };
+      return {
+        ...prev,
+        primary_address: {
+          ...currentAddress,
+          city_id: selectedCity.id,
+          city: selectedCity.name,
+          country: selectedCity.country_code,
+          country_name: selectedCity.country_name,
+        },
+      };
+    });
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -98,6 +205,7 @@ export default function EditCustomerPage() {
       return;
     }
 
+    setIsSaving(true);
     try {
       await api.updateCustomer(token, id as string, customer);
       router.push("/customers");
@@ -120,12 +228,75 @@ export default function EditCustomerPage() {
       } else {
         setError("Failed to update customer. An unknown error occurred.");
       }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!token || !id) {
+      setError("Authentication error or missing customer ID.");
+      return;
+    }
+
+    const shouldDelete = window.confirm(
+      "Delete this customer? This action cannot be undone.",
+    );
+    if (!shouldDelete) return;
+
+    setError(null);
+    setIsDeleting(true);
+    try {
+      await api.deleteCustomer(token, id as string);
+      router.push("/customers");
+    } catch (err: unknown) {
+      console.error(err);
+      if (err instanceof Error) {
+        setError(err.message || "Failed to delete customer.");
+      } else {
+        setError("Failed to delete customer.");
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleArchiveToggle = async (archive: boolean) => {
+    if (!token || !id) {
+      setError("Authentication error or missing customer ID.");
+      return;
+    }
+
+    const prompt = archive
+      ? "Archive this customer? Historical quotes remain unchanged."
+      : "Restore this archived customer?";
+    const confirmed = window.confirm(prompt);
+    if (!confirmed) return;
+
+    setError(null);
+    setIsArchiving(true);
+    try {
+      const updated = await api.setCustomerArchived(token, id as string, archive);
+      setCustomer(updated);
+    } catch (err: unknown) {
+      console.error(err);
+      if (err instanceof Error) {
+        setError(err.message || "Failed to update customer status.");
+      } else {
+        setError("Failed to update customer status.");
+      }
+    } finally {
+      setIsArchiving(false);
     }
   };
 
   if (!customer) return <div>Loading...</div>;
 
   const isOverseas = customer.audience_type !== 'LOCAL_PNG_CUSTOMER';
+  const cityOptions = cities.map((city) => ({
+    value: city.id,
+    label: city.display_name,
+  }));
 
   return (
     <div className="container mx-auto p-4">
@@ -155,6 +326,17 @@ export default function EditCustomerPage() {
                 </Select>
               </div>
             </div>
+            {!isOverseas && (
+              <div>
+                <Label htmlFor="address_description">Address Description</Label>
+                <Input
+                  id="address_description"
+                  name="address_description"
+                  value={customer.address_description ?? ''}
+                  onChange={handleChange}
+                />
+              </div>
+            )}
 
             {/* Address Details - Conditional */}
             <h3 className="text-lg font-semibold border-t pt-4 mt-4">Primary Address</h3>
@@ -165,7 +347,14 @@ export default function EditCustomerPage() {
                 </div>
                 <div>
                   <Label htmlFor="city">City / Suburb</Label>
-                  <Input id="city" name="city" value={customer.primary_address?.city ?? ''} onChange={handleAddressChange} />
+                  <Combobox
+                    value={customer.primary_address?.city_id ?? ''}
+                    onChange={handleCityChange}
+                    options={cityOptions}
+                    placeholder="Search city..."
+                    emptyMessage={selectedCountryCode ? "No city found." : "Select country first."}
+                    disabled={!selectedCountryCode || isLoadingCities}
+                  />
                 </div>
                 <div>
                   <Label htmlFor="state_province">State / Province</Label>
@@ -179,7 +368,21 @@ export default function EditCustomerPage() {
               )}
                <div>
                   <Label htmlFor="country">Country</Label>
-                  <Input id="country" name="country" value={customer.primary_address?.country ?? ''} onChange={handleAddressChange} />
+                  <Select
+                    value={customer.primary_address?.country ?? ''}
+                    onValueChange={handleCountryChange}
+                  >
+                    <SelectTrigger id="country">
+                      <SelectValue placeholder="Select country" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {countries.map((country) => (
+                        <SelectItem key={country.code} value={country.code}>
+                          {country.code} - {country.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
             </div>
 
@@ -202,9 +405,44 @@ export default function EditCustomerPage() {
             </div>
 
             {error && <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{error}</p>}
-            <div className="flex justify-end space-x-2">
-                <Button type="button" variant="outline" onClick={() => router.push('/customers')}>Cancel</Button>
-                <Button type="submit">Save Changes</Button>
+            <div className="flex items-center justify-between space-x-2">
+                <div>
+                  {isAdmin && (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleArchiveToggle(customer.is_active !== false)}
+                        disabled={isSaving || isDeleting || isArchiving}
+                      >
+                        {isArchiving
+                          ? (customer.is_active !== false ? "Archiving..." : "Restoring...")
+                          : (customer.is_active !== false ? "Archive Customer" : "Restore Customer")}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={handleDelete}
+                        disabled={isSaving || isDeleting || isArchiving}
+                      >
+                        {isDeleting ? "Deleting..." : "Delete Customer"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                <div className="flex space-x-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => router.push('/customers')}
+                    disabled={isSaving || isDeleting || isArchiving}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isSaving || isDeleting || isArchiving}>
+                    {isSaving ? "Saving..." : "Save Changes"}
+                  </Button>
+                </div>
             </div>
           </form>
         </CardContent>

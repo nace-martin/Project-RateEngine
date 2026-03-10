@@ -5,7 +5,7 @@
  * Refactored to use reusable components
  */
 
-import { useMemo, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -46,6 +46,37 @@ const getFormErrorMessage = (error: unknown) => {
     return undefined;
 };
 
+const normalizeScope = (scope?: string) => {
+    if (!scope) return "A2A";
+    const normalized = scope.toUpperCase();
+    return normalized === "P2P" ? "A2A" : normalized;
+};
+
+const getRequiredComponents = (
+    shipment: "EXPORT" | "IMPORT" | "DOMESTIC",
+    scope?: string,
+) => {
+    const normalizedScope = normalizeScope(scope);
+
+    if (shipment === "DOMESTIC") {
+        return ["FREIGHT"] as const;
+    }
+
+    if (normalizedScope === "A2A") return ["FREIGHT"] as const;
+    if (normalizedScope === "D2A") return ["ORIGIN_LOCAL", "FREIGHT"] as const;
+    if (normalizedScope === "A2D") return ["DESTINATION_LOCAL"] as const;
+    if (normalizedScope === "D2D") return ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"] as const;
+
+    return ["FREIGHT"] as const;
+};
+
+const componentToBucket = (component: string): SPEChargeBucket | null => {
+    if (component === "FREIGHT") return "airfreight";
+    if (component === "ORIGIN_LOCAL") return "origin_charges";
+    if (component === "DESTINATION_LOCAL") return "destination_charges";
+    return null;
+};
+
 export function SpotRateEntryForm({
     onSubmit,
     isLoading,
@@ -57,7 +88,11 @@ export function SpotRateEntryForm({
     submitLabel,
     onSaveDraft,
 }: SpotRateEntryFormProps) {
-    const mapAssertionToCharge = (assertion: ExtractedAssertion): SPEChargeLine | null => {
+    const submitLockRef = useRef(false);
+    const draftLockRef = useRef(false);
+    const [isSavingDraft, setIsSavingDraft] = useState(false);
+
+    const mapAssertionToCharge = useCallback((assertion: ExtractedAssertion): SPEChargeLine | null => {
         let category = assertion.category;
         let bucket: SPEChargeBucket | null = null;
         let code = "MISC";
@@ -133,7 +168,7 @@ export function SpotRateEntryForm({
             min_charge,
             percentage_basis,
         };
-    };
+    }, [missingComponents, shipmentType]);
 
     const mergedCharges = useMemo(() => {
         const merged: SPEChargeLine[] = [...initialCharges];
@@ -150,38 +185,7 @@ export function SpotRateEntryForm({
             seen.add(key);
         }
         return merged;
-    }, [initialCharges, suggestedCharges]);
-
-    const normalizeScope = (scope?: string) => {
-        if (!scope) return "A2A";
-        const normalized = scope.toUpperCase();
-        return normalized === "P2P" ? "A2A" : normalized;
-    };
-
-    const getRequiredComponents = (
-        shipment: "EXPORT" | "IMPORT" | "DOMESTIC",
-        scope?: string,
-    ) => {
-        const normalizedScope = normalizeScope(scope);
-
-        if (shipment === "DOMESTIC") {
-            return ["FREIGHT"] as const;
-        }
-
-        if (normalizedScope === "A2A") return ["FREIGHT"] as const;
-        if (normalizedScope === "D2A") return ["ORIGIN_LOCAL", "FREIGHT"] as const;
-        if (normalizedScope === "A2D") return ["DESTINATION_LOCAL"] as const;
-        if (normalizedScope === "D2D") return ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"] as const;
-
-        return ["FREIGHT"] as const;
-    };
-
-    const componentToBucket = (component: string): SPEChargeBucket | null => {
-        if (component === "FREIGHT") return "airfreight";
-        if (component === "ORIGIN_LOCAL") return "origin_charges";
-        if (component === "DESTINATION_LOCAL") return "destination_charges";
-        return null;
-    };
+    }, [initialCharges, suggestedCharges, mapAssertionToCharge]);
 
     // Determine visible buckets:
     // - If missing components are explicitly provided, show ONLY those buckets.
@@ -222,17 +226,6 @@ export function SpotRateEntryForm({
     const formattedVisibleCharges = useMemo<SpotFormInputValues["charges"]>(() => {
         // Only visible buckets are editable in this form.
         const filteredCharges = mergedCharges.filter(c => visibleBuckets.includes(c.bucket));
-
-        console.log("SpotRateEntryForm DEBUG pipeline:", {
-            initialCharges: initialCharges.length,
-            initialBuckets: initialCharges.map(c => `${c.bucket}:${c.code}`),
-            suggestedCharges: suggestedCharges.length,
-            mergedCharges: mergedCharges.length,
-            mergedBuckets: mergedCharges.map(c => `${c.bucket}:${c.code}`),
-            visibleBuckets: visibleBuckets.join(", "),
-            missingComponents: missingComponents.join(", "),
-            filtered: filteredCharges.length,
-        });
 
         return filteredCharges.map((charge) => ({
             // Omit charge.id because react-hook-form useFieldArray conflicts with existing 'id' fields
@@ -280,10 +273,6 @@ export function SpotRateEntryForm({
         name: "charges",
     });
 
-    useEffect(() => {
-        console.log("SpotRateEntryForm DEBUG fields length:", fields.length);
-    }, [fields.length]);
-
     const mapEditableLineToSubmitCharge = (line: SpotFormSubmitValues["charges"][number]): Omit<SPEChargeLine, 'id'> => {
         const isWeightBased = line.unit === "min_or_per_kg" || line.unit === "per_kg";
         return {
@@ -320,11 +309,38 @@ export function SpotRateEntryForm({
     });
 
     const handleFormSubmit = async (data: SpotFormSubmitValues) => {
+        if (submitLockRef.current) return;
+        submitLockRef.current = true;
+
         const editableCharges = data.charges.map(mapEditableLineToSubmitCharge);
         const preservedHiddenCharges = hiddenExistingCharges.map(mapHiddenChargeToSubmitCharge);
         const charges: Omit<SPEChargeLine, 'id'>[] = [...preservedHiddenCharges, ...editableCharges];
 
-        await onSubmit(charges);
+        try {
+            await onSubmit(charges);
+        } finally {
+            submitLockRef.current = false;
+        }
+    };
+    const handleFormSubmitRef = useRef(handleFormSubmit);
+    handleFormSubmitRef.current = handleFormSubmit;
+
+    const handleSaveDraft = async () => {
+        if (!onSaveDraft || draftLockRef.current) return;
+        draftLockRef.current = true;
+        setIsSavingDraft(true);
+
+        try {
+            const data = form.getValues();
+            const editableCharges = data.charges.map((line) =>
+                mapEditableLineToSubmitCharge(line as SpotFormSubmitValues["charges"][number])
+            );
+            const preservedHiddenCharges = hiddenExistingCharges.map(mapHiddenChargeToSubmitCharge);
+            await onSaveDraft([...preservedHiddenCharges, ...editableCharges]);
+        } finally {
+            setIsSavingDraft(false);
+            draftLockRef.current = false;
+        }
     };
 
     // Keyboard Shortcuts
@@ -332,14 +348,15 @@ export function SpotRateEntryForm({
         const handleKeyDown = (e: KeyboardEvent) => {
             // Ctrl/Cmd + Enter to submit
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                if (form.formState.isSubmitting || isLoading || isSavingDraft) return;
                 e.preventDefault();
-                form.handleSubmit(handleFormSubmit)();
+                form.handleSubmit((data) => handleFormSubmitRef.current(data))();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [form, handleFormSubmit]);
+    }, [form, isLoading, isSavingDraft]);
 
     const addLine = (bucket: SPEChargeBucket) => {
         append({
@@ -358,6 +375,8 @@ export function SpotRateEntryForm({
 
     const getFieldsByBucket = (bucket: SPEChargeBucket) =>
         fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
+
+    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
 
     return (
         <Form {...form}>
@@ -389,26 +408,21 @@ export function SpotRateEntryForm({
                         <Button
                             type="button"
                             variant="outline"
-                            disabled={isLoading}
+                            disabled={isSubmitBusy}
                             size="lg"
                             className="flex-1"
-                            onClick={() => {
-                                const data = form.getValues();
-                                const editableCharges = data.charges.map((line) => mapEditableLineToSubmitCharge(line as SpotFormSubmitValues["charges"][number]));
-                                const preservedHiddenCharges = hiddenExistingCharges.map(mapHiddenChargeToSubmitCharge);
-                                onSaveDraft([...preservedHiddenCharges, ...editableCharges]);
-                            }}
+                            onClick={handleSaveDraft}
                         >
-                            Save Draft
+                            {isSavingDraft ? "Saving..." : "Save Draft"}
                         </Button>
                     )}
                     <Button
                         type="submit"
-                        disabled={isLoading}
+                        disabled={isSubmitBusy}
                         size="lg"
                         className={`${onSaveDraft ? 'flex-1' : 'w-full'} bg-primary hover:bg-primary/90 text-primary-foreground font-semibold`}
                     >
-                        {isLoading ? "Processing..." : (submitLabel || "Save & Proceed")}
+                        {isSubmitBusy ? "Processing..." : (submitLabel || "Save & Proceed")}
                     </Button>
                 </div>
             </form>

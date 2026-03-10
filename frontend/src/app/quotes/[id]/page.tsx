@@ -115,16 +115,36 @@ export default function QuoteDetailPage() {
   const isArchived = quote.is_archived;
   const canDownloadPDF = (effectiveStatus === "FINALIZED" || effectiveStatus === "SENT");
   const displayTotals = computeResult?.totals ?? quote.latest_version?.totals;
-  const displayCurrency =
+  const displayCurrency = (
     displayTotals?.currency ||
+    displayTotals?.total_sell_fcy_currency ||
+    quote.latest_version?.totals?.currency ||
     quote.latest_version?.totals?.total_sell_fcy_currency ||
-    "PGK";
-  const displayAmount =
-    displayTotals?.total_sell_fcy_incl_gst ||
-    displayTotals?.sell_pgk_incl_gst ||
-    quote.latest_version?.totals?.total_sell_fcy_incl_gst ||
-    quote.latest_version?.totals?.total_sell_pgk_incl_gst ||
-    "0";
+    quote.output_currency ||
+    "PGK"
+  ).toUpperCase();
+  const displayAmountRaw = displayCurrency === "PGK"
+    ? (
+      displayTotals?.total_quote_amount ||
+      displayTotals?.total_sell_pgk_incl_gst ||
+      displayTotals?.sell_pgk_incl_gst ||
+      displayTotals?.total_sell_pgk ||
+      quote.latest_version?.totals?.total_sell_pgk_incl_gst ||
+      quote.latest_version?.totals?.sell_pgk_incl_gst ||
+      quote.latest_version?.totals?.total_sell_pgk ||
+      "0"
+    )
+    : (
+      displayTotals?.total_quote_amount ||
+      displayTotals?.total_sell_fcy_incl_gst ||
+      displayTotals?.sell_fcy_incl_gst ||
+      displayTotals?.total_sell_fcy ||
+      quote.latest_version?.totals?.total_sell_fcy_incl_gst ||
+      quote.latest_version?.totals?.sell_fcy_incl_gst ||
+      quote.latest_version?.totals?.total_sell_fcy ||
+      "0"
+    );
+  const displayAmount = Number(displayAmountRaw || 0);
   const shipmentMetrics = computeShipmentMetrics(quote);
   const fxEntries = buildFxEntries(quote, computeResult);
 
@@ -353,9 +373,9 @@ export default function QuoteDetailPage() {
         <div className="container mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <div>
-              <p className="text-xs text-slate-500 uppercase font-semibold">Total Estimated Cost</p>
+              <p className="text-xs text-slate-500 uppercase font-semibold">Total Quote Amount</p>
               <p className="text-2xl font-bold text-slate-900">
-                {displayCurrency} {parseFloat(displayAmount).toLocaleString()}
+                {displayCurrency} {displayAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
               <p className="text-[10px] text-slate-400">
                 Inc. GST
@@ -420,7 +440,12 @@ export default function QuoteDetailPage() {
                   className="gap-2 mr-2 hidden sm:flex"
                   onClick={() => {
                     if (quote.shipment_type === "SPOT_NEGOTIATION" && quote.spot_negotiation) {
-                      router.push(`/quotes/spot/${quote.spot_negotiation.id}`);
+                      const params = new URLSearchParams({
+                        customer_name: getCustomerName(quote.customer),
+                        service_scope: quote.service_scope || "D2D",
+                        payment_term: quote.payment_term || "PREPAID",
+                      });
+                      router.push(`/quotes/spot/${quote.spot_negotiation.id}?${params.toString()}`);
                     } else {
                       router.push(`/quotes/${quote.id}/edit`);
                     }
@@ -461,7 +486,12 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
       const existingSpeId =
         quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
       if (existingSpeId) {
-        router.push(`/quotes/spot/${existingSpeId}`);
+        const params = new URLSearchParams({
+          customer_name: getCustomerName(quote.customer),
+          service_scope: quote.service_scope || "D2D",
+          payment_term: quote.payment_term || "PREPAID",
+        });
+        router.push(`/quotes/spot/${existingSpeId}?${params.toString()}`);
         return;
       }
 
@@ -480,6 +510,9 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
       const weightInfo = computeChargeableWeight(quote);
       const commodity =
         quote.latest_version?.payload_json?.is_dangerous_goods ? "DG" : "GCR";
+      const paymentTerm = normalizePaymentTerm(quote.payment_term);
+      const spePaymentTerm: "prepaid" | "collect" =
+        paymentTerm === "COLLECT" ? "collect" : "prepaid";
 
       const scopeCheck = await validateSpotScope({
         origin_country: originCountry,
@@ -499,6 +532,7 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
         destination_airport: destinationCode || "",
         has_valid_buy_rate: false,
         service_scope: quote.service_scope,
+        payment_term: paymentTerm,
       });
 
       const triggerCode = triggerResult.trigger?.code || "MISSING_RATES";
@@ -511,10 +545,12 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
           destination_country: destinationCountry,
           origin_code: originCode || "",
           destination_code: destinationCode || "",
+          customer_name: getCustomerName(quote.customer),
           commodity,
           total_weight_kg: weightInfo.chargeableWeight,
           pieces: weightInfo.pieces,
           service_scope: (quote.service_scope || "P2P").toLowerCase(),
+          payment_term: spePaymentTerm,
           missing_components: triggerResult.trigger?.missing_components,
         },
         charges: [],
@@ -533,13 +569,14 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
         dest_country: destinationCountry,
         origin_code: originCode || "",
         dest_code: destinationCode || "",
+        customer_name: getCustomerName(quote.customer),
         commodity,
         weight: String(weightInfo.chargeableWeight),
         pieces: String(weightInfo.pieces),
         trigger_code: triggerCode,
         trigger_text: triggerText,
         service_scope: quote.service_scope,
-        payment_term: quote.payment_term,
+        payment_term: paymentTerm,
         output_currency: quote.output_currency || "PGK",
         shipment_type: quote.shipment_type,
       });
@@ -661,6 +698,10 @@ function computeChargeableWeight(quote: V3QuoteComputeResponse) {
   };
 }
 
+function normalizePaymentTerm(value?: string | null): "PREPAID" | "COLLECT" {
+  return (value || "").toUpperCase() === "COLLECT" ? "COLLECT" : "PREPAID";
+}
+
 function computeShipmentMetrics(quote: V3QuoteComputeResponse) {
   const payload = quote.latest_version?.payload_json as Record<string, unknown> | undefined;
   const dimsRaw = Array.isArray(payload?.dimensions)
@@ -744,6 +785,34 @@ function buildFxEntries(
       const ccy = (line.sell_fcy_currency || line.cost_fcy_currency || "").toUpperCase();
       if (!ccy || ccy === "PGK") continue;
       rates[`${ccy}/PGK`] = String(rate);
+    }
+  }
+
+  // Derive FX from line-level FCY/PGK totals when explicit rate fields are absent.
+  if (Object.keys(rates).length === 0) {
+    const sums: Record<string, { fcy: number; pgk: number }> = {};
+    const add = (currency: string | null | undefined, fcyRaw: string | null | undefined, pgkRaw: string | null | undefined) => {
+      const ccy = (currency || "").toUpperCase().trim();
+      if (!ccy || ccy === "PGK") return;
+      const fcy = Number(fcyRaw || 0);
+      const pgk = Number(pgkRaw || 0);
+      if (!Number.isFinite(fcy) || !Number.isFinite(pgk) || fcy <= 0 || pgk <= 0) return;
+      if (!sums[ccy]) sums[ccy] = { fcy: 0, pgk: 0 };
+      sums[ccy].fcy += fcy;
+      sums[ccy].pgk += pgk;
+    };
+
+    for (const line of quote.latest_version?.lines || []) {
+      add(line.sell_fcy_currency, line.sell_fcy, line.sell_pgk);
+    }
+    for (const line of computeResult?.sell_lines || []) {
+      add(line.sell_currency, line.sell_fcy, line.sell_pgk);
+    }
+
+    for (const [ccy, totals] of Object.entries(sums)) {
+      if (totals.fcy > 0 && totals.pgk > 0) {
+        rates[`${ccy}/PGK`] = (totals.pgk / totals.fcy).toFixed(6);
+      }
     }
   }
 

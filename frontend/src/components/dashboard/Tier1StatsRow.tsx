@@ -5,7 +5,7 @@ import type { Tier1Stats } from "@/lib/types";
 import { KPICard } from "@/components/KPICard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 interface Tier1StatsRowProps {
     timeframe: "weekly" | "monthly" | "ytd";

@@ -81,21 +81,37 @@ export interface StationSummary {
 export interface CustomerAddress {
   address_line_1: string;
   address_line_2?: string;
+  city_id?: string;
   city: string;
   state_province?: string;
   postcode?: string;
   country: string;
+  country_name?: string;
 }
 
 export interface Customer {
   id: string;
   company_name: string;
+  is_active?: boolean;
   audience_type: string;
   address_description?: string | null;
   primary_address?: CustomerAddress | null;
   contact_person_name?: string;
   contact_person_email?: string;
   contact_person_phone?: string;
+}
+
+export interface CountryOption {
+  code: string;
+  name: string;
+}
+
+export interface CityOption {
+  id: string;
+  name: string;
+  country_code: string;
+  country_name: string;
+  display_name: string;
 }
 
 // --- MISC HELPER TYPES ---
@@ -235,6 +251,7 @@ export interface V3QuoteComputeResponse {
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
   updated_at?: string; // ISO date string
+  request_details_json?: Record<string, unknown> | null;
   created_by?: string | null; // Assigned Agent (Sales Rep)
   rate_provider?: string | null; // Agent who provided rates
   latest_version: V3QuoteVersion;
