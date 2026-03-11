@@ -107,7 +107,7 @@ Inland Freight → Destination
 
 **Rate Engine Logic:**
 - Seller quotes: EVERYTHING except import duty/taxes/customs clearance
-- For **Import A2D DAP**: Full passthrough pricing (FCY → customer)
+- For **Import A2D DAP**: Destination pricing comes from Pricing V4 local tariffs (`LocalSellRate`), not legacy A2D DAP tables
 - Buyer pays: Import customs clearance, duties, taxes only
 
 ---
@@ -201,3 +201,4 @@ Inland Freight → Destination
 ## References
 - Maersk Incoterms Guide: https://www.maersk.com/
 - ICC Official Incoterms® 2020: https://iccwbo.org/resources-for-business/incoterms-rules/
+
