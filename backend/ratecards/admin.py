@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 from .models import (
-    PartnerRateCard, PartnerRateLane, PartnerRate, A2DDAPRateArchive
+    PartnerRateCard, PartnerRateLane, PartnerRate
 )
 
 
@@ -49,25 +49,3 @@ class PartnerRateCardAdmin(admin.ModelAdmin):
 admin.site.register(PartnerRateCard, PartnerRateCardAdmin)
 admin.site.register(PartnerRateLane, PartnerRateLaneAdmin)
 admin.site.register(PartnerRate)
-
-
-@admin.register(A2DDAPRateArchive)
-class A2DDAPRateArchiveAdmin(admin.ModelAdmin):
-    list_display = (
-        'source_rate_id',
-        'payment_term',
-        'currency',
-        'service_component_code',
-        'rate',
-        'archived_at',
-    )
-    list_filter = ('payment_term', 'currency', 'is_active', 'archived_at')
-    search_fields = ('source_rate_id', 'service_component_code', 'percent_of_component_code')
-    ordering = ('-archived_at', '-source_rate_id')
-    readonly_fields = [field.name for field in A2DDAPRateArchive._meta.fields]
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False

@@ -1,8 +1,8 @@
 """
 Legacy command retained only as a deprecation guard.
 
-A2DDAPRate was decommissioned and archived into ratecards_a2d_dap_rate_archive
-in migration 0012. Import destination local tariffs now live in
+A2DDAPRate was decommissioned in migration 0012 and removed from active
+pricing models. Import destination local tariffs now live in
 pricing_v4.LocalSellRate and pricing_v4.LocalCOGSRate.
 """
 

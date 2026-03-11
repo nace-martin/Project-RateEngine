@@ -4,7 +4,6 @@ import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from core.models import City, Airport, Port
 from parties.models import Company
 from services.models import ServiceComponent, UNIT_CHOICES as SERVICE_UNIT_CHOICES
@@ -325,43 +324,3 @@ class PartnerRate(models.Model):
         verbose_name_plural = "Partner Rates"
         unique_together = [['lane', 'service_component']]
 
-
-# ##############################################################################
-# A2D DAP LEGACY ARCHIVE
-# ##############################################################################
-
-class A2DDAPRateArchive(models.Model):
-    """
-    Immutable archive of decommissioned A2DDAPRate rows.
-
-    This table is populated by migration 0012 before removing the live
-    A2DDAPRate table to preserve historical configuration evidence.
-    """
-
-    source_rate_id = models.BigIntegerField(unique=True, db_index=True)
-    payment_term = models.CharField(max_length=10, db_index=True)
-    currency = models.CharField(max_length=3, db_index=True)
-    service_component_code = models.CharField(max_length=50, db_index=True)
-    unit_basis = models.CharField(max_length=20)
-    rate = models.DecimalField(max_digits=10, decimal_places=4)
-    min_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    max_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    percent_of_component_code = models.CharField(max_length=50, null=True, blank=True)
-    display_order = models.PositiveIntegerField(default=0)
-    is_active = models.BooleanField(default=True)
-    source_created_at = models.DateTimeField(null=True, blank=True)
-    source_updated_at = models.DateTimeField(null=True, blank=True)
-    archived_at = models.DateTimeField(default=timezone.now, db_index=True)
-    snapshot = models.JSONField(default=dict, blank=True)
-
-    def __str__(self):
-        return (
-            f"Archived A2D DAP #{self.source_rate_id} "
-            f"{self.payment_term}/{self.currency}/{self.service_component_code}"
-        )
-
-    class Meta:
-        db_table = 'a2d_dap_rate_archive'
-        verbose_name = "A2D DAP Rate Archive"
-        verbose_name_plural = "A2D DAP Rate Archive"
-        ordering = ['-archived_at', 'source_rate_id']
