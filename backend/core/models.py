@@ -244,32 +244,6 @@ class Surcharge(models.Model):
         return self.code
 
 
-class LocalTariff(models.Model):
-    """
-    Manages local charges for services like pickup, clearance, cartage, etc.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    country = models.ForeignKey(Country, on_delete=models.CASCADE)
-    charge_code = models.CharField(max_length=50, help_text="e.g., 'CARTAGE', 'CLEARANCE', 'AGENCY_FEE'")
-    description = models.CharField(max_length=255)
-
-    class Basis(models.TextChoices):
-        FLAT = 'FLAT', _('Flat Rate')
-        PER_KG = 'PER_KG', _('Per Kilogram')
-        FORMULA = 'FORMULA', _('Complex Formula')
-        
-    basis = models.CharField(max_length=20, choices=Basis.choices)
-    rate = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
-    minimum_charge = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    maximum_charge = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    currency = models.ForeignKey(Currency, on_delete=models.PROTECT)
-    gst_rate = models.DecimalField(max_digits=5, decimal_places=4, default=0.10)
-    formula_name = models.CharField(max_length=50, null=True, blank=True, help_text="Name of the function in code to calculate this, e.g., 'calculate_png_cartage'.")
-
-    def __str__(self):
-        return f"{self.charge_code} - {self.country.code}"
-
-
 class AircraftType(models.Model):
     """
     Aircraft type with cargo capacity constraints.
