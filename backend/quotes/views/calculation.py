@@ -21,11 +21,10 @@ from quotes.state_machine import (
     is_quote_editable,
 )
 from quotes.currency_rules import determine_quote_currency
-from quotes.approval import QuoteApprovalPolicy
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
-from core.commodity import COMMODITY_CODE_DG
+from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE
 from parties.models import Company, Contact
 
 # Pricing Dispatcher - Single Entry Point
@@ -141,6 +140,33 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         customer = get_object_or_404(Company, id=payload.customer_id)
+
+        if payload.commodity_code != DEFAULT_COMMODITY_CODE:
+            from quotes.spot_services import CommodityRateRuleService, SpotTriggerEvaluator
+
+            commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+                origin_airport=origin_location.code,
+                destination_airport=destination_location.code,
+                direction=shipment_type,
+                service_scope=payload.service_scope,
+                commodity_code=payload.commodity_code,
+                payment_term=payload.payment_term,
+            )
+            commodity_trigger = SpotTriggerEvaluator.build_commodity_trigger(commodity_coverage)
+            if commodity_trigger:
+                return Response(
+                    {
+                        "detail": commodity_trigger.text,
+                        "spot_trigger": {
+                            "code": commodity_trigger.code,
+                            "text": commodity_trigger.text,
+                            "missing_product_codes": commodity_trigger.missing_product_codes,
+                            "spot_required_product_codes": commodity_trigger.spot_required_product_codes,
+                            "manual_required_product_codes": commodity_trigger.manual_required_product_codes,
+                        },
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         try:
             # 1. Enforce Business Rules for EXPORT Incoterms
@@ -295,13 +321,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         """
         customer = get_object_or_404(Company, id=validated_data.customer_id)
         contact = get_object_or_404(Contact, id=validated_data.contact_id)
-        approval = QuoteApprovalPolicy.evaluate(
-            shipment_type=shipment_type,
-            service_scope=validated_data.service_scope,
-            commodity_code=validated_data.commodity_code,
-            total_cost_pgk=charges.totals.total_cost_pgk,
-            total_sell_pgk=charges.totals.total_sell_pgk,
-        )
 
         is_new_quote = quote is None
         if is_new_quote:
@@ -315,8 +334,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 payment_term=validated_data.payment_term,
                 service_scope=validated_data.service_scope,
                 commodity_code=validated_data.commodity_code,
-                approval_required=approval.approval_required,
-                approval_reason=approval.reason,
                 output_currency=output_currency or 'PGK',
                 origin_location_id=validated_data.origin_location_id,
                 destination_location_id=validated_data.destination_location_id,
@@ -338,8 +355,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.payment_term = validated_data.payment_term
             quote.service_scope = validated_data.service_scope
             quote.commodity_code = validated_data.commodity_code
-            quote.approval_required = approval.approval_required
-            quote.approval_reason = approval.reason
             quote.output_currency = output_currency or 'PGK'
             quote.origin_location_id = validated_data.origin_location_id
             quote.destination_location_id = validated_data.destination_location_id
@@ -357,8 +372,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'payment_term',
                 'service_scope',
                 'commodity_code',
-                'approval_required',
-                'approval_reason',
                 'output_currency',
                 'origin_location',
                 'destination_location',

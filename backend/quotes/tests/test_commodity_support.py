@@ -13,7 +13,7 @@ from core.commodity import COMMODITY_CODE_AVI, COMMODITY_CODE_DG, DEFAULT_COMMOD
 from core.dataclasses import CalculatedTotals, QuoteCharges
 from core.models import Country, Currency, FxSnapshot, Location, Policy
 from parties.models import Company, Contact
-from pricing_v4.models import CommodityApprovalRule
+from pricing_v4.models import CommodityChargeRule, ProductCode
 from quotes.models import Quote
 from quotes.schemas import QuoteComputeRequest
 from quotes.views.calculation import QuoteComputeV3APIView, _classify_shipment_type
@@ -199,152 +199,6 @@ class QuoteCommodityPersistenceTests(TestCase):
         self.assertEqual(quote.request_details_json["commodity_code"], COMMODITY_CODE_AVI)
         self.assertEqual(version.payload_json["commodity_code"], COMMODITY_CODE_AVI)
 
-    def test_save_quote_sets_approval_metadata_from_commodity_rule(self):
-        CommodityApprovalRule.objects.create(
-            shipment_type=Quote.ShipmentType.IMPORT,
-            service_scope="A2D",
-            commodity_code=COMMODITY_CODE_AVI,
-            requires_manager_approval=True,
-            effective_from=timezone.now().date() - timedelta(days=1),
-        )
-        payload = QuoteComputeRequest(
-            customer_id=self.customer.id,
-            contact_id=self.contact.id,
-            mode="AIR",
-            service_scope="A2D",
-            origin_location_id=self.origin.id,
-            destination_location_id=self.destination.id,
-            incoterm="DAP",
-            payment_term="PREPAID",
-            commodity_code=COMMODITY_CODE_AVI,
-            dimensions=[
-                {
-                    "pieces": 1,
-                    "length_cm": "20",
-                    "width_cm": "30",
-                    "height_cm": "40",
-                    "gross_weight_kg": "60",
-                }
-            ],
-        )
-        shipment_type = _classify_shipment_type(payload.mode, self.origin, self.destination)
-        charges = QuoteCharges(
-            lines=[],
-            totals=CalculatedTotals(
-                total_cost_pgk=Decimal("100.00"),
-                total_sell_pgk=Decimal("140.00"),
-                total_sell_pgk_incl_gst=Decimal("140.00"),
-                total_sell_fcy=Decimal("140.00"),
-                total_sell_fcy_incl_gst=Decimal("140.00"),
-                total_sell_fcy_currency="PGK",
-                has_missing_rates=False,
-            ),
-        )
-
-        quote = QuoteComputeV3APIView()._save_quote_v3(
-            request=self._build_request(),
-            validated_data=payload,
-            shipment_type=shipment_type,
-            charges=charges,
-            snapshot=self.fx_snapshot,
-            policy=self.policy,
-            output_currency="PGK",
-            initial_status=Quote.Status.DRAFT,
-        )
-
-        self.assertTrue(quote.approval_required)
-        self.assertIn("Live Animals requires manager approval.", quote.approval_reason)
-
-    def test_recalculation_clears_stale_approval_metadata(self):
-        CommodityApprovalRule.objects.create(
-            shipment_type=Quote.ShipmentType.IMPORT,
-            service_scope="A2D",
-            commodity_code=COMMODITY_CODE_AVI,
-            requires_manager_approval=True,
-            effective_from=timezone.now().date() - timedelta(days=1),
-        )
-        shipment_type = Quote.ShipmentType.IMPORT
-        approval_payload = QuoteComputeRequest(
-            customer_id=self.customer.id,
-            contact_id=self.contact.id,
-            mode="AIR",
-            service_scope="A2D",
-            origin_location_id=self.origin.id,
-            destination_location_id=self.destination.id,
-            incoterm="DAP",
-            payment_term="PREPAID",
-            commodity_code=COMMODITY_CODE_AVI,
-            dimensions=[
-                {
-                    "pieces": 1,
-                    "length_cm": "20",
-                    "width_cm": "30",
-                    "height_cm": "40",
-                    "gross_weight_kg": "60",
-                }
-            ],
-        )
-        charges = QuoteCharges(
-            lines=[],
-            totals=CalculatedTotals(
-                total_cost_pgk=Decimal("100.00"),
-                total_sell_pgk=Decimal("140.00"),
-                total_sell_pgk_incl_gst=Decimal("140.00"),
-                total_sell_fcy=Decimal("140.00"),
-                total_sell_fcy_incl_gst=Decimal("140.00"),
-                total_sell_fcy_currency="PGK",
-                has_missing_rates=False,
-            ),
-        )
-        request = self._build_request()
-        quote = QuoteComputeV3APIView()._save_quote_v3(
-            request=request,
-            validated_data=approval_payload,
-            shipment_type=shipment_type,
-            charges=charges,
-            snapshot=self.fx_snapshot,
-            policy=self.policy,
-            output_currency="PGK",
-            initial_status=Quote.Status.DRAFT,
-        )
-        self.assertTrue(quote.approval_required)
-
-        general_payload = QuoteComputeRequest(
-            customer_id=self.customer.id,
-            contact_id=self.contact.id,
-            mode="AIR",
-            service_scope="A2D",
-            origin_location_id=self.origin.id,
-            destination_location_id=self.destination.id,
-            incoterm="DAP",
-            payment_term="PREPAID",
-            commodity_code=DEFAULT_COMMODITY_CODE,
-            dimensions=[
-                {
-                    "pieces": 1,
-                    "length_cm": "20",
-                    "width_cm": "30",
-                    "height_cm": "40",
-                    "gross_weight_kg": "60",
-                }
-            ],
-        )
-
-        updated_quote = QuoteComputeV3APIView()._save_quote_v3(
-            request=request,
-            validated_data=general_payload,
-            shipment_type=shipment_type,
-            charges=charges,
-            snapshot=self.fx_snapshot,
-            policy=self.policy,
-            output_currency="PGK",
-            initial_status=Quote.Status.DRAFT,
-            quote=quote,
-        )
-
-        self.assertFalse(updated_quote.approval_required)
-        self.assertEqual(updated_quote.approval_reason, "")
-
 
 class QuoteCommodityAPITests(APITestCase):
     def setUp(self):
@@ -356,17 +210,30 @@ class QuoteCommodityAPITests(APITestCase):
         )
         self.client.force_authenticate(user=self.user)
         self.url = reverse("quotes:quote-compute-v3")
+        self.customer = Company.objects.create(name="Commodity API Customer")
+        self.contact = Contact.objects.create(
+            company=self.customer,
+            first_name="Ivy",
+            last_name="Consignee",
+            email="ivy.consignee@example.com",
+        )
+        aud = Currency.objects.create(code="AUD", name="Australian Dollar")
+        pgk = Currency.objects.create(code="PGK", name="Papua New Guinean Kina")
+        au = Country.objects.create(code="AU", name="Australia", currency=aud)
+        pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
+        self.origin = Location.objects.create(code="SYD", name="Sydney", country=au, is_active=True)
+        self.destination = Location.objects.create(code="POM", name="Port Moresby", country=pg, is_active=True)
 
     def test_standard_compute_blocks_dg_when_sent_as_commodity_code(self):
         response = self.client.post(
             self.url,
             {
-                "customer_id": str(uuid4()),
-                "contact_id": str(uuid4()),
+                "customer_id": str(self.customer.id),
+                "contact_id": str(self.contact.id),
                 "mode": "AIR",
                 "service_scope": "D2D",
-                "origin_location_id": str(uuid4()),
-                "destination_location_id": str(uuid4()),
+                "origin_location_id": str(self.origin.id),
+                "destination_location_id": str(self.destination.id),
                 "incoterm": "DAP",
                 "payment_term": "PREPAID",
                 "commodity_code": COMMODITY_CODE_DG,
@@ -387,4 +254,59 @@ class QuoteCommodityAPITests(APITestCase):
         self.assertEqual(
             response.json()["detail"],
             "Dangerous Goods (DG) shipments are not yet supported.",
+        )
+
+    def test_standard_compute_blocks_manual_only_commodity_rule_with_spot_trigger(self):
+        CommodityChargeRule.objects.create(
+            shipment_type=Quote.ShipmentType.IMPORT,
+            service_scope="A2D",
+            commodity_code=COMMODITY_CODE_AVI,
+            product_code=ProductCode.objects.create(
+                id=2987,
+                code="IMP-AVI-MANUAL-API",
+                description="Import AVI manual only",
+                domain="IMPORT",
+                category="HANDLING",
+                is_gst_applicable=True,
+                gl_revenue_code="4100",
+                gl_cost_code="5100",
+                default_unit="SHIPMENT",
+            ),
+            leg="DESTINATION",
+            trigger_mode="REQUIRES_MANUAL",
+            effective_from=timezone.now().date() - timedelta(days=1),
+            effective_to=timezone.now().date() + timedelta(days=30),
+        )
+
+        response = self.client.post(
+            self.url,
+            {
+                "customer_id": str(self.customer.id),
+                "contact_id": str(self.contact.id),
+                "mode": "AIR",
+                "service_scope": "A2D",
+                "origin_location_id": str(self.origin.id),
+                "destination_location_id": str(self.destination.id),
+                "incoterm": "DAP",
+                "payment_term": "PREPAID",
+                "commodity_code": COMMODITY_CODE_AVI,
+                "dimensions": [
+                    {
+                        "pieces": 1,
+                        "length_cm": "10",
+                        "width_cm": "10",
+                        "height_cm": "10",
+                        "gross_weight_kg": "10",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        payload = response.json()
+        self.assertEqual(payload["spot_trigger"]["code"], "COMMODITY_REQUIRES_MANUAL")
+        self.assertEqual(
+            payload["spot_trigger"]["manual_required_product_codes"],
+            ["IMP-AVI-MANUAL-API"],
         )

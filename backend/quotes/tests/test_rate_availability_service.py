@@ -514,3 +514,147 @@ def test_export_d2a_seeded_commodity_rate_does_not_trigger_spot_when_scope_is_co
     )
     assert is_spot is False
     assert trigger is None
+
+
+def test_export_d2a_requires_spot_rule_triggers_spot_even_with_scope_coverage():
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_freight = _pc(1951, "EXP-FRT-AIR-COMMODITY-SPOT", "EXPORT", "FREIGHT", unit="KG")
+    pc_origin = _pc(1952, "EXP-DOC-COMMODITY-SPOT", "EXPORT", "DOCUMENTATION")
+    pc_special = _pc(1953, "EXP-AVI-SPOT-ONLY", "EXPORT", "HANDLING")
+
+    ExportCOGS.objects.create(
+        product_code=pc_freight,
+        origin_airport="POM",
+        destination_airport="BNE",
+        agent=agent,
+        currency="USD",
+        rate_per_kg=Decimal("3.40"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("120.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    CommodityChargeRule.objects.create(
+        shipment_type="EXPORT",
+        service_scope="D2A",
+        commodity_code="AVI",
+        product_code=pc_special,
+        leg="ORIGIN",
+        trigger_mode="REQUIRES_SPOT",
+        effective_from=valid_from,
+        effective_to=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "POM", "BNE", "EXPORT", "D2A", payment_term="PREPAID"
+    )
+    commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+        "POM", "BNE", "EXPORT", "D2A", "AVI", payment_term="PREPAID"
+    )
+
+    assert commodity_coverage.spot_required_product_codes == ["EXP-AVI-SPOT-ONLY"]
+    is_spot, trigger = SpotTriggerEvaluator.evaluate(
+        origin_country="PG",
+        destination_country="AU",
+        direction="EXPORT",
+        service_scope="D2A",
+        component_availability=availability,
+        commodity_code="AVI",
+        commodity_coverage=commodity_coverage,
+    )
+    assert is_spot is True
+    assert trigger.code == SpotTriggerReason.COMMODITY_REQUIRES_SPOT
+    assert trigger.spot_required_product_codes == ["EXP-AVI-SPOT-ONLY"]
+
+
+def test_export_d2a_requires_manual_rule_triggers_spot_with_manual_reason():
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_freight = _pc(1941, "EXP-FRT-AIR-COMMODITY-MANUAL", "EXPORT", "FREIGHT", unit="KG")
+    pc_origin = _pc(1942, "EXP-DOC-COMMODITY-MANUAL", "EXPORT", "DOCUMENTATION")
+    pc_special = _pc(1943, "EXP-AVI-MANUAL-ONLY", "EXPORT", "HANDLING")
+
+    ExportCOGS.objects.create(
+        product_code=pc_freight,
+        origin_airport="POM",
+        destination_airport="BNE",
+        agent=agent,
+        currency="USD",
+        rate_per_kg=Decimal("3.40"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("120.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    CommodityChargeRule.objects.create(
+        shipment_type="EXPORT",
+        service_scope="D2A",
+        commodity_code="AVI",
+        product_code=pc_special,
+        leg="ORIGIN",
+        trigger_mode="REQUIRES_MANUAL",
+        effective_from=valid_from,
+        effective_to=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "POM", "BNE", "EXPORT", "D2A", payment_term="PREPAID"
+    )
+    commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+        "POM", "BNE", "EXPORT", "D2A", "AVI", payment_term="PREPAID"
+    )
+
+    assert commodity_coverage.manual_required_product_codes == ["EXP-AVI-MANUAL-ONLY"]
+    is_spot, trigger = SpotTriggerEvaluator.evaluate(
+        origin_country="PG",
+        destination_country="AU",
+        direction="EXPORT",
+        service_scope="D2A",
+        component_availability=availability,
+        commodity_code="AVI",
+        commodity_coverage=commodity_coverage,
+    )
+    assert is_spot is True
+    assert trigger.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
+    assert trigger.manual_required_product_codes == ["EXP-AVI-MANUAL-ONLY"]

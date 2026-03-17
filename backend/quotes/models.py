@@ -129,16 +129,7 @@ class Quote(models.Model):
         choices=COMMODITY_CHOICES,
         default=DEFAULT_COMMODITY_CODE,
         db_index=True,
-        help_text="Commodity classification used for conditional pricing and approvals.",
-    )
-    approval_required = models.BooleanField(
-        default=False,
-        db_index=True,
-        help_text="True when the quote needs manager approval before commercial release.",
-    )
-    approval_reason = models.TextField(
-        blank=True,
-        help_text="Human-readable reason explaining why approval is required.",
+        help_text="Commodity classification used for conditional pricing decisions.",
     )
     is_dangerous_goods = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)

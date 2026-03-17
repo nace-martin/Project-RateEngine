@@ -57,6 +57,8 @@ class SpotTriggerReason:
     # Canonical Code (Deterministic Logic)
     MISSING_SCOPE_RATES = "MISSING_SCOPE_RATES"
     MISSING_COMMODITY_RATES = "MISSING_COMMODITY_RATES"
+    COMMODITY_REQUIRES_SPOT = "COMMODITY_REQUIRES_SPOT"
+    COMMODITY_REQUIRES_MANUAL = "COMMODITY_REQUIRES_MANUAL"
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
     
     # Legacy codes (retained for backward compatibility in DB)
@@ -86,6 +88,8 @@ class TriggerResult:
     text: str
     missing_components: List[str] = field(default_factory=list)
     missing_product_codes: List[str] = field(default_factory=list)
+    spot_required_product_codes: List[str] = field(default_factory=list)
+    manual_required_product_codes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -311,20 +315,57 @@ class SpotTriggerEvaluator:
                 missing_components=coverage.missing_required,
             )
 
-        commodity_result = commodity_coverage or CommodityCoverageResult()
-        if commodity_result.is_spot_required:
-            unresolved = commodity_result.unresolved_product_codes
-            return True, TriggerResult(
-                code=SpotTriggerReason.MISSING_COMMODITY_RATES,
-                text=(
-                    "Missing commodity-specific pricing coverage for selected service scope: "
-                    f"{', '.join(unresolved)}"
-                ),
-                missing_product_codes=unresolved,
-            )
+        commodity_trigger = cls.build_commodity_trigger(commodity_coverage)
+        if commodity_trigger:
+            return True, commodity_trigger
 
         # 5️⃣ Normal Pricing Path
         return False, None
+
+    @classmethod
+    def build_commodity_trigger(
+        cls,
+        commodity_coverage: Optional[CommodityCoverageResult],
+    ) -> Optional[TriggerResult]:
+        commodity_result = commodity_coverage or CommodityCoverageResult()
+        if not commodity_result.is_spot_required:
+            return None
+
+        missing = commodity_result.missing_product_codes
+        spot_required = commodity_result.spot_required_product_codes
+        manual_required = commodity_result.manual_required_product_codes
+
+        if manual_required:
+            code = SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
+        elif spot_required:
+            code = SpotTriggerReason.COMMODITY_REQUIRES_SPOT
+        else:
+            code = SpotTriggerReason.MISSING_COMMODITY_RATES
+
+        message_parts: list[str] = []
+        if manual_required:
+            message_parts.append(
+                "Commodity requires manual charge entry for: "
+                + ", ".join(manual_required)
+            )
+        if spot_required:
+            message_parts.append(
+                "Commodity requires SPOT rate sourcing for: "
+                + ", ".join(spot_required)
+            )
+        if missing:
+            message_parts.append(
+                "Commodity-specific DB coverage is missing for: "
+                + ", ".join(missing)
+            )
+
+        return TriggerResult(
+            code=code,
+            text=" ".join(message_parts),
+            missing_product_codes=commodity_result.unresolved_product_codes,
+            spot_required_product_codes=spot_required,
+            manual_required_product_codes=manual_required,
+        )
 
 class RateAvailabilityService:
     """

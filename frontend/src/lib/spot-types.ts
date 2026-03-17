@@ -81,6 +81,9 @@ export interface TriggerResult {
     code: string;
     text: string;
     missing_components?: string[];
+    missing_product_codes?: string[];
+    spot_required_product_codes?: string[];
+    manual_required_product_codes?: string[];
 }
 
 /** Trigger evaluation response */

@@ -216,6 +216,52 @@ class TestSpotTriggerEvaluation:
         assert result.code == SpotTriggerReason.MISSING_COMMODITY_RATES
         assert result.missing_product_codes == ["EXP-DG"]
 
+    def test_spot_trigger_commodity_requires_spot_rule(self):
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="PG",
+            destination_country="AU",
+            direction="EXPORT",
+            service_scope="D2A",
+            component_availability={
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+            },
+            commodity_code="AVI",
+            commodity_coverage=CommodityCoverageResult(
+                spot_required_product_codes=["EXP-AVI-SPOT"],
+            ),
+        )
+
+        assert is_spot is True
+        assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_SPOT
+        assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
+        assert "SPOT rate sourcing" in result.text
+
+    def test_spot_trigger_commodity_requires_manual_rule(self):
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="PG",
+            destination_country="AU",
+            direction="EXPORT",
+            service_scope="D2A",
+            component_availability={
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+            },
+            commodity_code="AVI",
+            commodity_coverage=CommodityCoverageResult(
+                manual_required_product_codes=["EXP-AVI-MANUAL"],
+                spot_required_product_codes=["EXP-AVI-SPOT"],
+                missing_product_codes=["EXP-AVI-DB"],
+            ),
+        )
+
+        assert is_spot is True
+        assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
+        assert result.manual_required_product_codes == ["EXP-AVI-MANUAL"]
+        assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
+        assert result.missing_product_codes == ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
+        assert "manual charge entry" in result.text
+
 
 class TestRateAvailabilityService:
     """Rate availability detection against V4 rate tables."""

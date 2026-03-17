@@ -433,6 +433,8 @@ class SpotTriggerEvaluateAPIView(APIView):
                 'text': trigger.text,
                 'missing_components': trigger.missing_components,
                 'missing_product_codes': trigger.missing_product_codes,
+                'spot_required_product_codes': trigger.spot_required_product_codes,
+                'manual_required_product_codes': trigger.manual_required_product_codes,
             } if trigger else None,
         })
 
