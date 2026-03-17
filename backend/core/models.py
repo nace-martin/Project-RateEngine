@@ -133,8 +133,21 @@ class Location(models.Model):
     metadata = models.JSONField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
+    @property
+    def display_name(self) -> str:
+        if self.city and self.city.name:
+            return self.city.name
+        if self.airport and self.airport.city and self.airport.city.name:
+            return self.airport.city.name
+        if self.port and self.port.city and self.port.city.name:
+            return self.port.city.name
+        return self.name
+
     def __str__(self):
-        return f"{self.code} - {self.name}"
+        code = self.code
+        if code:
+            return f"{code} - {self.display_name}"
+        return self.display_name
 
     class Meta:
         indexes = [

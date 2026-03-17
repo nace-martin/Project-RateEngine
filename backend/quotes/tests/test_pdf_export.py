@@ -1,7 +1,7 @@
 from django.test import TestCase
 from decimal import Decimal
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from quotes.pdf_service import generate_quote_pdf, _get_chargeable_weight, _get_location_country_code
+from quotes.pdf_service import generate_quote_pdf, _extract_location_info, _get_chargeable_weight, _get_location_country_code
 from parties.models import Company
 from core.models import Location, Country, City
 
@@ -114,3 +114,27 @@ class QuotePDFExportTest(TestCase):
 
         self.assertEqual(_get_location_country_code(quote, 'origin'), 'HK')
         self.assertEqual(_get_location_country_code(quote, 'destination'), 'PG')
+
+    def test_extract_location_info_prefers_city_name_over_airport_label(self):
+        country_au = Country.objects.create(code='AU', name='Australia')
+        city_bne = City.objects.create(name='Brisbane', country=country_au)
+        origin_bne = Location.objects.create(
+            code='BNE',
+            name='Brisbane International Airport',
+            city=city_bne,
+            country=country_au,
+        )
+
+        quote = Quote.objects.create(
+            customer=self.customer,
+            origin_location=origin_bne,
+            destination_location=self.dest,
+            quote_number='TEST-PDF-CITY-LABEL',
+            status='DRAFT',
+            mode='AIR',
+            shipment_type='EXPORT',
+        )
+
+        code, name = _extract_location_info(quote, 'origin')
+        self.assertEqual(code, 'BNE')
+        self.assertEqual(name, 'Brisbane')

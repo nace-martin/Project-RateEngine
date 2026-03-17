@@ -75,9 +75,8 @@ class Command(BaseCommand):
 
         ImportSellRate.objects.update_or_create(
             product_code=pc, origin_airport=org, destination_airport=dest,
-            valid_from=date(2025, 1, 1),
+            currency=curr, valid_from=date(2025, 1, 1),
             defaults={
-                'currency': curr,
                 'rate_per_shipment': Decimal(flat) if flat else None,
                 'rate_per_kg': Decimal(per_kg) if per_kg else None,
                 'min_charge': Decimal(min_charge) if min_charge else None,

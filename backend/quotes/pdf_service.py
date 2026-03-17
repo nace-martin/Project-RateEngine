@@ -588,7 +588,14 @@ def _extract_location_info(quote, location_type: str) -> tuple[str, str]:
             code = location.code
         else:
             code = str(location)[:3].upper()
-        name = getattr(location, 'name', str(location))
+        if getattr(location, "city", None) and getattr(location.city, "name", None):
+            name = location.city.name
+        elif getattr(location, "airport", None) and getattr(location.airport, "city", None) and getattr(location.airport.city, "name", None):
+            name = location.airport.city.name
+        elif getattr(location, "port", None) and getattr(location.port, "city", None) and getattr(location.port.city, "name", None):
+            name = location.port.city.name
+        else:
+            name = getattr(location, 'name', str(location))
         return code, name
     
     if location_type == 'origin':

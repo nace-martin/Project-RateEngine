@@ -58,3 +58,6 @@ class LocationSearchViewTests(APITestCase):
         ids = {item['id'] for item in payload}
 
         self.assertIn(str(self.city_location.id), ids)
+
+    def test_location_string_prefers_city_name_for_airport_backed_locations(self):
+        self.assertEqual(str(self.airport_location), "BNE - Brisbane")

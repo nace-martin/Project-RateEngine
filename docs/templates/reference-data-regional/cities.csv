@@ -1,0 +1,4607 @@
+country_code,name
+AU,Adelaide
+AU,Adelaide Hills
+AU,Adelaide city centre
+AU,Albany
+AU,Albion Park Rail
+AU,Alice Springs
+AU,Altona Meadows
+AU,Ararat
+AU,Armidale
+AU,Ashfield
+AU,Auburn
+AU,Aurukun
+AU,Bacchus Marsh
+AU,Badu Island
+AU,Bairnsdale
+AU,Baldivis
+AU,Ballajura
+AU,Ballarat
+AU,Ballina
+AU,Balwyn North
+AU,Bamaga
+AU,Bankstown
+AU,Barcaldine
+AU,Batemans Bay
+AU,Bathurst
+AU,Baulkham Hills
+AU,Bedourie
+AU,Benalla
+AU,Bendigo
+AU,Bentleigh
+AU,Bentleigh East
+AU,Berwick
+AU,Bexley
+AU,Biloela
+AU,Blackall
+AU,Blacktown
+AU,Boigu Island
+AU,Boronia
+AU,Brighton
+AU,Brisbane
+AU,Broadwood
+AU,Broken Hill
+AU,Broome
+AU,Brunswick
+AU,Buderim
+AU,Bunbury
+AU,Bundaberg
+AU,Bundoora
+AU,Burnie
+AU,Burwood
+AU,Busselton
+AU,Byford
+AU,Caboolture
+AU,Cabramatta
+AU,Cairns
+AU,Calamvale
+AU,Caloundra
+AU,Camberwell
+AU,Campsie
+AU,Canberra
+AU,Canning Vale
+AU,Capalaba
+AU,Carlingford
+AU,Carnarvon
+AU,Carnegie
+AU,Caroline Springs
+AU,Carrum Downs
+AU,Castle Hill
+AU,Caulfield North
+AU,Central Coast
+AU,Cessnock
+AU,Charleville
+AU,Chatswood
+AU,Cheltenham
+AU,Cherrybrook
+AU,Chinchilla
+AU,Christmas Creek Mine
+AU,City of Port Phillip
+AU,Clayton
+AU,Cloncurry
+AU,Cobbitty
+AU,Coburg
+AU,Coen
+AU,Coffs Harbour
+AU,Coober Pedy
+AU,Cooma
+AU,Cosmo Newbery
+AU,Craigieburn
+AU,Cranbourne
+AU,Cranbourne East
+AU,Cranbourne North
+AU,Cranbourne West
+AU,Cronulla
+AU,Croydon
+AU,Dandenong
+AU,Dandenong North
+AU,Darnley Island
+AU,Darwin
+AU,Deception Bay
+AU,Dee Why
+AU,Deer Park
+AU,Denham
+AU,Deniliquin
+AU,Derby
+AU,Devonport
+AU,Dianella
+AU,Doncaster
+AU,Doncaster East
+AU,Doreen
+AU,Dubbo
+AU,Earlwood
+AU,East Albury
+AU,Eastwood
+AU,Elcho Island
+AU,Ellenbrook
+AU,Eltham
+AU,Emerald
+AU,Endeavour Hills
+AU,Engadine
+AU,Epping
+AU,Esperance
+AU,Essendon
+AU,Essendon Fields
+AU,Exmouth
+AU,Fairfield
+AU,Ferntree Gully
+AU,Footscray
+AU,Forbes
+AU,Forest Hill
+AU,Forest Lake
+AU,Frankston
+AU,Frankston East
+AU,Frankston South
+AU,Gawler
+AU,Geelong
+AU,Geelong/Melbourne
+AU,Geraldton
+AU,Gladstone
+AU,Glen Innes
+AU,Glen Iris
+AU,Glen Waverley
+AU,Glenferrie
+AU,Glenmore Park
+AU,Glenroy
+AU,Gold Coast
+AU,Gosnells
+AU,Goulburn
+AU,Grafton
+AU,Greenacre
+AU,Greensborough
+AU,Greenvale
+AU,Greystanes
+AU,Griffith
+AU,Groote Eylandt
+AU,Gympie
+AU,Hamilton Island
+AU,Hampton Park
+AU,Hawthorn
+AU,Hawthorn South
+AU,Hayman Island
+AU,Hervey Bay
+AU,Highton
+AU,Hillside
+AU,Hobart
+AU,Hobart (Cambridge)
+AU,Hoppers Crossing
+AU,Horn
+AU,Hornsby
+AU,Horsham
+AU,Hughenden
+AU,Hurstville
+AU,Inverell
+AU,Kalbarri
+AU,Kalgoorlie
+AU,Kallangur
+AU,Karara
+AU,Karratha
+AU,Kellyville
+AU,Kew
+AU,Keysborough
+AU,Kirwan
+AU,Kowanyama
+AU,Kubin Island
+AU,Kununurra
+AU,Kwinana
+AU,Labrador
+AU,Laceby
+AU,Lajamanu
+AU,Lakemba
+AU,Lalor
+AU,Langwarrin
+AU,Launceston
+AU,Launceston (Western Junction)
+AU,Laverton
+AU,Leonora
+AU,Lidcombe
+AU,Lilydale
+AU,Lismore
+AU,Liverpool
+AU,Lockhart River
+AU,Logan City
+AU,Longreach
+AU,Lord Howe Island
+AU,Mabuiag Island
+AU,Mackay
+AU,Maitland
+AU,Malvern East
+AU,Mandurah
+AU,Maningrida
+AU,Mareeba
+AU,Maroochydore
+AU,Maroubra
+AU,Marrickville
+AU,Maryborough
+AU,McArthur River Mine
+AU,Melbourne
+AU,Melbourne City Centre
+AU,Merimbula
+AU,Mernda
+AU,Merrylands
+AU,Mildura
+AU,Milikapiti
+AU,Milingimbi Island
+AU,Mill Park
+AU,Moonyoonooka
+AU,Mooroolbark
+AU,Moranbah
+AU,Morayfield
+AU,Moree
+AU,Morley
+AU,Mornington
+AU,Morphett Vale
+AU,Moruya
+AU,Morwell
+AU,Mosman
+AU,Mount Barker
+AU,Mount Eba
+AU,Mount Eliza
+AU,Mount Gambier
+AU,Mount Hotham
+AU,Mount Isa
+AU,Mount Martha
+AU,Mount Waverley
+AU,Mudgee
+AU,Mulgrave
+AU,Murray Island
+AU,Narangba
+AU,Narrabri
+AU,Narrandera
+AU,Narre Warren
+AU,Narre Warren South
+AU,Newcastle
+AU,Newman
+AU,Nhulunbuy
+AU,Noble Park
+AU,Normanton
+AU,North Lakes
+AU,Northcote
+AU,Nowra Hill
+AU,Officer
+AU,Olympic Dam
+AU,Orange
+AU,Pakenham
+AU,Palmerston
+AU,Paraburdoo
+AU,Parkes
+AU,Parramatta
+AU,Pascoe Vale
+AU,Perth
+AU,Pirlangimpi
+AU,Point Cook
+AU,Pormpuraaw
+AU,Port Hedland
+AU,Port Lincoln
+AU,Port Macquarie
+AU,Port Melbourne
+AU,Preston
+AU,Proserpine
+AU,Punchbowl
+AU,Quakers Hill
+AU,Randwick
+AU,Redbank Plains
+AU,Reservoir
+AU,Richmond
+AU,Ringwood
+AU,Robina
+AU,Rockhampton
+AU,Roma
+AU,Rowville
+AU,Roxburgh Park
+AU,Ryde
+AU,Saibai Island
+AU,Saint Albans
+AU,Saint Ives
+AU,Saint Kilda
+AU,Sale
+AU,Scarborough
+AU,Seaford
+AU,Seven Hills
+AU,Shepparton
+AU,South Morang
+AU,South Yarra
+AU,Southbank
+AU,Southport
+AU,Springvale
+AU,St Albans
+AU,St Clair
+AU,Strathfield
+AU,Sue Islet
+AU,Sunbury
+AU,Sunnybank Hills
+AU,Sunshine Coast
+AU,Sunshine West
+AU,Surfers Paradise
+AU,Sydney
+AU,Sydney (Mascot)
+AU,Sydney Central Business District
+AU,Tamworth
+AU,Taree
+AU,Tarneit
+AU,Temora
+AU,Templestowe
+AU,Tennant Creek
+AU,Thargomindah
+AU,Thomastown
+AU,Thornbury
+AU,Thornlie
+AU,Toowoomba
+AU,Torquay
+AU,Townsville
+AU,Traralgon
+AU,Truganina
+AU,Tuggeranong Administrative District
+AU,Tumut
+AU,Upper Coomera
+AU,Wadeye
+AU,Wahroonga
+AU,Wangaratta
+AU,Wantirna South
+AU,Warragul
+AU,Warrnambool
+AU,Weipa
+AU,Werribee
+AU,West Wyalong
+AU,Westmead
+AU,Wheelers Hill
+AU,Whitemark
+AU,Whyalla
+AU,Willetton
+AU,Williamtown
+AU,Windorah
+AU,Wodonga
+AU,Wollert
+AU,Wollongong
+AU,Wollongong city centre
+AU,Wurrumiyanga
+AU,Wyndham Vale
+AU,Yagoona
+AU,Yam Island
+AU,Yorke Island
+AU,Yulara
+BN,Bandar Seri Begawan
+BN,Bangar
+BN,Kampong Ayer
+BN,Kampong Beribi
+BN,Kampong Gadong
+BN,Kampong Jerudong
+BN,Kampong Kiajong
+BN,Kampong Lambak A
+BN,Kampong Lugu
+BN,Kampong Mata Mata
+BN,Kampong Meragang
+BN,Kampong Mulaut
+BN,Kampong Peninjau
+BN,Kampong Rimba
+BN,Kampong Selayun
+BN,Kampong Tanjong Nangka
+BN,Kampong Tunah Jambu
+BN,Kampung Labi
+BN,Kampung Panaga
+BN,Kampung Sungai Teraban
+BN,Kapok
+BN,Katok
+BN,Keriam
+BN,Kiudang
+BN,Kota Batu
+BN,Kuala Belait
+BN,Kulapis
+BN,Lamunin
+BN,Liang
+BN,Lumapas
+BN,Madewa
+BN,Mentiri
+BN,Pad Nunok
+BN,Penanjong
+BN,Pengkalan Batu
+BN,Perumahan Negara Panchor
+BN,Rambai
+BN,Salambigar
+BN,Sengkarai
+BN,Sengkurong
+BN,Serasa
+BN,Seria
+BN,Sinarubai
+BN,Subok
+BN,Sungai Hanching
+BN,Telamba
+BN,Telisai
+BN,Tutong
+CN,Aksu (Onsu)
+CN,Altay
+CN,Ankang
+CN,Ankang (Hanbin)
+CN,Anqing
+CN,Anshan
+CN,Anshun
+CN,Anshun (Xixiu)
+CN,Anyang
+CN,Aqsu
+CN,Aral
+CN,Arxan
+CN,Badanjilin
+CN,Baicheng
+CN,Baise
+CN,Baise (Tianyang)
+CN,Baishan
+CN,Banan
+CN,Bangda
+CN,Bao'an
+CN,Baoding
+CN,Baoji
+CN,Baoshan
+CN,Baoshan (Longyang)
+CN,Baoshan (Tengchong)
+CN,Baotou
+CN,Basuo
+CN,Bayan Nur
+CN,Bayanhot
+CN,Bayannur
+CN,Bazhong
+CN,Bei'an
+CN,Beihai
+CN,Beijing
+CN,Bengbu
+CN,Benxi
+CN,Bijie
+CN,Binzhou
+CN,Bole
+CN,Bozhou
+CN,Burang Town
+CN,Burqin
+CN,Cangzhou
+CN,Changchun
+CN,Changde
+CN,Changde (Dingcheng)
+CN,Changsha
+CN,Changsha (Changsha)
+CN,Changshu
+CN,Changzhi
+CN,Changzhou
+CN,Chaoyang
+CN,Chaozhou
+CN,Chengde
+CN,Chengdu
+CN,Chengdu (Jianyang)
+CN,Chengdu (Jintang)
+CN,Chengdu (Shuangliu)
+CN,Chengguan Qu
+CN,Chenzhou
+CN,Chifeng
+CN,Chizhou
+CN,Chongqing
+CN,Chuxiong
+CN,Chuxiong (Yuanmou)
+CN,Chuzhou
+CN,Cixi
+CN,Dali (Xiaguan)
+CN,Dalian
+CN,Dalian (Changhai)
+CN,Dalian (Ganjingzi)
+CN,Dandong
+CN,Dandong (Zhenxing)
+CN,Daqing
+CN,Datong
+CN,Dazhou
+CN,Dazhou (Dachuan)
+CN,Dazhou (Daxian)
+CN,Dehong (Mangshi)
+CN,Delingha
+CN,Deyang
+CN,Deyang (Guanghan)
+CN,Dezhou
+CN,Dingxi
+CN,Diqing (Shangri-La)
+CN,Dongguan
+CN,Dongying
+CN,Dongying (Kenli)
+CN,Dunhuang
+CN,E'zhou
+CN,Enshi (Enshi)
+CN,Erenhot
+CN,Ezhou
+CN,Foshan
+CN,Foshan (Nanhai)
+CN,Fushun
+CN,Fuxin
+CN,Fuyang
+CN,Fuyuan
+CN,Fuyun
+CN,Fuzhou
+CN,Fuzhou (Changle)
+CN,Gannan (Xiahe)
+CN,Ganzhou
+CN,Gaomi
+CN,Garzê (Daocheng)
+CN,Garzê (Garzê)
+CN,Garzê (Kangding)
+CN,Golmud
+CN,Golog (Maqên)
+CN,Guang'an
+CN,Guangyuan
+CN,Guangyuan (Lizhou)
+CN,Guangzhou
+CN,Guangzhou (Huadu)
+CN,Guankou
+CN,Guigang
+CN,Guilin
+CN,Guilin (Lingui)
+CN,Guiyang
+CN,Guiyang (Nanming)
+CN,Gujangbagh
+CN,Guli
+CN,Guyuan
+CN,Guyuan (Yuanzhou)
+CN,Haibei (Qilian)
+CN,Haidong (Huzhu Tu Autonomous County)
+CN,Haikou
+CN,Haikou (Meilan)
+CN,Hailar
+CN,Hami
+CN,Handan
+CN,Hangzhou
+CN,Hanzhong
+CN,Hanzhong (Chenggu)
+CN,Harbin
+CN,Hebi
+CN,Hechi (Jinchengjiang)
+CN,Hefei
+CN,Hegang
+CN,Heihe
+CN,Hejing
+CN,Hengshui
+CN,Hengyang
+CN,Heshan
+CN,Heyuan
+CN,Heze
+CN,Heze (Dingtao)
+CN,Hezhou
+CN,Hohhot
+CN,Holingol
+CN,Hotan
+CN,Hotan (Yutian)
+CN,Huai'an
+CN,Huaibei
+CN,Huaihua
+CN,Huainan
+CN,Huangshan
+CN,Huangshi
+CN,Huizhou
+CN,Huizhou (Pingtan)
+CN,Huludao
+CN,Huludao (Xingcheng)
+CN,Huzhou
+CN,Ili (Yining / Ghulja)
+CN,Ji'an
+CN,Jiagedaqi
+CN,Jiamusi
+CN,Jiangmen
+CN,Jiangyin
+CN,Jiansanjiang
+CN,Jianshui
+CN,Jiaojiang
+CN,Jiaozhou
+CN,Jiaozuo
+CN,Jiaxing
+CN,Jiayuguan
+CN,Jieyang
+CN,Jieyang (Rongcheng)
+CN,Jilin
+CN,Jinan
+CN,Jinan (Licheng)
+CN,Jinchang
+CN,Jincheng
+CN,Jingdezhen
+CN,Jinghong (Gasa)
+CN,Jingmen
+CN,Jingzhou
+CN,Jingzhou (Shashi)
+CN,Jinhua
+CN,Jining
+CN,Jinjiang
+CN,Jinzhong
+CN,Jinzhou
+CN,Jinzhou (Linghai)
+CN,Jiujiang
+CN,Jiuquan
+CN,Jixi
+CN,Kaifeng
+CN,Kaili (Huangping)
+CN,Karamay
+CN,Kashgar
+CN,Korla
+CN,Kunming
+CN,Kunshan
+CN,Kuqa
+CN,Laibin
+CN,Laiwu
+CN,Langfang
+CN,Lanzhou
+CN,Lanzhou (Yongdeng)
+CN,Leshan
+CN,Liangshan (Xichang)
+CN,Lianyungang
+CN,Liaocheng
+CN,Liaoyang
+CN,Lijiang
+CN,Lincang
+CN,Lincang (Cangyuan)
+CN,Linfen
+CN,Linfen (Yaodu)
+CN,Linyi
+CN,Linyi (Hedong)
+CN,Liping
+CN,Lishui
+CN,Liupanshui
+CN,Liupanshui (Zhongshan)
+CN,Liuzhou
+CN,Liuzhou (Liujiang)
+CN,Longnan (Cheng)
+CN,Longshan
+CN,Longyan
+CN,Longyan (Liancheng)
+CN,Loudi
+CN,Lu'an
+CN,Luancheng
+CN,Lueliang
+CN,Luohe
+CN,Luohu District
+CN,Luoyang
+CN,Luoyang (Laocheng)
+CN,Luzhou
+CN,Luzhou (Yunlong)
+CN,Lüliang
+CN,Ma'anshan
+CN,Manzhouli
+CN,Maoming
+CN,Meishan
+CN,Meizhou
+CN,Meizhou (Meixian)
+CN,Mengnai
+CN,Mengzi
+CN,Mianyang
+CN,Mianyang (Fucheng)
+CN,"Mianzhu, Deyang, Sichuan"
+CN,Mohe
+CN,Mudanjiang
+CN,Nanchang
+CN,Nanchong
+CN,Nanchong (Gaoping)
+CN,Nanchong (Langzhong)
+CN,Nanjing
+CN,Nanning
+CN,Nanning (Jiangnan)
+CN,Nanping
+CN,Nantong
+CN,Nantong (Tongzhou)
+CN,Nanyang
+CN,Nanyang (Wancheng)
+CN,Neijiang
+CN,Ngawa (Hongyuan)
+CN,Ngawa (Songpan)
+CN,Ningbo
+CN,Ningde
+CN,Ninglang
+CN,Nyingchi (Mainling)
+CN,Ordos
+CN,Panshan
+CN,Panzhihua
+CN,Panzhihua (Renhe)
+CN,Pingdingshan
+CN,Pingdu
+CN,Pingliang
+CN,Pingxiang
+CN,Pu'er
+CN,Pu'er (Lancang)
+CN,Puning
+CN,Putian
+CN,Puyang
+CN,Qian Gorlos Mongol Autonomous County
+CN,Qianjiang
+CN,Qiannan (Libo)
+CN,Qiemo
+CN,Qingdao
+CN,Qingdao (Jiaozhou)
+CN,Qingyang
+CN,Qingyang (Xifeng)
+CN,Qingyuan
+CN,Qinhuangdao
+CN,Qinhuangdao (Changli)
+CN,Qinzhou
+CN,Qionghai
+CN,Qionghai (Basuo)
+CN,Qiqihar
+CN,Qitai
+CN,Quanzhou
+CN,Qujing
+CN,Quzhou
+CN,Quzhou (Kezheng)
+CN,Rizhao
+CN,Rizhao (Donggang)
+CN,Rugao (Nantong)
+CN,Rui'an
+CN,Ruoqiang Town
+CN,Sanhe
+CN,Sanmenxia
+CN,Sanming
+CN,Sanming (Sha)
+CN,Sanya
+CN,Sanya (Tianya)
+CN,Shache
+CN,Shanghai
+CN,Shanghai (Minhang)
+CN,Shanghai (Pudong)
+CN,Shangluo
+CN,Shangqiu
+CN,Shangrao
+CN,Shangrao (Hengfeng)
+CN,Shangyu
+CN,Shannan
+CN,Shannan (Gonggar)
+CN,Shanshan
+CN,Shantou
+CN,Shanwei
+CN,Shaoguan
+CN,Shaoxing
+CN,Shaoyang
+CN,Shaoyang (Wugang)
+CN,Shennongjia (Hongping)
+CN,Shenyang
+CN,Shenzhen
+CN,Shihezi
+CN,Shijiazhuang
+CN,Shiquanhe
+CN,Shiyan
+CN,Shiyan (Maojian)
+CN,Shizuishan
+CN,Shouguang
+CN,"Shuangta, Chaoyang"
+CN,Shuangyashan
+CN,Shuozhou
+CN,Siping
+CN,Suining
+CN,Suizhou
+CN,Suqian
+CN,Suzhou
+CN,Tacheng
+CN,Tai'an
+CN,Taicang
+CN,Taiyuan
+CN,Taizhou
+CN,Taizhou (Luqiao)
+CN,Tangbu
+CN,Tanggu
+CN,Tangshan
+CN,Tangshan (Fengrun)
+CN,Tashikuergan
+CN,Tianjin
+CN,Tianshui
+CN,Tianshui (Maiji)
+CN,Tongchuan
+CN,Tonghua
+CN,Tongliao
+CN,Tongling
+CN,Tongren
+CN,Tongren (Daxing)
+CN,Tumxuk
+CN,Turpan
+CN,UEruemqi
+CN,Ulanhot
+CN,Ulanqab
+CN,Wafangdian
+CN,Wanning
+CN,Wanxian
+CN,Wanzhou
+CN,Weifang
+CN,Weifang (Kuiwen)
+CN,Weihai
+CN,Weinan
+CN,Wenchang
+CN,Wenshan
+CN,Wenshan City
+CN,Wenzhou
+CN,Wenzhou (Longwan)
+CN,Wuhai
+CN,Wuhan
+CN,Wuhan (Hannan)
+CN,Wuhan (Huangpi)
+CN,Wuhu
+CN,Wulong
+CN,Wushan
+CN,Wuwei
+CN,Wuxi
+CN,Wuyishan
+CN,Wuzhou
+CN,Xi'an
+CN,Xi'an (Baqiao)
+CN,Xiamen
+CN,Xiangtan
+CN,Xiangxi
+CN,Xiangyang
+CN,Xiangyang (Laohekou)
+CN,Xiangyang (Xiangzhou)
+CN,Xianning
+CN,Xianyang
+CN,Xianyang (Weicheng)
+CN,Xiaogan
+CN,Xichang
+CN,Xigazê (Dingri)
+CN,Xigazê (Samzhubzê)
+CN,Xilinhot
+CN,Xingtai
+CN,Xingyi
+CN,Xining
+CN,Xinxiang
+CN,Xinyang
+CN,Xinyu
+CN,Xinyuan
+CN,Xinzhou
+CN,"Xiuzhou, Hangzhou"
+CN,Xuancheng
+CN,Xuchang
+CN,Xuzhou
+CN,Ya'an
+CN,Yan'an
+CN,Yan'an (Baota)
+CN,Yancheng
+CN,Yancheng (Tinghu)
+CN,Yangjiang
+CN,Yangquan
+CN,Yangzhou
+CN,Yanji
+CN,Yantai
+CN,Yibin
+CN,Yibin (Cuiping)
+CN,Yichang
+CN,Yichang (Xiaoting)
+CN,Yichun
+CN,Yinchuan
+CN,Yingkou
+CN,Yingkou (Laobian)
+CN,"Yingzhou, Fuyang"
+CN,Yiwu
+CN,Yiwu/Jinhua
+CN,Yixing
+CN,Yongzhou
+CN,Yueyang
+CN,Yueyang (Yueyanglou)
+CN,Yulin
+CN,Yuncheng
+CN,Yuncheng (Yanhu)
+CN,Yunfu
+CN,Yushu (Batang)
+CN,Zaozhuang
+CN,Zhabei
+CN,Zhalantun
+CN,Zhangjiagang
+CN,Zhangjiajie
+CN,Zhangjiajie (Yongding)
+CN,Zhangjiakou
+CN,Zhangye
+CN,Zhangye (Ganzhou)
+CN,Zhangzhou
+CN,Zhanjiang
+CN,Zhaoqing
+CN,Zhaosu
+CN,Zhaotong
+CN,Zhengzhou
+CN,Zhenjiang
+CN,Zhongshan
+CN,Zhongwei (Shapotou)
+CN,Zhoukou
+CN,Zhoushan
+CN,Zhu Cheng City
+CN,Zhucheng
+CN,Zhuhai
+CN,Zhuhai (Jinwan)
+CN,Zhumadian
+CN,Zhuzhou
+CN,Zibo
+CN,Zigong
+CN,Ziyang
+CN,Zunyi
+CN,Ürümqi
+DE,Aachen
+DE,Aalen
+DE,Ahlen
+DE,Alt-Hohenschoenhausen
+DE,Altona
+DE,Arnsberg
+DE,Aschaffenburg
+DE,Augsburg
+DE,Bad Homburg vor der Hoehe
+DE,Bad Oeynhausen
+DE,Bad Salzuflen
+DE,Baden-Baden
+DE,Baltrum
+DE,Bamberg
+DE,Bayreuth
+DE,Bergedorf
+DE,Bergheim
+DE,Bergisch Gladbach
+DE,Bergkamen
+DE,Berlin
+DE,Berlin Koepenick
+DE,Bielefeld
+DE,Billstedt
+DE,Bindlach
+DE,Bocholt
+DE,Bochum
+DE,Bogenhausen
+DE,Bonn
+DE,Borkum
+DE,Bornheim
+DE,Bottrop
+DE,Brandenburg an der Havel
+DE,Braunschweig
+DE,Bremen
+DE,Bremerhaven
+DE,Burbach
+DE,Büren
+DE,Calden
+DE,Castrop-Rauxel
+DE,Celle
+DE,Charlottenburg
+DE,Chemnitz
+DE,Cottbus
+DE,Cuxhaven
+DE,Darmstadt
+DE,Delmenhorst
+DE,Dessau
+DE,Detmold
+DE,Dinslaken
+DE,Dormagen
+DE,Dorsten
+DE,Dortmund
+DE,Dresden
+DE,Dueren
+DE,Duesseldorf
+DE,Duisburg
+DE,Düsseldorf
+DE,Eimsbuettel
+DE,Elmshorn
+DE,Emden
+DE,Erftstadt
+DE,Erfurt
+DE,Erkrath
+DE,Erlangen
+DE,Eschweiler
+DE,Essen
+DE,Esslingen
+DE,Euskirchen
+DE,Flensburg
+DE,Frankfurt (Oder)
+DE,Frankfurt am Main
+DE,Frankfurt am Main (Lautzenhausen)
+DE,Frechen
+DE,Freiburg
+DE,Friedrichsfelde
+DE,Friedrichshafen
+DE,Friedrichshain Bezirk
+DE,Fritzlar
+DE,Fulda
+DE,Furth
+DE,Garbsen
+DE,Geilenkirchen
+DE,Gelsenkirchen
+DE,Gera
+DE,Gesundbrunnen
+DE,Giessen
+DE,Gladbeck
+DE,Goeppingen
+DE,Goerlitz
+DE,Goettingen
+DE,Greven
+DE,Grevenbroich
+DE,Guetersloh
+DE,Gummersbach
+DE,Hagen
+DE,Halle (Saale)
+DE,Hamburg
+DE,Hamburg-Mitte
+DE,Hamburg-Nord
+DE,Hameln
+DE,Hamm
+DE,Hanau am Main
+DE,Hannover
+DE,Harburg
+DE,Hattingen
+DE,Heidelberg
+DE,Heidenheim an der Brenz
+DE,Heilbronn
+DE,Helgoland
+DE,Hellersdorf
+DE,Hennef (Sieg)
+DE,Herford
+DE,Herne
+DE,Herten
+DE,Hilden
+DE,Hildesheim
+DE,Hof
+DE,Huerth
+DE,Hörselberg-Hainich
+DE,Ibbenbueren
+DE,Ingolstadt
+DE,Iserlohn
+DE,Jagel
+DE,Jena
+DE,Juist
+DE,Kaiserslautern
+DE,Karlsruhe
+DE,Kassel
+DE,Kempten (Allgaeu)
+DE,Kerpen
+DE,Kiel
+DE,Kleve
+DE,Koblenz
+DE,Koeln
+DE,Koepenick
+DE,Konstanz
+DE,Krefeld
+DE,Kreuzberg
+DE,Köln (Cologne)
+DE,Laage
+DE,Lahr/Schwarzwald
+DE,Landshut
+DE,Langenfeld
+DE,Langenhagen
+DE,Leipzig
+DE,Leverkusen
+DE,Lichtenrade
+DE,Lichterfelde
+DE,Lingen
+DE,Lippstadt
+DE,Ludwigsburg
+DE,Ludwigshafen am Rhein
+DE,Luebeck
+DE,Luedenscheid
+DE,Lueneburg
+DE,Luenen
+DE,Lübeck
+DE,Magdeburg
+DE,Mainz
+DE,Manching
+DE,Mannheim
+DE,Marburg an der Lahn
+DE,Mariendorf
+DE,Marienthal
+DE,Marl
+DE,Marzahn
+DE,Meerbusch
+DE,Memmingen
+DE,Menden
+DE,Minden
+DE,Mitte
+DE,Moabit
+DE,Moenchengladbach
+DE,Moers
+DE,Muelheim
+DE,Muenster
+DE,Munich
+DE,Mönchengladbach
+DE,Neu-Hohenschoenhausen
+DE,Neu-Ulm
+DE,Neubrandenburg
+DE,Neubrueck
+DE,Neue Neustadt
+DE,Neukoelln
+DE,Neumuenster
+DE,Neunkirchen
+DE,Neuss
+DE,Neustadt an der Weinstrasse
+DE,Neuwied
+DE,Nippes
+DE,Nobitz
+DE,Norddeich
+DE,Norderney
+DE,Norderstedt
+DE,Nordhorn
+DE,Nuernberg
+DE,Nuremberg
+DE,Oberhausen
+DE,Oesterdeichstrich
+DE,Offenbach
+DE,Offenburg
+DE,Oldenburg
+DE,Osnabrueck
+DE,Paderborn
+DE,Pankow
+DE,Passau
+DE,Peine
+DE,Pforzheim
+DE,Plauen
+DE,Porz am Rhein
+DE,Potsdam
+DE,Prenzlauer Berg Bezirk
+DE,Pulheim
+DE,Rahlstedt
+DE,Ramstein-Miesenbach
+DE,Rastatt
+DE,Ratingen
+DE,Ravensburg
+DE,Recklinghausen
+DE,Regensburg
+DE,Reinickendorf
+DE,Remscheid
+DE,Reutlingen
+DE,Rheine
+DE,Rheinhausen
+DE,Rheinmünster
+DE,Rodenkirchen
+DE,Rosenheim
+DE,Rostock
+DE,Ruesselsheim am Main
+DE,Saarbruecken
+DE,Saarbrücken
+DE,Salzgitter
+DE,Sankt Augustin
+DE,Schkeuditz
+DE,Schoeneberg
+DE,Schwaebisch Gmuend
+DE,Schweinfurt
+DE,Schwerin
+DE,Schwerte
+DE,Siegen
+DE,Sindelfingen
+DE,Singen
+DE,Soest
+DE,Solingen
+DE,Speyer
+DE,Steglitz Bezirk
+DE,Stolberg
+DE,Stralsund
+DE,Stuttgart
+DE,Sylt
+DE,Tempelhof
+DE,Treptow
+DE,Trier
+DE,Troisdorf
+DE,Trollenhagen
+DE,Tuebingen
+DE,Ulm
+DE,Universitats- und Hansestadt Greifswald
+DE,Unna
+DE,Velbert
+DE,Viersen
+DE,Villingen-Schwenningen
+DE,Waiblingen
+DE,Wandsbek
+DE,Wangerooge
+DE,Wedding
+DE,Weeze
+DE,Weimar
+DE,Wesel
+DE,Wetzlar
+DE,Weßling
+DE,Wiesbaden
+DE,Wilhelmsburg
+DE,Wilhelmshaven
+DE,Willich
+DE,Wilmersdorf
+DE,Winterhude
+DE,Witten
+DE,Wolfenbuettel
+DE,Wolfsburg
+DE,Worms
+DE,Wuerzburg
+DE,Wuppertal
+DE,Wurster Nordseeküste
+DE,Zehlendorf
+DE,Zirchow
+DE,Zwickau
+FJ,Ahau
+FJ,Ba
+FJ,Bureta
+FJ,Castaway Island
+FJ,Cicia
+FJ,Koro Island
+FJ,Korolevu
+FJ,Labasa
+FJ,Lakeba Island
+FJ,Lami
+FJ,Laucala Island
+FJ,Lautoka
+FJ,Levuka
+FJ,Malolo Lailai Island
+FJ,Mana Island
+FJ,Matei
+FJ,Moala
+FJ,Nadi
+FJ,Nanuku Auberge Resort
+FJ,Nanuya Lailai Island
+FJ,Nanuya Levu Island
+FJ,Nasinu
+FJ,Nausori
+FJ,Navua
+FJ,Ngau
+FJ,Ono-i-Lau
+FJ,Rabi Island
+FJ,Rotuma
+FJ,Savusavu
+FJ,Sigatoka
+FJ,Suva
+FJ,Tavua
+FJ,Tubou
+FJ,Vaileka
+FJ,Vanua Balavu
+FJ,Vatukoula
+FJ,Vatulele
+FJ,Vunisea
+FJ,Wakaya Island
+FJ,Yasawa Island
+FM,Colonia
+FM,Eauripik
+FM,Elato
+FM,Ettal
+FM,Fais
+FM,Falalop Island
+FM,Fananu
+FM,Faraulep
+FM,Houk
+FM,Ifalik
+FM,Ifalik Village
+FM,Kapingamarangi
+FM,Kolonia
+FM,Kolonia Town
+FM,Kuttu
+FM,Kuttu Village
+FM,Lamotrek
+FM,Lelu
+FM,Losap
+FM,Lukunor
+FM,Lukunor Village
+FM,Madolenihm Municipality Government
+FM,Makur
+FM,Malem
+FM,Moch
+FM,Moch Village
+FM,Mokil
+FM,Murilo
+FM,Namoluk
+FM,Nema
+FM,Ngatik
+FM,Ngulu
+FM,Nomwin
+FM,Nomwin Village
+FM,Nukuoro
+FM,Okat
+FM,Oneop
+FM,Oneop Village
+FM,Onou
+FM,Onoun
+FM,Palikir
+FM,Piis
+FM,Pingelap
+FM,Pisaras
+FM,Pohnpei Island
+FM,Polowat
+FM,Pulap
+FM,Pulap Village
+FM,Rumung
+FM,Ruo
+FM,Satawal
+FM,Satawal Village
+FM,Satowan
+FM,Satowan Village
+FM,Sorol
+FM,Ta
+FM,Tafunsak
+FM,Tamatam
+FM,Tofol
+FM,Tonoas Municipal Building
+FM,Unanu
+FM,Utwe
+FM,Weno
+FM,Weno Island
+FM,Yap Island
+GB,Aberdeen
+GB,Acton
+GB,Aldershot
+GB,Angelsey
+GB,Archway
+GB,Ashford
+GB,Aylesbury
+GB,"Balemartine, Argyll and Bute"
+GB,Balivanich
+GB,Bangor
+GB,Barking
+GB,Barnsley
+GB,Barrow-in-Furness
+GB,Barry
+GB,Basildon
+GB,Basingstoke
+GB,Bath
+GB,Batley
+GB,Battersea
+GB,Beckenham
+GB,Becontree
+GB,Bedford
+GB,Belfast
+GB,Bexley
+GB,Birkenhead
+GB,Birmingham
+GB,"Birmingham, West Midlands"
+GB,Blackburn
+GB,Blackpool
+GB,Bletchley
+GB,Bognor Regis
+GB,Bolton
+GB,Bootle
+GB,Bournemouth
+GB,Bracknell
+GB,Bradford
+GB,Braintree
+GB,"Brandon, Suffolk"
+GB,Brent
+GB,Brentwood
+GB,Brighton
+GB,"Brighton, East Sussex"
+GB,Bristol
+GB,Brixton
+GB,Broughton
+GB,Buckley
+GB,Burnley
+GB,Burton upon Trent
+GB,Bury
+GB,"Bury Saint Edmunds, Suffolk"
+GB,"Camberley, Surrey"
+GB,Cambridge
+GB,"Cambridge, Cambridgeshire"
+GB,Campbeltown
+GB,Canary Wharf
+GB,Cannock
+GB,Canterbury
+GB,Cardiff
+GB,Carlisle
+GB,"Carlisle, Cumbria"
+GB,"Carterton, Oxfordshire"
+GB,Castleford
+GB,Castlereagh
+GB,Chatham
+GB,Chelmsford
+GB,Chelsea
+GB,Cheltenham
+GB,Cheshunt
+GB,Chester
+GB,Chesterfield
+GB,Chingford
+GB,City of Westminster
+GB,Clacton-on-Sea
+GB,Colchester
+GB,Coll Island
+GB,Colonsay
+GB,Corby
+GB,Coventry
+GB,"Coventry, West Midlands"
+GB,Craigavon
+GB,Crawley
+GB,Crewe
+GB,Cricklewood
+GB,Croydon
+GB,Cumbernauld
+GB,Dagenham
+GB,Darlington
+GB,"Darlington, Durham"
+GB,Dartford
+GB,Derby
+GB,Derry
+GB,"Derry, Derry and Strabane"
+GB,Dewsbury
+GB,Doncaster
+GB,Dudley
+GB,Dundee
+GB,Dunfermline
+GB,Dunstable
+GB,East Kilbride
+GB,Eastbourne
+GB,Eastleigh
+GB,Eday
+GB,Edinburgh
+GB,Edmonton
+GB,Ellesmere Port Town
+GB,Enfield Town
+GB,"Enniskillen, Fermanagh and Omagh"
+GB,Eoligarry
+GB,Esher
+GB,Exeter
+GB,"Exeter, Devon"
+GB,Fair Isle
+GB,"Fairford, Gloucestershire"
+GB,Fareham
+GB,Farnborough
+GB,"Farnborough, Hampshire"
+GB,Finchley
+GB,Folkestone
+GB,Foula
+GB,Fulham
+GB,Fylde
+GB,Gateshead
+GB,Gillingham
+GB,Glasgow
+GB,Gloucester
+GB,Gosport
+GB,Gravesend
+GB,Grays
+GB,Great Yarmouth
+GB,Grimsby
+GB,"Grimsby, Lincolnshire"
+GB,Guildford
+GB,Halesowen
+GB,Halifax
+GB,Hamilton
+GB,Harlow
+GB,Harrogate
+GB,Harrow
+GB,Hartlepool
+GB,Hastings
+GB,Haverfordwest
+GB,Hayes
+GB,Hemel Hempstead
+GB,Hereford
+GB,High Peak
+GB,High Wycombe
+GB,"Hook, Hampshire"
+GB,Horsham
+GB,Hounslow
+GB,Hove
+GB,Huddersfield
+GB,Huyton
+GB,Ilford
+GB,Inverness
+GB,Ipswich
+GB,"Isle of Islay, Argyll and Bute"
+GB,Islington
+GB,Keighley
+GB,Kettering
+GB,Kidderminster
+GB,"Kidlington, Oxfordshire"
+GB,"King's Lynn, Norfolk"
+GB,Kingston upon Hull
+GB,Kingswood
+GB,"Kirkwall, Orkney Islands"
+GB,"Land's End, Cornwall"
+GB,Leeds
+GB,"Leeds, West Yorkshire"
+GB,Leicester
+GB,"Lerwick, Shetland"
+GB,"Lerwick, Shetland Islands"
+GB,"Leuchars, Fife"
+GB,Leytonstone
+GB,Lincoln
+GB,"Lincoln, Lincolnshire"
+GB,Lisburn
+GB,Littlehampton
+GB,Liverpool
+GB,Livingston
+GB,London
+GB,"London, Essex"
+GB,Londonderry County Borough
+GB,"Lossiemouth, Moray"
+GB,Loughborough
+GB,Lowestoft
+GB,Luton
+GB,"Luton, Luton"
+GB,Macclesfield
+GB,Maidenhead
+GB,Maidstone
+GB,Manchester
+GB,"Manchester, Greater Manchester"
+GB,Mansfield
+GB,Margate
+GB,Meikle Earnock
+GB,Mendip
+GB,Middlesbrough
+GB,Milton Keynes
+GB,Mitcham
+GB,Morecambe
+GB,Morley
+GB,Newcastle under Lyme
+GB,Newcastle upon Tyne
+GB,"Newcastle upon Tyne, Tyne and Wear"
+GB,Newport
+GB,Newquay
+GB,Newtownabbey
+GB,North Connel
+GB,North Ronaldsay
+GB,Northampton
+GB,"Northolt, Greater London"
+GB,Norwich
+GB,"Norwich, Norfolk"
+GB,Nottingham
+GB,"Nottingham, Leicestershire"
+GB,"Nottingham, Nottinghamshire"
+GB,Nuneaton
+GB,Oldham
+GB,Oxford
+GB,Paisley
+GB,"Papa Westray, Orkney Islands"
+GB,Peckham
+GB,"Penzance, Cornwall"
+GB,Peterborough
+GB,Plymouth
+GB,Poole
+GB,Portsmouth
+GB,Preston
+GB,"Prestwick, South Ayrshire"
+GB,Purley
+GB,Putney
+GB,Reading
+GB,Redditch
+GB,Redhill
+GB,Reigate
+GB,Rhondda
+GB,Rochdale
+GB,Romford
+GB,"Romney Marsh, Kent"
+GB,Rossendale
+GB,Rotherham
+GB,Royal Leamington Spa
+GB,Royal Tunbridge Wells
+GB,Rugby
+GB,Runcorn
+GB,Saint Peters
+GB,Sale
+GB,Salford
+GB,Sanday
+GB,Scarborough
+GB,Scunthorpe
+GB,Sheffield
+GB,Shrewsbury
+GB,Slough
+GB,Solihull
+GB,South Croydon
+GB,South Shields
+GB,Southall
+GB,Southampton
+GB,Southend-on-Sea
+GB,"Southend-on-Sea, Essex"
+GB,Southport
+GB,St Albans
+GB,St Helens
+GB,"St. Mary's, Isles of Scilly"
+GB,Stafford
+GB,Staines
+GB,Stamford Hill
+GB,"Staverton, Gloucestershire"
+GB,Stevenage
+GB,Stockport
+GB,Stockton-on-Tees
+GB,Stoke-on-Trent
+GB,"Stornoway, Western Isles"
+GB,Stourbridge
+GB,Streatham
+GB,Stronsay
+GB,Stroud
+GB,Sunderland
+GB,Sutton
+GB,Sutton Coldfield
+GB,Swansea
+GB,Swindon
+GB,Tamworth
+GB,Taunton
+GB,Telford
+GB,Tonypandy
+GB,Torquay
+GB,Tottenham
+GB,Uxbridge
+GB,Wakefield
+GB,Wallasey
+GB,"Wallingford, Oxfordshire"
+GB,Walsall
+GB,Walthamstow
+GB,Warrington
+GB,Warton
+GB,Washington
+GB,Waterlooville
+GB,Watford
+GB,Wellingborough
+GB,Welwyn Garden City
+GB,Wembley
+GB,West Bromwich
+GB,Weston-super-Mare
+GB,"Westray, Orkney Islands"
+GB,Weymouth
+GB,Wick
+GB,Widnes
+GB,Wigan
+GB,Wimbledon
+GB,Woking
+GB,Wolverhampton
+GB,Worcester
+GB,Worthing
+GB,Wrexham
+GB,"Yeovil, Somerset"
+GB,York
+ID,Abepura
+ID,Adiwerna
+ID,Ambarawa
+ID,Ambon
+ID,Amuntai
+ID,Arjawinangun
+ID,Astanajapura
+ID,Atambua
+ID,Ba'a - Rote Island
+ID,Babo
+ID,Baekrajan
+ID,Baki
+ID,Balai Pungut
+ID,Balikpapan
+ID,Banda Aceh
+ID,Bandar Lampung
+ID,Bandung
+ID,Bangil
+ID,Bangkalan
+ID,Banjar
+ID,Banjaran
+ID,Banjarbaru
+ID,Banjarmasin
+ID,Bantul
+ID,Banyuwangi
+ID,Barabai
+ID,Batam
+ID,Batang
+ID,Batu
+ID,Batu Licin
+ID,Baturaja
+ID,Baubau
+ID,Bekasi
+ID,Belawan
+ID,Bengkulu
+ID,Benteng
+ID,Beringin
+ID,Besuki
+ID,Biak
+ID,Bilogai
+ID,Bima
+ID,Binjai
+ID,Bitung
+ID,Blitar
+ID,Bogor
+ID,Bojonegoro
+ID,Bokondini
+ID,Bondowoso
+ID,Bontang
+ID,Bontang-Borneo Island
+ID,Boyolali
+ID,Bukittinggi
+ID,Buol-Celebes Island
+ID,Caringin
+ID,Ciamis
+ID,Ciampea
+ID,Cianjur
+ID,Cibinong
+ID,Cicurug
+ID,Cijulang
+ID,Cikampek
+ID,Cikarang
+ID,Cikupa
+ID,Cilacap
+ID,Cilegon
+ID,Cileungsir
+ID,Cileunyi
+ID,Cimahi
+ID,Ciputat
+ID,Ciranjang-hilir
+ID,Cirebon
+ID,Citeureup
+ID,Curug
+ID,Datadawai-Borneo Island
+ID,Dekai
+ID,Denpasar
+ID,Depok
+ID,Dukuhturi
+ID,Dumai
+ID,Ende
+ID,Fakfak
+ID,Galesong
+ID,Gamping Lor
+ID,Garut
+ID,Gedangan
+ID,Genteng
+ID,Godean
+ID,Gorontalo
+ID,Gorontalo-Celebes Island
+ID,Gotalalamo-Morotai Island
+ID,Gresik
+ID,Grogol
+ID,Gunungsitoli
+ID,Indramayu
+ID,Jakarta
+ID,Jambi
+ID,Jambi City
+ID,Jatibarang
+ID,Jatiwangi
+ID,Jayapura
+ID,Jember
+ID,Jepara
+ID,Jombang
+ID,Kabanjahe
+ID,Kabola
+ID,Kaimana
+ID,Karangsembung
+ID,Karawang
+ID,Karimunjawa
+ID,Kartasura
+ID,Kasihan
+ID,Kebomas
+ID,Kediri
+ID,Kedungwaru
+ID,Kedungwuni
+ID,Kendari
+ID,Kertajati
+ID,Kertosono
+ID,Ketapang
+ID,Kisaran
+ID,Klangenan
+ID,Klaten
+ID,Kolaka
+ID,Kota Sambas
+ID,Kresek
+ID,Kuala Pesisir
+ID,Kudus
+ID,Kuningan
+ID,Kupang
+ID,"Kuta, Badung"
+ID,Kutacane
+ID,Labuan Bajo
+ID,"Labuan Bajo, Manggarai Barat"
+ID,Lahat
+ID,Lamongan
+ID,Langgur
+ID,Langsa
+ID,Lawang
+ID,Lembang
+ID,Lhok Seumawe-Sumatra Island
+ID,Lhok Sukon-Sumatra Island
+ID,Lhokseumawe
+ID,Loa Janan
+ID,Lolak
+ID,Long Apung-Borneo Island
+ID,Long Bawan
+ID,Lubang
+ID,Lubuklinggau
+ID,Lumajang
+ID,Luwok
+ID,Madiun
+ID,Magelang
+ID,Majalengka
+ID,Majene
+ID,Makassar
+ID,Malang
+ID,Malinau
+ID,Manado
+ID,Manokwari
+ID,Margahayukencana
+ID,Martapura
+ID,Mataram
+ID,"Mataram (Pujut, Lombok Tengah)"
+ID,Maumere
+ID,Medan
+ID,Melati
+ID,Mendaha
+ID,Merauke
+ID,Mertoyudan
+ID,Metro
+ID,Meulaboh
+ID,Mojokerto
+ID,Morowali
+ID,Muara Bungo
+ID,Muara Teweh
+ID,Muko Muko
+ID,Muncar
+ID,Nabire
+ID,Namniwel
+ID,Nanga Pinoh-Borneo Island
+ID,Nganjuk
+ID,Nunukan
+ID,Oksibil
+ID,Padalarang
+ID,Padang
+ID,Padang (Katapiang)
+ID,Padang Sidempuan
+ID,Padangpanjang
+ID,Padangsidempuan
+ID,Pagar Alam
+ID,Palangkaraya
+ID,Palembang
+ID,Palimanan
+ID,Palopo
+ID,Palu
+ID,Pamanukan
+ID,Pamekasan
+ID,Pamulang
+ID,Pandak
+ID,Pandeglang
+ID,Pangkal Pinang
+ID,Pangkalanbun
+ID,Pangkalpinang
+ID,Pare
+ID,Parepare
+ID,Pariaman
+ID,Parung
+ID,Pasarkemis
+ID,Paseh
+ID,Pasuruan
+ID,Pati
+ID,Payakumbuh
+ID,Pecangaan
+ID,Pekalongan
+ID,Pekanbaru
+ID,Pelabuhanratu
+ID,Pemalang
+ID,Pematangsiantar
+ID,Perbaungan
+ID,Percut
+ID,Plumbon
+ID,Polewali
+ID,Ponorogo
+ID,Pontianak
+ID,Poso-Celebes Island
+ID,Prabumulih
+ID,Probolinggo
+ID,Purbalingga
+ID,Purwakarta
+ID,Purwodadi
+ID,Purwokerto
+ID,Putussibau-Borneo Island
+ID,Radamata
+ID,Raha
+ID,Ranai-Natuna Besar Island
+ID,Rangkasbitung
+ID,Rantauprapat
+ID,Rengasdengklok
+ID,Rengat-Sumatra Island
+ID,"Rogojampi, Banyuwangi"
+ID,Salatiga
+ID,Samarinda
+ID,Sampit
+ID,"Satar Tacik, Manggarai"
+ID,Saumlaki-Yamdena Island
+ID,Sawangan
+ID,Selong
+ID,Semarang
+ID,Sengkang
+ID,Sentani
+ID,Sepatan
+ID,Serang
+ID,Serpong
+ID,Serui
+ID,Seruyan
+ID,Sewon
+ID,Sibolga
+ID,Sibolga (Pinangsori)
+ID,Siborong-Borong
+ID,Sidoarjo
+ID,Singaraja
+ID,Singkawang
+ID,Singkil
+ID,Singosari
+ID,Sintang
+ID,Sipura Island
+ID,Situbondo
+ID,Slawi
+ID,Sleman
+ID,Sokaraja
+ID,Solok
+ID,Soreang
+ID,Sorong
+ID,South Tangerang
+ID,Sragen
+ID,Stagen
+ID,Subang
+ID,Subulussalam
+ID,Sukabumi
+ID,Sukawati
+ID,Sumbawa Besar
+ID,Sumber
+ID,Sumedang
+ID,Sumedang Utara
+ID,Sumenep
+ID,Sungai Penuh
+ID,Sungailiat
+ID,Sunggal
+ID,Surabaya
+ID,Surakarta
+ID,"Tabukan Utara, Sangihe Islands"
+ID,Takengon
+ID,Talang Gudang-Sumatra Island
+ID,Taliwang
+ID,Tanah Merah
+ID,Tangerang
+ID,Tanjung Pandan
+ID,Tanjung Pinang
+ID,Tanjung Pinang-Bintan Island
+ID,Tanjung Redeb - Borneo Island
+ID,Tanjung Selor
+ID,Tanjung Selor-Borneo Island
+ID,Tanjungbalai
+ID,Tanta-Tabalong
+ID,Tarakan
+ID,Tarub
+ID,Tasikmalaya
+ID,Tebingtinggi
+ID,Tegal
+ID,Teluknaga
+ID,Ternate
+ID,Tiakur
+ID,Timika
+ID,Tiwatobi
+ID,Tojo Una-Una
+ID,Toli Toli-Celebes Island
+ID,Toraja
+ID,Tual
+ID,Tuban
+ID,Tulangan Utara
+ID,Tulungagung
+ID,Tumbang Samba-Borneo Island
+ID,Ubud
+ID,Ungaran
+ID,Waingapu-Sumba Island
+ID,Waioti
+ID,Waisai
+ID,Wamena
+ID,Wangi-wangi Island
+ID,Watampone
+ID,Weleri
+ID,Weru
+ID,Wonosari
+ID,Wonosobo
+ID,Yogyakarta
+IN,Adampur
+IN,Agartala
+IN,Agatti
+IN,Agra
+IN,Ahmedabad
+IN,Aizawl (Lengpui)
+IN,Ajmer (Kishangarh)
+IN,Akola
+IN,Aligarh
+IN,Allahabad
+IN,Ambikapur
+IN,Amritsar
+IN,Aurangabad
+IN,Bareilly
+IN,Belgaum
+IN,Bellary
+IN,Bengaluru
+IN,Bhavnagar
+IN,Bhawanipatna
+IN,Bhopal
+IN,Bhubaneswar
+IN,Bhuj
+IN,Bhuntar
+IN,Bidar
+IN,Bikaner
+IN,Bilaspur
+IN,Calicut
+IN,Chandigarh
+IN,Chennai
+IN,Chipi
+IN,Coimbatore
+IN,Daman
+IN,Darbhanga
+IN,Dehradun (Jauligrant)
+IN,Delhi
+IN,Deoghar
+IN,Dibrugarh
+IN,Dimapur
+IN,Diu
+IN,Durgapur
+IN,Faizabad
+IN,Gautam Buddha Nagar
+IN,Gaya
+IN,Ghaziabad
+IN,Gondia
+IN,Gorakhpur
+IN,Guwahati
+IN,Gwalior
+IN,Halwara
+IN,Hisar
+IN,Hollongi
+IN,Hubballi
+IN,Hyderabad
+IN,IAF Camp
+IN,Imphal
+IN,Indore
+IN,Jabalpur
+IN,Jagdalpur
+IN,Jaipur
+IN,Jalgaon
+IN,Jammu
+IN,Jamnagar
+IN,Jamshedpur
+IN,Jodhpur
+IN,Jorhat
+IN,Kadapa
+IN,Kailashahar
+IN,Kakadi
+IN,Kalaburagi
+IN,Kandla
+IN,Kangra
+IN,Kannur
+IN,Kanpur
+IN,Keshod
+IN,Khajuraho
+IN,Kochi
+IN,Kolhapur
+IN,Kolkata
+IN,Kota
+IN,Kushinagar
+IN,Latur
+IN,Leh
+IN,Lilabari
+IN,Lucknow
+IN,Madhurapudi
+IN,Madurai
+IN,Mangaluru
+IN,Mopa
+IN,Moradabad
+IN,Mumbai
+IN,Muzaffarpur
+IN,Mysore
+IN,Nagpur
+IN,Nanded
+IN,Nashik
+IN,Navi Mumbai
+IN,New Delhi
+IN,Orvakal
+IN,Pantnagar
+IN,Pathankot
+IN,Patna
+IN,Porbandar
+IN,Port Blair
+IN,Puducherry (Pondicherry)
+IN,Pune
+IN,Puttaparthi
+IN,Raipur
+IN,Rajkot
+IN,Ranchi
+IN,Rewa
+IN,Rourkela
+IN,Salem
+IN,Shillong
+IN,Shimoga
+IN,Shravasti
+IN,Silchar
+IN,Siliguri
+IN,Solapur
+IN,Srinagar
+IN,Surat
+IN,Thiruvananthapuram
+IN,Tiruchirappalli
+IN,Tirupati
+IN,Udaipur
+IN,Vadodara
+IN,Vagaikulam
+IN,Varanasi
+IN,Vasco da Gama
+IN,Vijayawada
+IN,Visakhapatnam
+IN,Ziro
+JP,Adachi
+JP,Ageo
+JP,Aguni
+JP,Aihara
+JP,Akashi
+JP,Akita
+JP,Amagasaki
+JP,Amagi
+JP,Amakusa
+JP,Amami
+JP,Anjo
+JP,Aomori
+JP,Arakawa
+JP,Asahikawa
+JP,Atsugi
+JP,Ayase / Yamato
+JP,Bunkyo
+JP,Chiba
+JP,Chigasaki
+JP,Chofu
+JP,Chuo
+JP,Edogawe
+JP,Fuchu
+JP,Fuji
+JP,Fujisawa
+JP,Fukui
+JP,Fukui-shi
+JP,Fukuoka
+JP,Fukushima
+JP,Fukuyama
+JP,Fussa
+JP,Gifu
+JP,Goto
+JP,Hachijojima
+JP,Hachinohe
+JP,Hachioji
+JP,Hadano
+JP,Hakodate
+JP,Hamamatsu
+JP,Hanamaki
+JP,Higashihiroshima
+JP,Higashikagura
+JP,Higashine
+JP,Higashiosaka
+JP,Himeji
+JP,Hino
+JP,Hirakata
+JP,Hiratsuka
+JP,Hirosaki
+JP,Hiroshima
+JP,Hitachi
+JP,Hitachi-Naka
+JP,Honcho
+JP,Ibaraki
+JP,Ichihara
+JP,Ichikawa
+JP,Ichinomiya
+JP,Ie
+JP,Iki
+JP,Imabari
+JP,Isesaki
+JP,Ishigaki
+JP,Itabashi
+JP,Itami
+JP,Iwaki
+JP,Iwakuni
+JP,Iwata
+JP,Izu Oshima
+JP,Izumi
+JP,Izumo
+JP,Joetsu
+JP,Kagoshima
+JP,Kakogawacho-honmachi
+JP,Kamakura
+JP,Kamirenjaku
+JP,Kanazawa
+JP,Kashiwa
+JP,Kasugai
+JP,Kasukabe
+JP,Katsushika
+JP,Katsuta
+JP,Kawagoe
+JP,Kawaguchi
+JP,Kawasaki
+JP,Kikai
+JP,Kishiwada
+JP,Kita
+JP,Kitaakita
+JP,Kitadaitōjima
+JP,Kitakyushu
+JP,Kobe
+JP,Kochi
+JP,Kodaira
+JP,Kofu
+JP,Koriyama
+JP,Koshigaya
+JP,Koto
+JP,Kumagaya
+JP,Kumamoto
+JP,Kumejima
+JP,Kurashiki
+JP,Kure
+JP,Kurume
+JP,Kushiro
+JP,Kyoto
+JP,Machida
+JP,Maebashi
+JP,Makinohara / Shimada
+JP,Masuda
+JP,Matsudo
+JP,Matsue
+JP,Matsumoto
+JP,Matsusaka
+JP,Matsuyama
+JP,Meguro
+JP,Minamidaito
+JP,Minamirinkan
+JP,Minato
+JP,Minato City
+JP,Misawa
+JP,Mito
+JP,Miyakejima
+JP,Miyakojima
+JP,Miyakonojo
+JP,Miyazaki
+JP,Monbetsu
+JP,Morioka
+JP,Nagano
+JP,Nagaoka
+JP,Nagareyama
+JP,Nagasaki
+JP,Nagoya
+JP,Naha
+JP,Nakano
+JP,Nakashibetsu
+JP,Nankoku
+JP,Nara-shi
+JP,Narashino
+JP,Narita
+JP,Natori
+JP,Neyagawa
+JP,Niigata
+JP,Niiza
+JP,Nishi-Tokyo-shi
+JP,Nishinomiya
+JP,Nishio
+JP,Numazu
+JP,Obihiro
+JP,Odawara
+JP,Ogaki
+JP,Ogasawara
+JP,Oita
+JP,Okayama
+JP,Okazaki
+JP,Okinawa
+JP,Okinoshima
+JP,Okushiri Island
+JP,Omitama
+JP,Osaka
+JP,Ota
+JP,Otsu
+JP,Oyama
+JP,Rishiri
+JP,Sado
+JP,Saga
+JP,Sagamihara
+JP,Saitama
+JP,Sakai
+JP,Sakura
+JP,Sapporo
+JP,Sasebo
+JP,Sayama
+JP,Sendai
+JP,Setagaya
+JP,Shibuya
+JP,Shimonoseki
+JP,Shinagawa
+JP,Shinjuku
+JP,Shirahama
+JP,Shizuoka
+JP,Shonai
+JP,Soka
+JP,Suginami
+JP,Suita
+JP,Sukagawa
+JP,Sumida
+JP,Suzuka
+JP,Tachikawa
+JP,Taito
+JP,Takamatsu
+JP,Takaoka
+JP,Takarazuka
+JP,Takasaki
+JP,Takatsuki
+JP,Tanegashima
+JP,Tarama
+JP,Tochigi
+JP,Tokoname
+JP,Tokorozawa
+JP,Tokushima
+JP,Tokyo
+JP,Tomakomai
+JP,Toshima
+JP,Tottori
+JP,Tottori-shi
+JP,Toyama
+JP,Toyohashi
+JP,Toyokawa
+JP,Toyonaka
+JP,Toyooka
+JP,Toyota
+JP,Tsu
+JP,Tsukuba
+JP,Tsushima
+JP,Ube
+JP,Ueda
+JP,Uji
+JP,Urayasu
+JP,Utsunomiya
+JP,Wadomari
+JP,Wajima
+JP,Wakayama
+JP,Wakkanai
+JP,Yachiyo
+JP,Yakushima
+JP,Yamagata
+JP,Yamaguchi
+JP,Yamato
+JP,Yao
+JP,Yokkaichi
+JP,Yokohama
+JP,Yokosuka
+JP,Yonago
+JP,Yonaguni
+JP,Yoron
+JP,Ōzora
+KH,Aachar Leak
+KH,Ampil Pram Daeum
+KH,Ampov Prey
+KH,Andoung Khmaer
+KH,Andoung Thma
+KH,Andoung Trabaek
+KH,Angk Tasaom
+KH,Angkor Angk
+KH,Angkor Meas
+KH,Angkor Sar
+KH,Angkoul
+KH,Anhchanh Rung
+KH,Anlong Reab
+KH,Anlong Thnaot
+KH,Anlong Veaeng
+KH,Areaks Tnaot
+KH,Banlung
+KH,Banteay Meas Khang Kaeut
+KH,Battambang
+KH,Bavet
+KH,Boeng Kak Muoy
+KH,Boeng Kak Pir
+KH,Chealea
+KH,Chhloung
+KH,Chhnok Tru
+KH,Chong Kal
+KH,Chrang Chamreh Muoy
+KH,Damnak Khchas
+KH,Damrei Choan Khla
+KH,Damrei Phong
+KH,Dangkao
+KH,Dar
+KH,Doun Yay
+KH,Han Chey
+KH,Haong Samnam
+KH,Kak
+KH,Kampong Cham
+KH,Kampong Chhnang
+KH,Kampong Damrei
+KH,Kampong Speu
+KH,Kampong Thkov
+KH,Kampong Thom
+KH,Kampong Trabaek
+KH,Kampot
+KH,Kandoeng
+KH,Kanhchor
+KH,Kantueu Pir
+KH,Kdol
+KH,Khnach Romeas
+KH,Khpob Ateav
+KH,Khum Angkor Ban
+KH,Khum Ansaong
+KH,Koh Kong
+KH,Kouk Trab
+KH,Koun Sat
+KH,Kratie
+KH,Krong Kep
+KH,Kuttasat
+KH,L'ang
+KH,Lumphat
+KH,Lvea Leu
+KH,Memot
+KH,Odongk
+KH,Otdam Souriya
+KH,Ou Bei Choan
+KH,Ou Char
+KH,Ou Krasar
+KH,Ou Ruessei
+KH,Ou Smach
+KH,Ou Svay
+KH,Pailin
+KH,Paoy Paet
+KH,Ph'av
+KH,Phnom Penh
+KH,Phnom Penh (Boeng Khyang)
+KH,Phnom Penh (Pou Senchey)
+KH,Phum Anlung Vil
+KH,Phumi Ampil Leu
+KH,Phumi Andong Snay
+KH,Phumi Angkor Borei
+KH,Phumi Anhchaeum
+KH,Phumi Khchau
+KH,Phumi Kouk Kong
+KH,Phumi Tnaot
+KH,Phumi Tnaot Chum
+KH,Phumi Veal Sre
+KH,Phumi Veal Tonsay
+KH,Phumi Youl Toung
+KH,Pongro
+KH,Preaek Khsay Kha
+KH,Preaek Prasab
+KH,Preaek Saman
+KH,Preah Sihanouk
+KH,Prey Veng
+KH,Pursat
+KH,Ratanakiri
+KH,Roka Khnaor
+KH,Rung
+KH,Samraong
+KH,Sdach Kong Khang Cheung
+KH,Sen Monorom
+KH,Siem Reab
+KH,Siem Reap
+KH,Sihanoukville
+KH,Sisophon
+KH,Smach Mean Chey
+KH,Snuol
+KH,Stung Treng
+KH,Suong
+KH,Svay Rieng
+KH,Svay Rumpea
+KH,Ta Khmau
+KH,Ta Noun
+KH,Takeo
+KH,Tang Krasang
+KH,Tbeng Meanchey
+KH,Toek L'ak
+KH,Trapeang Chan
+KH,Tuek Kraham
+KH,Tuol Tumpung
+KH,Veal Sbov
+KH,Voat Angk Khang Cheung
+KH,Voat Angk Khang Tboung
+KH,Yeang
+KH,Yeang Dangkum
+KI,Abaiang
+KI,Abarao Village
+KI,Abariringa
+KI,Abemama
+KI,Ambo Village
+KI,Arorae Island
+KI,Bairiki Village
+KI,Bakaka Village
+KI,Banana
+KI,Banana Village
+KI,Banraeaba Village
+KI,Beru
+KI,Betio Village
+KI,Bikenibeu Village
+KI,Bonriki Village
+KI,Buariki
+KI,Buariki Village
+KI,Buota Village
+KI,Butaritari
+KI,Eita Village
+KI,Kiebu Village
+KI,Kiritimati
+KI,Kuma Village
+KI,Kuria
+KI,London Village
+KI,Maiana
+KI,Makin Island
+KI,Makin Village
+KI,Marakei
+KI,Matang Village
+KI,Nanikai Village
+KI,Napari Village
+KI,Nawerewere Village
+KI,Nikunau
+KI,Nonouti
+KI,Onotoa
+KI,Rawannawi Village
+KI,Roreti Village
+KI,Rotuma Village
+KI,Rungata
+KI,South Tarawa
+KI,Tabiang Village
+KI,Tabiteuea South
+KI,Taborio Village
+KI,Tabuaeran Island
+KI,Tabwakea Village
+KI,Tamana Island
+KI,Tanaeang Village
+KI,Tarawa
+KI,Teaoraereke Village
+KI,Temaiku Village
+KI,Teraina
+KI,Toboiaki Village
+KI,Utiroa
+KR,Andong
+KR,Ansan-si
+KR,Anseong
+KR,Anyang-si
+KR,Ara-dong
+KR,Asan
+KR,Boryeong
+KR,Boseong
+KR,Bucheon-si
+KR,Busan
+KR,Buyeo
+KR,Changnyeong
+KR,Changwon
+KR,Cheonan
+KR,Cheongju
+KR,Cheongju-si
+KR,Cheorwon
+KR,Chinch'on
+KR,Chinju
+KR,Chuncheon
+KR,Chungju
+KR,Daegu
+KR,Daejeon
+KR,Damyang
+KR,Donghae City
+KR,Eisen
+KR,Gangneung
+KR,Gapyeong
+KR,Geoje
+KR,Gijang
+KR,Gimcheon
+KR,Gimseang-ro
+KR,Gonghang-ro
+KR,Gongju
+KR,Goyang-si
+KR,Gumi
+KR,Gunpo
+KR,Gunsan
+KR,Guri-si
+KR,Gwangju
+KR,Gwangmyeong
+KR,Gwangyang
+KR,Gyeongju
+KR,Gyeongsan-si
+KR,Hadong
+KR,Hanam
+KR,Heunghae
+KR,Hongch'on
+KR,Hongseong
+KR,Hwado
+KR,Hwaseong-si
+KR,Hwasun
+KR,Hwawon
+KR,Icheon-si
+KR,Ido-dong
+KR,Iksan
+KR,Incheon
+KR,Jangheung
+KR,Jangseong
+KR,Jeju City
+KR,Jeju Island
+KR,Jeongeup
+KR,Jeonju
+KR,Jungpyong
+KR,Kimhae
+KR,Kimje
+KR,Koch'ang
+KR,Koesan
+KR,Kosong
+KR,Kunwi
+KR,Kwangyang
+KR,Kyosai
+KR,Masan
+KR,Miryang
+KR,Mokpo
+KR,Muan
+KR,Muan (Piseo-ri)
+KR,Mungyeong
+KR,Munsan
+KR,Naeso
+KR,Naju
+KR,Namyangju
+KR,Nangen
+KR,Nonsan
+KR,Okcheon
+KR,Osan
+KR,Pohang
+KR,Pubal
+KR,Pyeongtaek
+KR,Sacheon
+KR,Sangju
+KR,Santyoku
+KR,Sejong
+KR,Seodong
+KR,Seogwipo
+KR,Seongnam
+KR,Seongnam-si
+KR,Seosan
+KR,Seoul
+KR,Siheungdong
+KR,Sinan
+KR,Sinhyeon
+KR,Sokcho
+KR,Suncheon
+KR,Suwon
+KR,T'aebaek
+KR,Tallang-dong
+KR,Tongyeong
+KR,Uijeongbu-si
+KR,Uiwang
+KR,Ulsan
+KR,Ungsang
+KR,Wabu
+KR,Wanju
+KR,Wonju
+KR,Yangju
+KR,Yangp'yong
+KR,Yangsan
+KR,Yecheon
+KR,Yecheon-ri
+KR,Yeoju
+KR,Yeongam
+KR,Yeongdong
+KR,Yeonggwang
+KR,Yeongju
+KR,Yeonil
+KR,Yeosu
+KR,Yesan
+LA,Achiang (1)
+LA,Attapeu
+LA,Ban Acholaosa
+LA,Ban Achung
+LA,Ban Adon
+LA,Ban Bachiang
+LA,Ban Boten
+LA,Ban Bouakhai
+LA,Ban Dansavan
+LA,Ban Donghen
+LA,Ban Fangdeng
+LA,Ban Hatgnao
+LA,Ban Houakhoua
+LA,Ban Houayxay
+LA,Ban Inthi
+LA,Ban Khangviang
+LA,Ban Khoan
+LA,Ban Laongam
+LA,Ban Lixingxo
+LA,Ban Muang-Nan
+LA,Ban Nahin
+LA,Ban Nalaotay
+LA,Ban Nambak
+LA,Ban Namnga
+LA,Ban Nape
+LA,Ban Nasang
+LA,Ban Nongdeun
+LA,Ban Pakla
+LA,Ban Phonsavang-Nua
+LA,Ban Pong
+LA,Ban Siphom
+LA,Ban Thakham
+LA,Ban Thakho
+LA,Ban Thateng
+LA,Ban Xeno
+LA,Ban Xepon
+LA,Ban Xiang-Ngeun
+LA,Borikhan
+LA,Champasak
+LA,Dak Cheung
+LA,Dansavan
+LA,Houay Nga Na Song
+LA,Huameung
+LA,Khoa
+LA,Lamam
+LA,Luang Namtha
+LA,Luang Phabang
+LA,Luang Prabang
+LA,Muang Hinboun
+LA,Muang Hongsa
+LA,Muang Kasi
+LA,Muang Kenthao
+LA,Muang Khamkeut
+LA,Muang Khong
+LA,Muang Long
+LA,Muang Mok
+LA,Muang Nale
+LA,Muang Phin
+LA,Muang Phon-Hong
+LA,Muang Phonsavan
+LA,Muang Sanakham
+LA,Muang Sing
+LA,Muang Xay
+LA,Oudomsay
+LA,Pakkading
+LA,Pakse
+LA,Pakxan
+LA,Pakxong
+LA,Phongsali
+LA,Phonthong
+LA,Sainyabuli
+LA,Salavan
+LA,Sanaxy
+LA,Savannakhet
+LA,Sekong
+LA,Thakhek
+LA,Ton Phueng
+LA,Vang Vieng
+LA,Viangxai
+LA,Viengthong
+LA,Viengxay
+LA,Vientiane
+LA,Xam Nua
+LA,Xamtay
+LA,Xaysetha
+LA,Xieng Khouang
+MH,Ailinglapalap Atoll
+MH,Ailuk
+MH,Ailuk Island
+MH,Airuk
+MH,Arno
+MH,Arno Atoll
+MH,Aur
+MH,Aur Atoll
+MH,Bigatyelang Island
+MH,Bikini Atoll
+MH,Ebadon Island
+MH,Ebaye
+MH,Ebon
+MH,Ebon Atoll
+MH,Enejit Island
+MH,Enewetak
+MH,Eniwetok Atoll
+MH,Jabat
+MH,Jabor
+MH,Jabor Jaluit Atoll
+MH,Kaben
+MH,Kili
+MH,Kili Island
+MH,Kwajalein
+MH,Lae
+MH,Lae Island
+MH,Laura
+MH,Lib
+MH,Likiep
+MH,Likiep Island
+MH,Loen
+MH,Majkin
+MH,Majuro
+MH,Majuro Atoll
+MH,Maloelap Island
+MH,Mejato Island
+MH,Mejit
+MH,Mejit Atoll
+MH,Mili
+MH,Mili Island
+MH,Namdrik
+MH,Namorik Atoll
+MH,Rongelap
+MH,Rongelap Island
+MH,Tabal Island
+MH,Taroa
+MH,Ujae
+MH,Ujae Atoll
+MH,Utirik Island
+MH,Utrik
+MH,Woja
+MH,Wotho
+MH,Wotho Island
+MH,Wotje
+MM,Ah Lel
+MM,Ahlone
+MM,Amarapura
+MM,Ann
+MM,Aungban
+MM,Bago
+MM,Banmaw
+MM,Bhamo
+MM,Bogale
+MM,Botataung
+MM,Buthidaung Town
+MM,Chauk
+MM,Daik-u
+MM,Danai
+MM,Dawbon
+MM,Dawei
+MM,Gwa
+MM,Heho
+MM,Hinthada
+MM,Hlaingthaya
+MM,Hlegu
+MM,Hmaw Bi
+MM,Hopin
+MM,Hpa-An
+MM,Hpakan
+MM,Insein
+MM,Kalaw
+MM,Kalemyo
+MM,Kanbalu
+MM,Kanbe
+MM,Kanti
+MM,Katha
+MM,Kawkareik
+MM,Kawthoung
+MM,Kayan
+MM,Keng Tung
+MM,Kengtung
+MM,Kungyangon
+MM,Kutkai
+MM,Kyaikkami
+MM,Kyaiklat
+MM,Kyaikto
+MM,Kyaukme
+MM,Kyaukpadaung
+MM,Kyaukpyu
+MM,Kyaukse
+MM,Kyauktaga
+MM,Kyauktan
+MM,Kyeintali
+MM,Kyimyindine
+MM,Kyonpyaw
+MM,Labutta
+MM,Lakang
+MM,Lashio
+MM,Laukkai
+MM,Lawksawk
+MM,Letpandan
+MM,Lewe
+MM,Loikaw
+MM,Madaya
+MM,Magway
+MM,Manaung
+MM,Mandalay
+MM,Martaban
+MM,Maubin
+MM,Mawlaik
+MM,Mawlamyine
+MM,Mawlamyinegyunn
+MM,Meiktila
+MM,Min Ga Lar Don Zay
+MM,Minbu
+MM,Mingala Tangnyunt
+MM,Mingaladon
+MM,Mkeik
+MM,Moeng La
+MM,Moeng Yang
+MM,Moeng Yawng
+MM,Mogaung
+MM,Mogok
+MM,Mohnyin
+MM,Mong Hsat
+MM,Monywa
+MM,Mrauk U
+MM,Mu-se
+MM,Mudon
+MM,Myanaung
+MM,Myaungmya
+MM,Myawaddy
+MM,Myaydo
+MM,Myeik
+MM,Myingyan
+MM,Myitkyina
+MM,Namhkam
+MM,Namsang
+MM,Nansang
+MM,Nay Pyi Taw
+MM,Naypyitaw
+MM,Nyaung
+MM,Nyaung U
+MM,Nyaung-U
+MM,Nyaungdon
+MM,Nyaunglebin
+MM,Oke Kan
+MM,Pakokku
+MM,Panglong
+MM,Pathein
+MM,Pauk Kone
+MM,Paung
+MM,Paungde
+MM,Pawgan
+MM,Payathonzu
+MM,Pazundaung
+MM,Putao
+MM,Pyan Lel Nay Yar Cha Htar Ye
+MM,Pyapon
+MM,Pyawbwe
+MM,Pyay
+MM,Pyin Oo Lwin
+MM,Pyinmana
+MM,Pyu
+MM,Sagaing
+MM,San Chaung
+MM,Sangyoung
+MM,Set Ka Lay
+MM,Shwe Lin Ban
+MM,Shwebo
+MM,Shwegu
+MM,Shwegyin
+MM,Shwenatha
+MM,Sittwe
+MM,Tachileik
+MM,Tachilek
+MM,Taikkyi
+MM,Tamu
+MM,Tangyan
+MM,Tatkon
+MM,Taungdwingyi
+MM,Taunggyi
+MM,Taungoo
+MM,Taungup
+MM,Thanatpin
+MM,Thanbyuzayat
+MM,Thandwe
+MM,Thanhlyin
+MM,Thanlyin
+MM,Tharyarwady
+MM,Thaton
+MM,Thayetmyo
+MM,Thin Gan Kyun Gyi
+MM,Thongwa
+MM,Twante
+MM,Wakema
+MM,Wundwin
+MM,Yamethin
+MM,Yangon
+MM,Yawnghwe
+MM,Ye
+MM,Yedashe
+MM,Yenangyaung
+MM,Yesagyo
+MM,Ywar Ma West
+MM,Zee Kone
+MY,Alor Satar
+MY,Alor Setar
+MY,Ampang
+MY,Bakalalan
+MY,Bandar Bukit Raja
+MY,Bandar Kinrara
+MY,Bandar Mahkota Cheras
+MY,Bandar Saujana Utama
+MY,Bandar Seri Alam
+MY,Bandar Sunway
+MY,Bandar Tasik Puteri
+MY,Bandar Utama
+MY,Bario
+MY,Batu Caves
+MY,Batu Pahat
+MY,Bayan Lepas
+MY,Bercham
+MY,Bintulu
+MY,Bukit Bintang
+MY,Bukit Jalil
+MY,Bukit Mertajam
+MY,Bukit Rahman Putra
+MY,Butterworth
+MY,Cheras
+MY,Cukai
+MY,Cyberjaya
+MY,Damansara Damai
+MY,Donggongon
+MY,Gelang Patah
+MY,George Town
+MY,Ijok
+MY,Ipoh
+MY,Iskandar Puteri
+MY,Jelutong
+MY,Johor Bahru
+MY,Johor Jaya
+MY,Kajang
+MY,Kampong Baharu Cheras Batu Sebelas
+MY,Kampung Baru Balakong
+MY,Kampung Baru Subang
+MY,Kampung Kangkar Teberau
+MY,Kampung Larkin Lama
+MY,Kampung Manjoi
+MY,Kampung Pasir Gudang Baru
+MY,Kampung Sungai Ara
+MY,Kampung Sungai Glugur
+MY,Kampung Sungai Kajang
+MY,Kangar
+MY,Kapar
+MY,Keningau
+MY,Kepong
+MY,Kerteh
+MY,Klang
+MY,Kluang
+MY,Kota Baharu
+MY,Kota Bharu
+MY,Kota Damansara
+MY,Kota Kinabalu
+MY,Kota Kuala Muda
+MY,Kuala Krai
+MY,Kuala Kubu Baharu
+MY,Kuala Lumpur
+MY,Kuala Nerus
+MY,Kuala Terengganu
+MY,Kuantan
+MY,Kuching
+MY,Kudat
+MY,Kulai
+MY,Kulim
+MY,Labuan
+MY,Lahad Datu
+MY,Langkawi
+MY,Lawas
+MY,Limbang
+MY,Long Banga
+MY,Long Datih
+MY,Long Seridan
+MY,Malacca
+MY,Maran
+MY,Marudi
+MY,Masai
+MY,Miri
+MY,Muar
+MY,Mukah
+MY,Mukim Pulai
+MY,Mulu
+MY,Pagoh
+MY,Pangkor Island
+MY,Parit Sulung
+MY,Pasir Gudang
+MY,Pasir Mas
+MY,Pasir Puteh
+MY,Paya Terubong
+MY,Pelentong
+MY,Penang
+MY,Pendang
+MY,Perai
+MY,Perling
+MY,Petaling Jaya
+MY,Port Dickson
+MY,Puchong
+MY,Putatan
+MY,Rawang
+MY,Sandakan
+MY,Segamat
+MY,Selayang Baru Utara
+MY,Semenyih
+MY,Sentul
+MY,Sepang
+MY,Seremban
+MY,Serendah
+MY,Seri Kembangan
+MY,Seri Manjung
+MY,Setapak
+MY,Setia Alam
+MY,Shah Alam
+MY,Sibu
+MY,Sitiawan
+MY,Skudai
+MY,Subang
+MY,Subang Jaya
+MY,Sungai Buloh
+MY,Sungai Petani
+MY,Taiping
+MY,Taman Melawati
+MY,Taman Petaling
+MY,Taman Senai
+MY,Taman Senawang Indah
+MY,Tanjong Malim
+MY,Tasek Glugor
+MY,Tawau
+MY,Teluk Intan
+MY,Tioman Island
+MY,Titiwangsa
+MY,Tomanggong
+MY,Ulu Tiram
+MY,Val Dor
+MY,Wangsa Maju
+MY,Yan Besar
+NL,'s-Hertogenbosch
+NL,Alkmaar
+NL,Almelo
+NL,Almere Stad
+NL,Alphen aan den Rijn
+NL,Amersfoort
+NL,Amstelveen
+NL,Amsterdam
+NL,Amsterdam-Zuidoost
+NL,Apeldoorn
+NL,Arnhem
+NL,Assen
+NL,Barendrecht
+NL,Barneveld
+NL,Bergen
+NL,Bergen op Zoom
+NL,Best
+NL,Beverwijk
+NL,Boxtel
+NL,Breda
+NL,Brunssum
+NL,Bussum
+NL,Capelle aan den IJssel
+NL,Castricum
+NL,Delft
+NL,Delfzijl
+NL,Den Helder
+NL,Deventer
+NL,Doetinchem
+NL,Dordrecht
+NL,Drachten
+NL,Ede
+NL,Eindhoven
+NL,Emmeloord
+NL,Emmen
+NL,Enschede
+NL,Epe
+NL,Geleen
+NL,Goes
+NL,Gorinchem
+NL,Gouda
+NL,Groningen
+NL,Groot IJsselmonde
+NL,Haarlem
+NL,Hardenberg
+NL,Harderwijk
+NL,Heemskerk
+NL,Heerenveen
+NL,Heerhugowaard
+NL,Heerlen
+NL,Helmond
+NL,Hengelo
+NL,Hilversum
+NL,Hoofddorp
+NL,Hoogerheide
+NL,Hoogeveen
+NL,Hoogvliet
+NL,Hoorn
+NL,Huizen
+NL,IJmuiden
+NL,IJsselstein
+NL,Kampen
+NL,Kerkrade
+NL,Krimpen aan den IJssel
+NL,Leeuwarden
+NL,Leiden
+NL,Lelystad
+NL,Leusden
+NL,Maarssen
+NL,Maassluis
+NL,Maastricht
+NL,Medemblik
+NL,Meppel
+NL,Middelburg
+NL,Nieuw-Vennep
+NL,Nieuwegein
+NL,Nijkerk
+NL,Nijmegen
+NL,Oldenzaal
+NL,Oosterhout
+NL,Oss
+NL,Papendrecht
+NL,Purmerend
+NL,Ridderkerk
+NL,Rijen
+NL,Rijswijk
+NL,Roermond
+NL,Roosendaal
+NL,Rotterdam
+NL,Schiedam
+NL,Sittard
+NL,Sneek
+NL,Soest
+NL,Spijkenisse
+NL,The Hague
+NL,Tiel
+NL,Tilburg
+NL,Uden
+NL,Utrecht
+NL,Valkenswaard
+NL,Veendam
+NL,Veenendaal
+NL,Velsen-Zuid
+NL,Venlo
+NL,Venray
+NL,Vlaardingen
+NL,Vlissingen
+NL,Voorburg
+NL,Waalwijk
+NL,Wageningen
+NL,Weert
+NL,Wijchen
+NL,Winterswijk
+NL,Woerden
+NL,Ypenburg
+NL,Zaandam
+NL,Zaanstad
+NL,Zeist
+NL,Zoetermeer
+NL,Zutphen
+NL,Zwijndrecht
+NL,Zwolle
+NR,Anabar
+NR,Anibare
+NR,Arijejen
+NR,Baiti
+NR,Boe
+NR,Denigomodu
+NR,Ijuw
+NR,Menen
+NR,Uaboe
+NR,Yangor
+NR,Yaren
+NZ,Albany
+NZ,Alexandra
+NZ,Ashburton
+NZ,Auckland
+NZ,Avondale
+NZ,Awanui
+NZ,Balmoral
+NZ,Beach Haven
+NZ,Birkenhead
+NZ,Blenheim
+NZ,Blockhouse Bay
+NZ,Browns Bay
+NZ,Cambridge
+NZ,Christchurch
+NZ,Claris
+NZ,Dunedin
+NZ,Epsom
+NZ,Favona
+NZ,Flaxmere
+NZ,Forrest Hill
+NZ,Gisborne
+NZ,Glentanner Station
+NZ,Gore
+NZ,Grey Lynn
+NZ,Halswell
+NZ,Hamilton
+NZ,Hamilton East
+NZ,Hastings
+NZ,Havelock North
+NZ,Hawera
+NZ,Henderson
+NZ,Hillcrest
+NZ,Hillsborough
+NZ,Hokowhitu
+NZ,Homai
+NZ,Howick
+NZ,Invercargill
+NZ,Johnsonville
+NZ,Kaiapoi
+NZ,Karori
+NZ,Kerikeri
+NZ,Koromiko
+NZ,Levin
+NZ,Lincoln
+NZ,Lower Hutt
+NZ,Mangere
+NZ,Mangere East
+NZ,Manukau City
+NZ,Manurewa
+NZ,Massey
+NZ,Massey East
+NZ,Masterton
+NZ,Mosgiel
+NZ,Mount Eden
+NZ,Napier
+NZ,Nelson
+NZ,New Lynn
+NZ,New Plymouth
+NZ,North Shore
+NZ,Oamaru
+NZ,Onehunga
+NZ,Orewa
+NZ,Otahuhu
+NZ,Otara
+NZ,Palmerston North
+NZ,Papakura
+NZ,Papatoetoe
+NZ,Paraparaumu
+NZ,Parklands
+NZ,Porirua
+NZ,Pukekohe East
+NZ,Queenstown
+NZ,Rangiora
+NZ,Redwoodtown
+NZ,Remuera
+NZ,Riccarton
+NZ,Richmond
+NZ,Rolleston
+NZ,Rotorua
+NZ,Sandringham
+NZ,Stoke
+NZ,Stokes Valley
+NZ,Takanini
+NZ,Takapuna
+NZ,Taradale
+NZ,Taupo
+NZ,Tauranga
+NZ,Te Aro
+NZ,Te Atatu Peninsula
+NZ,Te Atatu South
+NZ,Te Awamutu
+NZ,Te One
+NZ,Te Puke
+NZ,Timaru
+NZ,Titirangi
+NZ,Tokoroa
+NZ,Twitzel
+NZ,Upper Hutt
+NZ,Waikanae
+NZ,Wainuiomata
+NZ,Wairoa
+NZ,Wanaka
+NZ,Wanganui
+NZ,Wellington
+NZ,West Harbour
+NZ,Westport
+NZ,Whakatane
+NZ,Whakatāne
+NZ,Whanganui
+NZ,Whangarei
+NZ,Whitby
+NZ,Wigram
+PG,Afore
+PG,Agaun
+PG,Aiambak
+PG,Aiome
+PG,Aitape
+PG,Aiyura Valley
+PG,Alotau
+PG,Amanab
+PG,Amboin
+PG,Ambunti
+PG,Andekombe
+PG,Angoram
+PG,Angoram Village
+PG,Anguganak
+PG,April River
+PG,Arawa
+PG,Aseki
+PG,Atkamba Mission
+PG,Au
+PG,Aua Island
+PG,Aue
+PG,Aumo
+PG,Awaba
+PG,Awar
+PG,Babase Island
+PG,Baimuru
+PG,Bainyik
+PG,Balimo
+PG,Bambu
+PG,Bamu
+PG,Bapi
+PG,Bensbach
+PG,Bereina
+PG,Bewani
+PG,"Bialla, Matalilu, Ewase"
+PG,Biangabip
+PG,Biaru
+PG,Biniguni
+PG,Boana
+PG,Boang Island
+PG,Bodinumu
+PG,Bomai
+PG,Bosset
+PG,Brahman Mission
+PG,Buin
+PG,Buka
+PG,Buka Island
+PG,Buki
+PG,Bulolo
+PG,Bundi
+PG,Bunsil - Umboi Island
+PG,Cape Gloucester
+PG,Cape Rodney
+PG,Castori Islets
+PG,Chungribu
+PG,Daru
+PG,Debepare
+PG,Demgulu
+PG,Denglagu Mission
+PG,Derim
+PG,Dinangat
+PG,Dorobisoro
+PG,Efogi
+PG,Eliptamin
+PG,Embessa
+PG,Emirau Island
+PG,Emo Mission
+PG,Engati
+PG,Erave
+PG,Erume
+PG,Esa'ala
+PG,Fane Mission
+PG,Fatima Mission
+PG,Feramin
+PG,Finschhafen
+PG,Frieda River
+PG,Fulleborn
+PG,Fuma
+PG,Garaina
+PG,Garove Island
+PG,Gasmata Island
+PG,Gasuke
+PG,Gewoia
+PG,Gonaili
+PG,Gora
+PG,Goroka
+PG,Goronka
+PG,Green River
+PG,Guari
+PG,Gulgubip
+PG,Gunim
+PG,Guriaso
+PG,Gurney
+PG,Gusap
+PG,Gwarawon
+PG,Habi
+PG,Haelogo
+PG,Haivaro
+PG,Hatzfeldhaven
+PG,Hawabango
+PG,Heiweni
+PG,Hermit Islands
+PG,Hoieti
+PG,Honinabi
+PG,Ialibu
+PG,"Iamalele, Fergusson Island"
+PG,Iboki
+PG,Ihu
+PG,Imane
+PG,Imonda
+PG,Indagen
+PG,Iokea
+PG,Ioma
+PG,Itokama
+PG,Jacquinot Bay
+PG,Josephstaal
+PG,Kagi
+PG,Kagua
+PG,Kainantu
+PG,Kaintiba
+PG,Kakoro
+PG,Kamberatoro Mission
+PG,Kamulai Mission
+PG,Kamusi
+PG,Kanabea
+PG,Kanainj
+PG,Kandep
+PG,Kandrian
+PG,Kapal
+PG,Kar
+PG,Kar Kar Island
+PG,Karato
+PG,Karimui
+PG,Kasonombe
+PG,Kavieng
+PG,Kawbenaberi
+PG,Kawito
+PG,Kerema
+PG,Kibuli
+PG,Kieta
+PG,Kikori
+PG,Kimbe
+PG,Kira
+PG,Kitava Island
+PG,Kiunga
+PG,Kokoda
+PG,Kokopo
+PG,Kol
+PG,Komaio
+PG,Komako
+PG,Komo
+PG,Konambe
+PG,Kondobol
+PG,Konge
+PG,Kopiago
+PG,Koroba
+PG,Kosipe Mission
+PG,Kulumadau
+PG,Kundiawa
+PG,Kungim
+PG,Kupiano
+PG,Kuri
+PG,Kurumul
+PG,Kwikila
+PG,Lab Lab Mission
+PG,Lae
+PG,Laiagam
+PG,Lake Murray
+PG,Leitre
+PG,Leron Plains
+PG,Lese
+PG,Linga Linga
+PG,Londolovit
+PG,Long Island
+PG,Lorengau
+PG,Losuia
+PG,Lowai
+PG,Lumi
+PG,Madang
+PG,Maitanakunai
+PG,Makini
+PG,Mal Island
+PG,Malalaua
+PG,Malam
+PG,Mamai
+PG,Manari
+PG,Manga Mission
+PG,Manguna
+PG,Manumu
+PG,Manus Island
+PG,Mapoda
+PG,Maramuni
+PG,Marawaka
+PG,Masa
+PG,May River
+PG,Mendi
+PG,Menyamya
+PG,Mindik
+PG,Minj
+PG,Misima Island
+PG,Miyanmin
+PG,Moki
+PG,Morehead
+PG,Moro
+PG,Morobe
+PG,Mougulu
+PG,Mount Hagen
+PG,Munduku
+PG,Mussau Island
+PG,Nadunumu
+PG,Namane
+PG,Namatanai
+PG,Nambaiyufa
+PG,Namudi
+PG,Naoro Vilage
+PG,Negarbo
+PG,Nepesi
+PG,Nipa
+PG,Nissan Island
+PG,Nomad River
+PG,Nowata
+PG,Nuguria Island
+PG,Nuku
+PG,Obo
+PG,Okao
+PG,Oksapmin
+PG,Olsobip
+PG,Omora
+PG,Onange Mission
+PG,Ossima
+PG,Paiela
+PG,Pambwa Station
+PG,Pangia
+PG,Pangoa
+PG,Panguna
+PG,Pimaga
+PG,Pindiu
+PG,Popondetta
+PG,Porgera
+PG,Port Moresby
+PG,Puas Mission
+PG,Pumani
+PG,Puri
+PG,Rabaraba
+PG,Rabaul
+PG,Rakanda
+PG,Rauna
+PG,Sabah
+PG,Safia
+PG,Saidor
+PG,Salamo
+PG,Samarai
+PG,Samarai Island
+PG,Sapmanga
+PG,Sasereme
+PG,Satwag
+PG,Sauren
+PG,Sehulea
+PG,Selbang
+PG,Sengapi
+PG,Sepik Plains
+PG,Sialum
+PG,Siassi
+PG,Sila Mission
+PG,Silur Mission
+PG,Sim
+PG,Simbai
+PG,Simberi Island
+PG,Sissano
+PG,Siwea
+PG,Sopu
+PG,Stockholm
+PG,Sudest Island
+PG,Suki
+PG,Sule
+PG,Tabubil
+PG,Talasea
+PG,Tapini
+PG,Tarabo
+PG,Tarakbits
+PG,Tari
+PG,Tatau Island
+PG,Tawa
+PG,Tekadu
+PG,Tekin
+PG,Telefomin
+PG,Teptep
+PG,Terapo Mission
+PG,Tetebedi
+PG,Tifalmin
+PG,Timbunke
+PG,Tinboli
+PG,Tol
+PG,Tonu
+PG,Torembi
+PG,Torokina
+PG,Tsewi
+PG,Tsile Tsile
+PG,Tufi
+PG,Tumolbil
+PG,Umba
+PG,Unea Island
+PG,Upiara
+PG,Uroubi
+PG,Uvol
+PG,Vanimo
+PG,Vivigani
+PG,Wabag
+PG,Wabo
+PG,Wakunai
+PG,Wanigela
+PG,Wantoat
+PG,Wanuma
+PG,Wapenamanda
+PG,Wapolu
+PG,Wasu
+PG,Wasua
+PG,Wasum
+PG,Wau
+PG,Wavoi Falls
+PG,Weam
+PG,Wedau
+PG,Wewak
+PG,Wipim
+PG,Wonenara
+PG,Woodlark (Muyua) Island
+PG,Wuvulu Island
+PG,Yalumet
+PG,Yasuru
+PG,Yellow River Mission
+PG,Yeva
+PG,Yongai
+PG,Yule Island
+PG,Zenag
+PH,Alabel
+PH,Alicia
+PH,Angeles City
+PH,Angono
+PH,Antipolo
+PH,Apalit
+PH,Arayat
+PH,Bacolod City
+PH,Bacoor
+PH,Bago City
+PH,Bagong Barrio
+PH,Bagong Silang
+PH,Bagong Silangan
+PH,Baguio
+PH,Bais
+PH,Balanga
+PH,Baler
+PH,Baliuag
+PH,Bamban
+PH,Banco Filipino Homes
+PH,Bantayan
+PH,Basco
+PH,Batangas
+PH,Bauang
+PH,Bayambang
+PH,Bayawan
+PH,Bayugan
+PH,Binan
+PH,Binangonan
+PH,Binonga
+PH,Bislig
+PH,Bocaue
+PH,Bongao
+PH,Brookes Point
+PH,Budta
+PH,Bulacan
+PH,Bulaon
+PH,Bustos
+PH,Butuan
+PH,Cabanatuan City
+PH,Cabatuan
+PH,Cabuyao
+PH,Cadiz
+PH,Cagayan de Oro
+PH,Cainta
+PH,Calabanga
+PH,Calamba
+PH,Calasiao
+PH,Calauan
+PH,Calbayog City
+PH,Caloocan
+PH,Calumpit
+PH,Candelaria
+PH,Capas
+PH,Carmona
+PH,Catarman
+PH,Catbalogan
+PH,Caticlan
+PH,Cauayan City
+PH,Cavite
+PH,Cavite City
+PH,Cebu City
+PH,Cebu City/Lapu-Lapu City
+PH,Commonwealth
+PH,Concepcion
+PH,Coron
+PH,Cotabato
+PH,Cuyo
+PH,Daanbantayan
+PH,Daet
+PH,Dagupan
+PH,Dapitan
+PH,Dasmarinas
+PH,Datu Odin Sinsuat
+PH,Davao
+PH,Del Carmen
+PH,Digos
+PH,Dinaig
+PH,Dipolog
+PH,Don Carlos
+PH,Dumaguete
+PH,Dumaguete City
+PH,El Nido
+PH,Escalante
+PH,Gapan
+PH,Gasan
+PH,General Santos
+PH,General Trias
+PH,Gingoog
+PH,Guiguinto
+PH,Guyong
+PH,Hagonoy
+PH,Himamaylan
+PH,Ilagan
+PH,Iligan
+PH,Iligan City
+PH,Iloilo
+PH,Imus
+PH,Iriga City
+PH,Isulan
+PH,Jolo
+PH,Kabankalan
+PH,Kalibo
+PH,Kalibo (poblacion)
+PH,Kawit
+PH,Kidapawan
+PH,Koronadal
+PH,La Paz
+PH,La Trinidad
+PH,Laguindingan
+PH,Lal-lo
+PH,Lambayong
+PH,Laoag
+PH,Laoag City
+PH,Lapu-Lapu City
+PH,Las Pinas
+PH,Legaspi
+PH,Legazpi
+PH,Libertad
+PH,Limay
+PH,Lipa City
+PH,Los Banos
+PH,Lubang
+PH,Lucena
+PH,Mabalacat
+PH,Mabalacat City
+PH,Maco
+PH,Magugpo Poblacion
+PH,Makati City
+PH,Malabon
+PH,Malapatan
+PH,Malingao
+PH,Malita
+PH,Malolos
+PH,Mambajao
+PH,Mamburao
+PH,Mandaluyong
+PH,Mandaluyong City
+PH,Mandaue City
+PH,Mangaldan
+PH,Manila
+PH,Manila (Pasay)
+PH,Manolo Fortich
+PH,Mansilingan
+PH,Mantampay
+PH,Maramag
+PH,Marawi City
+PH,Marikina City
+PH,Marilao
+PH,Mariveles
+PH,Masbate
+PH,Mati
+PH,Meycauayan
+PH,Midsayap
+PH,Monkayo
+PH,Munoz
+PH,Muricay
+PH,NIA Valencia
+PH,Naga
+PH,Navotas
+PH,Norzagaray
+PH,Olongapo
+PH,Ormoc
+PH,Ormoc City
+PH,Ozamiz
+PH,Ozamiz City
+PH,Paco
+PH,Pagadian
+PH,Pagbilao
+PH,Panabo
+PH,Panalanoy
+PH,Pandi
+PH,Panglao
+PH,Paniqui
+PH,Paranaque City
+PH,Pasay
+PH,Pasig City
+PH,Plaridel
+PH,Polangui
+PH,Port Area
+PH,Prosperidad
+PH,Puerto Princesa
+PH,Pulilan
+PH,Pulong Santa Cruz
+PH,Quezon
+PH,Quezon City
+PH,Rodriguez
+PH,Rosario
+PH,Roxas City
+PH,Sablayan
+PH,Sagay
+PH,San Fernando
+PH,San Francisco
+PH,San Jose
+PH,San Jose del Monte
+PH,San Juan
+PH,San Mateo
+PH,San Pablo
+PH,San Pedro
+PH,San Vicente
+PH,Santa Cruz
+PH,Santa Rosa
+PH,Santiago
+PH,Santol
+PH,Silang
+PH,Sipalay
+PH,Solana
+PH,Sorsogon
+PH,Sultan Kudarat
+PH,Surallah
+PH,Surigao
+PH,Surigao City
+PH,Tablas Island
+PH,Tabuk
+PH,Tacloban
+PH,Tacloban City
+PH,Tacurong
+PH,Tagaytay
+PH,Tagbilaran City
+PH,Taguig
+PH,Talisay
+PH,Tandag
+PH,Tanjay
+PH,Tanza
+PH,Tarlac City
+PH,Tayabas
+PH,Taytay
+PH,Toledo
+PH,Tuguegarao
+PH,Tuguegarao City
+PH,Tupi
+PH,Urdaneta
+PH,Valenzuela
+PH,Victorias
+PH,Virac
+PH,Zamboanga
+PW,Angaur State
+PW,Babelthuap Island
+PW,Idid Hamlet
+PW,Ikelau Hamlet
+PW,Imeong Hamlet
+PW,Iyebukel Hamlet
+PW,Kayangel
+PW,Kloulklubed
+PW,Koror
+PW,Koror Town
+PW,Medalaii Hamlet
+PW,Meketii Hamlet
+PW,Melekeok Village
+PW,Mengellang
+PW,Meyungs Hamlet
+PW,Ngardmau
+PW,Ngchemiangel
+PW,Ngchesar Hamlet
+PW,Ngerbeched Hamlet
+PW,Ngerchemai Hamlet
+PW,Ngerekebesang Hamlet
+PW,Ngereklmadel
+PW,Ngerkeai
+PW,Ngerkeseuaol Hamlet
+PW,Ngermid Hamlet
+PW,Ngerulmud
+PW,Ngetkib
+PW,Sonsorol Village
+PW,Tobi Village
+PW,Ulimang
+SB,Anua
+SB,Arona
+SB,Atoifi
+SB,Auki
+SB,Avu Avu
+SB,Ballalae
+SB,Barakoma
+SB,Batuna Mission Station
+SB,Bila
+SB,Buala
+SB,Choiseul Bay
+SB,Fera Island
+SB,Gatokae
+SB,Gizo
+SB,Honiara
+SB,Kagau Island
+SB,Kirakira
+SB,Kola'a
+SB,Kolombangara Island
+SB,Kukum
+SB,Kwailabesi
+SB,Lata
+SB,Liangia
+SB,Lomlom
+SB,Malango
+SB,Manaoba
+SB,Marau
+SB,Mataniko
+SB,Mbambanakira
+SB,Mbumburu
+SB,Munda
+SB,Nggosi
+SB,Noro
+SB,Panatina
+SB,Parasi
+SB,Ramata
+SB,Rennell Island
+SB,Ringi Cove
+SB,Rove - Lengakiki
+SB,Santa Ana Island
+SB,Santa Cruz/Graciosa Bay/Luova
+SB,Sege
+SB,Star Harbor
+SB,Stirling Island
+SB,Suavanao
+SB,Tandai
+SB,Taro
+SB,Tulaghi Island
+SB,Tulagi
+SB,Vavaea
+SB,Viru
+SB,Vuhokesa
+SB,Vura
+SB,Yandina
+SG,Admiralty
+SG,Alexandra Estate
+SG,Anak Bukit
+SG,Ang Mo Kio New Town
+SG,Bangkit
+SG,Bedok New Town
+SG,Bencoolen
+SG,Bishan New Town
+SG,Boon Lay
+SG,Braddell Heights Estate
+SG,Brickworks Estate
+SG,Bugis
+SG,Bukit Batok New Town
+SG,Bukit Ho Swee Estate
+SG,Bukit Mandai Village
+SG,Bukit Merah Estate
+SG,Bukit Panjang New Town
+SG,Bukit Timah
+SG,Bulim
+SG,Changi Village
+SG,Chia Keng
+SG,Choa Chu Kang New Town
+SG,Clementi Housing Estate
+SG,Dairy Farm
+SG,Dover
+SG,Eunos
+SG,Faber Hills
+SG,Fajar
+SG,Farrer Park
+SG,Geylang
+SG,Ghim Moh
+SG,HarbourFront
+SG,Henderson Estate
+SG,Hillcrest Park
+SG,Holland Drive
+SG,Holland Village
+SG,Hong Kah
+SG,Hougang New Town
+SG,Institution Hill
+SG,Jelebu
+SG,Jurong East
+SG,Jurong Town
+SG,Jurong West
+SG,Kaki Bukit Estate
+SG,Kallang
+SG,Kampong Java Teban
+SG,Kampong Loyang
+SG,Kampong Pasir Ris
+SG,Kampong Potong Pasir
+SG,Kampong Ubi
+SG,Kampong Ulu Pandan
+SG,Kangkar
+SG,Keat Hong Village
+SG,Kembangan
+SG,Kent Ridge
+SG,Lam San Village
+SG,Lavender
+SG,Leedon Park
+SG,Leonie Hill
+SG,Loyang
+SG,Lucky Hills
+SG,MacPherson
+SG,Margaret Drive
+SG,Marina Bay
+SG,Marine Parade
+SG,Marsiling
+SG,Matilda Estate
+SG,Mount Emily Park
+SG,Mount Vernon
+SG,Nature Reserve
+SG,Nee Soon Estate
+SG,Newton
+SG,Novena
+SG,One North
+SG,One Tree Hill
+SG,Orchard
+SG,Outram Park
+SG,Oxley
+SG,Pandan Valley
+SG,Pasir Panjang
+SG,Pasir Ris New Town
+SG,Paya Lebar
+SG,Peng Siang
+SG,Punggol
+SG,Queenstown Estate
+SG,Radin Mas
+SG,River Valley
+SG,Rochor
+SG,Saujana
+SG,Seletar
+SG,Sembawang Estate
+SG,Sembawang Hills Estate
+SG,Sengkang New Town
+SG,Senja
+SG,Sennett Estate
+SG,Sentosa
+SG,Serangoon
+SG,Serangoon Garden
+SG,Serangoon New Town
+SG,Simei New Town
+SG,Singapore
+SG,Somapah
+SG,Sungai Simpang
+SG,Tai Seng
+SG,Tampines Estate
+SG,Tampines New Town
+SG,Tanglin
+SG,Tanglin Halt
+SG,Tanjong Pagar
+SG,Teck Whye
+SG,Telok Blangah
+SG,Thomson
+SG,Tiong Bahru Estate
+SG,Toa Payoh New Town
+SG,Tyersall Park
+SG,Ulu Bedok
+SG,West Coast Village
+SG,Western Water Catchment
+SG,Woodlands
+SG,Woodlands North Coast
+SG,Yew Tee
+SG,Yio Chu Kang
+SG,Yishun New Town
+TH,Anusawari
+TH,Ban I Chang
+TH,Ban Khlong Prawet
+TH,Ban Ko Sire
+TH,Ban Lak Song
+TH,Ban Lam Luk Ka
+TH,Ban Mai
+TH,Ban Na
+TH,Ban Phaeo
+TH,Ban Pong
+TH,Ban Samae Dam
+TH,Ban Talat Yai
+TH,Ban Tha Kham
+TH,Bang Bon
+TH,Bang Bua Thong
+TH,Bang Kapi
+TH,Bang Khae
+TH,Bang Khae Nuea
+TH,Bang Khun Thian
+TH,Bang Kruai
+TH,Bang Lamung
+TH,Bang Na
+TH,Bang Phai
+TH,Bang Phlat
+TH,Bang Rak
+TH,Bang Sue
+TH,Bang Sue subdistrict
+TH,Bangkok
+TH,Bangkok Noi
+TH,Bangkok Riverside
+TH,Bangkok Yai
+TH,Betong
+TH,Bueng Kum
+TH,Buriram
+TH,Cha-am
+TH,Chachoengsao
+TH,Chaiyaphum
+TH,Chaloem Phra Kiat
+TH,Chanthaburi
+TH,Chatuchak
+TH,Chiang Mai
+TH,Chiang Rai
+TH,Chom Thong
+TH,Chon Buri
+TH,Chong Nonsi
+TH,Chum Phae
+TH,Chumphon
+TH,Din Daeng
+TH,Dusit
+TH,Hat Yai
+TH,Hua Hin
+TH,Huai Khwang
+TH,Huamak
+TH,Kabin Buri
+TH,Kalasin
+TH,Kamphaeng Phet
+TH,Kanchanaburi
+TH,Khan Na Yao
+TH,Khlong Chan
+TH,Khlong Kum
+TH,Khlong Luang
+TH,Khlong Sam Wa
+TH,Khlong San
+TH,Khlong Toei
+TH,Khon Kaen
+TH,Klaeng
+TH,Ko Samui
+TH,Krabi
+TH,Krathum Baen
+TH,Laem Ngop
+TH,Lak Si
+TH,Lampang
+TH,Lamphun
+TH,Lat Krabang
+TH,Lat Phrao
+TH,Lat Yao
+TH,Latkrabang
+TH,Lop Buri
+TH,Mae Hong Son
+TH,Mae Sot
+TH,Maha Sarakham
+TH,Mueang Nonthaburi
+TH,Mukdahan
+TH,Na Di
+TH,Na Thon (Ko Samui Island)
+TH,Nakhon Pathom
+TH,Nakhon Phanom
+TH,Nakhon Ratchasima
+TH,Nakhon Sawan
+TH,Nakhon Si Thammarat
+TH,Narathiwat
+TH,Nong Chok
+TH,Nong Khae
+TH,Nong Khaem
+TH,Nong Khai
+TH,Pak Chong
+TH,Pak Kret
+TH,Pathum Wan
+TH,Pattani
+TH,Pattaya
+TH,Phasi Charoen
+TH,Phatthalung
+TH,Phaya Thai
+TH,Phetchabun
+TH,Phetchaburi
+TH,Phitsanulok
+TH,Phra Khanong
+TH,Phra Nakhon
+TH,Phra Nakhon Si Ayutthaya
+TH,Phra Phutthabat
+TH,Phra Pradaeng
+TH,Phuket
+TH,Pom Prap Sattru Phai
+TH,Prachantakham
+TH,Pran Buri
+TH,Ranong
+TH,Rat Burana
+TH,Ratchaburi
+TH,Ratchathewi
+TH,Rayong
+TH,Roi Et
+TH,Sadao
+TH,Sai Mai
+TH,Sakon Nakhon
+TH,Samut Prakan
+TH,Samut Sakhon
+TH,Saphan Sung
+TH,Saraburi
+TH,Sathon
+TH,Sathorn
+TH,Sattahip
+TH,Si Maha Phot
+TH,Si Racha
+TH,Si Sa Ket
+TH,Songkhla
+TH,Su-ngai Kolok
+TH,Suan Luang
+TH,Suphan Buri
+TH,Surat Thani
+TH,Surin
+TH,Takhli
+TH,Taling Chan
+TH,Tha Maka
+TH,Tha Raeng
+TH,Tha Yang
+TH,Thawi Watthana
+TH,Thon Buri
+TH,Thung Khru
+TH,Trang
+TH,Ubon Ratchathani
+TH,Udon Thani
+TH,Uttaradit
+TH,Wang Thonglang
+TH,Warin Chamrap
+TH,Wat Tha Phra
+TH,Watthana
+TH,Wichian Buri
+TH,Wong Sawang
+TH,Yala
+TH,Yan Nawa
+TL,Aileu
+TL,Ainaro
+TL,Aissirimou
+TL,Atauro
+TL,Barique
+TL,Baucau
+TL,Baukau
+TL,Dare
+TL,Dili
+TL,Fohorem
+TL,Gleno
+TL,Irabin de Baixo
+TL,Lautem
+TL,Lifau
+TL,Likisa
+TL,Lospalos
+TL,Luro
+TL,Maliana
+TL,Manatutu
+TL,Maubara
+TL,Metinaro
+TL,Oecussi-Ambeno
+TL,Pante Makasar
+TL,Same
+TL,Suai
+TL,Tilomar
+TL,Tutuala
+TL,Venilale
+TL,Viqueque
+TO,'Ohonua
+TO,'Utulau
+TO,"Angaha, Niuafo'ou Island"
+TO,Eua Island
+TO,Fangale'ounga
+TO,Fo'ui
+TO,Folaha
+TO,Fua'amotu
+TO,Ha'akame
+TO,Ha'alalo
+TO,Ha'asini
+TO,Ha'ateiho
+TO,Ha'atu'a
+TO,Haveluloto
+TO,Hihifo
+TO,Hofoa
+TO,Holonga
+TO,Houma
+TO,Kolonga
+TO,Kolovai
+TO,Lapaha
+TO,Leimatu'a
+TO,Lifuka
+TO,Longomapu
+TO,Longoteme
+TO,Malapo
+TO,Matahau
+TO,Mataika
+TO,Mu'a
+TO,Navutoka
+TO,Neiafu
+TO,Niuatoputapu
+TO,Niutoua
+TO,Nuku'alofa
+TO,Nukunuku
+TO,Pangai
+TO,Pangaimotu
+TO,Pea
+TO,Pelehake
+TO,Popua
+TO,Puke
+TO,Sia'atoutai
+TO,Ta'anea
+TO,Tatakamotonga
+TO,Te'ekiu
+TO,Tefisi
+TO,Tofoa-Koloua
+TO,Tokomololo
+TO,Tukutonga
+TO,Vaini
+TO,Vava'u Island
+TO,Veitongo
+TV,Alapi Village
+TV,Asau Village
+TV,Fakaifou Village
+TV,Funafuti
+TV,Kulia Village
+TV,Motufoua School
+TV,Savave Village
+TV,Senala Village
+TV,Tanrake Village
+TV,Teone Village
+TV,Toga Village
+TV,Vaiaku Village
+VN,An Nhon
+VN,Ba Dinh
+VN,Ba GJon
+VN,Ba Vi
+VN,Bac Giang
+VN,Bac Lieu
+VN,Bac Ninh
+VN,Bac Quang
+VN,Bac Tu Liem
+VN,Bach Mai
+VN,Bao Loc
+VN,Ben Cat
+VN,Ben Tre
+VN,Bien Hoa
+VN,Binh Minh
+VN,Binh Thanh
+VN,Binh Thuy
+VN,Bo GJe
+VN,Buon Ho
+VN,Buon Ma Thuot
+VN,Ca Mau
+VN,Ca Mau City
+VN,Cai Lay
+VN,Cam Pha
+VN,Cam Pha Mines
+VN,Cam Ranh
+VN,Can Giuoc
+VN,Can Tho
+VN,Cao Lanh
+VN,Cau Giay
+VN,Chi Linh
+VN,Cho Lon
+VN,Chon Thanh
+VN,Chu
+VN,Co GJo
+VN,Con Dao
+VN,Da Lat
+VN,Da Nang
+VN,Di An
+VN,Dien Bien Phu
+VN,Dong Ha
+VN,Dong Hoi
+VN,GJien Ban
+VN,GJong GJa
+VN,GJong Hoi
+VN,GJong Xoai
+VN,GJuc Pho
+VN,GJuc Trong
+VN,Gia Lam
+VN,Gia Rai
+VN,Go Cong
+VN,Go Vap
+VN,Ha Long
+VN,Ha Tien
+VN,Hai Ba Trung
+VN,Hai Chau
+VN,Hai Duong
+VN,Haiphong
+VN,Haiphong (Hai An)
+VN,Hanoi
+VN,Hanoi (Soc Son)
+VN,Ho Chi Minh City
+VN,Ho Chi Minh City (Long Thanh)
+VN,Hoa Binh
+VN,Hoa Cuong
+VN,Hoa Thanh
+VN,Hoan Kiem
+VN,Hoang Mai
+VN,Hong Ngu
+VN,Hue
+VN,Hung Yen
+VN,Huong Thuy
+VN,Huyen Lam Ha
+VN,Huế
+VN,Kien An
+VN,Kon Tum
+VN,Ky Anh
+VN,La Gi
+VN,Lang Son
+VN,Lao Cai
+VN,Long Bien
+VN,Long Khanh
+VN,Long Xuyen
+VN,Mong Cai
+VN,My Hao
+VN,My Tho
+VN,Nam GJinh
+VN,Nga Bay
+VN,Nghi Son
+VN,Nghi Xuan
+VN,Nghia GJo
+VN,Nha Trang
+VN,Nha Trang/nha Trang aiurportCam Ranh
+VN,Ninh Hoa
+VN,O Mon
+VN,Phan Rang-Thap Cham
+VN,Phan Thiet
+VN,Pho Yen
+VN,Phong GJien
+VN,Phu Ly
+VN,Phu My
+VN,Phu Quoc
+VN,Phu Quoc Island
+VN,Phu Tho
+VN,Phuc Yen
+VN,Pleiku
+VN,Quan Ba
+VN,Quan Bon
+VN,Quan GJuc Thinh
+VN,Quan Muoi
+VN,Quan Muoi Mot
+VN,Quan Nam
+VN,Quan Sau
+VN,Quang Ngai
+VN,Qui Nhon
+VN,Quy Nohn
+VN,Rach Gia
+VN,Sa Dec
+VN,Sam Son
+VN,Soc Trang
+VN,Son La
+VN,Son Tay
+VN,Song Cau
+VN,Tam Ky
+VN,Tam Nghĩa
+VN,Tan An
+VN,Tan Binh
+VN,Tan Chau
+VN,Tay Ho
+VN,Tay Ninh
+VN,Thai Nguyen
+VN,Thanh Hoa
+VN,Thanh Hóa
+VN,Thanh Khe
+VN,Thanh Pho Ba Ria
+VN,Thanh Xuan
+VN,Thanh pho Song Cong
+VN,Thanh pho Tra Vinh
+VN,Thi Tran GJai Tu
+VN,Thi Tran GJong Trieu
+VN,Thi Tran Thuan Chau
+VN,Thoi Lai
+VN,Thot Not
+VN,Thu Dau Mot
+VN,Thu GJuc
+VN,Thuan An
+VN,Thuan Thanh
+VN,Thuong Cat
+VN,Tinh Bien
+VN,Trang Bang
+VN,Tuy Hoa
+VN,Tuyen Quang
+VN,Van Don
+VN,Viet Tri
+VN,Viet Yen
+VN,Vinh
+VN,Vinh Chau
+VN,Vinh Long
+VN,Vinh Thanh
+VN,Vinh Yen
+VN,Vung Tau
+VN,Xuan Loc
+VN,Yen Bai
+VN,Yen Vinh
+VU,Ablow
+VU,Ambrym Island
+VU,Anatom Island
+VU,Aniwa
+VU,Craig Cove
+VU,Dillon's Bay
+VU,Emae Island
+VU,Epi Island
+VU,Futuna Island
+VU,Gaua Island
+VU,Hog Harbour
+VU,Ipota
+VU,Isangel
+VU,Lakatoro
+VU,Lamap
+VU,Lamen Bay
+VU,Loh/Linua
+VU,Longana
+VU,Lonorore
+VU,Luganville
+VU,Maewo Island
+VU,Malekula Island
+VU,Norsup
+VU,Olpoi
+VU,Paama Island
+VU,Pango
+VU,Pentecost Island
+VU,Port Vila
+VU,Port-Olry
+VU,Port-Vila
+VU,Redcliffe
+VU,Saratamata
+VU,Sola
+VU,Tanna Island
+VU,Tongoa Island
+VU,Walaha
+WS,Afega
+WS,Apia
+WS,Asau
+WS,Auala
+WS,Faleapuna
+WS,Faleatiu
+WS,Falefa
+WS,Faleula
+WS,Falevao
+WS,Fasito`outa
+WS,Fusi
+WS,Gataivai
+WS,Lalomanu
+WS,Lano
+WS,Le'auva'a
+WS,Lepea
+WS,Letogo
+WS,Leulumoega
+WS,Levi
+WS,Lotofaga
+WS,Lufilufi
+WS,Malie
+WS,Maota
+WS,Matautu
+WS,Matavai
+WS,Mulifanua
+WS,Nofoali`i
+WS,Pata
+WS,Patamea
+WS,Sa'asa'ai
+WS,Safotu
+WS,Safotulafai
+WS,Sagone
+WS,Saipipi
+WS,Salani
+WS,Sale'a'aumua
+WS,Sale'aula
+WS,Saleilua
+WS,Salepou`a`e
+WS,Samalaeulu
+WS,Samamea
+WS,Samatau
+WS,Samusu
+WS,Sapapali'i
+WS,Sapulu
+WS,Sasina
+WS,Satapuala
+WS,Sataua
+WS,Satitoa
+WS,Satupa`itea
+WS,Si'umu
+WS,Sili
+WS,Siusega
+WS,Siutu
+WS,Solosolo
+WS,Taga
+WS,Tanugamanono
+WS,Toamua
+WS,Tuana'i
+WS,Tufulele
+WS,Vaigaga
+WS,Vailima
+WS,Vailoa
+WS,Vaimoso
+WS,Vaisala
+WS,Vaiusu
+WS,Vaovai

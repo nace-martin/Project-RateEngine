@@ -203,8 +203,6 @@ class ExportPricingEngine:
         # Origin Clearance (D2A, D2D)
         if service_scope in ('D2A', 'D2D'):
             codes.append(1020)  # EXP-CLEAR - Customs Clearance (Origin)
-            codes.append(1071)  # EXP-VCH - Valuable Cargo Handling
-            codes.append(1072)  # EXP-LPC - Livestock Processing Fee
         
         # Deduplicate and sort
         return sorted(list(set(codes)))

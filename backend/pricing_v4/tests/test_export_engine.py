@@ -241,3 +241,12 @@ class ExportPercentRateSelectionTest(ExportEngineTestCase):
         self.assertIn(self.pc_fsc_pickup.code, by_code)
         self.assertEqual(by_code[self.pc_pickup.code].sell_amount, Decimal('25.00'))
         self.assertEqual(by_code[self.pc_fsc_pickup.code].sell_amount, Decimal('2.50'))
+
+
+class ExportProductCodeSelectionTest(TestCase):
+    def test_general_export_scope_does_not_auto_include_special_cargo_fees(self):
+        codes = ExportPricingEngine.get_product_codes(is_dg=False, service_scope='D2A')
+
+        self.assertIn(1020, codes)
+        self.assertNotIn(1071, codes)
+        self.assertNotIn(1072, codes)
