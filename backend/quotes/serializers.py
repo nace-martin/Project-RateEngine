@@ -307,7 +307,8 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version', 'request_details_json', 'spot_negotiation',
+            'status', 'approval_required', 'approval_reason', 'valid_until', 'created_at',
+            'latest_version', 'request_details_json', 'spot_negotiation',
             'created_by', 'rate_provider'
         )
 
@@ -346,7 +347,8 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             'id', 'quote_number', 'customer', 'contact', 'mode', 
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version', 'created_by',
+            'status', 'approval_required', 'approval_reason', 'valid_until', 'created_at',
+            'latest_version', 'created_by',
             'spot_negotiation'
         )
 

@@ -16,6 +16,7 @@ from .models import (
     DomesticSellRate,
     CustomerDiscount,
     CommodityChargeRule,
+    CommodityApprovalRule,
 )
 
 
@@ -186,6 +187,44 @@ class CommodityChargeRuleAdmin(admin.ModelAdmin):
         }),
         ('Optional Filters', {
             'fields': ('origin_code', 'destination_code', 'payment_term', 'is_active')
+        }),
+        ('Validity', {
+            'fields': ('effective_from', 'effective_to')
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(CommodityApprovalRule)
+class CommodityApprovalRuleAdmin(admin.ModelAdmin):
+    list_display = [
+        'shipment_type',
+        'service_scope',
+        'commodity_code',
+        'requires_manager_approval',
+        'margin_below_pct',
+        'is_active',
+        'effective_from',
+        'effective_to',
+    ]
+    list_filter = [
+        'shipment_type',
+        'service_scope',
+        'commodity_code',
+        'requires_manager_approval',
+        'is_active',
+    ]
+    search_fields = ['commodity_code', 'notes']
+    ordering = ['shipment_type', 'commodity_code', 'service_scope']
+    fieldsets = (
+        ('Applicability', {
+            'fields': ('shipment_type', 'service_scope', 'commodity_code', 'is_active')
+        }),
+        ('Approval', {
+            'fields': ('requires_manager_approval', 'margin_below_pct')
         }),
         ('Validity', {
             'fields': ('effective_from', 'effective_to')

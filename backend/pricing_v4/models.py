@@ -1527,3 +1527,72 @@ class CommodityChargeRule(models.Model):
             f"{self.shipment_type} {self.service_scope} {self.commodity_code} "
             f"{self.product_code.code} ({self.trigger_mode}) [{lane_display}]"
         )
+
+
+class CommodityApprovalRule(models.Model):
+    """
+    Standard quote approval rules for special commodities.
+
+    These rules are evaluated independently from SPOT triggering so a quote can
+    price normally while still being flagged for manager review.
+    """
+
+    SHIPMENT_TYPE_CHOICES = CommodityChargeRule.SHIPMENT_TYPE_CHOICES
+    SERVICE_SCOPE_CHOICES = CommodityChargeRule.SERVICE_SCOPE_CHOICES
+
+    shipment_type = models.CharField(max_length=10, choices=SHIPMENT_TYPE_CHOICES, db_index=True)
+    service_scope = models.CharField(
+        max_length=3,
+        choices=SERVICE_SCOPE_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Optional scope filter. Leave blank to apply to all scopes.",
+    )
+    commodity_code = models.CharField(
+        max_length=10,
+        choices=COMMODITY_CHOICES,
+        default=DEFAULT_COMMODITY_CODE,
+        db_index=True,
+    )
+    requires_manager_approval = models.BooleanField(default=True)
+    margin_below_pct = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional minimum margin threshold below which approval is required.",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'commodity_approval_rules'
+        ordering = ['shipment_type', 'commodity_code', 'service_scope']
+        verbose_name = 'Commodity Approval Rule'
+        verbose_name_plural = 'Commodity Approval Rules'
+        indexes = [
+            models.Index(
+                fields=['shipment_type', 'commodity_code', 'is_active'],
+                name='commodity_approval_lookup_idx',
+            ),
+            models.Index(
+                fields=['service_scope', 'effective_from'],
+                name='commodity_approval_scope_idx',
+            ),
+        ]
+
+    def clean(self):
+        if self.effective_to and self.effective_to < self.effective_from:
+            raise ValidationError({'effective_to': 'effective_to must be on or after effective_from.'})
+
+    def __str__(self):
+        scope = self.service_scope or 'ALL'
+        return (
+            f"{self.shipment_type} {scope} {self.commodity_code} "
+            f"(approval={'Y' if self.requires_manager_approval else 'N'})"
+        )

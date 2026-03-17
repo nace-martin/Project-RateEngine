@@ -21,6 +21,7 @@ from quotes.state_machine import (
     is_quote_editable,
 )
 from quotes.currency_rules import determine_quote_currency
+from quotes.approval import QuoteApprovalPolicy
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
@@ -294,6 +295,13 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         """
         customer = get_object_or_404(Company, id=validated_data.customer_id)
         contact = get_object_or_404(Contact, id=validated_data.contact_id)
+        approval = QuoteApprovalPolicy.evaluate(
+            shipment_type=shipment_type,
+            service_scope=validated_data.service_scope,
+            commodity_code=validated_data.commodity_code,
+            total_cost_pgk=charges.totals.total_cost_pgk,
+            total_sell_pgk=charges.totals.total_sell_pgk,
+        )
 
         is_new_quote = quote is None
         if is_new_quote:
@@ -307,6 +315,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 payment_term=validated_data.payment_term,
                 service_scope=validated_data.service_scope,
                 commodity_code=validated_data.commodity_code,
+                approval_required=approval.approval_required,
+                approval_reason=approval.reason,
                 output_currency=output_currency or 'PGK',
                 origin_location_id=validated_data.origin_location_id,
                 destination_location_id=validated_data.destination_location_id,
@@ -328,6 +338,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.payment_term = validated_data.payment_term
             quote.service_scope = validated_data.service_scope
             quote.commodity_code = validated_data.commodity_code
+            quote.approval_required = approval.approval_required
+            quote.approval_reason = approval.reason
             quote.output_currency = output_currency or 'PGK'
             quote.origin_location_id = validated_data.origin_location_id
             quote.destination_location_id = validated_data.destination_location_id
@@ -345,6 +357,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'payment_term',
                 'service_scope',
                 'commodity_code',
+                'approval_required',
+                'approval_reason',
                 'output_currency',
                 'origin_location',
                 'destination_location',

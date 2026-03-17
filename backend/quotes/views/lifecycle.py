@@ -576,6 +576,8 @@ class QuoteCloneAPIView(APIView):
                 incoterm=source_quote.incoterm,
                 payment_term=source_quote.payment_term,
                 commodity_code=source_quote.commodity_code,
+                approval_required=source_quote.approval_required,
+                approval_reason=source_quote.approval_reason,
                 output_currency=source_quote.output_currency,
                 origin_location=source_quote.origin_location,
                 destination_location=source_quote.destination_location,

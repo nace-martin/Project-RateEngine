@@ -50,13 +50,14 @@ class QuoteAdmin(admin.ModelAdmin):
         'mode', 
         'shipment_type',
         'commodity_code',
+        'approval_required',
         'origin_location',
         'destination_location',
         'status', 
         'created_at', 
         'created_by'
     )
-    list_filter = ('status', 'mode', 'shipment_type', 'created_at')
+    list_filter = ('status', 'mode', 'shipment_type', 'approval_required', 'created_at')
     search_fields = ('quote_number', 'customer__name')
     # --- END UPDATES ---
     
@@ -67,7 +68,8 @@ class QuoteAdmin(admin.ModelAdmin):
         'quote_number', 'customer', 'contact', 'mode', 'shipment_type', 
         'incoterm', 'payment_term', 'output_currency', 
         'origin_location', 'destination_location',
-        'policy', 'fx_snapshot', 'commodity_code', 'is_dangerous_goods', 'status', 
+        'policy', 'fx_snapshot', 'commodity_code', 'approval_required', 'approval_reason',
+        'is_dangerous_goods', 'status',
         'request_details_json', 'created_at', 'created_by', 'updated_at',
         'finalized_at', 'finalized_by', 'sent_at', 'sent_by'
     )
