@@ -575,6 +575,7 @@ class QuoteCloneAPIView(APIView):
                 service_scope=source_quote.service_scope,
                 incoterm=source_quote.incoterm,
                 payment_term=source_quote.payment_term,
+                commodity_code=source_quote.commodity_code,
                 output_currency=source_quote.output_currency,
                 origin_location=source_quote.origin_location,
                 destination_location=source_quote.destination_location,

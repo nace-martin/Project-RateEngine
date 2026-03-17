@@ -18,6 +18,7 @@ from django.utils import timezone
 
 from fpdf import FPDF
 
+from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE, commodity_label
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .public_links import build_public_quote_url
 
@@ -698,18 +699,40 @@ def _get_cargo_type(quote, version) -> str:
         cargo_type = quote_input.get('cargo_type')
         if cargo_type:
             return cargo_type
+        commodity_code = quote_input.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
     
     cargo_data = getattr(version, 'cargo_data', None) or {}
     if isinstance(cargo_data, dict):
         cargo_type = cargo_data.get('cargo_type')
         if cargo_type:
             return cargo_type
-    
+        commodity_code = cargo_data.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
+
+    version_payload = getattr(version, 'payload_json', None) or {}
+    if isinstance(version_payload, dict):
+        commodity_code = version_payload.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
+
+    request_payload = getattr(quote, 'request_details_json', None) or {}
+    if isinstance(request_payload, dict):
+        commodity_code = request_payload.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
+
+    commodity_code = getattr(quote, 'commodity_code', None)
+    if commodity_code:
+        return commodity_label(commodity_code)
+
     is_dg = getattr(quote, 'is_dangerous_goods', False)
     if is_dg:
-        return 'Dangerous Goods'
+        return commodity_label(COMMODITY_CODE_DG)
     
-    return 'General Cargo'
+    return commodity_label(DEFAULT_COMMODITY_CODE)
 
 
 def _get_chargeable_weight(quote, version) -> str:

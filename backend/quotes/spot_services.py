@@ -648,6 +648,7 @@ class StandardChargeService:
                 shipment_type=shipment_type,
                 incoterm="EXW" if direction == "EXPORT" else "DDU",
                 payment_term=str(payment_term or "PREPAID").upper(),
+                commodity_code=commodity or "GCR",
                 is_dangerous_goods=(commodity == "DG"),
                 pieces=[Piece(
                     pieces=1,

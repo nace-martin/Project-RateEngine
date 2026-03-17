@@ -24,6 +24,7 @@ from quotes.currency_rules import determine_quote_currency
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
+from core.commodity import COMMODITY_CODE_DG
 from parties.models import Company, Contact
 
 # Pricing Dispatcher - Single Entry Point
@@ -120,7 +121,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 )
         
         # --- MVP CHECK: Block DG ---
-        if payload.is_dangerous_goods:
+        if payload.commodity_code == COMMODITY_CODE_DG or payload.is_dangerous_goods:
             return Response(
                 {"detail": "Dangerous Goods (DG) shipments are not yet supported."},
                 status=status.HTTP_400_BAD_REQUEST
@@ -232,6 +233,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             shipment_type=shipment_type,
             incoterm=data.incoterm,
             payment_term=data.payment_term,
+            commodity_code=data.commodity_code,
             is_dangerous_goods=data.is_dangerous_goods,
             pieces=[Piece(**p.model_dump()) for p in data.dimensions],
             service_scope=data.service_scope,
@@ -304,6 +306,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 incoterm=validated_data.incoterm,
                 payment_term=validated_data.payment_term,
                 service_scope=validated_data.service_scope,
+                commodity_code=validated_data.commodity_code,
                 output_currency=output_currency or 'PGK',
                 origin_location_id=validated_data.origin_location_id,
                 destination_location_id=validated_data.destination_location_id,
@@ -324,6 +327,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.incoterm = validated_data.incoterm
             quote.payment_term = validated_data.payment_term
             quote.service_scope = validated_data.service_scope
+            quote.commodity_code = validated_data.commodity_code
             quote.output_currency = output_currency or 'PGK'
             quote.origin_location_id = validated_data.origin_location_id
             quote.destination_location_id = validated_data.destination_location_id
@@ -340,6 +344,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'incoterm',
                 'payment_term',
                 'service_scope',
+                'commodity_code',
                 'output_currency',
                 'origin_location',
                 'destination_location',

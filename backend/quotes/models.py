@@ -12,6 +12,7 @@ from django.utils.translation import gettext_lazy as _
 from parties.models import Company, Contact
 # --- UPDATED IMPORT ---
 from core.models import Policy, FxSnapshot, Location
+from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
 # --- END UPDATE ---
 from services.models import MODE_CHOICES, ServiceComponent, SERVICE_SCOPE_CHOICES
 
@@ -123,6 +124,13 @@ class Quote(models.Model):
         null=True, blank=True
     )
 
+    commodity_code = models.CharField(
+        max_length=10,
+        choices=COMMODITY_CHOICES,
+        default=DEFAULT_COMMODITY_CODE,
+        db_index=True,
+        help_text="Commodity classification used for conditional pricing and approvals.",
+    )
     is_dangerous_goods = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     request_details_json = models.JSONField(

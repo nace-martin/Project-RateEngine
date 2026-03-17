@@ -12,6 +12,8 @@ from typing import List, Optional, Dict, Any
 import uuid
 from pydantic import BaseModel, Field, ConfigDict
 
+from core.commodity import DEFAULT_COMMODITY_CODE
+
 # --- Core Shipment & Quote Inputs ---
 
 class LocationRef(BaseModel):
@@ -42,6 +44,7 @@ class ShipmentDetails(BaseModel):
     shipment_type: str         # e.g., 'IMPORT', 'EXPORT'
     incoterm: str              # e.g., 'EXW'
     payment_term: str          # e.g., 'PREPAID'
+    commodity_code: str = DEFAULT_COMMODITY_CODE
     is_dangerous_goods: bool
     pieces: List[Piece]
     service_scope: Optional[str] = None  # e.g., 'D2D'

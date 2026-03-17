@@ -7,6 +7,11 @@ from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
+from core.commodity import (
+    COMMODITY_CODE_DG,
+    DEFAULT_COMMODITY_CODE,
+    validate_commodity_code,
+)
 from core.models import Location
 from parties.serializers import CustomerV3Serializer, ContactV3Serializer
 # --- END IMPORTS ---
@@ -57,10 +62,17 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     
     incoterm = serializers.CharField(max_length=3)
     payment_term = serializers.ChoiceField(choices=Quote.PaymentTerm.choices)
+    commodity_code = serializers.CharField(max_length=10, required=False, default=DEFAULT_COMMODITY_CODE)
     is_dangerous_goods = serializers.BooleanField(default=False)
     dimensions = V3DimensionInputSerializer(many=True, required=True)
     overrides = V3ManualOverrideSerializer(many=True, required=False)
     spot_rates = serializers.DictField(required=False, allow_null=True)
+
+    def validate_commodity_code(self, value):
+        try:
+            return validate_commodity_code(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     def validate_dimensions(self, value):
         if not value or len(value) == 0:
@@ -77,6 +89,18 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
             legacy_errors['shipment_type'] = ["Shipment type is derived automatically and should not be provided."]
         if legacy_errors:
             raise serializers.ValidationError(legacy_errors)
+
+        commodity_code = attrs.get('commodity_code', DEFAULT_COMMODITY_CODE)
+        is_dangerous_goods = attrs.get('is_dangerous_goods', False)
+        if is_dangerous_goods and commodity_code == DEFAULT_COMMODITY_CODE:
+            commodity_code = COMMODITY_CODE_DG
+        elif commodity_code == COMMODITY_CODE_DG:
+            attrs['is_dangerous_goods'] = True
+        elif is_dangerous_goods:
+            raise serializers.ValidationError({
+                'is_dangerous_goods': ["is_dangerous_goods can only be true when commodity_code is DG."]
+            })
+        attrs['commodity_code'] = commodity_code
 
         return attrs
 
@@ -281,7 +305,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         model = Quote
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
-            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
+            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at', 'latest_version', 'request_details_json', 'spot_negotiation',
             'created_by', 'rate_provider'
@@ -320,7 +344,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
         model = Quote
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
-            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
+            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at', 'latest_version', 'created_by',
             'spot_negotiation'

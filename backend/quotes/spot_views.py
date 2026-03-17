@@ -1049,6 +1049,7 @@ class SpotEnvelopeComputeAPIView(APIView):
             shipment_type=shipment_type,
             incoterm=quote_data.get('incoterm', 'DAP'),
             payment_term=quote_data.get('payment_term', 'PREPAID'),
+            commodity_code=ctx.get('commodity') or 'GCR',
             is_dangerous_goods=ctx.get('commodity') == 'DG',
             pieces=[
                 Piece(
@@ -1377,6 +1378,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             shipment_type=shipment_type,
             incoterm=quote_data.get('incoterm', 'DAP'),
             payment_term=quote_data.get('payment_term', 'PREPAID'),
+            commodity_code=ctx.get('commodity') or 'GCR',
             is_dangerous_goods=ctx.get('commodity') == 'DG',
             pieces=[Piece(
                 pieces=ctx.get('pieces', 1),

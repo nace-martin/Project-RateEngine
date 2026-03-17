@@ -15,6 +15,7 @@ from .models import (
     DomesticCOGS,
     DomesticSellRate,
     CustomerDiscount,
+    CommodityChargeRule,
 )
 
 
@@ -145,6 +146,55 @@ class CustomerDiscountAdmin(admin.ModelAdmin):
         }),
     )
     readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(CommodityChargeRule)
+class CommodityChargeRuleAdmin(admin.ModelAdmin):
+    list_display = [
+        'shipment_type',
+        'service_scope',
+        'commodity_code',
+        'product_code',
+        'leg',
+        'trigger_mode',
+        'origin_code',
+        'destination_code',
+        'payment_term',
+        'is_active',
+        'effective_from',
+        'effective_to',
+    ]
+    list_filter = [
+        'shipment_type',
+        'service_scope',
+        'commodity_code',
+        'leg',
+        'trigger_mode',
+        'payment_term',
+        'is_active',
+    ]
+    search_fields = ['product_code__code', 'product_code__description', 'origin_code', 'destination_code', 'notes']
+    ordering = ['shipment_type', 'service_scope', 'commodity_code', 'product_code']
+    autocomplete_fields = ['product_code']
+
+    fieldsets = (
+        ('Applicability', {
+            'fields': ('shipment_type', 'service_scope', 'commodity_code', 'leg', 'trigger_mode')
+        }),
+        ('Product Mapping', {
+            'fields': ('product_code',)
+        }),
+        ('Optional Filters', {
+            'fields': ('origin_code', 'destination_code', 'payment_term', 'is_active')
+        }),
+        ('Validity', {
+            'fields': ('effective_from', 'effective_to')
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+            'classes': ('collapse',)
+        }),
+    )
 
 
 # =============================================================================
