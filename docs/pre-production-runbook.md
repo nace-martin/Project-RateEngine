@@ -195,6 +195,13 @@ Sync V4 product codes into service components used by quote line rendering/repor
 python manage.py sync_v4_components
 ```
 
+Seed the launch commodity routing matrix:
+
+```bash
+python manage.py seed_launch_commodity_rules --dry-run
+python manage.py seed_launch_commodity_rules --effective-from 2026-01-01
+```
+
 Optional, only if you use routing constraints or special lane tooling:
 
 ```bash
