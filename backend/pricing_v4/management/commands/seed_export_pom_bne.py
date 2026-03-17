@@ -16,7 +16,8 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from pricing_v4.models import Carrier, Agent, ProductCode, ExportCOGS, ExportSellRate
+from pricing_v4.models import Carrier, Agent, ProductCode, ExportCOGS
+from pricing_v4.management.commands._sell_seed_utils import seed_export_sell_rate
 
 
 class Command(BaseCommand):
@@ -557,24 +558,26 @@ class Command(BaseCommand):
             },
         ]
         
+        percent_of_pickup = ProductCode.objects.get(id=1050)
+
         for rate_data in sell_rates:
-            obj, created = ExportSellRate.objects.update_or_create(
-                product_code_id=rate_data['product_code_id'],
+            pc = ProductCode.objects.get(id=rate_data['product_code_id'])
+            result = seed_export_sell_rate(
+                product_code=pc,
                 origin_airport=rate_data['origin_airport'],
                 destination_airport=rate_data['destination_airport'],
+                currency=rate_data.get('currency', 'PGK'),
                 valid_from=valid_from,
-                defaults={
-                    'currency': rate_data.get('currency', 'PGK'),
-                    'rate_per_kg': rate_data.get('rate_per_kg'),
-                    'rate_per_shipment': rate_data.get('rate_per_shipment'),
-                    'min_charge': rate_data.get('min_charge'),
-                    'max_charge': rate_data.get('max_charge'),
-                    'weight_breaks': rate_data.get('weight_breaks'),
-                    'percent_rate': rate_data.get('percent_rate'),
-                    'is_additive': rate_data.get('is_additive', False),
-                    'valid_until': valid_until,
-                }
+                valid_until=valid_until,
+                rate_per_kg=rate_data.get('rate_per_kg'),
+                rate_per_shipment=rate_data.get('rate_per_shipment'),
+                min_charge=rate_data.get('min_charge'),
+                max_charge=rate_data.get('max_charge'),
+                weight_breaks=rate_data.get('weight_breaks'),
+                percent_rate=rate_data.get('percent_rate'),
+                is_additive=rate_data.get('is_additive', False),
+                payment_term='PREPAID',
+                percent_of_product_code=percent_of_pickup if pc.id == 1060 else None,
             )
-            pc = ProductCode.objects.get(id=rate_data['product_code_id'])
-            status = "Created" if created else "Updated"
-            self.stdout.write(f"  {status}: SELL {pc.code} POM->BNE")
+            status = "Created" if result.created else "Updated"
+            self.stdout.write(f"  {status}: {result.table_name} {pc.code} POM->BNE")
