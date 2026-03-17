@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from django.test import TestCase
 
 from pricing_v4.models import (
+    CommodityChargeRule,
     ProductCode, Agent,
     ImportCOGS, LocalCOGSRate, LocalSellRate
 )
@@ -418,3 +419,73 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
         self.assertEqual(len(doc_origin_lines), 1)
         line = doc_origin_lines[0]
         self.assertFalse(getattr(line, 'is_rate_missing', False))
+
+
+class ImportCommodityRuleSelectionTest(ImportEngineTestCase):
+    def setUp(self):
+        self.pc_special_dest = ProductCode.objects.create(
+            id=2099,
+            code='IMP-AVI-DEST-TEST',
+            description='Import Live Animal Destination Handling',
+            domain='IMPORT',
+            category='HANDLING',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4399',
+            gl_cost_code='5399',
+            default_unit='SHIPMENT'
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='IMPORT',
+            service_scope='A2D',
+            commodity_code='AVI',
+            product_code=self.pc_special_dest,
+            leg='DESTINATION',
+            trigger_mode='AUTO',
+            origin_code='SYD',
+            destination_code='POM',
+            payment_term='COLLECT',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        LocalCOGSRate.objects.create(
+            product_code=self.pc_special_dest,
+            location='POM',
+            direction='IMPORT',
+            agent=self.agent_efm,
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('250.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.pc_special_dest,
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('320.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+    def test_import_engine_only_includes_matching_commodity_rule_products(self):
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='SYD',
+            destination='POM',
+            chargeable_weight_kg=Decimal('25'),
+            payment_term=PaymentTerm.COLLECT,
+            service_scope=ServiceScope.A2D
+        )
+
+        general_result = engine.calculate_quote(commodity_code='GCR')
+        commodity_result = engine.calculate_quote(commodity_code='AVI')
+
+        general_codes = {line.product_code for line in general_result.destination_lines}
+        commodity_codes = {line.product_code for line in commodity_result.destination_lines}
+
+        self.assertNotIn('IMP-AVI-DEST-TEST', general_codes)
+        self.assertIn('IMP-AVI-DEST-TEST', commodity_codes)

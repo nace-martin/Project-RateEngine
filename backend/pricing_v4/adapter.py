@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
 from uuid import UUID
 
+from core.commodity import DEFAULT_COMMODITY_CODE
 from core.models import FxSnapshot, Policy
 from django.db import models
 from core.dataclasses import (
@@ -240,6 +241,7 @@ class PricingServiceV4Adapter:
     def _calculate_standard_lines(self) -> List[CalculatedChargeLine]:
         """Run standard V4 pricing engine and return raw charge lines."""
         shipment = self.quote_input.shipment
+        commodity_code = getattr(shipment, "commodity_code", DEFAULT_COMMODITY_CODE)
         engine = None
         result = None
         
@@ -338,7 +340,8 @@ class PricingServiceV4Adapter:
                 destination=dest_code,
                 weight_kg=chargeable_weight,
                 service_scope=shipment.service_scope,
-                quote_date=self.quote_input.quote_date
+                quote_date=self.quote_input.quote_date,
+                commodity_code=commodity_code,
             )
         else:
             raise NotImplementedError(f"Unsupported shipment type: {shipment.shipment_type}")
@@ -348,16 +351,25 @@ class PricingServiceV4Adapter:
         if shipment.shipment_type == 'EXPORT':
             product_code_ids = ExportPricingEngine.get_product_codes(
                 is_dg=shipment.is_dangerous_goods,
-                service_scope=shipment.service_scope
+                service_scope=shipment.service_scope,
+                commodity_code=commodity_code,
+                origin=origin_code,
+                destination=dest_code,
+                payment_term=shipment.payment_term,
+                quote_date=self.quote_input.quote_date,
             )
             result = engine.calculate_quote(
                 product_code_ids,
                 is_dg=shipment.is_dangerous_goods,
-                service_scope=shipment.service_scope
+                service_scope=shipment.service_scope,
+                commodity_code=commodity_code,
             )
         else:
             # Import and Domestic engines use calculate_quote() without args
-            result = engine.calculate_quote()
+            if shipment.shipment_type == 'IMPORT':
+                result = engine.calculate_quote(commodity_code=commodity_code)
+            else:
+                result = engine.calculate_quote()
         
         # 3. Convert Result to V3 QuoteCharges (now returns List[CalculatedChargeLine])
         return self._convert_result_to_lines(result)
@@ -723,6 +735,11 @@ class PricingServiceV4Adapter:
         shipment_type = getattr(shipment, "shipment_type", None)
         service_scope = getattr(shipment, "service_scope", None)
         is_dg = getattr(shipment, "is_dangerous_goods", False)
+        commodity_code = getattr(shipment, "commodity_code", DEFAULT_COMMODITY_CODE)
+        origin_code = getattr(getattr(shipment, "origin_location", None), "code", None)
+        destination_code = getattr(getattr(shipment, "destination_location", None), "code", None)
+        quote_date = getattr(self.quote_input, "quote_date", None)
+        payment_term = getattr(shipment, "payment_term", None)
         
         # 3. COMPLETENESS EVALUATION (Safety Handlers)
         coverage = evaluate_from_lines(lines, shipment_type, service_scope)
@@ -738,9 +755,33 @@ class PricingServiceV4Adapter:
 
             mandatory_ids = []
             if shipment_type == 'EXPORT':
-                mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+                mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(
+                    is_dg=is_dg,
+                    service_scope=service_scope,
+                    commodity_code=commodity_code,
+                    origin=origin_code,
+                    destination=destination_code,
+                    payment_term=payment_term,
+                    quote_date=quote_date,
+                )
             elif shipment_type == 'IMPORT':
-                mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+                mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(
+                    is_dg=is_dg,
+                    service_scope=service_scope,
+                    commodity_code=commodity_code,
+                    origin=origin_code,
+                    destination=destination_code,
+                    payment_term=payment_term,
+                    quote_date=quote_date,
+                )
+            elif shipment_type == 'DOMESTIC':
+                mandatory_ids = DomesticPricingEngine.get_mandatory_product_codes(
+                    service_scope=service_scope,
+                    commodity_code=commodity_code,
+                    origin=origin_code,
+                    destination=destination_code,
+                    quote_date=quote_date,
+                )
 
             resolved_codes = {l.service_component_code for l in lines}
             resolved_ids = set()

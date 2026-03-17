@@ -28,6 +28,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
 from enum import Enum
 
+from core.commodity import DEFAULT_COMMODITY_CODE
+from pricing_v4.commodity_rules import get_auto_product_code_ids
 from pricing_v4.models import (
     ProductCode, ExportCOGS, ExportSellRate,
     LocalSellRate, LocalCOGSRate, Surcharge
@@ -193,12 +195,28 @@ class ExportPricingEngine:
     # =========================================================================
     
     @staticmethod
-    def get_product_codes(is_dg: bool = False, service_scope: str = 'P2P') -> List[int]:
+    def get_product_codes(
+        is_dg: bool = False,
+        service_scope: str = 'P2P',
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+        origin: Optional[str] = None,
+        destination: Optional[str] = None,
+        payment_term: Optional[str] = None,
+        quote_date: Optional[date] = None,
+    ) -> List[int]:
         if service_scope == 'A2A':
             service_scope = 'P2P'
 
         # All codes requested are now mandatory
-        codes = ExportPricingEngine.get_mandatory_product_codes(is_dg, service_scope)
+        codes = ExportPricingEngine.get_mandatory_product_codes(
+            is_dg=is_dg,
+            service_scope=service_scope,
+            commodity_code=commodity_code,
+            origin=origin,
+            destination=destination,
+            payment_term=payment_term,
+            quote_date=quote_date,
+        )
         
         # Origin Clearance (D2A, D2D)
         if service_scope in ('D2A', 'D2D'):
@@ -208,7 +226,15 @@ class ExportPricingEngine:
         return sorted(list(set(codes)))
 
     @staticmethod
-    def get_mandatory_product_codes(is_dg: bool = False, service_scope: str = 'P2P') -> List[int]:
+    def get_mandatory_product_codes(
+        is_dg: bool = False,
+        service_scope: str = 'P2P',
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+        origin: Optional[str] = None,
+        destination: Optional[str] = None,
+        payment_term: Optional[str] = None,
+        quote_date: Optional[date] = None,
+    ) -> List[int]:
         if service_scope == 'A2A': service_scope = 'P2P'
 
         codes = [
@@ -238,12 +264,36 @@ class ExportPricingEngine:
             
         if is_dg:
             codes.append(1070)
+
+        codes.extend(get_auto_product_code_ids(
+            shipment_type='EXPORT',
+            service_scope=service_scope,
+            commodity_code=commodity_code,
+            origin_code=origin,
+            destination_code=destination,
+            payment_term=payment_term,
+            quote_date=quote_date,
+        ))
             
-        return codes
+        return sorted(list(set(codes)))
     
-    def calculate_quote(self, product_code_ids: List[int], is_dg: bool = False, service_scope: str = 'P2P') -> QuoteResult:
+    def calculate_quote(
+        self,
+        product_code_ids: List[int],
+        is_dg: bool = False,
+        service_scope: str = 'P2P',
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+    ) -> QuoteResult:
         self._prefetch_rates(product_code_ids)
-        mandatory_ids = self.get_mandatory_product_codes(is_dg, service_scope)
+        mandatory_ids = self.get_mandatory_product_codes(
+            is_dg=is_dg,
+            service_scope=service_scope,
+            commodity_code=commodity_code,
+            origin=self.origin,
+            destination=self.destination,
+            payment_term=self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term),
+            quote_date=self.quote_date,
+        )
         lines = []
         regular_ids = []
         percent_ids = []

@@ -2,6 +2,9 @@ from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import date
+from core.commodity import DEFAULT_COMMODITY_CODE
+from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
+from pricing_v4.models import ProductCode
 from pricing_v4.models import DomesticCOGS, DomesticSellRate, Surcharge
 from core.charge_rules import evaluate_charge_rule
 
@@ -31,13 +34,22 @@ class DomesticPricingEngine:
     - GST added at end for Domestic
     """
 
-    def __init__(self, cogs_origin, destination, weight_kg, service_scope='A2A', quote_date: Optional[date] = None):
+    def __init__(
+        self,
+        cogs_origin,
+        destination,
+        weight_kg,
+        service_scope='A2A',
+        quote_date: Optional[date] = None,
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+    ):
         self.origin = cogs_origin  # e.g., 'POM'
         self.destination = destination  # e.g., 'LAE'
         self.weight = Decimal(str(weight_kg))
         self.service_scope = service_scope  # D2D, D2A, A2D, A2A
         self.service_type = 'DOMESTIC_AIR'
         self.quote_date = quote_date or date.today()
+        self.commodity_code = commodity_code
         
         # Validation: Door service only available in specific ports
         self.DOOR_PORTS = ['POM', 'LAE']
@@ -57,6 +69,28 @@ class DomesticPricingEngine:
             
         if is_dest_door and self.destination not in self.DOOR_PORTS:
             raise ValueError(f"Delivery not available for {self.destination}. Door service only in {self.DOOR_PORTS}")
+
+    @staticmethod
+    def get_mandatory_product_codes(
+        service_scope: str = 'A2A',
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+        origin: Optional[str] = None,
+        destination: Optional[str] = None,
+        quote_date: Optional[date] = None,
+    ) -> List[int]:
+        codes: list[int] = []
+        freight_id = ProductCode.objects.filter(code='DOM-FRT-AIR').values_list('id', flat=True).first()
+        if freight_id:
+            codes.append(freight_id)
+        codes.extend(get_auto_product_code_ids(
+            shipment_type='DOMESTIC',
+            service_scope=service_scope,
+            commodity_code=commodity_code,
+            origin_code=origin,
+            destination_code=destination,
+            quote_date=quote_date,
+        ))
+        return sorted(list(set(codes)))
 
     def calculate_quote(self) -> QuoteResult:
         result = QuoteResult()
@@ -88,6 +122,17 @@ class DomesticPricingEngine:
             .first()
         )
         if cogs:
+            if not is_product_code_enabled(
+                shipment_type='DOMESTIC',
+                service_scope=self.service_scope,
+                commodity_code=self.commodity_code,
+                product_code_id=cogs.product_code_id,
+                origin_code=self.origin,
+                destination_code=self.destination,
+                quote_date=self.quote_date,
+            ):
+                cogs = None
+        if cogs:
             cost = self._calc_weight_based_amount(cogs.rate_per_kg, cogs.weight_breaks, cogs.min_charge)
             if cost > 0:
                 agent_name = cogs.agent.name if cogs.agent else None
@@ -106,6 +151,17 @@ class DomesticPricingEngine:
             .first()
         )
         if sell:
+            if not is_product_code_enabled(
+                shipment_type='DOMESTIC',
+                service_scope=self.service_scope,
+                commodity_code=self.commodity_code,
+                product_code_id=sell.product_code_id,
+                origin_code=self.origin,
+                destination_code=self.destination,
+                quote_date=self.quote_date,
+            ):
+                sell = None
+        if sell:
             amt = self._calc_weight_based_amount(sell.rate_per_kg, sell.weight_breaks, sell.min_charge)
             if amt > 0:
                 result.sell_breakdown.append(BillableCharge("Air Freight", amt, product_code='DOM-FRT-AIR'))
@@ -118,6 +174,16 @@ class DomesticPricingEngine:
             is_active=True
         ).select_related('product_code')
         for sur in cogs_surcharges:
+            if not is_product_code_enabled(
+                shipment_type='DOMESTIC',
+                service_scope=self.service_scope,
+                commodity_code=self.commodity_code,
+                product_code_id=sur.product_code_id,
+                origin_code=self.origin,
+                destination_code=self.destination,
+                quote_date=self.quote_date,
+            ):
+                continue
             amount = self._calc_surcharge_amount(sur)
             result.cogs_breakdown.append(BillableCharge(f"{sur.product_code.description} (Cost)", amount, product_code=sur.product_code.code))
 
@@ -128,6 +194,16 @@ class DomesticPricingEngine:
             is_active=True
         ).select_related('product_code')
         for sur in sell_surcharges:
+            if not is_product_code_enabled(
+                shipment_type='DOMESTIC',
+                service_scope=self.service_scope,
+                commodity_code=self.commodity_code,
+                product_code_id=sur.product_code_id,
+                origin_code=self.origin,
+                destination_code=self.destination,
+                quote_date=self.quote_date,
+            ):
+                continue
             amount = self._calc_surcharge_amount(sur)
             result.sell_breakdown.append(BillableCharge(sur.product_code.description, amount, product_code=sur.product_code.code))
 

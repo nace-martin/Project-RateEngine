@@ -20,11 +20,13 @@ from typing import Dict, List, Optional, Literal
 from enum import Enum
 import logging
 
+from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.models import (
     ImportCOGS, ImportSellRate, ProductCode,
     LocalSellRate, LocalCOGSRate
 )
 from pricing_v4.category_rules import is_local_rate_category
+from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
 
@@ -338,12 +340,21 @@ class ImportPricingEngine:
                 return 'DESTINATION'
             return 'ORIGIN'
     
-    def calculate_quote(self) -> QuoteResult:
+    def calculate_quote(self, commodity_code: str = DEFAULT_COMMODITY_CODE) -> QuoteResult:
         """
         Calculate complete import quote.
         """
         active_legs = self._get_active_legs()
-        mandatory_ids = self.get_mandatory_product_codes(is_dg=False, service_scope=self.service_scope.value)
+        payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
+        mandatory_ids = self.get_mandatory_product_codes(
+            is_dg=False,
+            service_scope=self.service_scope.value,
+            commodity_code=commodity_code,
+            origin=self.origin,
+            destination=self.destination,
+            payment_term=payment_term_value,
+            quote_date=self.quote_date,
+        )
         
         result = QuoteResult(
             origin=self.origin,
@@ -366,9 +377,20 @@ class ImportPricingEngine:
         
         # Get all Import ProductCodes
         import_pcs = ProductCode.objects.filter(domain='IMPORT').order_by('id')
-        
+
         # First pass: Calculate base costs (for FSC dependencies)
         for pc in import_pcs:
+            if not is_product_code_enabled(
+                shipment_type='IMPORT',
+                service_scope=self.service_scope.value,
+                commodity_code=commodity_code,
+                product_code_id=pc.id,
+                origin_code=self.origin,
+                destination_code=self.destination,
+                payment_term=payment_term_value,
+                quote_date=self.quote_date,
+            ):
+                continue
             leg = self._get_leg_for_product_code(pc)
             if leg not in active_legs:
                 continue
@@ -391,6 +413,17 @@ class ImportPricingEngine:
         
         # Second pass: Calculate all charges including FSC
         for pc in import_pcs:
+            if not is_product_code_enabled(
+                shipment_type='IMPORT',
+                service_scope=self.service_scope.value,
+                commodity_code=commodity_code,
+                product_code_id=pc.id,
+                origin_code=self.origin,
+                destination_code=self.destination,
+                payment_term=payment_term_value,
+                quote_date=self.quote_date,
+            ):
+                continue
             leg = self._get_leg_for_product_code(pc)
             if leg not in active_legs:
                 continue
@@ -458,7 +491,15 @@ class ImportPricingEngine:
         return result
 
     @staticmethod
-    def get_mandatory_product_codes(is_dg: bool = False, service_scope: str = 'A2A') -> List[int]:
+    def get_mandatory_product_codes(
+        is_dg: bool = False,
+        service_scope: str = 'A2A',
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+        origin: Optional[str] = None,
+        destination: Optional[str] = None,
+        payment_term: Optional[str] = None,
+        quote_date: Optional[date] = None,
+    ) -> List[int]:
         """
         Returns list of ProductCode IDs that MUST be present for commercial validity.
         """
@@ -495,7 +536,17 @@ class ImportPricingEngine:
                 2080,  # IMP-FSC-CARTAGE-DEST
             ])
 
-        return codes
+        codes.extend(get_auto_product_code_ids(
+            shipment_type='IMPORT',
+            service_scope=service_scope,
+            commodity_code=commodity_code,
+            origin_code=origin,
+            destination_code=destination,
+            payment_term=payment_term,
+            quote_date=quote_date,
+        ))
+
+        return sorted(list(set(codes)))
     
     def _calculate_charge_line(self, pc: ProductCode, leg: str) -> Optional[ChargeLine]:
         """Calculate a single charge line."""

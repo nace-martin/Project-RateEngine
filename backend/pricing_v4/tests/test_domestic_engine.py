@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from django.test import TestCase
 
 from pricing_v4.models import (
+    CommodityChargeRule,
     ProductCode, Carrier, Agent,
     DomesticCOGS, DomesticSellRate, Surcharge
 )
@@ -378,3 +379,84 @@ class DomesticServiceScopeValidationTest(DomesticEngineTestCase):
                 service_scope='D2A'
             )
         self.assertIn('Pickup not available', str(context.exception))
+
+
+class DomesticCommodityRuleSelectionTest(DomesticEngineTestCase):
+    def setUp(self):
+        DomesticCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_zone='POM',
+            destination_zone='LAE',
+            carrier=self.carrier_px,
+            currency='PGK',
+            rate_per_kg=Decimal('6.50'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+        DomesticSellRate.objects.create(
+            product_code=self.pc_freight,
+            origin_zone='POM',
+            destination_zone='LAE',
+            currency='PGK',
+            rate_per_kg=Decimal('8.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+        self.pc_live = ProductCode.objects.create(
+            id=3009,
+            code='DOM-AVI-HANDLING',
+            description='Domestic Live Animal Handling',
+            domain='DOMESTIC',
+            category='HANDLING',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4400',
+            gl_cost_code='5400',
+            default_unit='SHIPMENT'
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='DOMESTIC',
+            service_scope='A2A',
+            commodity_code='AVI',
+            product_code=self.pc_live,
+            leg='MAIN',
+            trigger_mode='AUTO',
+            origin_code='POM',
+            destination_code='LAE',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        Surcharge.objects.create(
+            product_code=self.pc_live,
+            rate_side='SELL',
+            service_type='DOMESTIC_AIR',
+            rate_type='FLAT',
+            amount=Decimal('75.00'),
+            currency='PGK',
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+            is_active=True
+        )
+
+    def test_domestic_engine_only_includes_matching_commodity_surcharge(self):
+        general_result = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=20,
+            service_scope='A2A',
+            commodity_code='GCR'
+        ).calculate_quote()
+        commodity_result = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=20,
+            service_scope='A2A',
+            commodity_code='AVI'
+        ).calculate_quote()
+
+        general_codes = {item.product_code for item in general_result.sell_breakdown}
+        commodity_codes = {item.product_code for item in commodity_result.sell_breakdown}
+
+        self.assertNotIn('DOM-AVI-HANDLING', general_codes)
+        self.assertIn('DOM-AVI-HANDLING', commodity_codes)

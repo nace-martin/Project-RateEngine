@@ -8,7 +8,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 from django.test import TestCase
 
-from pricing_v4.models import ProductCode, Agent, LocalCOGSRate, LocalSellRate
+from pricing_v4.models import CommodityChargeRule, ProductCode, Agent, LocalCOGSRate, LocalSellRate
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm
 
 
@@ -250,3 +250,51 @@ class ExportProductCodeSelectionTest(TestCase):
         self.assertIn(1020, codes)
         self.assertNotIn(1071, codes)
         self.assertNotIn(1072, codes)
+
+    def test_matching_commodity_rule_auto_includes_product_code(self):
+        product_code = ProductCode.objects.create(
+            id=1510,
+            code='EXP-AVI-TEST',
+            description='Export Live Animal Handling',
+            domain='EXPORT',
+            category='HANDLING',
+            is_gst_applicable=False,
+            gst_rate=Decimal('0.00'),
+            gl_revenue_code='4310',
+            gl_cost_code='5310',
+            default_unit='SHIPMENT',
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='EXPORT',
+            service_scope='D2A',
+            commodity_code='AVI',
+            product_code=product_code,
+            leg='ORIGIN',
+            trigger_mode='AUTO',
+            origin_code='POM',
+            destination_code='BNE',
+            effective_from=date.today() - timedelta(days=1),
+            effective_to=date.today() + timedelta(days=30),
+        )
+
+        general_codes = ExportPricingEngine.get_product_codes(
+            is_dg=False,
+            service_scope='D2A',
+            commodity_code='GCR',
+            origin='POM',
+            destination='BNE',
+            payment_term='PREPAID',
+            quote_date=date.today(),
+        )
+        commodity_codes = ExportPricingEngine.get_product_codes(
+            is_dg=False,
+            service_scope='D2A',
+            commodity_code='AVI',
+            origin='POM',
+            destination='BNE',
+            payment_term='PREPAID',
+            quote_date=date.today(),
+        )
+
+        self.assertNotIn(product_code.id, general_codes)
+        self.assertIn(product_code.id, commodity_codes)
