@@ -346,17 +346,17 @@ class SpotTriggerEvaluator:
         if manual_required:
             message_parts.append(
                 "Commodity requires manual charge entry for: "
-                + ", ".join(manual_required)
+                + cls._format_product_codes(manual_required)
             )
         if spot_required:
             message_parts.append(
                 "Commodity requires SPOT rate sourcing for: "
-                + ", ".join(spot_required)
+                + cls._format_product_codes(spot_required)
             )
         if missing:
             message_parts.append(
                 "Commodity-specific DB coverage is missing for: "
-                + ", ".join(missing)
+                + cls._format_product_codes(missing)
             )
 
         return TriggerResult(
@@ -366,6 +366,36 @@ class SpotTriggerEvaluator:
             spot_required_product_codes=spot_required,
             manual_required_product_codes=manual_required,
         )
+
+    @staticmethod
+    def _format_product_codes(codes: List[str]) -> str:
+        ordered_codes: list[str] = []
+        for code in codes:
+            normalized = str(code or "").strip().upper()
+            if normalized and normalized not in ordered_codes:
+                ordered_codes.append(normalized)
+
+        if not ordered_codes:
+            return ""
+
+        try:
+            from pricing_v4.models import ProductCode
+
+            description_map = {
+                product.code.upper(): product.description
+                for product in ProductCode.objects.filter(code__in=ordered_codes)
+            }
+        except Exception:
+            description_map = {}
+
+        formatted: list[str] = []
+        for code in ordered_codes:
+            description = description_map.get(code)
+            if description:
+                formatted.append(f"{description} ({code})")
+            else:
+                formatted.append(code)
+        return ", ".join(formatted)
 
 class RateAvailabilityService:
     """

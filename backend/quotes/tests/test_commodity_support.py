@@ -224,14 +224,35 @@ class QuoteCommodityAPITests(APITestCase):
         self.origin = Location.objects.create(code="SYD", name="Sydney", country=au, is_active=True)
         self.destination = Location.objects.create(code="POM", name="Port Moresby", country=pg, is_active=True)
 
-    def test_standard_compute_blocks_dg_when_sent_as_commodity_code(self):
+    def test_standard_compute_routes_dg_using_commodity_rules(self):
+        CommodityChargeRule.objects.create(
+            shipment_type=Quote.ShipmentType.IMPORT,
+            service_scope="A2D",
+            commodity_code=COMMODITY_CODE_DG,
+            product_code=ProductCode.objects.create(
+                id=2986,
+                code="IMP-DG-MANUAL-API",
+                description="Import DG manual only",
+                domain="IMPORT",
+                category="HANDLING",
+                is_gst_applicable=True,
+                gl_revenue_code="4100",
+                gl_cost_code="5100",
+                default_unit="SHIPMENT",
+            ),
+            leg="DESTINATION",
+            trigger_mode="REQUIRES_MANUAL",
+            effective_from=timezone.now().date() - timedelta(days=1),
+            effective_to=timezone.now().date() + timedelta(days=30),
+        )
+
         response = self.client.post(
             self.url,
             {
                 "customer_id": str(self.customer.id),
                 "contact_id": str(self.contact.id),
                 "mode": "AIR",
-                "service_scope": "D2D",
+                "service_scope": "A2D",
                 "origin_location_id": str(self.origin.id),
                 "destination_location_id": str(self.destination.id),
                 "incoterm": "DAP",
@@ -250,11 +271,14 @@ class QuoteCommodityAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        payload = response.json()
+        self.assertEqual(payload["spot_trigger"]["code"], "COMMODITY_REQUIRES_MANUAL")
         self.assertEqual(
-            response.json()["detail"],
-            "Dangerous Goods (DG) shipments are not yet supported.",
+            payload["spot_trigger"]["manual_required_product_codes"],
+            ["IMP-DG-MANUAL-API"],
         )
+        self.assertIn("Import DG manual only (IMP-DG-MANUAL-API)", payload["detail"])
 
     def test_standard_compute_blocks_manual_only_commodity_rule_with_spot_trigger(self):
         CommodityChargeRule.objects.create(
@@ -310,3 +334,4 @@ class QuoteCommodityAPITests(APITestCase):
             payload["spot_trigger"]["manual_required_product_codes"],
             ["IMP-AVI-MANUAL-API"],
         )
+        self.assertIn("Import AVI manual only (IMP-AVI-MANUAL-API)", payload["detail"])

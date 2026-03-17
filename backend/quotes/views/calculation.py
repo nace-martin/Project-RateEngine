@@ -24,7 +24,7 @@ from quotes.currency_rules import determine_quote_currency
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
-from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE
+from core.commodity import DEFAULT_COMMODITY_CODE
 from parties.models import Company, Contact
 
 # Pricing Dispatcher - Single Entry Point
@@ -120,13 +120,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
         
-        # --- MVP CHECK: Block DG ---
-        if payload.commodity_code == COMMODITY_CODE_DG or payload.is_dangerous_goods:
-            return Response(
-                {"detail": "Dangerous Goods (DG) shipments are not yet supported."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-            
         origin_location = get_object_or_404(Location, pk=payload.origin_location_id, is_active=True)
         destination_location = get_object_or_404(Location, pk=payload.destination_location_id, is_active=True)
 

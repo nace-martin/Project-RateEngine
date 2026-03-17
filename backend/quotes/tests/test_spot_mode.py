@@ -16,6 +16,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+from pricing_v4.models import ProductCode
 from quotes.spot_schemas import (
     AIExtractedCharge,
     AISpotExtractionResult,
@@ -217,6 +218,17 @@ class TestSpotTriggerEvaluation:
         assert result.missing_product_codes == ["EXP-DG"]
 
     def test_spot_trigger_commodity_requires_spot_rule(self):
+        ProductCode.objects.create(
+            id=1977,
+            code="EXP-AVI-SPOT",
+            description="Export Live Animal Spot Charge",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
         is_spot, result = SpotTriggerEvaluator.evaluate(
             origin_country="PG",
             destination_country="AU",
@@ -236,8 +248,31 @@ class TestSpotTriggerEvaluation:
         assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_SPOT
         assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
         assert "SPOT rate sourcing" in result.text
+        assert "Export Live Animal Spot Charge (EXP-AVI-SPOT)" in result.text
 
     def test_spot_trigger_commodity_requires_manual_rule(self):
+        ProductCode.objects.create(
+            id=1976,
+            code="EXP-AVI-MANUAL",
+            description="Export Live Animal Manual Charge",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        ProductCode.objects.create(
+            id=1975,
+            code="EXP-AVI-DB",
+            description="Export Live Animal Database Charge",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
         is_spot, result = SpotTriggerEvaluator.evaluate(
             origin_country="PG",
             destination_country="AU",
@@ -261,6 +296,9 @@ class TestSpotTriggerEvaluation:
         assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
         assert result.missing_product_codes == ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
         assert "manual charge entry" in result.text
+        assert "Export Live Animal Manual Charge (EXP-AVI-MANUAL)" in result.text
+        assert "EXP-AVI-SPOT" in result.text
+        assert "Export Live Animal Database Charge (EXP-AVI-DB)" in result.text
 
 
 class TestRateAvailabilityService:

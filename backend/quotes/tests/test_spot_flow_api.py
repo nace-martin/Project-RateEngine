@@ -216,6 +216,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertTrue(payload["is_spot_required"])
         self.assertEqual(payload["trigger"]["code"], "MISSING_COMMODITY_RATES")
         self.assertEqual(payload["trigger"]["missing_product_codes"], ["EXP-DG-API"])
+        self.assertIn("Export DG API Test (EXP-DG-API)", payload["trigger"]["text"])
 
     @patch("quotes.spot_services.RateAvailabilityService.get_availability")
     def test_evaluate_trigger_returns_manual_commodity_requirement(self, mock_availability):
@@ -266,6 +267,10 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertTrue(payload["is_spot_required"])
         self.assertEqual(payload["trigger"]["code"], "COMMODITY_REQUIRES_MANUAL")
         self.assertEqual(payload["trigger"]["manual_required_product_codes"], ["EXP-AVI-MANUAL-API"])
+        self.assertIn(
+            "Export AVI Manual API Test (EXP-AVI-MANUAL-API)",
+            payload["trigger"]["text"],
+        )
 
     def test_acknowledge_allows_a2d_destination_only_charge_without_airfreight(self):
         create_payload = {
