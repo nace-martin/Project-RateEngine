@@ -2,11 +2,13 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from unittest.mock import patch
 from django.utils import timezone
+from datetime import date, timedelta
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.models import Location
+from pricing_v4.models import CommodityChargeRule, ProductCode
 from services.models import ServiceComponent
 from quotes.completeness import (
     COMPONENT_FREIGHT,
@@ -164,6 +166,56 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertFalse(response.json()["is_spot_required"])
         kwargs = mock_availability.call_args.kwargs
         self.assertEqual(kwargs["payment_term"], "COLLECT")
+
+    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
+    def test_evaluate_trigger_returns_missing_commodity_rates(self, mock_availability):
+        valid_from = date.today() - timedelta(days=1)
+        valid_until = date.today() + timedelta(days=30)
+        product_code = ProductCode.objects.create(
+            id=1979,
+            code="EXP-DG-API",
+            description="Export DG API Test",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type="EXPORT",
+            service_scope="D2A",
+            commodity_code="DG",
+            product_code=product_code,
+            leg="ORIGIN",
+            trigger_mode="AUTO",
+            effective_from=valid_from,
+            effective_to=valid_until,
+        )
+
+        mock_availability.return_value = {
+            COMPONENT_FREIGHT: True,
+            COMPONENT_ORIGIN_LOCAL: True,
+            COMPONENT_DESTINATION_LOCAL: False,
+        }
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_airport": "POM",
+                "destination_airport": "SYD",
+                "service_scope": "D2A",
+                "payment_term": "PREPAID",
+                "commodity": "DG",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertTrue(payload["is_spot_required"])
+        self.assertEqual(payload["trigger"]["code"], "MISSING_COMMODITY_RATES")
+        self.assertEqual(payload["trigger"]["missing_product_codes"], ["EXP-DG-API"])
 
     def test_acknowledge_allows_a2d_destination_only_charge_without_airfreight(self):
         create_payload = {

@@ -28,6 +28,7 @@ from quotes.spot_schemas import (
     SPEStatus,
 )
 from quotes.spot_services import (
+    CommodityCoverageResult,
     ScopeValidator,
     SpotTriggerEvaluator,
     RateAvailabilityService,
@@ -193,6 +194,27 @@ class TestSpotTriggerEvaluation:
         )
         
         assert is_spot is False
+
+    def test_spot_trigger_missing_commodity_rates(self):
+        """Commodity-specific DB gaps trigger SPOT once base scope coverage is otherwise complete."""
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="PG",
+            destination_country="AU",
+            direction="EXPORT",
+            service_scope="D2A",
+            component_availability={
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+            },
+            commodity_code="DG",
+            commodity_coverage=CommodityCoverageResult(
+                missing_product_codes=["EXP-DG"]
+            ),
+        )
+
+        assert is_spot is True
+        assert result.code == SpotTriggerReason.MISSING_COMMODITY_RATES
+        assert result.missing_product_codes == ["EXP-DG"]
 
 
 class TestRateAvailabilityService:

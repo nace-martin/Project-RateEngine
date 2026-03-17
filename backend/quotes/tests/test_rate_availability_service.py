@@ -5,6 +5,7 @@ import pytest
 
 from pricing_v4.models import (
     Agent,
+    CommodityChargeRule,
     ExportCOGS,
     ImportCOGS,
     LocalCOGSRate,
@@ -17,7 +18,12 @@ from quotes.completeness import (
     COMPONENT_FREIGHT,
     COMPONENT_ORIGIN_LOCAL,
 )
-from quotes.spot_services import RateAvailabilityService, SpotTriggerEvaluator, SpotTriggerReason
+from quotes.spot_services import (
+    CommodityRateRuleService,
+    RateAvailabilityService,
+    SpotTriggerEvaluator,
+    SpotTriggerReason,
+)
 
 
 pytestmark = pytest.mark.django_db
@@ -338,3 +344,173 @@ def test_import_a2d_payment_term_mismatch_does_not_count_destination_local():
     assert is_spot is True
     assert trigger is not None
     assert trigger.missing_components == [COMPONENT_DESTINATION_LOCAL]
+
+
+def test_export_d2a_missing_commodity_rate_triggers_spot_when_scope_is_covered():
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_freight = _pc(1971, "EXP-FRT-AIR-COMMODITY", "EXPORT", "FREIGHT", unit="KG")
+    pc_origin = _pc(1972, "EXP-DOC-COMMODITY", "EXPORT", "DOCUMENTATION")
+    pc_dg = _pc(1973, "EXP-DG-COMMODITY", "EXPORT", "HANDLING")
+
+    ExportCOGS.objects.create(
+        product_code=pc_freight,
+        origin_airport="POM",
+        destination_airport="BNE",
+        agent=agent,
+        currency="USD",
+        rate_per_kg=Decimal("3.40"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("120.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    CommodityChargeRule.objects.create(
+        shipment_type="EXPORT",
+        service_scope="D2A",
+        commodity_code="DG",
+        product_code=pc_dg,
+        leg="ORIGIN",
+        trigger_mode="AUTO",
+        effective_from=valid_from,
+        effective_to=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "POM", "BNE", "EXPORT", "D2A", payment_term="PREPAID"
+    )
+    commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+        "POM", "BNE", "EXPORT", "D2A", "DG", payment_term="PREPAID"
+    )
+
+    assert availability[COMPONENT_FREIGHT] is True
+    assert availability[COMPONENT_ORIGIN_LOCAL] is True
+    assert commodity_coverage.missing_product_codes == ["EXP-DG-COMMODITY"]
+
+    is_spot, trigger = SpotTriggerEvaluator.evaluate(
+        origin_country="PG",
+        destination_country="AU",
+        direction="EXPORT",
+        service_scope="D2A",
+        component_availability=availability,
+        commodity_code="DG",
+        commodity_coverage=commodity_coverage,
+    )
+    assert is_spot is True
+    assert trigger is not None
+    assert trigger.code == SpotTriggerReason.MISSING_COMMODITY_RATES
+    assert trigger.missing_product_codes == ["EXP-DG-COMMODITY"]
+
+
+def test_export_d2a_seeded_commodity_rate_does_not_trigger_spot_when_scope_is_covered():
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_freight = _pc(1961, "EXP-FRT-AIR-COMMODITY-OK", "EXPORT", "FREIGHT", unit="KG")
+    pc_origin = _pc(1962, "EXP-DOC-COMMODITY-OK", "EXPORT", "DOCUMENTATION")
+    pc_dg = _pc(1963, "EXP-DG-COMMODITY-OK", "EXPORT", "HANDLING")
+
+    ExportCOGS.objects.create(
+        product_code=pc_freight,
+        origin_airport="POM",
+        destination_airport="BNE",
+        agent=agent,
+        currency="USD",
+        rate_per_kg=Decimal("3.40"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("120.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_dg,
+        location="POM",
+        direction="EXPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("250.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_dg,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("350.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    CommodityChargeRule.objects.create(
+        shipment_type="EXPORT",
+        service_scope="D2A",
+        commodity_code="DG",
+        product_code=pc_dg,
+        leg="ORIGIN",
+        trigger_mode="AUTO",
+        effective_from=valid_from,
+        effective_to=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "POM", "BNE", "EXPORT", "D2A", payment_term="PREPAID"
+    )
+    commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+        "POM", "BNE", "EXPORT", "D2A", "DG", payment_term="PREPAID"
+    )
+
+    assert commodity_coverage.is_spot_required is False
+
+    is_spot, trigger = SpotTriggerEvaluator.evaluate(
+        origin_country="PG",
+        destination_country="AU",
+        direction="EXPORT",
+        service_scope="D2A",
+        component_availability=availability,
+        commodity_code="DG",
+        commodity_coverage=commodity_coverage,
+    )
+    assert is_spot is False
+    assert trigger is None

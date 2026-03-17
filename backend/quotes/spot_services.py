@@ -19,7 +19,7 @@ SpotApprovalPolicy:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Optional, Tuple, List
@@ -30,6 +30,7 @@ from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
+from core.commodity import DEFAULT_COMMODITY_CODE
 from quotes.spot_schemas import (
     SpotPricingEnvelope,
     SPEShipmentContext,
@@ -55,6 +56,7 @@ class SpotTriggerReason:
     """Machine-readable SPOT trigger reason codes."""
     # Canonical Code (Deterministic Logic)
     MISSING_SCOPE_RATES = "MISSING_SCOPE_RATES"
+    MISSING_COMMODITY_RATES = "MISSING_COMMODITY_RATES"
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
     
     # Legacy codes (retained for backward compatibility in DB)
@@ -83,6 +85,36 @@ class TriggerResult:
     code: str
     text: str
     missing_components: List[str] = field(default_factory=list)
+    missing_product_codes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class CommodityCoverageResult:
+    """Commodity-specific pricing coverage for the selected lane/scope."""
+    missing_product_codes: List[str] = field(default_factory=list)
+    spot_required_product_codes: List[str] = field(default_factory=list)
+    manual_required_product_codes: List[str] = field(default_factory=list)
+
+    @property
+    def is_spot_required(self) -> bool:
+        return bool(
+            self.missing_product_codes
+            or self.spot_required_product_codes
+            or self.manual_required_product_codes
+        )
+
+    @property
+    def unresolved_product_codes(self) -> List[str]:
+        ordered: list[str] = []
+        for code in (
+            self.missing_product_codes
+            + self.spot_required_product_codes
+            + self.manual_required_product_codes
+        ):
+            normalized = str(code or "").upper()
+            if normalized and normalized not in ordered:
+                ordered.append(normalized)
+        return ordered
 
 
 # =============================================================================
@@ -240,7 +272,9 @@ class SpotTriggerEvaluator:
         service_scope: str,
         # A dictionary mapping component codes to their availability in the DB
         # { "FREIGHT": True, "ORIGIN_LOCAL": False, "DESTINATION_LOCAL": True, ... }
-        component_availability: dict[str, bool]
+        component_availability: dict[str, bool],
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+        commodity_coverage: Optional[CommodityCoverageResult] = None,
     ) -> Tuple[bool, Optional[TriggerResult]]:
         """
         Determine deterministically whether a quote must enter SPOT mode.
@@ -275,6 +309,18 @@ class SpotTriggerEvaluator:
                     f"{', '.join(coverage.missing_required)}"
                 ),
                 missing_components=coverage.missing_required,
+            )
+
+        commodity_result = commodity_coverage or CommodityCoverageResult()
+        if commodity_result.is_spot_required:
+            unresolved = commodity_result.unresolved_product_codes
+            return True, TriggerResult(
+                code=SpotTriggerReason.MISSING_COMMODITY_RATES,
+                text=(
+                    "Missing commodity-specific pricing coverage for selected service scope: "
+                    f"{', '.join(unresolved)}"
+                ),
+                missing_product_codes=unresolved,
             )
 
         # 5️⃣ Normal Pricing Path
@@ -543,6 +589,217 @@ class RateAvailabilityService:
             )
 
         return availability
+
+
+class CommodityRateRuleService:
+    """Evaluate commodity-specific ProductCode coverage for a lane/scope."""
+
+    @classmethod
+    def evaluate_coverage(
+        cls,
+        origin_airport: str,
+        destination_airport: str,
+        direction: str,
+        service_scope: str,
+        commodity_code: str,
+        payment_term: Optional[str] = None,
+    ) -> CommodityCoverageResult:
+        commodity_code = str(commodity_code or DEFAULT_COMMODITY_CODE).strip().upper() or DEFAULT_COMMODITY_CODE
+        if commodity_code == DEFAULT_COMMODITY_CODE:
+            return CommodityCoverageResult()
+
+        from pricing_v4.models import CommodityChargeRule
+
+        origin_airport = (origin_airport or "").strip().upper()
+        destination_airport = (destination_airport or "").strip().upper()
+        direction = (direction or "").strip().upper()
+        scope = (service_scope or "A2A").strip().upper()
+        if scope == "P2P":
+            scope = "A2A"
+
+        payment_term_normalized = (payment_term or "").strip().upper()
+        if payment_term_normalized not in {"PREPAID", "COLLECT"}:
+            payment_term_normalized = None
+
+        today = date.today()
+        rules = (
+            CommodityChargeRule.objects
+            .filter(
+                shipment_type=direction,
+                service_scope=scope,
+                commodity_code=commodity_code,
+                is_active=True,
+                effective_from__lte=today,
+            )
+            .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+            .filter(Q(origin_code__isnull=True) | Q(origin_code='') | Q(origin_code=origin_airport))
+            .filter(Q(destination_code__isnull=True) | Q(destination_code='') | Q(destination_code=destination_airport))
+            .select_related("product_code")
+        )
+
+        if payment_term_normalized:
+            rules = rules.filter(
+                Q(payment_term__isnull=True) | Q(payment_term='') | Q(payment_term=payment_term_normalized)
+            )
+
+        result = CommodityCoverageResult()
+        for rule in rules:
+            code = str(rule.product_code.code or "").upper()
+            if rule.trigger_mode == rule.TRIGGER_MODE_OPTIONAL:
+                continue
+            if rule.trigger_mode == rule.TRIGGER_MODE_REQUIRES_SPOT:
+                result.spot_required_product_codes.append(code)
+                continue
+            if rule.trigger_mode == rule.TRIGGER_MODE_REQUIRES_MANUAL:
+                result.manual_required_product_codes.append(code)
+                continue
+            if not cls._rule_has_coverage(
+                rule=rule,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                payment_term=payment_term_normalized,
+                today=today,
+            ):
+                result.missing_product_codes.append(code)
+
+        return result
+
+    @classmethod
+    def _rule_has_coverage(
+        cls,
+        *,
+        rule,
+        origin_airport: str,
+        destination_airport: str,
+        payment_term: Optional[str],
+        today: date,
+    ) -> bool:
+        from pricing_v4.category_rules import is_local_rate_category
+        from pricing_v4.models import (
+            DomesticCOGS,
+            ExportCOGS,
+            ImportCOGS,
+            LocalCOGSRate,
+            LocalSellRate,
+            Surcharge,
+        )
+
+        product_code = rule.product_code
+
+        if cls._has_matching_surcharge(
+            rule=rule,
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            today=today,
+        ):
+            return True
+
+        if rule.shipment_type == rule.SHIPMENT_TYPE_DOMESTIC:
+            return DomesticCOGS.objects.filter(
+                product_code=product_code,
+                origin_zone=origin_airport,
+                destination_zone=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+
+        if is_local_rate_category(product_code.category):
+            location_candidates = cls._local_location_candidates(
+                shipment_type=rule.shipment_type,
+                leg=rule.leg,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+            )
+            has_local_cogs = LocalCOGSRate.objects.filter(
+                product_code=product_code,
+                direction=rule.shipment_type,
+                location__in=location_candidates,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+            if not has_local_cogs:
+                return False
+            if payment_term and rule.shipment_type in {rule.SHIPMENT_TYPE_EXPORT, rule.SHIPMENT_TYPE_IMPORT}:
+                return LocalSellRate.objects.filter(
+                    product_code=product_code,
+                    direction=rule.shipment_type,
+                    location__in=location_candidates,
+                    valid_from__lte=today,
+                    valid_until__gte=today,
+                    payment_term__in=[payment_term, "ANY"],
+                ).exists()
+            return True
+
+        if rule.shipment_type == rule.SHIPMENT_TYPE_EXPORT:
+            return ExportCOGS.objects.filter(
+                product_code=product_code,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+
+        return ImportCOGS.objects.filter(
+            product_code=product_code,
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            valid_from__lte=today,
+            valid_until__gte=today,
+        ).exists()
+
+    @staticmethod
+    def _local_location_candidates(
+        *,
+        shipment_type: str,
+        leg: str,
+        origin_airport: str,
+        destination_airport: str,
+    ) -> list[str]:
+        shipment_type = (shipment_type or "").upper()
+        leg = (leg or "").upper()
+        if shipment_type == "EXPORT":
+            return [origin_airport] if leg != "DESTINATION" else [destination_airport]
+        if shipment_type == "IMPORT":
+            if leg == "ORIGIN":
+                # Keep the legacy compatibility fallback used in standard scope availability.
+                return [origin_airport, destination_airport]
+            return [destination_airport]
+        return [origin_airport, destination_airport]
+
+    @staticmethod
+    def _has_matching_surcharge(
+        *,
+        rule,
+        origin_airport: str,
+        destination_airport: str,
+        today: date,
+    ) -> bool:
+        from pricing_v4.models import Surcharge
+
+        service_types = {
+            ("EXPORT", "ORIGIN"): ["EXPORT_ORIGIN", "ALL"],
+            ("EXPORT", "MAIN"): ["EXPORT_AIR", "ALL"],
+            ("EXPORT", "DESTINATION"): ["EXPORT_DEST", "ALL"],
+            ("IMPORT", "ORIGIN"): ["IMPORT_ORIGIN", "ALL"],
+            ("IMPORT", "MAIN"): ["IMPORT_AIR", "ALL"],
+            ("IMPORT", "DESTINATION"): ["IMPORT_DEST", "ALL"],
+            ("DOMESTIC", "ORIGIN"): ["DOMESTIC_AIR", "ALL"],
+            ("DOMESTIC", "MAIN"): ["DOMESTIC_AIR", "ALL"],
+            ("DOMESTIC", "DESTINATION"): ["DOMESTIC_AIR", "ALL"],
+        }.get(((rule.shipment_type or "").upper(), (rule.leg or "").upper()), ["ALL"])
+
+        return Surcharge.objects.filter(
+            product_code=rule.product_code,
+            rate_side="COGS",
+            service_type__in=service_types,
+            is_active=True,
+            valid_from__lte=today,
+            valid_until__gte=today,
+        ).filter(
+            Q(origin_filter=origin_airport) | Q(origin_filter__isnull=True) | Q(origin_filter='')
+        ).filter(
+            Q(destination_filter=destination_airport) | Q(destination_filter__isnull=True) | Q(destination_filter='')
+        ).exists()
 
 
 class StandardChargeService:

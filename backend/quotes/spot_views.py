@@ -398,12 +398,21 @@ class SpotTriggerEvaluateAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        from quotes.spot_services import RateAvailabilityService
+        from quotes.spot_services import CommodityRateRuleService, RateAvailabilityService
         component_availability = RateAvailabilityService.get_availability(
             origin_airport=origin_airport,
             destination_airport=destination_airport,
             direction=direction,
             service_scope=service_scope,
+            payment_term=payment_term,
+        )
+        commodity = str(request.data.get('commodity') or 'GCR').upper()
+        commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            direction=direction,
+            service_scope=service_scope,
+            commodity_code=commodity,
             payment_term=payment_term,
         )
 
@@ -412,7 +421,9 @@ class SpotTriggerEvaluateAPIView(APIView):
             destination_country=destination_country,
             direction=direction,
             service_scope=service_scope,
-            component_availability=component_availability
+            component_availability=component_availability,
+            commodity_code=commodity,
+            commodity_coverage=commodity_coverage,
         )
         
         return Response({
@@ -421,6 +432,7 @@ class SpotTriggerEvaluateAPIView(APIView):
                 'code': trigger.code,
                 'text': trigger.text,
                 'missing_components': trigger.missing_components,
+                'missing_product_codes': trigger.missing_product_codes,
             } if trigger else None,
         })
 
