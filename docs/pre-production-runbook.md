@@ -7,6 +7,10 @@ It is intentionally pragmatic:
 - It calls out repo gaps where production setup is still manual.
 - It uses commands that actually exist in this repository.
 
+For current readiness state, owner tracking, and go/no-go status, also see:
+- `docs/go-live-status-tracker.md`
+- `docs/launch-corridor-matrix.md`
+
 ## Stop-Ship Criteria
 
 Do not launch if any of these are false:
