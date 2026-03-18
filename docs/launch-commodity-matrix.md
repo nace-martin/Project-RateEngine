@@ -20,9 +20,9 @@ Principle:
 
 | Commodity | Scope | Product code | Trigger mode | Notes |
 | --- | --- | --- | --- | --- |
-| `DG` | `A2D`, `D2D` | `IMP-DG-SPECIAL` | `REQUIRES_MANUAL` | Destination local DG charges/permits not standardized yet. |
-| `AVI` | `A2D`, `D2D` | `IMP-AVI-SPECIAL` | `REQUIRES_MANUAL` | Live animal import handling remains manual. |
-| `HVC` | `A2D`, `D2D` | `IMP-HVC-SPECIAL` | `REQUIRES_MANUAL` | High-value import handling remains manual. |
+| `DG` | `A2D`, `D2D` | `IMP-DG-SPECIAL` | `AUTO` | Standard quote stays enabled when destination-local DG tariffs exist in `LocalSellRate`; otherwise commodity coverage falls back to missing-rates/SPOT. |
+| `AVI` | `A2D`, `D2D` | `IMP-AVI-SPECIAL` | `AUTO` | Standard quote stays enabled when destination-local live-animal tariffs exist in `LocalSellRate`; otherwise commodity coverage falls back to missing-rates/SPOT. |
+| `HVC` | `A2D`, `D2D` | `IMP-HVC-SPECIAL` | `AUTO` | Standard quote stays enabled when destination-local high-value tariffs exist in `LocalSellRate`; otherwise commodity coverage falls back to missing-rates/SPOT. |
 | `PER` | `A2D`, `D2D` | `IMP-PER-SPECIAL` | `REQUIRES_SPOT` | Perishable import pricing remains partner-driven. |
 
 ## Domestic

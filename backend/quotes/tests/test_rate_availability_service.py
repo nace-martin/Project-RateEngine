@@ -516,6 +516,93 @@ def test_export_d2a_seeded_commodity_rate_does_not_trigger_spot_when_scope_is_co
     assert trigger is None
 
 
+@pytest.mark.parametrize(
+    ("commodity_code", "product_id", "product_code"),
+    [
+        ("DG", 1964, "IMP-DG-SPECIAL-AUTO"),
+        ("AVI", 1965, "IMP-AVI-SPECIAL-AUTO"),
+        ("HVC", 1966, "IMP-HVC-SPECIAL-AUTO"),
+    ],
+)
+@pytest.mark.parametrize("payment_term", ["PREPAID", "COLLECT"])
+def test_import_a2d_special_local_sell_rate_allows_standard_quote_without_spot(
+    commodity_code: str,
+    product_id: int,
+    product_code: str,
+    payment_term: str,
+):
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_dest = _pc(2963, "IMP-CARTAGE-DEST-COMMODITY-BASE", "IMPORT", "CARTAGE")
+    pc_special = _pc(product_id, product_code, "IMPORT", "HANDLING")
+
+    LocalCOGSRate.objects.create(
+        product_code=pc_dest,
+        location="POM",
+        direction="IMPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("50.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_dest,
+        location="POM",
+        direction="IMPORT",
+        payment_term=payment_term,
+        currency="AUD" if payment_term == "PREPAID" else "PGK",
+        rate_type="FIXED",
+        amount=Decimal("75.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_special,
+        location="POM",
+        direction="IMPORT",
+        payment_term=payment_term,
+        currency="AUD" if payment_term == "PREPAID" else "PGK",
+        rate_type="FIXED",
+        amount=Decimal("125.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    CommodityChargeRule.objects.create(
+        shipment_type="IMPORT",
+        service_scope="A2D",
+        commodity_code=commodity_code,
+        product_code=pc_special,
+        leg="DESTINATION",
+        trigger_mode="AUTO",
+        effective_from=valid_from,
+        effective_to=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "SYD", "POM", "IMPORT", "A2D", payment_term=payment_term
+    )
+    commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+        "SYD", "POM", "IMPORT", "A2D", commodity_code, payment_term=payment_term
+    )
+
+    assert availability[COMPONENT_DESTINATION_LOCAL] is True
+    assert commodity_coverage.is_spot_required is False
+
+    is_spot, trigger = SpotTriggerEvaluator.evaluate(
+        origin_country="AU",
+        destination_country="PG",
+        direction="IMPORT",
+        service_scope="A2D",
+        component_availability=availability,
+        commodity_code=commodity_code,
+        commodity_coverage=commodity_coverage,
+    )
+    assert is_spot is False
+    assert trigger is None
+
+
 def test_export_d2a_requires_spot_rule_triggers_spot_even_with_scope_coverage():
     valid_from, valid_until = _today_window()
     agent = _agent()

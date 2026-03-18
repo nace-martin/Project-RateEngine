@@ -781,6 +781,30 @@ class CommodityRateRuleService:
                 origin_airport=origin_airport,
                 destination_airport=destination_airport,
             )
+            local_sell_qs = LocalSellRate.objects.filter(
+                product_code=product_code,
+                direction=rule.shipment_type,
+                location__in=location_candidates,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            )
+
+            if payment_term and rule.shipment_type in {rule.SHIPMENT_TYPE_EXPORT, rule.SHIPMENT_TYPE_IMPORT}:
+                has_local_sell = local_sell_qs.filter(
+                    product_code=product_code,
+                    payment_term__in=[payment_term, "ANY"],
+                ).exists()
+            else:
+                has_local_sell = local_sell_qs.exists()
+
+            # Import destination-local commodity lines can price from explicit local sell tariffs
+            # even when there is no dedicated commodity LocalCOGSRate row.
+            if (
+                rule.shipment_type == rule.SHIPMENT_TYPE_IMPORT
+                and (rule.leg or "").upper() == "DESTINATION"
+            ):
+                return has_local_sell
+
             has_local_cogs = LocalCOGSRate.objects.filter(
                 product_code=product_code,
                 direction=rule.shipment_type,
@@ -791,14 +815,7 @@ class CommodityRateRuleService:
             if not has_local_cogs:
                 return False
             if payment_term and rule.shipment_type in {rule.SHIPMENT_TYPE_EXPORT, rule.SHIPMENT_TYPE_IMPORT}:
-                return LocalSellRate.objects.filter(
-                    product_code=product_code,
-                    direction=rule.shipment_type,
-                    location__in=location_candidates,
-                    valid_from__lte=today,
-                    valid_until__gte=today,
-                    payment_term__in=[payment_term, "ANY"],
-                ).exists()
+                return has_local_sell
             return True
 
         if rule.shipment_type == rule.SHIPMENT_TYPE_EXPORT:

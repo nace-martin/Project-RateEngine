@@ -101,7 +101,7 @@ class SeedLaunchCommodityRulesCommandTests(TestCase):
             commodity_code="AVI",
             product_code__code="IMP-AVI-SPECIAL",
         )
-        self.assertEqual(import_avi.trigger_mode, CommodityChargeRule.TRIGGER_MODE_REQUIRES_MANUAL)
+        self.assertEqual(import_avi.trigger_mode, CommodityChargeRule.TRIGGER_MODE_AUTO)
 
         domestic_per = CommodityChargeRule.objects.get(
             shipment_type="DOMESTIC",
