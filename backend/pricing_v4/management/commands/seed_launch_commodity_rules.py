@@ -25,9 +25,9 @@ class MarkerProductCodeDef:
 
 MARKER_PRODUCT_CODES = [
     MarkerProductCodeDef(1091, "EXP-PER-SPECIAL", "Export Perishable Routing Marker", "EXPORT", "HANDLING", "ZERO_RATED", "4490", "5490"),
-    MarkerProductCodeDef(2091, "IMP-DG-SPECIAL", "Import DG Routing Marker", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
-    MarkerProductCodeDef(2092, "IMP-AVI-SPECIAL", "Import Live Animal Routing Marker", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
-    MarkerProductCodeDef(2093, "IMP-HVC-SPECIAL", "Import High Value Routing Marker", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
+    MarkerProductCodeDef(2091, "IMP-DG-SPECIAL", "Import Dangerous Goods Handling", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
+    MarkerProductCodeDef(2092, "IMP-AVI-SPECIAL", "Import Live Animal Handling", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
+    MarkerProductCodeDef(2093, "IMP-HVC-SPECIAL", "Import High Value Handling", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
     MarkerProductCodeDef(2094, "IMP-PER-SPECIAL", "Import Perishable Routing Marker", "IMPORT", "HANDLING", "STANDARD", "4490", "5490"),
     MarkerProductCodeDef(3091, "DOM-DG-SPECIAL", "Domestic DG Routing Marker", "DOMESTIC", "HANDLING", "STANDARD", "4490", "5490"),
     MarkerProductCodeDef(3092, "DOM-PER-SPECIAL", "Domestic Perishable Routing Marker", "DOMESTIC", "HANDLING", "STANDARD", "4490", "5490"),

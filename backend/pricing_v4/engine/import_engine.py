@@ -332,6 +332,8 @@ class ImportPricingEngine:
             return 'ORIGIN'
         elif 'DEST' in code or code in ['IMP-CLEAR', 'IMP-CARTAGE-DEST', 'IMP-FSC-CARTAGE-DEST']:
             return 'DESTINATION'
+        elif pc.domain == 'IMPORT' and '-SPECIAL' in code:
+            return 'DESTINATION'
         elif 'FRT' in code or 'FREIGHT' in code:
             return 'FREIGHT'
         else:

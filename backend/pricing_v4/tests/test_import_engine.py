@@ -489,3 +489,53 @@ class ImportCommodityRuleSelectionTest(ImportEngineTestCase):
 
         self.assertNotIn('IMP-AVI-DEST-TEST', general_codes)
         self.assertIn('IMP-AVI-DEST-TEST', commodity_codes)
+
+    def test_import_engine_can_price_special_destination_line_with_sell_only_tariff(self):
+        pc_special_sell_only = ProductCode.objects.create(
+            id=2100,
+            code='IMP-DG-SPECIAL-SELL-ONLY',
+            description='Import Dangerous Goods Handling Sell Only',
+            domain='IMPORT',
+            category='HANDLING',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4398',
+            gl_cost_code='5398',
+            default_unit='SHIPMENT'
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='IMPORT',
+            service_scope='A2D',
+            commodity_code='DG',
+            product_code=pc_special_sell_only,
+            leg='DESTINATION',
+            trigger_mode='AUTO',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        LocalSellRate.objects.create(
+            product_code=pc_special_sell_only,
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('100.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='SYD',
+            destination='POM',
+            chargeable_weight_kg=Decimal('25'),
+            payment_term=PaymentTerm.COLLECT,
+            service_scope=ServiceScope.A2D
+        )
+        result = engine.calculate_quote(commodity_code='DG')
+
+        lines = [line for line in result.destination_lines if line.product_code == 'IMP-DG-SPECIAL-SELL-ONLY']
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].sell_amount, Decimal('100.00'))
+        self.assertEqual(lines[0].cost_amount, Decimal('0'))
