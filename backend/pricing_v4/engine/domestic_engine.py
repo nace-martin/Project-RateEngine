@@ -167,6 +167,15 @@ class DomesticPricingEngine:
                 result.sell_breakdown.append(BillableCharge("Air Freight", amt, product_code='DOM-FRT-AIR'))
 
     def _calculate_surcharges(self, result: QuoteResult):
+        cogs_freight_basis = sum(
+            (c.amount for c in result.cogs_breakdown if c.product_code == 'DOM-FRT-AIR'),
+            Decimal('0.00'),
+        )
+        sell_freight_basis = sum(
+            (c.amount for c in result.sell_breakdown if c.product_code == 'DOM-FRT-AIR'),
+            Decimal('0.00'),
+        )
+
         # COGS Surcharges (prefetch product_code to avoid N+1)
         cogs_surcharges = Surcharge.objects.filter(
             service_type=self.service_type, 
@@ -184,7 +193,7 @@ class DomesticPricingEngine:
                 quote_date=self.quote_date,
             ):
                 continue
-            amount = self._calc_surcharge_amount(sur)
+            amount = self._calc_surcharge_amount(sur, basis_amount=cogs_freight_basis)
             result.cogs_breakdown.append(BillableCharge(f"{sur.product_code.description} (Cost)", amount, product_code=sur.product_code.code))
 
         # SELL Surcharges (prefetch product_code to avoid N+1)
@@ -204,14 +213,15 @@ class DomesticPricingEngine:
                 quote_date=self.quote_date,
             ):
                 continue
-            amount = self._calc_surcharge_amount(sur)
+            amount = self._calc_surcharge_amount(sur, basis_amount=sell_freight_basis)
             result.sell_breakdown.append(BillableCharge(sur.product_code.description, amount, product_code=sur.product_code.code))
 
-    def _calc_surcharge_amount(self, surcharge: Surcharge) -> Decimal:
+    def _calc_surcharge_amount(self, surcharge: Surcharge, basis_amount: Decimal = Decimal('0.00')) -> Decimal:
         amount = Decimal('0.00')
         shipment_ctx = {
             'chargeable_weight_kg': self.weight,
             'shipment_count': Decimal('1'),
+            'basis_amounts': {'freight': basis_amount},
         }
         
         if surcharge.rate_type == 'FLAT':
@@ -231,8 +241,16 @@ class DomesticPricingEngine:
                 shipment_ctx,
             )
         elif surcharge.rate_type == 'PERCENT':
-            # Not implemented for verified scenario yet (would need base amount)
-            pass
+            amount = evaluate_charge_rule(
+                {
+                    'calculation_type': 'PERCENT_OF',
+                    'percent': surcharge.amount,
+                    'percent_basis': 'freight',
+                    'min_amount': surcharge.min_charge,
+                    'max_amount': surcharge.max_charge,
+                },
+                shipment_ctx,
+            )
             
         return amount
 

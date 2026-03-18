@@ -418,6 +418,40 @@ class DomesticCommodityRuleSelectionTest(DomesticEngineTestCase):
         CommodityChargeRule.objects.create(
             shipment_type='DOMESTIC',
             service_scope='A2A',
+            commodity_code='SCR',
+            product_code=ProductCode.objects.create(
+                id=3010,
+                code='DOM-EXPRESS',
+                description='Domestic Express Cargo Uplift',
+                domain='DOMESTIC',
+                category='SURCHARGE',
+                is_gst_applicable=True,
+                gst_rate=Decimal('0.10'),
+                gl_revenue_code='4401',
+                gl_cost_code='5401',
+                default_unit='PERCENT'
+            ),
+            leg='MAIN',
+            trigger_mode='AUTO',
+            origin_code='POM',
+            destination_code='LAE',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        Surcharge.objects.create(
+            product_code=ProductCode.objects.get(code='DOM-EXPRESS'),
+            rate_side='SELL',
+            service_type='DOMESTIC_AIR',
+            rate_type='PERCENT',
+            amount=Decimal('100.00'),
+            currency='PGK',
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+            is_active=True
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='DOMESTIC',
+            service_scope='A2A',
             commodity_code='AVI',
             product_code=self.pc_live,
             leg='MAIN',
@@ -459,4 +493,104 @@ class DomesticCommodityRuleSelectionTest(DomesticEngineTestCase):
         commodity_codes = {item.product_code for item in commodity_result.sell_breakdown}
 
         self.assertNotIn('DOM-AVI-HANDLING', general_codes)
+        self.assertNotIn('DOM-EXPRESS', general_codes)
         self.assertIn('DOM-AVI-HANDLING', commodity_codes)
+
+    def test_domestic_engine_only_includes_express_for_scr(self):
+        general_result = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=20,
+            service_scope='A2A',
+            commodity_code='GCR'
+        ).calculate_quote()
+        express_result = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=20,
+            service_scope='A2A',
+            commodity_code='SCR'
+        ).calculate_quote()
+
+        general_codes = {item.product_code for item in general_result.sell_breakdown}
+        express_codes = {item.product_code for item in express_result.sell_breakdown}
+
+        self.assertNotIn('DOM-EXPRESS', general_codes)
+        self.assertIn('DOM-EXPRESS', express_codes)
+
+
+class DomesticSpecialMultiplierTest(DomesticEngineTestCase):
+    def setUp(self):
+        DomesticCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_zone='POM',
+            destination_zone='LAE',
+            carrier=self.carrier_px,
+            currency='PGK',
+            rate_per_kg=Decimal('6.10'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+        DomesticSellRate.objects.create(
+            product_code=self.pc_freight,
+            origin_zone='POM',
+            destination_zone='LAE',
+            currency='PGK',
+            rate_per_kg=Decimal('6.10'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+        self.pc_valuable = ProductCode.objects.create(
+            id=3110,
+            code='DOM-VALUABLE-TEST',
+            description='Domestic Valuable Cargo Uplift',
+            domain='DOMESTIC',
+            category='SPECIAL',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4410',
+            gl_cost_code='5410',
+            default_unit='PERCENT'
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='DOMESTIC',
+            service_scope='A2A',
+            commodity_code='HVC',
+            product_code=self.pc_valuable,
+            leg='MAIN',
+            trigger_mode='AUTO',
+            origin_code='POM',
+            destination_code='LAE',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        Surcharge.objects.create(
+            product_code=self.pc_valuable,
+            rate_side='SELL',
+            service_type='DOMESTIC_AIR',
+            rate_type='PERCENT',
+            amount=Decimal('400.00'),
+            currency='PGK',
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+            is_active=True
+        )
+
+    def test_percent_special_surcharge_uses_freight_as_basis(self):
+        engine = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=10,
+            service_scope='A2A',
+            commodity_code='HVC'
+        )
+        result = engine.calculate_quote()
+
+        valuable_line = next((c for c in result.sell_breakdown if c.product_code == 'DOM-VALUABLE-TEST'), None)
+        freight_line = next((c for c in result.sell_breakdown if c.product_code == 'DOM-FRT-AIR'), None)
+
+        self.assertIsNotNone(freight_line)
+        self.assertIsNotNone(valuable_line)
+        self.assertEqual(freight_line.amount, Decimal('61.00'))
+        self.assertEqual(valuable_line.amount, Decimal('244.00'))

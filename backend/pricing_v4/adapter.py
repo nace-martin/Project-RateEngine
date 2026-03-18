@@ -23,6 +23,14 @@ from quotes.currency_rules import determine_quote_currency
 
 logger = logging.getLogger(__name__)
 
+DOMESTIC_AIRFREIGHT_CODES = {
+    'DOM-FRT-AIR',
+    'DOM-EXPRESS',
+    'DOM-VALUABLE',
+    'DOM-LIVE-ANIMAL',
+    'DOM-OVERSIZE',
+}
+
 
 class PricingMode:
     """Pricing mode constants."""
@@ -462,14 +470,34 @@ class PricingServiceV4Adapter:
         if hasattr(result, 'cogs_breakdown'):
             for item in result.cogs_breakdown:
                 code = item.product_code
+                bucket = 'airfreight' if code in DOMESTIC_AIRFREIGHT_CODES else 'origin_charges'
+                leg = 'MAIN' if bucket == 'airfreight' else 'ORIGIN'
                 if code not in consolidated:
-                    consolidated[code] = {'description': item.description.replace(' (Cost)', ''), 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges', 'agent_name': getattr(item, 'agent_name', None)} # Domestic simplified
+                    consolidated[code] = {
+                        'description': item.description.replace(' (Cost)', ''),
+                        'cost_amount': Decimal('0'),
+                        'sell_amount': Decimal('0'),
+                        'sell_incl_gst': Decimal('0'),
+                        'bucket': bucket,
+                        'leg': leg,
+                        'agent_name': getattr(item, 'agent_name', None),
+                    }  # Domestic simplified
                 consolidated[code]['cost_amount'] += item.amount
 
             for item in result.sell_breakdown:
                 code = item.product_code
+                bucket = 'airfreight' if code in DOMESTIC_AIRFREIGHT_CODES else 'origin_charges'
+                leg = 'MAIN' if bucket == 'airfreight' else 'ORIGIN'
                 if code not in consolidated:
-                    consolidated[code] = {'description': item.description, 'cost_amount': Decimal('0'), 'sell_amount': Decimal('0'), 'sell_incl_gst': Decimal('0'), 'bucket': 'origin_charges', 'agent_name': None}
+                    consolidated[code] = {
+                        'description': item.description,
+                        'cost_amount': Decimal('0'),
+                        'sell_amount': Decimal('0'),
+                        'sell_incl_gst': Decimal('0'),
+                        'bucket': bucket,
+                        'leg': leg,
+                        'agent_name': None,
+                    }
                 consolidated[code]['sell_amount'] += item.amount
                 
                 # Domestic GST Logic (10%)
