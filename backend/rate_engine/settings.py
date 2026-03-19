@@ -225,6 +225,10 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']  # Project-level static files
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # Collected static files for production
+MEDIA_URL = '/media/'
+# Uploaded branding assets are currently stored under BASE_DIR/branding/... via upload_to.
+# Keeping MEDIA_ROOT at BASE_DIR preserves existing uploaded logo paths during beta.
+MEDIA_ROOT = BASE_DIR
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

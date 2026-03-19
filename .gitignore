@@ -98,6 +98,7 @@ media/
 backend/staticfiles/
 backend/media/
 backend/static/
+backend/branding/
 
 # Node/JS tooling caches
 .eslintcache
