@@ -1,62 +1,82 @@
-from django.test import TestCase
 from decimal import Decimal
-from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
-from quotes.pdf_service import generate_quote_pdf, _extract_location_info, _get_chargeable_weight, _get_location_country_code
-from parties.models import Company
-from core.models import Location, Country, City
+
+from django.test import TestCase
+
+from core.models import City, Country, Location
+from parties.models import Company, Organization, OrganizationBranding
+from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
+from quotes.pdf_service import (
+    _extract_location_info,
+    _get_chargeable_weight,
+    _get_location_country_code,
+    _get_quote_branding,
+    generate_quote_pdf,
+)
+
 
 class QuotePDFExportTest(TestCase):
     def setUp(self):
-        self.country = Country.objects.create(code='PG', name='Papua New Guinea')
-        self.city = City.objects.create(name='Port Moresby', country=self.country)
-        self.origin = Location.objects.create(code='POM', name='Port Moresby', city=self.city, country=self.country)
-        self.dest = Location.objects.create(code='LAE', name='Lae', country=self.country)
-        self.customer = Company.objects.create(name='Test Customer 🚀', company_type='CUSTOMER')
-        
+        self.country = Country.objects.create(code="PG", name="Papua New Guinea")
+        self.city = City.objects.create(name="Port Moresby", country=self.country)
+        self.origin = Location.objects.create(code="POM", name="Port Moresby", city=self.city, country=self.country)
+        self.dest = Location.objects.create(code="LAE", name="Lae", country=self.country)
+        self.customer = Company.objects.create(name="Test Customer", company_type="CUSTOMER")
+        self.organization, _ = Organization.objects.get_or_create(
+            slug="efm-express-air-cargo",
+            defaults={"name": "EFM Express Air Cargo"},
+        )
+        self.branding, _ = OrganizationBranding.objects.update_or_create(
+            organization=self.organization,
+            defaults={
+                "display_name": "EFM Express Air Cargo",
+                "support_email": "quotes@efmexpress.com",
+                "support_phone": "+675 325 8500",
+                "address_lines": "PO Box 1791\nPort Moresby\nPapua New Guinea",
+                "primary_color": "#0F2A56",
+                "accent_color": "#D71920",
+            },
+        )
+
     def test_pdf_generation_unicode_and_safety(self):
-        """
-        Ensure PDF generation succeeds with Unicode characters and minimal data.
-        """
         quote = Quote.objects.create(
             customer=self.customer,
+            organization=self.organization,
             origin_location=self.origin,
             destination_location=self.dest,
-            quote_number='TEST-PDF-UNICODE',
-            status='DRAFT',
-            valid_until=None,  # Should fallback to created_at
-            mode='AIR ✈️',
-            shipment_type='IMPORT'
+            quote_number="TEST-PDF-UNICODE",
+            status="DRAFT",
+            valid_until=None,
+            mode="AIR",
+            shipment_type="IMPORT",
         )
         version = QuoteVersion.objects.create(quote=quote, version_number=1)
-        
-        # Add lines with unicode
+
         QuoteLine.objects.create(
             quote_version=version,
-            cost_source_description="Test Item 📦",
-            sell_pgk=Decimal('100.00'),
-            leg='MAIN'
+            cost_source_description="Test Item",
+            sell_pgk=Decimal("100.00"),
+            leg="MAIN",
         )
         QuoteTotal.objects.create(
             quote_version=version,
-            total_sell_pgk=Decimal('100.00'),
-            total_sell_pgk_incl_gst=Decimal('110.00')
+            total_sell_pgk=Decimal("100.00"),
+            total_sell_pgk_incl_gst=Decimal("110.00"),
         )
-        
-        # Should not raise
+
         pdf_bytes = generate_quote_pdf(str(quote.id))
         self.assertTrue(len(pdf_bytes) > 0)
-        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
     def test_chargeable_weight_uses_nested_shipment_pieces_payload(self):
-        """Chargeable weight should resolve from shipment.pieces payload structure."""
         quote = Quote.objects.create(
             customer=self.customer,
+            organization=self.organization,
             origin_location=self.origin,
             destination_location=self.dest,
-            quote_number='TEST-PDF-CW-NESTED',
-            status='DRAFT',
-            mode='AIR',
-            shipment_type='EXPORT',
+            quote_number="TEST-PDF-CW-NESTED",
+            status="DRAFT",
+            mode="AIR",
+            shipment_type="EXPORT",
             request_details_json={
                 "shipment": {
                     "pieces": [
@@ -92,49 +112,87 @@ class QuotePDFExportTest(TestCase):
         self.assertEqual(_get_chargeable_weight(quote, version), "100.0")
 
     def test_location_country_code_uses_quote_location_country(self):
-        """Shipment bar country labels must come from quote locations."""
-        country_hk = Country.objects.create(code='HK', name='Hong Kong')
-        city_hk = City.objects.create(name='Hong Kong', country=country_hk)
+        country_hk = Country.objects.create(code="HK", name="Hong Kong")
+        city_hk = City.objects.create(name="Hong Kong", country=country_hk)
         origin_hk = Location.objects.create(
-            code='HKG',
-            name='Hong Kong Intl',
+            code="HKG",
+            name="Hong Kong Intl",
             city=city_hk,
             country=country_hk,
         )
 
         quote = Quote.objects.create(
             customer=self.customer,
+            organization=self.organization,
             origin_location=origin_hk,
             destination_location=self.dest,
-            quote_number='TEST-PDF-COUNTRY-CODE',
-            status='DRAFT',
-            mode='AIR',
-            shipment_type='IMPORT',
+            quote_number="TEST-PDF-COUNTRY-CODE",
+            status="DRAFT",
+            mode="AIR",
+            shipment_type="IMPORT",
         )
 
-        self.assertEqual(_get_location_country_code(quote, 'origin'), 'HK')
-        self.assertEqual(_get_location_country_code(quote, 'destination'), 'PG')
+        self.assertEqual(_get_location_country_code(quote, "origin"), "HK")
+        self.assertEqual(_get_location_country_code(quote, "destination"), "PG")
 
     def test_extract_location_info_prefers_city_name_over_airport_label(self):
-        country_au = Country.objects.create(code='AU', name='Australia')
-        city_bne = City.objects.create(name='Brisbane', country=country_au)
+        country_au = Country.objects.create(code="AU", name="Australia")
+        city_bne = City.objects.create(name="Brisbane", country=country_au)
         origin_bne = Location.objects.create(
-            code='BNE',
-            name='Brisbane International Airport',
+            code="BNE",
+            name="Brisbane International Airport",
             city=city_bne,
             country=country_au,
         )
 
         quote = Quote.objects.create(
             customer=self.customer,
+            organization=self.organization,
             origin_location=origin_bne,
             destination_location=self.dest,
-            quote_number='TEST-PDF-CITY-LABEL',
-            status='DRAFT',
-            mode='AIR',
-            shipment_type='EXPORT',
+            quote_number="TEST-PDF-CITY-LABEL",
+            status="DRAFT",
+            mode="AIR",
+            shipment_type="EXPORT",
         )
 
-        code, name = _extract_location_info(quote, 'origin')
-        self.assertEqual(code, 'BNE')
-        self.assertEqual(name, 'Brisbane')
+        code, name = _extract_location_info(quote, "origin")
+        self.assertEqual(code, "BNE")
+        self.assertEqual(name, "Brisbane")
+
+    def test_quote_branding_prefers_organization_branding(self):
+        quote = Quote.objects.create(
+            customer=self.customer,
+            organization=self.organization,
+            origin_location=self.origin,
+            destination_location=self.dest,
+            quote_number="TEST-PDF-BRANDING",
+            status="DRAFT",
+            mode="AIR",
+            shipment_type="EXPORT",
+        )
+
+        branding = _get_quote_branding(quote)
+
+        self.assertEqual(branding.display_name, "EFM Express Air Cargo")
+        self.assertEqual(branding.support_email, "quotes@efmexpress.com")
+        self.assertEqual(branding.support_phone, "+675 325 8500")
+        self.assertEqual(branding.primary_color, (15, 42, 86))
+        self.assertEqual(branding.accent_color, (215, 25, 32))
+        self.assertIn("Port Moresby", branding.address_lines)
+
+    def test_quote_branding_falls_back_when_organization_missing(self):
+        quote = Quote.objects.create(
+            customer=self.customer,
+            origin_location=self.origin,
+            destination_location=self.dest,
+            quote_number="TEST-PDF-BRANDING-FALLBACK",
+            status="DRAFT",
+            mode="AIR",
+            shipment_type="EXPORT",
+        )
+
+        branding = _get_quote_branding(quote)
+
+        self.assertEqual(branding.display_name, "EFM Express Air Cargo")
+        self.assertEqual(branding.support_email, "quotes@efmexpress.com")

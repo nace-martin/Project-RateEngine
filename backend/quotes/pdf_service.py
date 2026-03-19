@@ -11,6 +11,7 @@ import math
 from decimal import Decimal, ROUND_UP
 from pathlib import Path
 from typing import Optional
+from dataclasses import dataclass
 
 from django.conf import settings
 from django.contrib.staticfiles import finders
@@ -28,6 +29,19 @@ logger = logging.getLogger(__name__)
 class QuotePDFGenerationError(Exception):
     """Raised when PDF generation fails."""
     pass
+
+
+@dataclass(frozen=True)
+class QuoteBrandingContext:
+    display_name: str
+    support_email: str
+    support_phone: str
+    website_url: str
+    address_lines: list[str]
+    quote_footer_text: str
+    primary_color: tuple[int, int, int]
+    accent_color: tuple[int, int, int]
+    logo_path: Optional[str] = None
 
 
 def format_currency(amount) -> str:
@@ -96,11 +110,12 @@ class QuotePDF(FPDF):
         super().__init__(orientation='L', unit='mm', format='A4')
         self.quote = quote
         self.show_watermark = show_watermark
+        self.branding = _get_quote_branding(quote)
         self.set_auto_page_break(auto=True, margin=15)
         
         # Colors
-        self.dark_blue = (15, 42, 86)  # #0F2A56
-        self.red = (215, 25, 32)  # #D71920
+        self.dark_blue = self.branding.primary_color
+        self.red = self.branding.accent_color
         self.gray = (71, 85, 105)  # #475569
         self.light_gray = (241, 245, 249)  # #F1F5F9
         self.white = (255, 255, 255)
@@ -126,7 +141,7 @@ def generate_quote_pdf(
     try:
         # Fetch quote with related data
         quote = Quote.objects.select_related(
-            'customer', 'contact', 'origin_location', 'destination_location'
+            'customer', 'contact', 'origin_location', 'destination_location', 'organization', 'organization__branding'
         ).get(id=quote_id)
         
         # Get the version to display
@@ -188,7 +203,8 @@ def _build_header(pdf: QuotePDF, quote):
     """Build header with logo anchored at the very top, quote info to the right."""
     # LOGO - anchored at absolute top of page
     logo_y = 10  # Start 10mm from top margin
-    logo_path = _get_logo_path()
+    branding = pdf.branding
+    logo_path = branding.logo_path
     
     # Cropped logo is 608x205 pixels (aspect ratio ~3:1)
     # At 55mm width, height will be ~18.5mm
@@ -202,11 +218,14 @@ def _build_header(pdf: QuotePDF, quote):
         # Fallback text logo
         pdf.set_font('Helvetica', 'B', 24)
         pdf.set_text_color(*pdf.dark_blue)
-        pdf.text(15, logo_y + 10, 'EFM')
+        display_name = branding.display_name or "RateEngine"
+        short_name = display_name.split()[0][:12].upper()
+        pdf.text(15, logo_y + 10, _clean_text(short_name))
         pdf.set_font('Helvetica', 'B', 9)
         pdf.set_text_color(*pdf.red)
-        pdf.text(47, logo_y + 10, 'EXPRESS')
-        pdf.text(47, logo_y + 14, 'AIR CARGO')
+        secondary = " ".join(display_name.split()[1:3]).upper()
+        if secondary:
+            pdf.text(47, logo_y + 10, _clean_text(secondary[:18]))
     
     # Quote number & status (right side, aligned with top of logo)
     pdf.set_font('Helvetica', 'B', 22)
@@ -472,6 +491,7 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
 def _build_footer(pdf: QuotePDF, quote, version):
     """Build footer with contact info, terms, and public quote link."""
     start_y = pdf.get_y()
+    branding = pdf.branding
     
     # Separator
     pdf.set_draw_color(*pdf.light_border)
@@ -518,14 +538,18 @@ def _build_footer(pdf: QuotePDF, quote, version):
     pdf.set_font('Helvetica', 'B', 7)
     pdf.set_text_color(15, 23, 42)
     pdf.set_xy(15, contact_y)
-    pdf.cell(0, 4, 'EFM EXPRESS AIR CARGO')
+    pdf.cell(0, 4, _clean_text((branding.display_name or "RateEngine").upper()))
 
     pdf.set_font('Helvetica', '', 7)
     pdf.set_text_color(*pdf.gray)
-    pdf.set_xy(15, contact_y + 4)
-    pdf.cell(0, 4, 'Phone: +675 325 8500 | Email: quotes@efmexpress.com')
-    pdf.set_xy(15, contact_y + 8)
-    pdf.cell(0, 4, 'PO Box 1791, Port Moresby, Papua New Guinea')
+    contact_line = _build_branding_contact_line(branding)
+    if contact_line:
+        pdf.set_xy(15, contact_y + 4)
+        pdf.cell(0, 4, _clean_text(contact_line))
+    address_line = " | ".join(branding.address_lines[:2])
+    if address_line:
+        pdf.set_xy(15, contact_y + 8)
+        pdf.cell(0, 4, _clean_text(address_line))
 
     # Terms block (right)
     terms_x = 150
@@ -537,7 +561,7 @@ def _build_footer(pdf: QuotePDF, quote, version):
     pdf.set_font('Helvetica', '', 6)
     pdf.set_text_color(*pdf.gray)
     valid_until_str = (quote.valid_until or quote.created_at).strftime('%d %b %Y')
-    terms = _build_terms_and_conditions(quote, valid_until_str)
+    terms = _build_terms_and_conditions(quote, valid_until_str, branding)
     terms_y = content_top + 4
     for term in terms:
         pdf.set_xy(terms_x, terms_y)
@@ -615,7 +639,7 @@ def _get_location_country_code(quote, location_type: str) -> str:
     return "ORG" if location_type == "origin" else "DST"
 
 
-def _build_terms_and_conditions(quote, valid_until_str: str) -> list[str]:
+def _build_terms_and_conditions(quote, valid_until_str: str, branding: Optional[QuoteBrandingContext]) -> list[str]:
     """Build customer-facing terms suited to mode of transport."""
     mode = str(getattr(quote, "mode", "") or "").upper()
     if mode == "AIR":
@@ -628,13 +652,17 @@ def _build_terms_and_conditions(quote, valid_until_str: str) -> list[str]:
         ]
         if getattr(quote, "is_dangerous_goods", False):
             terms.append("Dangerous goods are accepted only with prior approval and full declaration.")
-        return terms
+    else:
+        terms = [
+            f"Quotation valid until {valid_until_str}.",
+            "Space and equipment availability are subject to carrier confirmation.",
+            "Final charges are based on confirmed shipment details at handover.",
+        ]
+    footer_note = (branding.quote_footer_text if branding else "").strip()
+    if footer_note:
+        terms.insert(0, footer_note)
 
-    return [
-        f"Quotation valid until {valid_until_str}.",
-        "Space and equipment availability are subject to carrier confirmation.",
-        "Final charges are based on confirmed shipment details at handover.",
-    ]
+    return terms
 
 
 def _get_charge_buckets(version) -> list[dict]:
@@ -833,9 +861,68 @@ def _get_chargeable_weight(quote, version) -> str:
     return '0.0'
 
 
-def _get_logo_path() -> Optional[str]:
-    """Get logo file path."""
+def _build_branding_contact_line(branding: QuoteBrandingContext) -> str:
+    segments = []
+    if branding.support_phone:
+        segments.append(f"Phone: {branding.support_phone}")
+    if branding.support_email:
+        segments.append(f"Email: {branding.support_email}")
+    if branding.website_url:
+        segments.append(branding.website_url)
+    return " | ".join(segments)
+
+
+def _hex_to_rgb(value: str, default: tuple[int, int, int]) -> tuple[int, int, int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return default
+    if raw.startswith("#"):
+        raw = raw[1:]
+    if len(raw) != 6:
+        return default
     try:
+        return tuple(int(raw[i : i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return default
+
+
+def _get_quote_branding(quote) -> QuoteBrandingContext:
+    branding = getattr(getattr(quote, "organization", None), "branding", None)
+    display_name = getattr(branding, "display_name", "") or getattr(getattr(quote, "organization", None), "name", "") or "EFM Express Air Cargo"
+    support_email = getattr(branding, "support_email", "") or "quotes@efmexpress.com"
+    support_phone = getattr(branding, "support_phone", "") or "+675 325 8500"
+    website_url = getattr(branding, "website_url", "") or ""
+    address_lines = [
+        line.strip()
+        for line in str(getattr(branding, "address_lines", "") or "PO Box 1791\nPort Moresby\nPapua New Guinea").splitlines()
+        if line.strip()
+    ]
+    quote_footer_text = getattr(branding, "quote_footer_text", "") or ""
+    primary_color = _hex_to_rgb(getattr(branding, "primary_color", ""), (15, 42, 86))
+    accent_color = _hex_to_rgb(getattr(branding, "accent_color", ""), (215, 25, 32))
+    logo_path = _get_logo_path(getattr(branding, "logo_primary", None))
+
+    return QuoteBrandingContext(
+        display_name=display_name,
+        support_email=support_email,
+        support_phone=support_phone,
+        website_url=website_url,
+        address_lines=address_lines,
+        quote_footer_text=quote_footer_text,
+        primary_color=primary_color,
+        accent_color=accent_color,
+        logo_path=logo_path,
+    )
+
+
+def _get_logo_path(logo_field=None) -> Optional[str]:
+    """Resolve uploaded branding logo first, then fall back to bundled defaults."""
+    try:
+        if logo_field:
+            uploaded_path = getattr(logo_field, "path", None)
+            if uploaded_path and Path(uploaded_path).exists():
+                return uploaded_path
+
         # Try the cropped logo first (no padding, proper aspect ratio)
         logo_path = finders.find('images/efm_logo_cropped.png')
         if logo_path and Path(logo_path).exists():

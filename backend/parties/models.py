@@ -1,10 +1,12 @@
 # backend/parties/models.py
 
 import uuid
+
+from django.conf import settings  # For AUTH_USER_MODEL
 from django.db import models
+from django.utils.text import slugify
+
 from core.models import Country, City, Currency
-from django.conf import settings # For AUTH_USER_MODEL
-from decimal import Decimal # Import Decimal
 
 class Company(models.Model):
     AUDIENCE_LOCAL_PNG = 'LOCAL_PNG_CUSTOMER'
@@ -42,6 +44,87 @@ class Company(models.Model):
 
     class Meta:
         verbose_name_plural = "Companies"
+
+
+def branding_upload_to(instance, filename: str) -> str:
+    org_slug = getattr(instance.organization, "slug", None) or "unassigned"
+    return f"branding/{org_slug}/{filename}"
+
+
+class Organization(models.Model):
+    """
+    Tenant/account that owns the RateEngine workspace and outbound branding.
+    Separate from Company, which represents customers/agents/carriers.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, unique=True)
+    slug = models.SlugField(max_length=64, unique=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    default_currency = models.ForeignKey(
+        Currency,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        help_text="Default quote/output currency for this organization.",
+    )
+    time_zone = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)[:56] or "organization"
+            candidate = base_slug
+            counter = 2
+            while Organization.objects.exclude(pk=self.pk).filter(slug=candidate).exists():
+                suffix = f"-{counter}"
+                candidate = f"{base_slug[: max(1, 56 - len(suffix))]}{suffix}"
+                counter += 1
+            self.slug = candidate
+        super().save(*args, **kwargs)
+
+
+class OrganizationBranding(models.Model):
+    """
+    Per-tenant branding/configuration used in PDFs, public quote pages, and emails.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.OneToOneField(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="branding",
+    )
+    display_name = models.CharField(max_length=255)
+    legal_name = models.CharField(max_length=255, blank=True, default="")
+    logo_primary = models.ImageField(upload_to=branding_upload_to, null=True, blank=True)
+    logo_small = models.ImageField(upload_to=branding_upload_to, null=True, blank=True)
+    primary_color = models.CharField(max_length=7, blank=True, default="")
+    accent_color = models.CharField(max_length=7, blank=True, default="")
+    support_email = models.EmailField(blank=True, default="")
+    support_phone = models.CharField(max_length=64, blank=True, default="")
+    website_url = models.URLField(blank=True, default="")
+    address_lines = models.TextField(blank=True, default="")
+    quote_footer_text = models.TextField(blank=True, default="")
+    public_quote_tagline = models.CharField(max_length=255, blank=True, default="")
+    email_signature_text = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Organization Branding"
+        verbose_name_plural = "Organization Branding"
+
+    def __str__(self):
+        return f"{self.display_name or self.organization.name} Branding"
 
 class Address(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

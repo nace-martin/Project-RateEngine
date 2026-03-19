@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Import models needed for V3 ForeignKeys
-from parties.models import Company, Contact
+from parties.models import Company, Contact, Organization
 # --- UPDATED IMPORT ---
 from core.models import Policy, FxSnapshot, Location
 from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
@@ -58,6 +58,14 @@ class Quote(models.Model):
         on_delete=models.PROTECT,
         related_name='quotes_as_customer',
         help_text="The primary customer requesting the quote."
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="quotes",
+        help_text="Tenant/account branding context for this quote.",
     )
     contact = models.ForeignKey(
         Contact,

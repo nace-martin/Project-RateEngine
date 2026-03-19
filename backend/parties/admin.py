@@ -2,7 +2,14 @@
 
 from django.contrib import admin
 # Add CustomerCommercialProfile to imports
-from .models import Company, Address, Contact, CustomerCommercialProfile 
+from .models import (
+    Address,
+    Company,
+    Contact,
+    CustomerCommercialProfile,
+    Organization,
+    OrganizationBranding,
+)
 
 class AddressInline(admin.StackedInline):
     """Allows editing Addresses directly within the Company admin page."""
@@ -45,3 +52,33 @@ class CompanyAdmin(admin.ModelAdmin):
 
 # Register separately if direct access is needed (optional)
 # admin.site.register(CustomerCommercialProfile)
+
+
+class OrganizationBrandingInline(admin.StackedInline):
+    model = OrganizationBranding
+    can_delete = False
+    extra = 0
+    fields = (
+        "display_name",
+        "legal_name",
+        "logo_primary",
+        "logo_small",
+        "primary_color",
+        "accent_color",
+        "support_email",
+        "support_phone",
+        "website_url",
+        "address_lines",
+        "quote_footer_text",
+        "public_quote_tagline",
+        "email_signature_text",
+        "is_active",
+    )
+
+
+@admin.register(Organization)
+class OrganizationAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "default_currency", "is_active", "updated_at")
+    search_fields = ("name", "slug")
+    list_filter = ("is_active", "default_currency")
+    inlines = [OrganizationBrandingInline]
