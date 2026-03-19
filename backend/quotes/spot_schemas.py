@@ -198,8 +198,8 @@ class SPEShipmentContext(BaseModel):
     """
     model_config = ConfigDict(frozen=True)
     
-    origin_country: Literal["PG", "AU", "US", "SG", "NZ", "ID", "PH", "JP", "CN", "HK", "OTHER"]
-    destination_country: Literal["PG", "AU", "US", "SG", "NZ", "ID", "PH", "JP", "CN", "HK", "OTHER"]
+    origin_country: str
+    destination_country: str
     
     origin_code: str = Field(min_length=3, max_length=3)
     destination_code: str = Field(min_length=3, max_length=3)
@@ -213,6 +213,16 @@ class SPEShipmentContext(BaseModel):
     service_scope: Literal['p2p', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
     payment_term: Optional[Literal['prepaid', 'collect']] = Field(default=None, description="Payment term")
     missing_components: Optional[List[str]] = Field(default=None, description="Components explicitly missing rates")
+
+    @field_validator("origin_country", "destination_country")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        normalized = (value or "").strip().upper()
+        if normalized == "OTHER":
+            return normalized
+        if len(normalized) == 2 and normalized.isalpha():
+            return normalized
+        raise ValueError("Country code must be a 2-letter ISO code or 'OTHER'")
     
     @property
     def context_hash(self) -> str:
