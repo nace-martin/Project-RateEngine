@@ -13,6 +13,7 @@ import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
+import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 
 type ErrorWithResponse = {
   response?: {
@@ -300,6 +301,12 @@ export default function EditCustomerPage() {
 
   return (
     <div className="container mx-auto p-4">
+      <WorkspaceContextCard
+        title="Customer Workspace"
+        description="You are editing this customer from your current organization workspace."
+        note="Customer master data is still shared in this beta, but all quote outputs and branding follow the quote organization."
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Edit Customer: {customer.company_name}</CardTitle>

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiClient, listCities, listCountries, updateCustomer } from "@/lib/api";
 import { useAuth } from "@/context/auth-context";
 import { CityOption, CountryOption } from "@/lib/types";
+import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 
 type CustomerFormData = {
   company_name: string;
@@ -195,12 +196,19 @@ export default function NewCustomerPage() {
   }));
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Add New Customer</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="space-y-6">
+      <WorkspaceContextCard
+        title="Customer Workspace"
+        description="You are managing customer records from your current organization workspace."
+        note="Customer master data is still shared in this beta, but quotes and outbound branding resolve from the signed-in organization."
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Add New Customer</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label htmlFor="company_name">Company Name</Label>
             <Input id="company_name" value={formData.company_name} onChange={handleChange} required />
@@ -284,10 +292,11 @@ export default function NewCustomerPage() {
             <Label htmlFor="contact_person_phone">Contact Person Phone</Label>
             <Input id="contact_person_phone" value={formData.contact_person_phone} onChange={handleChange} required />
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <Button type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Customer'}</Button>
-        </form>
-      </CardContent>
-    </Card>
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <Button type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Customer'}</Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

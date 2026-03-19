@@ -9,6 +9,7 @@ import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import { V3QuoteComputeRequest } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
+import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -172,6 +173,12 @@ export default function NewQuotePage() {
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
+
+      <WorkspaceContextCard
+        title="Quote Workspace"
+        description="New quotes created here inherit the signed-in organization and use that branding in PDFs, public quote pages, and quote emails."
+        note="This keeps the beta workflow simple while preparing the app for future multi-company rollout."
+      />
 
       <QuoteForm
         user={user}
