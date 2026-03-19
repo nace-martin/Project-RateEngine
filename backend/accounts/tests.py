@@ -234,3 +234,81 @@ class RBACPermissionTests(TestCase):
         self.assertFalse(self.manager_user.can_access_system_settings)
         self.assertFalse(self.finance_user.can_access_system_settings)
         self.assertTrue(self.admin_user.can_access_system_settings)
+
+
+class UserManagementOrganizationTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.pgk = Currency.objects.filter(code='PGK').first() or Currency.objects.create(
+            code='PGK',
+            name='Papua New Guinean Kina',
+        )
+        self.org_a, _ = Organization.objects.get_or_create(
+            slug='efm-express-air-cargo',
+            defaults={
+                'name': 'EFM Express Air Cargo',
+                'default_currency': self.pgk,
+                'is_active': True,
+            },
+        )
+        self.org_b = Organization.objects.create(
+            name='Lae Branch Workspace',
+            slug='lae-branch-workspace',
+            default_currency=self.pgk,
+            is_active=True,
+        )
+        self.manager = CustomUser.objects.create_user(
+            username='manager-user',
+            password='test12345',
+            role=CustomUser.ROLE_MANAGER,
+            organization=self.org_a,
+        )
+
+    def test_manager_can_list_organizations(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.get('/api/auth/organizations/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        slugs = [row['slug'] for row in response.json()]
+        self.assertIn('efm-express-air-cargo', slugs)
+        self.assertIn('lae-branch-workspace', slugs)
+
+    def test_user_create_defaults_to_request_users_organization(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            '/api/auth/users/',
+            {
+                'username': 'new-sales-user',
+                'email': 'new-sales@example.com',
+                'role': 'sales',
+                'department': 'AIR',
+                'password': 'password123',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created = CustomUser.objects.get(username='new-sales-user')
+        self.assertEqual(created.organization, self.org_a)
+
+    def test_user_create_can_assign_explicit_organization(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            '/api/auth/users/',
+            {
+                'username': 'lae-sales-user',
+                'email': 'lae-sales@example.com',
+                'role': 'sales',
+                'department': 'AIR',
+                'password': 'password123',
+                'organization': str(self.org_b.id),
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created = CustomUser.objects.get(username='lae-sales-user')
+        self.assertEqual(created.organization, self.org_b)

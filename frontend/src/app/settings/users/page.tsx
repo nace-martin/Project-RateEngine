@@ -46,9 +46,18 @@ interface User {
     last_name: string;
     role: string;
     department: string | null;
+    organization: string | null;
+    organization_name?: string | null;
     is_active: boolean;
     date_joined: string;
     last_login: string | null;
+}
+
+interface OrganizationOption {
+    id: string;
+    name: string;
+    slug: string;
+    is_active: boolean;
 }
 
 const ROLE_OPTIONS = [
@@ -80,6 +89,7 @@ export default function UsersPage() {
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [organizations, setOrganizations] = useState<OrganizationOption[]>([]);
 
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -91,6 +101,7 @@ export default function UsersPage() {
         last_name: '',
         role: 'sales',
         department: '',
+        organization: '',
         password: '',
     });
     const [formLoading, setFormLoading] = useState(false);
@@ -123,9 +134,26 @@ export default function UsersPage() {
         }
     }, [token, searchQuery, toast]);
 
+    const fetchOrganizations = useCallback(async () => {
+        if (!token) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/auth/organizations/`, {
+                headers: { Authorization: `Token ${token}` },
+            });
+            if (!res.ok) {
+                throw new Error('Failed to fetch organizations');
+            }
+            const data = await res.json();
+            setOrganizations(data);
+        } catch {
+            toast({ description: 'Failed to load organizations', variant: 'destructive' });
+        }
+    }, [token, toast]);
+
     useEffect(() => {
         fetchUsers();
-    }, [fetchUsers]);
+        fetchOrganizations();
+    }, [fetchUsers, fetchOrganizations]);
 
     const handleOpenCreate = () => {
         setEditingUser(null);
@@ -136,6 +164,7 @@ export default function UsersPage() {
             last_name: '',
             role: 'sales',
             department: '',
+            organization: currentUser?.organization?.id || '',
             password: '',
         });
         setIsModalOpen(true);
@@ -150,6 +179,7 @@ export default function UsersPage() {
             last_name: user.last_name || '',
             role: user.role,
             department: user.department || '',
+            organization: user.organization || '',
             password: '', // Don't show password
         });
         setIsModalOpen(true);
@@ -175,6 +205,9 @@ export default function UsersPage() {
             // Convert empty department to null
             if (!payload.department) {
                 (payload as Record<string, unknown>).department = null;
+            }
+            if (!payload.organization) {
+                (payload as Record<string, unknown>).organization = null;
             }
 
             const res = await fetch(url, {
@@ -292,6 +325,7 @@ export default function UsersPage() {
                                 <TableHead>User</TableHead>
                                 <TableHead>Role</TableHead>
                                 <TableHead>Department</TableHead>
+                                <TableHead>Organization</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Last Login</TableHead>
                                 <TableHead className="text-right">Actions</TableHead>
@@ -300,13 +334,13 @@ export default function UsersPage() {
                         <TableBody>
                             {loading ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="text-center py-8">
+                                    <TableCell colSpan={7} className="text-center py-8">
                                         Loading users...
                                     </TableCell>
                                 </TableRow>
                             ) : users.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                                         No users found
                                     </TableCell>
                                 </TableRow>
@@ -334,6 +368,11 @@ export default function UsersPage() {
                                                     {user.department}
                                                 </span>
                                             ) : (
+                                                <span className="text-muted-foreground">—</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell>
+                                            {user.organization_name ? user.organization_name : (
                                                 <span className="text-muted-foreground">—</span>
                                             )}
                                         </TableCell>
@@ -471,6 +510,25 @@ export default function UsersPage() {
                                     </SelectContent>
                                 </Select>
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="organization">Organization</Label>
+                            <Select
+                                value={formData.organization}
+                                onValueChange={(value) => setFormData({ ...formData, organization: value })}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select organization" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {organizations.map((org) => (
+                                        <SelectItem key={org.id} value={org.id}>
+                                            {org.name}{!org.is_active ? ' (Inactive)' : ''}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
 
                         <div className="space-y-2">

@@ -5,7 +5,7 @@ User Management API
 Provides CRUD operations for users.
 Only accessible by Manager and Admin roles.
 """
-from rest_framework import viewsets, serializers, status
+from rest_framework import generics, serializers, status, viewsets
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.hashers import make_password
@@ -39,7 +39,8 @@ class UserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         if 'organization' not in validated_data:
-            validated_data['organization'] = _default_organization()
+            request = self.context.get('request')
+            validated_data['organization'] = getattr(getattr(request, 'user', None), 'organization', None) or _default_organization()
         user = CustomUser(**validated_data)
         if password:
             user.password = make_password(password)
@@ -63,6 +64,20 @@ class CanManageUsers(IsAuthenticated):
         if not super().has_permission(request, view):
             return False
         return getattr(request.user, 'can_manage_users', False)
+
+
+class OrganizationOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Organization
+        fields = ['id', 'name', 'slug', 'is_active']
+
+
+class OrganizationListAPIView(generics.ListAPIView):
+    serializer_class = OrganizationOptionSerializer
+    permission_classes = [CanManageUsers]
+
+    def get_queryset(self):
+        return Organization.objects.order_by('-is_active', 'name')
 
 
 class UserViewSet(viewsets.ModelViewSet):
