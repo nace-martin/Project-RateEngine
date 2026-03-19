@@ -4,13 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import {
-  createSpotEnvelope,
-  evaluateSpotTrigger,
   getQuoteV3,
   getQuoteCompute,
   downloadQuotePDF,
   transitionQuoteStatus,
-  validateSpotScope,
 } from "@/lib/api";
 import {
   V3QuoteComputeResponse,
@@ -404,7 +401,7 @@ export default function QuoteDetailPage() {
 
         {/* Main Content Area */}
         {isIncomplete ? (
-          <SpotNegotiationCard quote={quote} />
+          <SpotWorkflowUnavailableCard quoteId={quote.id} />
         ) : (
           /* Full-width Layout for Finalized Quotes */
           <div className="space-y-6">
@@ -523,148 +520,25 @@ export default function QuoteDetailPage() {
   );
 }
 
-function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
+function SpotWorkflowUnavailableCard({ quoteId }: { quoteId: string }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleOpenSpot = async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const existingSpeId =
-        quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
-      if (existingSpeId) {
-        const params = new URLSearchParams({
-          customer_name: getCustomerName(quote.customer),
-          service_scope: quote.service_scope || "D2D",
-          payment_term: quote.payment_term || "PREPAID",
-        });
-        router.push(`/quotes/spot/${existingSpeId}?${params.toString()}`);
-        return;
-      }
-
-      const originLocation = quote.origin_location;
-      const destinationLocation = quote.destination_location;
-
-      const originCode =
-        extractIataCode(originLocation) ||
-        (quote.latest_version?.payload_json?.origin_airport || "").toUpperCase();
-      const destinationCode =
-        extractIataCode(destinationLocation) ||
-        (quote.latest_version?.payload_json?.destination_airport || "").toUpperCase();
-      const originCountry = extractCountryCode(originLocation, originCode) || "OTHER";
-      const destinationCountry = extractCountryCode(destinationLocation, destinationCode) || "OTHER";
-
-      const weightInfo = computeChargeableWeight(quote);
-      const commodity =
-        quote.latest_version?.payload_json?.is_dangerous_goods ? "DG" : "GCR";
-      const paymentTerm = normalizePaymentTerm(quote.payment_term);
-      const spePaymentTerm: "prepaid" | "collect" =
-        paymentTerm === "COLLECT" ? "collect" : "prepaid";
-
-      const scopeCheck = await validateSpotScope({
-        origin_country: originCountry,
-        destination_country: destinationCountry,
-        origin_code: originCode || "",
-        destination_code: destinationCode || "",
-      });
-      if (!scopeCheck.is_valid) {
-        throw new Error(scopeCheck.error || "Shipment is out of SPOT scope.");
-      }
-
-      const triggerResult = await evaluateSpotTrigger({
-        origin_country: originCountry,
-        destination_country: destinationCountry,
-        commodity,
-        origin_airport: originCode || "",
-        destination_airport: destinationCode || "",
-        has_valid_buy_rate: false,
-        service_scope: quote.service_scope,
-        payment_term: paymentTerm,
-      });
-
-      const triggerCode = triggerResult.trigger?.code || "MISSING_RATES";
-      const triggerText =
-        triggerResult.trigger?.text || "Missing rates require manual sourcing.";
-
-      const spe = await createSpotEnvelope({
-        shipment_context: {
-          origin_country: originCountry,
-          destination_country: destinationCountry,
-          origin_code: originCode || "",
-          destination_code: destinationCode || "",
-          customer_name: getCustomerName(quote.customer),
-          commodity,
-          total_weight_kg: weightInfo.chargeableWeight,
-          pieces: weightInfo.pieces,
-          service_scope: (quote.service_scope || "P2P").toLowerCase(),
-          payment_term: spePaymentTerm,
-          missing_components: triggerResult.trigger?.missing_components,
-        },
-        charges: [],
-        trigger_code: triggerCode,
-        trigger_text: triggerText,
-        conditions: { rate_validity_hours: 72 },
-        quote_id: quote.id,
-      });
-
-      if (spe?.id) {
-        storeSpotEnvelopeId(quote.id, spe.id);
-      }
-
-      const params = new URLSearchParams({
-        origin_country: originCountry,
-        dest_country: destinationCountry,
-        origin_code: originCode || "",
-        dest_code: destinationCode || "",
-        customer_name: getCustomerName(quote.customer),
-        commodity,
-        weight: String(weightInfo.chargeableWeight),
-        pieces: String(weightInfo.pieces),
-        trigger_code: triggerCode,
-        trigger_text: triggerText,
-        service_scope: quote.service_scope,
-        payment_term: paymentTerm,
-        output_currency: quote.output_currency || "PGK",
-        shipment_type: quote.shipment_type,
-      });
-      if (triggerResult.trigger?.missing_components?.length) {
-        params.append("missing_components", triggerResult.trigger.missing_components.join(","));
-      }
-
-      router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to open SPOT flow.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <Card className="border-amber-200 bg-amber-50/40">
       <CardHeader>
-        <CardTitle className="text-lg text-amber-800">SPOT Rate Required</CardTitle>
+        <CardTitle className="text-lg text-amber-800">SPOT Workflow Required</CardTitle>
         <CardDescription>
-          This quote has missing rates. Continue in the SPOT workflow to source
-          agent pricing and finalize the quote.
+          This quote is incomplete, but it no longer uses the legacy in-page SPOT launcher.
+          Re-open the quote from the edit flow if you need to re-enter SPOT.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          We will open the SPOT envelope flow for this shipment.
+          No active SPOT envelope is linked to this quote detail view.
         </div>
-        <Button onClick={handleOpenSpot} disabled={loading}>
-          {loading ? "Opening..." : "Open SPOT Workflow"}
+        <Button onClick={() => router.push(`/quotes/${quoteId}/edit`)}>
+          Return To Quote Edit
         </Button>
       </CardContent>
-      {error && (
-        <CardContent className="pt-0">
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        </CardContent>
-      )}
     </Card>
   );
 }
@@ -696,58 +570,6 @@ function readSpotEnvelopeId(quoteId: string): string | null {
   }
 }
 
-function storeSpotEnvelopeId(quoteId: string, speId: string) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(SPOT_ENVELOPE_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {};
-    parsed[quoteId] = speId;
-    window.localStorage.setItem(SPOT_ENVELOPE_STORAGE_KEY, JSON.stringify(parsed));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-function extractIataCode(location?: string): string | undefined {
-  if (!location) return undefined;
-  const iataMatch = location.match(/\(([A-Z]{3})\)/i);
-  if (iataMatch) return iataMatch[1].toUpperCase();
-  const prefixMatch = location.match(/^([A-Z]{3})(?:\s*[-,/]|$)/i);
-  if (prefixMatch) return prefixMatch[1].toUpperCase();
-  const trimmed = location.trim();
-  if (trimmed.length === 3) return trimmed.toUpperCase();
-  return undefined;
-}
-
-function extractCountryCode(location?: string, iataCode?: string): string | undefined {
-  if (!location) return undefined;
-  const countryMatch = location.match(/,\s*([A-Z]{2})\s*$/i);
-  if (countryMatch) return countryMatch[1].toUpperCase();
-
-  const airportCountryMap: Record<string, string> = {
-    BNE: "AU", SYD: "AU", MEL: "AU", PER: "AU", ADL: "AU", CBR: "AU",
-    DRW: "AU", CNS: "AU", OOL: "AU", HBA: "AU",
-    LAX: "US", JFK: "US", SFO: "US", ORD: "US", MIA: "US", DFW: "US",
-    ATL: "US", SEA: "US", DEN: "US",
-    PVG: "CN", PEK: "CN", CAN: "CN", SZX: "CN", CTU: "CN",
-    HKG: "HK",
-    SIN: "SG",
-    AKL: "NZ", WLG: "NZ", CHC: "NZ",
-    LHR: "GB", LGW: "GB", MAN: "GB", STN: "GB",
-    POM: "PG", LAE: "PG",
-    NRT: "JP", HND: "JP", KIX: "JP",
-    ICN: "KR", GMP: "KR",
-    BKK: "TH", DMK: "TH",
-    KUL: "MY",
-    CGK: "ID", DPS: "ID",
-    MNL: "PH", CEB: "PH",
-    DEL: "IN", BOM: "IN", BLR: "IN",
-    DXB: "AE", AUH: "AE",
-  };
-  const code = iataCode || extractIataCode(location);
-  return code ? airportCountryMap[code] : undefined;
-}
-
 function computeChargeableWeight(quote: V3QuoteComputeResponse) {
   const shipmentMetrics = computeShipmentMetrics(quote);
   const fallbackPieces = quote.latest_version?.payload_json && "pieces" in quote.latest_version.payload_json
@@ -758,10 +580,6 @@ function computeChargeableWeight(quote: V3QuoteComputeResponse) {
     pieces: shipmentMetrics.pieces > 0 ? shipmentMetrics.pieces : Math.max(fallbackPieces, 1),
     chargeableWeight: shipmentMetrics.chargeableWeightKg > 0 ? shipmentMetrics.chargeableWeightKg : 1,
   };
-}
-
-function normalizePaymentTerm(value?: string | null): "PREPAID" | "COLLECT" {
-  return (value || "").toUpperCase() === "COLLECT" ? "COLLECT" : "PREPAID";
 }
 
 function computeShipmentMetrics(quote: V3QuoteComputeResponse) {
