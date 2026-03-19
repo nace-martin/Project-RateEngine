@@ -3,6 +3,7 @@
 from decimal import Decimal
 import re
 from rest_framework import serializers
+from quotes.branding import get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
@@ -222,6 +223,18 @@ class V3QuoteVersionSummarySerializer(serializers.ModelSerializer):
         except (ValueError, TypeError, AttributeError):
             return 0
 
+
+class QuoteBrandingSerializer(serializers.Serializer):
+    display_name = serializers.CharField()
+    support_email = serializers.CharField(allow_blank=True)
+    support_phone = serializers.CharField(allow_blank=True)
+    website_url = serializers.CharField(allow_blank=True)
+    address_lines = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    public_quote_tagline = serializers.CharField(allow_blank=True)
+    primary_color = serializers.CharField(allow_blank=True)
+    accent_color = serializers.CharField(allow_blank=True)
+    logo_url = serializers.CharField(allow_null=True, allow_blank=True)
+
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
     The main serializer for the Quote model, used for GET requests
@@ -240,6 +253,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     created_by = serializers.SerializerMethodField()
     rate_provider = serializers.SerializerMethodField()
     spot_negotiation = serializers.SerializerMethodField()
+    branding = serializers.SerializerMethodField()
     
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -301,6 +315,10 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             return None
         return {'id': str(latest.id)}
 
+    def get_branding(self, obj):
+        branding = get_quote_branding(obj)
+        return QuoteBrandingSerializer(branding).data
+
     class Meta:
         model = Quote
         fields = (
@@ -309,7 +327,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at',
             'latest_version', 'request_details_json', 'spot_negotiation',
-            'created_by', 'rate_provider'
+            'created_by', 'rate_provider', 'branding'
         )
 
 class QuoteListSerializerV3(serializers.ModelSerializer):
@@ -324,6 +342,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
     destination_location = serializers.StringRelatedField()
     created_by = serializers.SerializerMethodField()
     spot_negotiation = serializers.SerializerMethodField()
+    branding = serializers.SerializerMethodField()
 
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -341,6 +360,10 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             return None
         return {'id': str(latest.id)}
 
+    def get_branding(self, obj):
+        branding = get_quote_branding(obj)
+        return QuoteBrandingSerializer(branding).data
+
     class Meta:
         model = Quote
         fields = (
@@ -348,7 +371,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at',
-            'latest_version', 'created_by',
+            'latest_version', 'created_by', 'branding',
             'spot_negotiation'
         )
 

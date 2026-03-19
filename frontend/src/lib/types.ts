@@ -34,6 +34,18 @@ export interface QuoteContactRef {
   phone?: string | null;
 }
 
+export interface QuoteBrandingRef {
+  display_name: string;
+  support_email?: string | null;
+  support_phone?: string | null;
+  website_url?: string | null;
+  address_lines?: string[];
+  public_quote_tagline?: string | null;
+  primary_color?: string | null;
+  accent_color?: string | null;
+  logo_url?: string | null;
+}
+
 // --- PARTIES (COMPANY/CONTACT) TYPES ---
 export interface Company {
   id: string; // UUID
@@ -235,6 +247,7 @@ export interface V3QuoteComputeResponse {
   quote_number: string;
   customer: string | QuoteCustomerRef;
   contact: string | QuoteContactRef;
+  branding?: QuoteBrandingRef | null;
   mode: string;
   shipment_type: string; // The backend calculates and returns this
   spot_negotiation?: { id: string } | null;

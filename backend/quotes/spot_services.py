@@ -31,6 +31,7 @@ from django.db.models import Q
 logger = logging.getLogger(__name__)
 
 from core.commodity import DEFAULT_COMMODITY_CODE
+from quotes.branding import QuoteBrandingContext
 from quotes.spot_schemas import (
     SpotPricingEnvelope,
     SPEShipmentContext,
@@ -1553,6 +1554,7 @@ class SpotEmailDraftGenerator:
         trigger_code: Optional[str] = None,
         user_name: Optional[str] = None,
         recipient_name: Optional[str] = None,
+        branding: Optional[QuoteBrandingContext] = None,
     ) -> SpotEmailDraft:
         """
         Generate a SPOT rate request email draft.
@@ -1575,7 +1577,8 @@ class SpotEmailDraftGenerator:
         subject = f"SPOT Rate Request – {origin_code} → {destination_code} – {weight_kg}kg Airfreight"
         
         # Resolve names
-        sender = user_name or "[Your Name]"
+        company_name = (branding.display_name if branding else "") or "RateEngine"
+        sender = user_name or company_name
         recipient = recipient_name or "[Agent / Carrier Name]"
         commodity_display = cls.COMMODITY_NAMES.get(commodity, commodity)
         
@@ -1614,6 +1617,16 @@ class SpotEmailDraftGenerator:
             notes_text = "\n" + "\n".join(notes) + "\n"
         
         # Build body
+        signature_parts = [sender]
+        signature_text = (branding.email_signature_text if branding else "").strip()
+        if signature_text:
+            signature_parts = [signature_text]
+        else:
+            if branding and branding.support_email:
+                signature_parts.append(f"Email: {branding.support_email}")
+            if branding and branding.support_phone:
+                signature_parts.append(f"Phone: {branding.support_phone}")
+
         body = f"""Hi {recipient},
 
 Please provide a SPOT airfreight rate for the shipment below:
@@ -1635,7 +1648,7 @@ Please include:
 If acceptance or capacity is subject to confirmation, please advise.
 
 Thank you,
-{sender}"""
+{"\n".join(signature_parts)}"""
         
         return SpotEmailDraft(subject=subject.strip(), body=body.strip())
 

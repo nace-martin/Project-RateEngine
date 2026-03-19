@@ -15,6 +15,7 @@ interface QuoteDocumentPreviewProps {
 export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProps) {
     const [pdfDownloading, setPdfDownloading] = useState(false);
     const canDownloadPDF = quote.status === "FINALIZED" || quote.status === "SENT";
+    const branding = quote.branding;
 
     const customerDetails =
         quote.customer && typeof quote.customer === "object"
@@ -32,6 +33,9 @@ export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProp
     const totalAmount = parseFloat(totals?.total_sell_fcy || "0").toLocaleString("en-US", {
         minimumFractionDigits: 2,
     });
+    const brandName = branding?.display_name || "RateEngine";
+    const brandPrimary = branding?.primary_color || "#2563eb";
+    const contactLine = [branding?.support_phone, branding?.support_email].filter(Boolean).join(" • ");
 
     const handleDownloadPDF = async () => {
         setPdfDownloading(true);
@@ -60,7 +64,10 @@ export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProp
                         {/* Mini Document Preview */}
                         <div className="flex justify-between mb-2">
                             <div>
-                                <div className="font-bold text-[10px] text-blue-600">EFM Express</div>
+                                <div className="font-bold text-[10px]" style={{ color: brandPrimary }}>{brandName}</div>
+                                {contactLine && (
+                                    <div className="text-[7px] text-slate-400 mt-0.5">{contactLine}</div>
+                                )}
                                 <div className="text-slate-400 mt-1">
                                     <div>Bill To:</div>
                                     <div className="font-medium text-slate-600">{customerDetails?.name || "Customer"}</div>
@@ -82,7 +89,7 @@ export default function QuoteDocumentPreview({ quote }: QuoteDocumentPreviewProp
                         </div>
                         <div className="border-t border-slate-200 pt-2 mt-2 text-right">
                             <div className="text-slate-400">Total Amount</div>
-                            <div className="font-bold text-[10px] text-blue-600">{currency} {totalAmount}</div>
+                            <div className="font-bold text-[10px]" style={{ color: brandPrimary }}>{currency} {totalAmount}</div>
                         </div>
                     </div>
                 </div>
