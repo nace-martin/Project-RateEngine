@@ -95,7 +95,7 @@ Why:
 
 ## Next Best Actions
 
-1. Review and approve the actual seeded go-live lanes in `docs/launch-corridor-matrix.md`.
+1. Use `docs/production-cutover-checklist.md` as the launch execution sheet.
 2. Confirm whether `POM` is the only import `A2D` destination at launch.
 3. Import and validate final launch customers/contacts on the target environment.
 4. Verify production env vars, migrations, static files, and scheduled jobs.

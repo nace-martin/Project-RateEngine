@@ -10,6 +10,7 @@ It is intentionally pragmatic:
 For current readiness state, owner tracking, and go/no-go status, also see:
 - `docs/go-live-status-tracker.md`
 - `docs/launch-corridor-matrix.md`
+- `docs/production-cutover-checklist.md`
 
 ## Stop-Ship Criteria
 
