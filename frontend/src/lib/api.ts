@@ -1255,6 +1255,11 @@ export async function analyzeSpotReply(
     file?: File | null;
     assertions?: import('./spot-types').ExtractedAssertion[];
     speId?: string;
+    sourceBatchId?: string;
+    sourceKind?: 'AIRLINE' | 'AGENT' | 'MANUAL' | 'OTHER';
+    targetBucket?: 'airfreight' | 'origin_charges' | 'destination_charges' | 'mixed';
+    label?: string;
+    sourceReference?: string;
     useAi?: boolean;
   }
 ): Promise<ReplyAnalysisResult> {
@@ -1263,6 +1268,11 @@ export async function analyzeSpotReply(
     file = null,
     assertions = [],
     speId,
+    sourceBatchId,
+    sourceKind,
+    targetBucket,
+    label,
+    sourceReference,
     useAi = true,
   } = options;
   const url = API_BASE_URL + '/api/v3/spot/analyze-reply/';
@@ -1279,6 +1289,21 @@ export async function analyzeSpotReply(
   }
   if (speId) {
     formData.append('spe_id', speId);
+  }
+  if (sourceBatchId) {
+    formData.append('source_batch_id', sourceBatchId);
+  }
+  if (sourceKind) {
+    formData.append('source_kind', sourceKind);
+  }
+  if (targetBucket) {
+    formData.append('target_bucket', targetBucket);
+  }
+  if (label) {
+    formData.append('label', label);
+  }
+  if (sourceReference) {
+    formData.append('source_reference', sourceReference);
   }
   formData.append('use_ai', String(useAi));
 

@@ -24,9 +24,16 @@ interface ReplyPasteCardProps {
     isLoading?: boolean;
     speId?: string;
     missingComponents?: string[];
+    sourceBatchId?: string | null;
 }
 
-export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoading, speId, missingComponents = [] }: ReplyPasteCardProps) {
+export function ReplyPasteCard({
+    onAnalysisComplete,
+    isLoading: externalIsLoading,
+    speId,
+    missingComponents = [],
+    sourceBatchId = null,
+}: ReplyPasteCardProps) {
     const [text, setText] = useState("");
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -117,6 +124,11 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
                 file: selectedFile,
                 assertions: [],
                 speId,
+                sourceBatchId: sourceBatchId || undefined,
+                sourceKind: "OTHER",
+                targetBucket: "mixed",
+                label: "Primary SPOT Source",
+                sourceReference: selectedFile?.name || undefined,
                 useAi: true,
             });
             onAnalysisComplete(result);
@@ -146,6 +158,12 @@ export function ReplyPasteCard({ onAnalysisComplete, isLoading: externalIsLoadin
 
             <CardContent className="space-y-4">
                 {getMissingMessage()}
+
+                {sourceBatchId && (
+                    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                        Re-analyzing will update the current SPOT source instead of creating a duplicate source entry.
+                    </div>
+                )}
 
                 {error && (
                     <Alert variant="destructive">

@@ -115,6 +115,7 @@ export default function SpotRateEntryPage() {
     const { loadSPE } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
+    const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
     // Guard ref: prevents the auto-detection useEffect from overriding
     // an explicit step transition (e.g. after analysis completes).
@@ -193,6 +194,13 @@ export default function SpotRateEntryPage() {
             }
         }
     }, [state.spe, state.flowState]);
+
+    useEffect(() => {
+        if (primarySourceBatchId || !state.spe?.sources?.length) {
+            return;
+        }
+        setPrimarySourceBatchId(state.spe.sources[0].id);
+    }, [primarySourceBatchId, state.spe?.sources]);
 
     // Load hybrid standard DB charges (origin/freight/destination where coverage exists)
     useEffect(() => {
@@ -331,6 +339,9 @@ export default function SpotRateEntryPage() {
     // Handle analysis complete from intake step - move directly to review
     const handleAnalysisComplete = async (result: ReplyAnalysisResult) => {
         setAnalysisResult(result);
+        if (result.source_batch_id) {
+            setPrimarySourceBatchId(result.source_batch_id);
+        }
         // Set the guard BEFORE the async reload so the useEffect doesn't fight us
         userAdvancedToReviewRef.current = true;
         if (speId && !isNew) {
@@ -505,6 +516,7 @@ export default function SpotRateEntryPage() {
                 <ReplyPasteCard
                     speId={speId as string}
                     missingComponents={missingComponents}
+                    sourceBatchId={primarySourceBatchId}
                     onAnalysisComplete={handleAnalysisComplete}
                 />
             )}

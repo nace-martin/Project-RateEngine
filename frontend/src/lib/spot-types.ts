@@ -115,6 +115,8 @@ export interface SPEShipmentContext {
 /** SPE charge line */
 export interface SPEChargeLine {
     id?: string;
+    source_batch_id?: string | null;
+    source_batch_label?: string | null;
     code: string;
     description: string;
     amount: string;
@@ -156,6 +158,22 @@ export interface SPEManagerApproval {
     comment?: string;
 }
 
+/** SPE source batch */
+export interface SPESourceBatch {
+    id: string;
+    source_kind: 'AIRLINE' | 'AGENT' | 'MANUAL' | 'OTHER';
+    source_type: 'TEXT' | 'PDF' | 'EMAIL' | 'MANUAL';
+    target_bucket: 'airfreight' | 'origin_charges' | 'destination_charges' | 'mixed';
+    label: string;
+    source_reference: string;
+    file_name: string;
+    file_content_type: string;
+    analysis_summary_json: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+    charge_count: number;
+}
+
 /** Create SPE request */
 export interface CreateSPERequest {
     shipment_context: SPEShipmentContext;
@@ -185,6 +203,7 @@ export interface SpotPricingEnvelope {
     manager_approval: SPEManagerApproval | null;
     missing_mandatory_fields: string[];  // 'rate', 'currency' if missing
     can_proceed: boolean;  // True if no missing mandatory fields
+    sources: SPESourceBatch[];
     charges: SPEChargeLine[];
     customer_name?: string; // from backend/quotes/spot_schemas.py
 }
@@ -294,6 +313,8 @@ export interface ReplyAnalysisResult {
     warnings: string[];
     can_proceed: boolean;
     blocked_reason: string | null;
+    source_batch_id?: string;
+    source_batch_label?: string;
 }
 
 /** Input for manually adding an assertion */
