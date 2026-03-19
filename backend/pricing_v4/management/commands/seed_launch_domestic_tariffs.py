@@ -17,7 +17,7 @@ class RouteRate:
     rate_per_kg: str
 
 
-ROUTE_RATES: tuple[RouteRate, ...] = (
+COGS_ROUTE_RATES: tuple[RouteRate, ...] = (
     RouteRate("POM", "GUR", "7.85"),
     RouteRate("POM", "BUA", "19.35"),
     RouteRate("POM", "DAU", "11.05"),
@@ -67,12 +67,68 @@ ROUTE_RATES: tuple[RouteRate, ...] = (
     RouteRate("LAE", "WWK", "12.10"),
 )
 
+SELL_ROUTE_RATES: tuple[RouteRate, ...] = (
+    RouteRate("POM", "GUR", "9.15"),
+    RouteRate("POM", "BUA", "22.45"),
+    RouteRate("POM", "DAU", "12.85"),
+    RouteRate("POM", "GKA", "9.65"),
+    RouteRate("POM", "HKN", "13.40"),
+    RouteRate("POM", "KVG", "20.50"),
+    RouteRate("POM", "KIE", "23.75"),
+    RouteRate("POM", "KOM", "16.25"),
+    RouteRate("POM", "UNG", "18.65"),
+    RouteRate("POM", "CMU", "8.40"),
+    RouteRate("POM", "LAE", "7.10"),
+    RouteRate("POM", "LNV", "21.75"),
+    RouteRate("POM", "LSA", "9.30"),
+    RouteRate("POM", "MAG", "10.15"),
+    RouteRate("POM", "MAS", "15.40"),
+    RouteRate("POM", "MDU", "11.05"),
+    RouteRate("POM", "HGU", "10.30"),
+    RouteRate("POM", "PNP", "5.65"),
+    RouteRate("POM", "RAB", "17.95"),
+    RouteRate("POM", "TBG", "18.65"),
+    RouteRate("POM", "TIZ", "16.25"),
+    RouteRate("POM", "TFI", "6.10"),
+    RouteRate("POM", "VAI", "19.90"),
+    RouteRate("POM", "WBM", "7.75"),
+    RouteRate("POM", "WWK", "15.95"),
+    RouteRate("LAE", "GUR", "11.55"),
+    RouteRate("LAE", "BUA", "16.10"),
+    RouteRate("LAE", "DAU", "11.55"),
+    RouteRate("LAE", "GKA", "11.55"),
+    RouteRate("LAE", "HKN", "12.85"),
+    RouteRate("LAE", "KVG", "14.80"),
+    RouteRate("LAE", "KIE", "17.95"),
+    RouteRate("LAE", "UNG", "18.65"),
+    RouteRate("LAE", "CMU", "11.55"),
+    RouteRate("LAE", "LNV", "17.35"),
+    RouteRate("LAE", "MAG", "11.55"),
+    RouteRate("LAE", "MAS", "9.60"),
+    RouteRate("LAE", "MDU", "12.85"),
+    RouteRate("LAE", "HGU", "11.55"),
+    RouteRate("LAE", "PNP", "9.60"),
+    RouteRate("LAE", "POM", "7.10"),
+    RouteRate("LAE", "RAB", "13.50"),
+    RouteRate("LAE", "TBG", "19.90"),
+    RouteRate("LAE", "TIZ", "16.10"),
+    RouteRate("LAE", "VAI", "17.95"),
+    RouteRate("LAE", "WBM", "12.85"),
+    RouteRate("LAE", "WWK", "14.05"),
+)
 
-SURCHARGES = (
+COGS_SURCHARGES = (
     ("DOM-DOC", "FLAT", "35.00", None),
     ("DOM-TERMINAL", "FLAT", "35.00", None),
     ("DOM-SECURITY", "PER_KG", "0.20", "5.00"),
     ("DOM-FSC", "PER_KG", "0.25", None),
+)
+
+SELL_SURCHARGES = (
+    ("DOM-AWB", "FLAT", "70.00", None),
+    ("DOM-SECURITY", "PER_KG", "0.20", "5.00"),
+    ("DOM-FSC", "PER_KG", "0.35", None),
+    ("DOM-DG-HANDLING", "FLAT", "195.00", None),
 )
 
 
@@ -88,9 +144,8 @@ SPECIAL_UPLIFTS = (
 
 class Command(BaseCommand):
     help = (
-        "Seed launch domestic air tariffs from the current tariff sheet. "
-        "Until a separate domestic buy-rate sheet is supplied, the same freight and surcharge "
-        "values are written to both DomesticCOGS and DomesticSellRate / Surcharge."
+        "Seed launch domestic air tariffs from the current tariff sheets. "
+        "COGS uses the original buy-rate sheet. SELL uses the corrected POM/LAE commercial sheet."
     )
 
     def add_arguments(self, parser):
@@ -109,8 +164,10 @@ class Command(BaseCommand):
         freight_pc = self._get_product_code("DOM-FRT-AIR")
         self._get_product_code("DOM-DOC")
         self._get_product_code("DOM-TERMINAL")
+        self._get_product_code("DOM-AWB")
         self._get_product_code("DOM-SECURITY")
         self._get_product_code("DOM-FSC")
+        self._get_product_code("DOM-DG-HANDLING")
         self._get_product_code("DOM-EXPRESS")
         self._get_product_code("DOM-VALUABLE")
         self._get_product_code("DOM-LIVE-ANIMAL")
@@ -129,13 +186,16 @@ class Command(BaseCommand):
         self.stdout.write(f"Seeding Launch Domestic Tariffs ({year})")
         self.stdout.write("=" * 72)
 
-        freight_created = freight_updated = 0
-        surcharge_created = surcharge_updated = 0
+        cogs_freight_created = cogs_freight_updated = 0
+        sell_freight_created = sell_freight_updated = 0
+        cogs_surcharge_created = cogs_surcharge_updated = 0
+        sell_surcharge_created = sell_surcharge_updated = 0
+        legacy_surcharges_disabled = 0
 
         with transaction.atomic():
-            for route in ROUTE_RATES:
+            for route in COGS_ROUTE_RATES:
                 rate = Decimal(route.rate_per_kg)
-                cogs_obj, cogs_created = DomesticCOGS.objects.update_or_create(
+                _, cogs_created = DomesticCOGS.objects.update_or_create(
                     product_code=freight_pc,
                     origin_zone=route.origin,
                     destination_zone=route.destination,
@@ -150,7 +210,15 @@ class Command(BaseCommand):
                         "valid_until": valid_until,
                     },
                 )
-                sell_obj, sell_created = DomesticSellRate.objects.update_or_create(
+                cogs_freight_created += int(cogs_created)
+                cogs_freight_updated += int(not cogs_created)
+                self.stdout.write(
+                    f"  COGS Freight {route.origin}->{route.destination}: K{route.rate_per_kg}/kg"
+                )
+
+            for route in SELL_ROUTE_RATES:
+                rate = Decimal(route.rate_per_kg)
+                _, sell_created = DomesticSellRate.objects.update_or_create(
                     product_code=freight_pc,
                     origin_zone=route.origin,
                     destination_zone=route.destination,
@@ -165,10 +233,10 @@ class Command(BaseCommand):
                         "valid_until": valid_until,
                     },
                 )
-                freight_created += int(cogs_created) + int(sell_created)
-                freight_updated += int(not cogs_created) + int(not sell_created)
+                sell_freight_created += int(sell_created)
+                sell_freight_updated += int(not sell_created)
                 self.stdout.write(
-                    f"  Freight {route.origin}->{route.destination}: K{route.rate_per_kg}/kg"
+                    f"  SELL Freight {route.origin}->{route.destination}: K{route.rate_per_kg}/kg"
                 )
 
             created_count, updated_count = self._seed_global_surcharges(
@@ -176,31 +244,48 @@ class Command(BaseCommand):
                 valid_from=valid_from,
                 valid_until=valid_until,
             )
-            surcharge_created += created_count
-            surcharge_updated += updated_count
+            cogs_surcharge_created += created_count
+            cogs_surcharge_updated += updated_count
 
             created_count, updated_count = self._seed_global_surcharges(
                 rate_side="SELL",
                 valid_from=valid_from,
                 valid_until=valid_until,
             )
-            surcharge_created += created_count
-            surcharge_updated += updated_count
+            sell_surcharge_created += created_count
+            sell_surcharge_updated += updated_count
 
-            awb_pc = ProductCode.objects.filter(code="DOM-AWB").first()
-            if awb_pc:
-                Surcharge.objects.filter(
-                    product_code=awb_pc,
-                    service_type="DOMESTIC_AIR",
-                    rate_side="SELL",
-                ).update(is_active=False, valid_until=valid_until)
-                self.stdout.write("  Disabled DOM-AWB domestic sell surcharge for launch tariff alignment")
+            for code in ("DOM-DOC", "DOM-TERMINAL"):
+                pc = ProductCode.objects.filter(code=code).first()
+                if pc:
+                    disabled = Surcharge.objects.filter(
+                        product_code=pc,
+                        service_type="DOMESTIC_AIR",
+                        rate_side="SELL",
+                    ).exclude(valid_from=valid_from).update(is_active=False, valid_until=valid_until)
+                    legacy_surcharges_disabled += disabled
+                    self.stdout.write(f"  Disabled SELL surcharge {code} in favour of DOM-AWB")
+
+            legacy_surcharges_disabled += self._disable_overlapping_legacy_surcharges(
+                rate_side="COGS",
+                valid_from=valid_from,
+                valid_until=valid_until,
+            )
+            legacy_surcharges_disabled += self._disable_overlapping_legacy_surcharges(
+                rate_side="SELL",
+                valid_from=valid_from,
+                valid_until=valid_until,
+            )
 
         self.stdout.write("")
         self.stdout.write(
             self.style.SUCCESS(
-                f"Domestic launch tariffs ready. Freight created/updated={freight_created}/{freight_updated}; "
-                f"Surcharges created/updated={surcharge_created}/{surcharge_updated}"
+                "Domestic launch tariffs ready. "
+                f"COGS freight created/updated={cogs_freight_created}/{cogs_freight_updated}; "
+                f"SELL freight created/updated={sell_freight_created}/{sell_freight_updated}; "
+                f"COGS surcharges created/updated={cogs_surcharge_created}/{cogs_surcharge_updated}; "
+                f"SELL surcharges created/updated={sell_surcharge_created}/{sell_surcharge_updated}; "
+                f"legacy surcharges disabled={legacy_surcharges_disabled}"
             )
         )
 
@@ -208,7 +293,9 @@ class Command(BaseCommand):
         created = 0
         updated = 0
 
-        for code, rate_type, amount, min_charge in SURCHARGES:
+        surcharge_set = COGS_SURCHARGES if rate_side == "COGS" else SELL_SURCHARGES
+
+        for code, rate_type, amount, min_charge in surcharge_set:
             pc = self._get_product_code(code)
             _, was_created = Surcharge.objects.update_or_create(
                 product_code=pc,
@@ -249,6 +336,32 @@ class Command(BaseCommand):
             updated += int(not was_created)
 
         return created, updated
+
+    def _disable_overlapping_legacy_surcharges(
+        self,
+        *,
+        rate_side: str,
+        valid_from: date,
+        valid_until: date,
+    ) -> int:
+        disabled = 0
+        surcharge_set = COGS_SURCHARGES if rate_side == "COGS" else SELL_SURCHARGES
+        relevant_codes = [code for code, *_ in surcharge_set] + [code for code, _ in SPECIAL_UPLIFTS]
+
+        for code in relevant_codes:
+            pc = ProductCode.objects.filter(code=code).first()
+            if not pc:
+                continue
+            updated = Surcharge.objects.filter(
+                product_code=pc,
+                service_type="DOMESTIC_AIR",
+                rate_side=rate_side,
+                is_active=True,
+                valid_from__lt=valid_from,
+                valid_until__gte=valid_from,
+            ).update(is_active=False, valid_until=valid_until)
+            disabled += updated
+        return disabled
 
     def _get_product_code(self, code: str) -> ProductCode:
         product_code = ProductCode.objects.filter(code=code).first()

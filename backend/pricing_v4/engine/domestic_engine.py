@@ -2,6 +2,9 @@ from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from datetime import date
+
+from django.db.models import Q
+
 from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from pricing_v4.models import ProductCode
@@ -180,7 +183,10 @@ class DomesticPricingEngine:
         cogs_surcharges = Surcharge.objects.filter(
             service_type=self.service_type, 
             rate_side='COGS',
-            is_active=True
+            is_active=True,
+            valid_from__lte=self.quote_date,
+        ).filter(
+            Q(valid_until__isnull=True) | Q(valid_until__gte=self.quote_date)
         ).select_related('product_code')
         for sur in cogs_surcharges:
             if not is_product_code_enabled(
@@ -200,7 +206,10 @@ class DomesticPricingEngine:
         sell_surcharges = Surcharge.objects.filter(
             service_type=self.service_type, 
             rate_side='SELL',
-            is_active=True
+            is_active=True,
+            valid_from__lte=self.quote_date,
+        ).filter(
+            Q(valid_until__isnull=True) | Q(valid_until__gte=self.quote_date)
         ).select_related('product_code')
         for sur in sell_surcharges:
             if not is_product_code_enabled(

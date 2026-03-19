@@ -343,6 +343,45 @@ class DomesticSurchargeTest(DomesticEngineTestCase):
         self.assertEqual(result.total_cost, Decimal('695.00'))
         self.assertEqual(result.total_sell, Decimal('865.00'))
 
+    def test_surcharges_only_use_rows_valid_for_quote_date(self):
+        Surcharge.objects.create(
+            product_code=self.pc_doc_fee,
+            rate_side='COGS',
+            service_type='DOMESTIC_AIR',
+            rate_type='FLAT',
+            amount=Decimal('99.00'),
+            currency='PGK',
+            valid_from=self.valid_from - timedelta(days=400),
+            valid_until=self.valid_from - timedelta(days=200),
+            is_active=True
+        )
+        Surcharge.objects.create(
+            product_code=self.pc_doc_fee,
+            rate_side='SELL',
+            service_type='DOMESTIC_AIR',
+            rate_type='FLAT',
+            amount=Decimal('101.00'),
+            currency='PGK',
+            valid_from=self.valid_from - timedelta(days=400),
+            valid_until=self.valid_from - timedelta(days=200),
+            is_active=True
+        )
+
+        engine = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=100,
+            service_scope='A2A',
+            quote_date=self.valid_from,
+        )
+        result = engine.calculate_quote()
+
+        doc_cogs = next((c for c in result.cogs_breakdown if c.product_code == 'DOM-DOC'), None)
+        doc_sell = next((c for c in result.sell_breakdown if c.product_code == 'DOM-DOC'), None)
+
+        self.assertEqual(doc_cogs.amount, Decimal('25.00'))
+        self.assertEqual(doc_sell.amount, Decimal('35.00'))
+
 
 class DomesticServiceScopeValidationTest(DomesticEngineTestCase):
     """Test service scope validation (Door availability)."""

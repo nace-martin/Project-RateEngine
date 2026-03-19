@@ -17,9 +17,11 @@ class Command(BaseCommand):
             # Documentation & Terminal
             (3010, 'DOM-DOC', 'Documentation Fee', 'DOCUMENTATION', 'FLAT', False),
             (3011, 'DOM-TERMINAL', 'Terminal Fee', 'TERMINAL', 'FLAT', False),
+            (3012, 'DOM-AWB', 'AWB Fee', 'DOCUMENTATION', 'FLAT', False),
             
             # Security
             (3020, 'DOM-SECURITY', 'Security Surcharge', 'SECURITY', 'PER_KG', False),
+            (3021, 'DOM-DG-HANDLING', 'DG Handling Fee', 'HANDLING', 'FLAT', False),
             
             # Fuel Surcharge
             (3030, 'DOM-FSC', 'Fuel Surcharge', 'SURCHARGE', 'PER_KG', False),

@@ -1,4 +1,5 @@
 from io import StringIO
+from datetime import date
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -28,6 +29,12 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             47,
         )
 
+        pom_lae_cogs = DomesticCOGS.objects.get(
+            product_code=freight_pc,
+            origin_zone="POM",
+            destination_zone="LAE",
+            valid_from="2026-01-01",
+        )
         pom_lae_sell = DomesticSellRate.objects.get(
             product_code=freight_pc,
             origin_zone="POM",
@@ -40,8 +47,9 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             destination_zone="POM",
             valid_from="2026-01-01",
         )
-        self.assertEqual(str(pom_lae_sell.rate_per_kg), "6.1000")
-        self.assertEqual(str(lae_pom_sell.rate_per_kg), "6.1000")
+        self.assertEqual(str(pom_lae_cogs.rate_per_kg), "6.1000")
+        self.assertEqual(str(pom_lae_sell.rate_per_kg), "7.1000")
+        self.assertEqual(str(lae_pom_sell.rate_per_kg), "7.1000")
 
         security_sell = Surcharge.objects.get(
             product_code__code="DOM-SECURITY",
@@ -61,6 +69,33 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
         )
         self.assertEqual(str(fuel_cogs.amount), "0.2500")
 
+        fuel_sell = Surcharge.objects.get(
+            product_code__code="DOM-FSC",
+            service_type="DOMESTIC_AIR",
+            rate_side="SELL",
+            valid_from="2026-01-01",
+        )
+        self.assertEqual(str(fuel_sell.amount), "0.3500")
+
+        awb_sell = Surcharge.objects.get(
+            product_code__code="DOM-AWB",
+            service_type="DOMESTIC_AIR",
+            rate_side="SELL",
+            valid_from="2026-01-01",
+        )
+        self.assertTrue(awb_sell.is_active)
+        self.assertEqual(awb_sell.rate_type, "FLAT")
+        self.assertEqual(str(awb_sell.amount), "70.0000")
+
+        dg_sell = Surcharge.objects.get(
+            product_code__code="DOM-DG-HANDLING",
+            service_type="DOMESTIC_AIR",
+            rate_side="SELL",
+            valid_from="2026-01-01",
+        )
+        self.assertTrue(dg_sell.is_active)
+        self.assertEqual(str(dg_sell.amount), "195.0000")
+
         valuable_sell = Surcharge.objects.get(
             product_code__code="DOM-VALUABLE",
             service_type="DOMESTIC_AIR",
@@ -72,7 +107,15 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
 
         self.assertFalse(
             Surcharge.objects.filter(
-                product_code__code="DOM-AWB",
+                product_code__code="DOM-DOC",
+                service_type="DOMESTIC_AIR",
+                rate_side="SELL",
+                is_active=True,
+            ).exists()
+        )
+        self.assertFalse(
+            Surcharge.objects.filter(
+                product_code__code="DOM-TERMINAL",
                 service_type="DOMESTIC_AIR",
                 rate_side="SELL",
                 is_active=True,
@@ -80,3 +123,38 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
         )
 
         self.assertIn("Domestic launch tariffs ready.", stdout.getvalue())
+
+    def test_command_disables_overlapping_legacy_domestic_surcharges(self):
+        doc_pc = ProductCode.objects.get(code="DOM-DOC")
+        security_pc = ProductCode.objects.get(code="DOM-SECURITY")
+
+        legacy_doc = Surcharge.objects.create(
+            product_code=doc_pc,
+            service_type="DOMESTIC_AIR",
+            rate_side="COGS",
+            rate_type="FLAT",
+            amount="35.00",
+            currency="PGK",
+            valid_from=date(2025, 1, 1),
+            valid_until=date(2026, 12, 31),
+            is_active=True,
+        )
+        legacy_security = Surcharge.objects.create(
+            product_code=security_pc,
+            service_type="DOMESTIC_AIR",
+            rate_side="SELL",
+            rate_type="FLAT",
+            amount="5.00",
+            currency="PGK",
+            valid_from=date(2025, 1, 1),
+            valid_until=date(2026, 12, 31),
+            is_active=True,
+        )
+
+        call_command("seed_launch_domestic_tariffs", year=2026, stdout=StringIO())
+
+        legacy_doc.refresh_from_db()
+        legacy_security.refresh_from_db()
+
+        self.assertFalse(legacy_doc.is_active)
+        self.assertFalse(legacy_security.is_active)

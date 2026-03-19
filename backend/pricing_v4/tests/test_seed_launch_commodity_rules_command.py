@@ -45,6 +45,12 @@ class SeedLaunchCommodityRulesCommandTests(TestCase):
             description="Domestic Express Cargo Surcharge",
             domain=ProductCode.DOMAIN_DOMESTIC,
         )
+        cls._create_product_code(
+            id=3021,
+            code="DOM-DG-HANDLING",
+            description="Domestic DG Handling Fee",
+            domain=ProductCode.DOMAIN_DOMESTIC,
+        )
 
     @staticmethod
     def _create_product_code(*, id: int, code: str, description: str, domain: str):
@@ -124,6 +130,14 @@ class SeedLaunchCommodityRulesCommandTests(TestCase):
             product_code__code="DOM-EXPRESS",
         )
         self.assertEqual(domestic_express.trigger_mode, CommodityChargeRule.TRIGGER_MODE_AUTO)
+
+        domestic_dg_handling = CommodityChargeRule.objects.get(
+            shipment_type="DOMESTIC",
+            service_scope="A2A",
+            commodity_code="DG",
+            product_code__code="DOM-DG-HANDLING",
+        )
+        self.assertEqual(domestic_dg_handling.trigger_mode, CommodityChargeRule.TRIGGER_MODE_AUTO)
 
         call_command(
             "seed_launch_commodity_rules",
