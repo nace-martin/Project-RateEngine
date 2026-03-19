@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import {
@@ -45,6 +45,15 @@ export default function QuoteDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfDownloading, setPdfDownloading] = useState(false);
+  const redirectingSpotRef = useRef(false);
+  const spotWorkflowHref = (() => {
+    if (!quote) return null;
+    const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
+    if (currentStatus !== "INCOMPLETE") return null;
+    const existingSpotEnvelopeId = quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
+    if (!existingSpotEnvelopeId) return null;
+    return `/quotes/spot/${existingSpotEnvelopeId}?${buildSpotWorkflowParams(quote).toString()}`;
+  })();
 
   useEffect(() => {
     if (id && user) {
@@ -75,6 +84,14 @@ export default function QuoteDetailPage() {
       fetchQuote();
     }
   }, [id, user]);
+
+  useEffect(() => {
+    if (!spotWorkflowHref || redirectingSpotRef.current) {
+      return;
+    }
+    redirectingSpotRef.current = true;
+    router.replace(spotWorkflowHref);
+  }, [router, spotWorkflowHref]);
 
 
   if (loading) {
@@ -149,6 +166,30 @@ export default function QuoteDetailPage() {
   const fxEntries = buildFxEntries(quote, computeResult);
   const isDomesticQuote = (quote.shipment_type || "").toUpperCase() === "DOMESTIC";
   const resolvedServiceScope = formatServiceScope(quote.service_scope);
+
+  if (spotWorkflowHref) {
+    return (
+      <div className="container mx-auto max-w-3xl p-6">
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-lg">Continuing SPOT Workflow</CardTitle>
+            <CardDescription>
+              This incomplete quote already has an active SPOT envelope. Redirecting you to the live SPOT workflow now.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Opening {quote.quote_number} in SPOT mode...
+            </div>
+            <Button onClick={() => router.replace(spotWorkflowHref)}>
+              Open SPOT Now
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -626,6 +667,19 @@ function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
       )}
     </Card>
   );
+}
+
+function buildSpotWorkflowParams(quote: V3QuoteComputeResponse): URLSearchParams {
+  const weightInfo = computeChargeableWeight(quote);
+  return new URLSearchParams({
+    customer_name: getCustomerName(quote.customer),
+    service_scope: quote.service_scope || "D2D",
+    payment_term: quote.payment_term || "PREPAID",
+    output_currency: quote.output_currency || "PGK",
+    shipment_type: quote.shipment_type,
+    weight: String(weightInfo.chargeableWeight),
+    pieces: String(weightInfo.pieces),
+  });
 }
 
 const SPOT_ENVELOPE_STORAGE_KEY = "spotEnvelopeByQuoteId";
