@@ -1,10 +1,10 @@
 # Go-Live Status Tracker
 
-Last updated: 2026-03-19
+Last updated: 2026-03-20
 
 This is the practical readiness view for launch.
 
-Overall estimated readiness: `80%`
+Overall estimated readiness: `85%`
 
 Go / no-go status today: `NOT READY FOR PRODUCTION YET`
 
@@ -13,7 +13,8 @@ Reason:
 - core reference/master data is seeded
 - standard vs SPOT decisioning is materially stronger
 - domestic tariff/routing coverage is now in place for the current launch sheet
-- remaining work is mostly production setup, launch-data validation, and final UAT
+- tenant/branding foundation is now in place for the EFM beta
+- remaining work is mostly production setup, brand/user setup, launch-data validation, and final UAT
 
 ## Summary
 
@@ -31,6 +32,9 @@ Reason:
 | Policy hygiene | DONE | Pricing | Single active launch policy |
 | Local development readiness | DONE | Eng | Current local environment is launch-like |
 | Domestic tariff/routing coverage | DONE | Pricing / Eng | Launch domestic tariff sheet seeded and verified locally |
+| Tenant and branding foundation | DONE | Eng / Product | Quotes, PDFs, public pages, auth, and internal UI now resolve organization branding |
+| In-app branding management | DONE | Eng / Admin | Admins can upload branding and manage settings in-app |
+| User organization assignment | DONE | Eng / Admin | User management now supports organization assignment |
 | Production users on prod env | IN PROGRESS | Admin / Security | Named launch users are defined; must verify on actual production DB |
 | Production env vars / deploy config | REMAINING | Platform / DevOps | Must verify on actual server |
 | Scheduler / cron jobs | REMAINING | Platform / DevOps | FX refresh and housekeeping still need prod wiring |
@@ -58,6 +62,10 @@ Reason:
 | Seed import special local tariffs for `DG` / `AVI` / `HVC` | DONE | High | Pricing | None | Import `A2D` standard quotes include special local lines |
 | Verify import `A2D` `DG` / `AVI` / `HVC` live behavior | DONE | High | Eng / QA | None | `201` standard quote responses confirmed locally |
 | Seed domestic launch tariffs and commodity uplifts | DONE | High | Pricing / Eng | None | Domestic tariff sheet is seeded and domestic special cargo routes correctly |
+| Add tenant-aware branding foundation | DONE | Medium | Eng | None | Quotes, PDFs, public pages, and auth resolve organization branding |
+| Add in-app branding settings | DONE | Medium | Eng / Admin | None | Branding can be managed without Django admin |
+| Add organization assignment to user management | DONE | Medium | Eng / Admin | None | Managers/admins can assign users to the right organization |
+| Surface workspace context in quote/customer flows | DONE | Low | Eng / Product | None | Internal workflows show the current organization context clearly |
 | Create/verify real prod admin + role users | IN PROGRESS | High | Admin / Security | Needs prod env access | system admin, `manager`, and `sales` log in on production; `finance` optional for this phase |
 | Verify customer/contact production seed | IN PROGRESS | High | Customer Ops | Need final customer seed files | Launch customers selectable, with real contacts |
 | Verify launch corridor list | IN PROGRESS | High | Pricing / Business | Business confirmation needed | Written list of go-live lanes approved against `docs/launch-corridor-matrix.md` |
@@ -96,7 +104,8 @@ Why:
 ## Next Best Actions
 
 1. Use `docs/production-cutover-checklist.md` as the launch execution sheet.
-2. Confirm whether `POM` is the only import `A2D` destination at launch.
-3. Import and validate final launch customers/contacts on the target environment.
-4. Verify production env vars, migrations, static files, and scheduled jobs.
-5. Run final UAT in the deployed environment and mark each stop-ship item done.
+2. Use `docs/beta-readiness-efm.md` to configure EFM branding and assign the three launch users to the EFM organization.
+3. Confirm whether `POM` is the only import `A2D` destination at launch.
+4. Import and validate final launch customers/contacts on the target environment.
+5. Verify production env vars, migrations, static files, and scheduled jobs.
+6. Run final UAT in the deployed environment and mark each stop-ship item done.
