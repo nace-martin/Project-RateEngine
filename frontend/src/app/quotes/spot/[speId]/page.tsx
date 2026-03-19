@@ -63,6 +63,12 @@ const componentToBucket = (component: string): SPEChargeLine["bucket"] | null =>
     return null;
 };
 
+const BUCKET_LABELS: Record<SPEChargeLine["bucket"], string> = {
+    airfreight: "Freight",
+    origin_charges: "Origin Charges",
+    destination_charges: "Destination Charges",
+};
+
 type IntakeSourceSection = {
     id: SPEChargeLine["bucket"];
     title: string;
@@ -379,6 +385,58 @@ export default function SpotRateEntryPage() {
         const editableBucketSet = new Set(editableBuckets);
         return candidateCharges.filter((charge) => editableBucketSet.has(charge.bucket));
     }, [mergedFormCharges, editableBuckets]);
+
+    const sourceReviewSummaries = useMemo(() => {
+        const charges = (state.spe?.charges || EMPTY_CHARGES).filter(
+            (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
+        );
+        return (state.spe?.sources || []).map((source) => {
+            const sourceCharges = charges.filter((charge) => charge.source_batch_id === source.id);
+            const currencies = Array.from(new Set(sourceCharges.map((charge) => charge.currency)));
+            const buckets = Array.from(new Set(sourceCharges.map((charge) => charge.bucket)));
+            return {
+                id: source.id,
+                label: source.label,
+                targetBucket: source.target_bucket,
+                sourceKind: source.source_kind,
+                lineCount: sourceCharges.length,
+                currencies,
+                buckets,
+            };
+        });
+    }, [state.spe?.charges, state.spe?.sources]);
+
+    const overlapWarnings = useMemo(() => {
+        const warnings = new Set<string>();
+        const missingBucketSet = new Set(editableBuckets);
+
+        for (const summary of sourceReviewSummaries) {
+            if (summary.currencies.length > 1) {
+                warnings.add(
+                    `${summary.label} contains multiple currencies (${summary.currencies.join(", ")}). Review the FX treatment before confirming the quote.`
+                );
+            }
+
+            if (summary.targetBucket !== "mixed") {
+                const unexpectedBuckets = summary.buckets.filter((bucket) => bucket !== summary.targetBucket);
+                if (unexpectedBuckets.length > 0) {
+                    warnings.add(
+                        `${summary.label} imported ${unexpectedBuckets.map((bucket) => BUCKET_LABELS[bucket]).join(", ")} as well as its expected bucket. Check for overlap before confirming.`
+                    );
+                }
+            }
+
+            for (const bucket of summary.buckets) {
+                if (missingBucketSet.size > 0 && !missingBucketSet.has(bucket)) {
+                    warnings.add(
+                        `${summary.label} includes ${BUCKET_LABELS[bucket]}, but that bucket is already covered by standard pricing for this lane. Remove duplicates before confirming.`
+                    );
+                }
+            }
+        }
+
+        return Array.from(warnings);
+    }, [editableBuckets, sourceReviewSummaries]);
 
     // Handle saving charges, acknowledging, and creating the final quote in one flow
     const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
@@ -724,6 +782,64 @@ export default function SpotRateEntryPage() {
                     >
                         ← Back to Agent Reply
                     </Button>
+
+                    {sourceReviewSummaries.length > 0 && (
+                        <Card className="border-slate-200">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-base font-semibold">Imported Source Summary</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="grid gap-3 md:grid-cols-2">
+                                    {sourceReviewSummaries.map((summary) => (
+                                        <div key={summary.id} className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div className="font-medium text-slate-900">{summary.label}</div>
+                                                    <div className="mt-1 text-sm text-slate-600">
+                                                        {summary.sourceKind} source
+                                                    </div>
+                                                </div>
+                                                <div className="rounded-full border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700">
+                                                    {summary.targetBucket === "mixed" ? "Mixed" : BUCKET_LABELS[summary.targetBucket]}
+                                                </div>
+                                            </div>
+                                            <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-3">
+                                                <div>
+                                                    <div className="text-xs uppercase tracking-wide text-slate-500">Lines</div>
+                                                    <div className="font-medium">{summary.lineCount}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs uppercase tracking-wide text-slate-500">Currencies</div>
+                                                    <div className="font-medium">{summary.currencies.join(", ") || "None"}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs uppercase tracking-wide text-slate-500">Buckets</div>
+                                                    <div className="font-medium">
+                                                        {summary.buckets.map((bucket) => BUCKET_LABELS[bucket]).join(", ") || "None"}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {overlapWarnings.length > 0 ? (
+                                    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+                                        <div className="text-sm font-medium text-amber-900">Review Warnings</div>
+                                        <ul className="mt-2 space-y-2 text-sm text-amber-900">
+                                            {overlapWarnings.map((warning) => (
+                                                <li key={warning}>• {warning}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ) : (
+                                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                                        Imported source batches align with the missing quote buckets. Review the lines below and confirm the final charge mix.
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
 
                     {/* Rate Entry Form with AI-suggested charges */}
                     <SpotRateEntryForm
