@@ -49,7 +49,13 @@ class SystemSettingsPermission(BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role == CustomUser.ROLE_ADMIN)
 
 
-def resolve_active_organization() -> Organization:
+def resolve_active_organization(user=None) -> Organization:
+    user_organization = getattr(user, "organization", None)
+    if user_organization and user_organization.is_active:
+        return user_organization
+    if user_organization:
+        return user_organization
+
     organization = Organization.objects.filter(is_active=True).order_by("name").first()
     if organization:
         return organization
@@ -138,7 +144,7 @@ class OrganizationBrandingSettingsView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_object(self) -> OrganizationBranding:
-        organization = resolve_active_organization()
+        organization = resolve_active_organization(self.request.user)
         branding, _ = OrganizationBranding.objects.get_or_create(
             organization=organization,
             defaults={

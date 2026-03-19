@@ -121,9 +121,15 @@ export async function login(
     username:
       ((rawUser && typeof rawUser.username === 'string') ? rawUser.username : undefined) ??
       (typeof result.username === 'string' ? result.username : data.username),
+    email:
+      ((rawUser && typeof rawUser.email === 'string') ? rawUser.email : undefined) ?? null,
     role:
       ((rawUser && typeof rawUser.role === 'string') ? rawUser.role : undefined) ??
       (typeof result.role === 'string' ? result.role : 'sales'),
+    organization:
+      rawUser && rawUser.organization && typeof rawUser.organization === 'object'
+        ? (rawUser.organization as User['organization'])
+        : null,
   };
 
   return {
@@ -133,11 +139,12 @@ export async function login(
 }
 
 export async function getMe(): Promise<User> {
-  const url = API_BASE_URL + '/api/accounts/me/';
+  const url = API_BASE_URL + '/api/auth/me/';
   const response = await fetch(url, {
     headers: {
-      Authorization: `Token ${getToken()}`,
+      Authorization: `Token ${resolveAuthToken()}`,
     },
+    cache: 'no-store',
   });
 
   if (!response.ok) {

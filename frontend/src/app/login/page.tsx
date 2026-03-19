@@ -35,9 +35,11 @@ export default function LoginPage() {
 
     try {
       const { token, user } = await apiLogin({ username, password });
-      const resolvedRole = user?.role ?? 'sales';
-      const resolvedUsername = user?.username ?? username;
-      login(token, resolvedRole, resolvedUsername);
+      login(token, {
+        ...user,
+        role: user?.role ?? 'sales',
+        username: user?.username ?? username,
+      });
 
       toast({
         title: "Welcome back!",

@@ -13,10 +13,26 @@ export interface LoginData {
   password: string;
 }
 
+export interface UserBrandingRef {
+  display_name: string;
+  primary_color?: string | null;
+  accent_color?: string | null;
+  logo_url?: string | null;
+}
+
+export interface UserOrganizationRef {
+  id: string;
+  name: string;
+  slug: string;
+  branding?: UserBrandingRef | null;
+}
+
 export interface User {
   id?: number;
   username: string;
+  email?: string | null;
   role: string;
+  organization?: UserOrganizationRef | null;
 }
 
 export interface QuoteCustomerRef {

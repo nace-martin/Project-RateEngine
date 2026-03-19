@@ -335,7 +335,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 is_dangerous_goods=validated_data.is_dangerous_goods,
                 status=initial_status,
                 request_details_json=validated_data.model_dump(mode='json'),
-                created_by=request.user
+                created_by=request.user,
+                organization=getattr(request.user, 'organization', None),
             )
             version_number = 1
         else:
@@ -356,6 +357,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.is_dangerous_goods = validated_data.is_dangerous_goods
             quote.status = initial_status
             quote.request_details_json = validated_data.model_dump(mode='json')
+            if quote.organization_id is None and getattr(request.user, 'organization_id', None):
+                quote.organization = request.user.organization
             quote.save(update_fields=[
                 'customer',
                 'contact',
@@ -373,6 +376,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'is_dangerous_goods',
                 'status',
                 'request_details_json',
+                'organization',
             ])
 
             latest_version = quote.versions.order_by('-version_number').first()

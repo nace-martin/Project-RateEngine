@@ -1,12 +1,14 @@
 import json
+
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import make_password
-from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
+
 from .models import CustomUser
 
 def _error(detail: str, status_code: int):
@@ -17,6 +19,57 @@ def _error(detail: str, status_code: int):
 class LoginRateThrottle(ScopedRateThrottle):
     """Throttle for login attempts - uses 'login' scope from settings."""
     scope = 'login'
+
+
+def _serialize_branding(branding, request=None):
+    if not branding:
+        return None
+
+    logo_url = branding.logo_small.url if branding.logo_small else None
+    if not logo_url and branding.logo_primary:
+        logo_url = branding.logo_primary.url
+    if logo_url and request is not None:
+        logo_url = request.build_absolute_uri(logo_url)
+
+    return {
+        'display_name': branding.display_name,
+        'primary_color': branding.primary_color or None,
+        'accent_color': branding.accent_color or None,
+        'logo_url': logo_url,
+    }
+
+
+def _serialize_organization(organization, request=None):
+    if not organization:
+        return None
+
+    branding = getattr(organization, 'branding', None)
+    return {
+        'id': str(organization.id),
+        'name': organization.name,
+        'slug': organization.slug,
+        'branding': _serialize_branding(branding, request=request),
+    }
+
+
+def _serialize_user(user: CustomUser, request=None):
+    organization = getattr(user, 'organization', None)
+    return {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'role': user.role,
+        'organization': _serialize_organization(organization, request=request),
+    }
+
+
+def _default_organization():
+    from parties.models import Organization
+
+    organization = Organization.objects.filter(is_active=True).order_by('name').first()
+    if organization is None:
+        organization = Organization.objects.order_by('name').first()
+    return organization
 
 
 @csrf_exempt
@@ -50,7 +103,8 @@ def login_view(request):
     return JsonResponse({
         'token': token.key,
         'role': user.role,
-        'username': user.username
+        'username': user.username,
+        'user': _serialize_user(user, request=request),
     })
 
 login_view.throttle_scope = 'login'
@@ -99,7 +153,8 @@ def register_view(request):
     user = CustomUser.objects.create(
         username=username,
         password=make_password(password),
-        role=CustomUser.ROLE_SALES  # Always sales - no role self-assignment
+        role=CustomUser.ROLE_SALES,  # Always sales - no role self-assignment
+        organization=_default_organization(),
     )
     
     # Create token for the user
@@ -108,5 +163,13 @@ def register_view(request):
     return JsonResponse({
         'token': token.key,
         'role': user.role,
-        'username': user.username
+        'username': user.username,
+        'user': _serialize_user(user, request=request),
     }, status=201)
+
+
+@csrf_exempt
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def me_view(request):
+    return JsonResponse(_serialize_user(request.user, request=request))

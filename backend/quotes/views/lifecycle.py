@@ -587,6 +587,7 @@ class QuoteCloneAPIView(APIView):
                 request_details_json=clone_payload,
                 status=Quote.Status.DRAFT,  # New quote starts as DRAFT
                 created_by=request.user,
+                organization=getattr(request.user, 'organization', None) or source_quote.organization,
                 # Note: quote_number is auto-generated on save
             )
 

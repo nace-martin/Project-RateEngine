@@ -1699,6 +1699,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 output_currency=quote_input.output_currency,
                 is_dangerous_goods=shipment.is_dangerous_goods,
                 created_by=request.user,
+                organization=getattr(request.user, 'organization', None),
                 status=Quote.Status.DRAFT,
                 request_details_json=quote_input.model_dump(mode='json'),
             )

@@ -20,6 +20,8 @@ export function AppSidebar() {
     const pathname = usePathname();
     const { user, logout } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
+    const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
+    const brandLogoUrl = user?.organization?.branding?.logo_url || null;
 
     const routes = [
         {
@@ -56,13 +58,25 @@ export function AppSidebar() {
         )}>
             <div className="px-3 py-4 flex items-center">
                 <Link href="/" className="flex items-center pl-3 mb-14">
-                    <div className="relative w-8 h-8 mr-4">
-                        <Plane className="w-8 h-8 text-primary" />
+                    <div className="relative w-8 h-8 mr-4 flex items-center justify-center">
+                        {brandLogoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={brandLogoUrl} alt={`${brandName} logo`} className="max-h-8 max-w-8 object-contain" />
+                        ) : (
+                            <Plane className="w-8 h-8 text-primary" />
+                        )}
                     </div>
                     {!collapsed && (
-                        <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-transparent">
-                            RateEngine
-                        </h1>
+                        <div className="flex flex-col">
+                            <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-transparent">
+                                {brandName}
+                            </h1>
+                            {brandName !== 'RateEngine' && (
+                                <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                                    Powered by RateEngine
+                                </span>
+                            )}
+                        </div>
                     )}
                 </Link>
                 <Button

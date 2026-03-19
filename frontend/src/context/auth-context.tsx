@@ -2,17 +2,14 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-
-interface User {
-  username: string;
-  role: string;
-}
+import { getMe } from '@/lib/api';
+import type { User } from '@/lib/types';
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   loading: boolean;
-  login: (token: string, role: string, username: string) => void;
+  login: (token: string, user: User) => void;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -26,32 +23,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    try {
+    const load = async () => {
       const storedToken = localStorage.getItem('authToken');
-      const role = localStorage.getItem('userRole');
-      const username = localStorage.getItem('username');
+      const storedUserJson = localStorage.getItem('authUser');
+      const legacyRole = localStorage.getItem('userRole');
+      const legacyUsername = localStorage.getItem('username');
 
-      if (storedToken && role && username) {
-        setUser({ username, role });
-        setToken(storedToken);
+      if (!storedToken) {
+        setLoading(false);
+        return;
       }
-    } catch (e) {
-      console.error('Error in AuthProvider effect:', e);
-    } finally {
-      setLoading(false);
-    }
+
+      setToken(storedToken);
+
+      try {
+        if (storedUserJson) {
+          const parsed = JSON.parse(storedUserJson) as User;
+          setUser(parsed);
+        } else if (legacyRole && legacyUsername) {
+          setUser({ username: legacyUsername, role: legacyRole });
+        }
+
+        const refreshedUser = await getMe();
+        setUser(refreshedUser);
+        localStorage.setItem('authUser', JSON.stringify(refreshedUser));
+        localStorage.setItem('userRole', refreshedUser.role);
+        localStorage.setItem('username', refreshedUser.username);
+      } catch (e) {
+        console.error('Error in AuthProvider effect:', e);
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('userRole');
+        localStorage.removeItem('username');
+        setUser(null);
+        setToken(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
   }, []);
 
-  const login = (newToken: string, role: string, username: string) => {
+  const login = (newToken: string, nextUser: User) => {
     localStorage.setItem('authToken', newToken);
-    localStorage.setItem('userRole', role);
-    localStorage.setItem('username', username);
-    setUser({ username, role });
+    localStorage.setItem('authUser', JSON.stringify(nextUser));
+    localStorage.setItem('userRole', nextUser.role);
+    localStorage.setItem('username', nextUser.username);
+    setUser(nextUser);
     setToken(newToken);
   };
 
   const logout = () => {
     localStorage.removeItem('authToken');
+    localStorage.removeItem('authUser');
     localStorage.removeItem('userRole');
     localStorage.removeItem('username');
     setUser(null);

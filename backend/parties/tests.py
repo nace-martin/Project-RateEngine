@@ -333,3 +333,30 @@ class OrganizationBrandingSettingsAPITests(APITestCase):
         self.assertEqual(self.branding.display_name, "EFM Cargo")
         self.assertEqual(self.branding.support_phone, "+675 123 4567")
         self.assertEqual(self.branding.public_quote_tagline, "Fast PNG airfreight quotes")
+
+    def test_settings_resolve_from_authenticated_users_organization(self):
+        aud = Currency.objects.filter(code="AUD").first() or Currency.objects.create(
+            code="AUD",
+            name="Australian Dollar",
+        )
+        other_org = Organization.objects.create(
+            name="Second Tenant",
+            slug="second-tenant",
+            default_currency=aud,
+            is_active=True,
+        )
+        OrganizationBranding.objects.create(
+            organization=other_org,
+            display_name="Second Tenant",
+            support_email="ops@second.example",
+            is_active=True,
+        )
+        self.admin.organization = other_org
+        self.admin.save(update_fields=["organization"])
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["organization_slug"], "second-tenant")
+        self.assertEqual(response.data["display_name"], "Second Tenant")

@@ -58,6 +58,14 @@ class CustomUser(AbstractUser):
         blank=True,
         help_text="Department assignment for visibility restrictions (e.g., Air vs Sea)."
     )
+    organization = models.ForeignKey(
+        'parties.Organization',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='users',
+        help_text="Tenant/account workspace this user belongs to.",
+    )
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

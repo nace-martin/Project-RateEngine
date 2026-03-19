@@ -31,6 +31,9 @@ export default function AppHeader() {
   const { user, logout } = useAuth();
   const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
   const [open, setOpen] = useState(false);
+  const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
+  const brandLogoUrl = user?.organization?.branding?.logo_url || null;
+  const productSubLabel = brandName === 'RateEngine' ? null : 'Powered by RateEngine';
 
   // Hide header on login page
   if (pathname === '/login') {
@@ -144,13 +147,25 @@ export default function AppHeader() {
           </SheetContent>
         </Sheet>
 
-        <Link href="/" className="flex items-center gap-2 text-lg font-bold text-primary mr-2">
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-            <line x1="12" y1="22.08" x2="12" y2="12" />
-          </svg>
-          <span className="hidden sm:inline-block">RateEngine</span>
+        <Link href="/" className="flex items-center gap-3 text-lg font-bold text-primary mr-2">
+          {brandLogoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={brandLogoUrl} alt={`${brandName} logo`} className="h-8 w-auto max-w-24 object-contain" />
+          ) : (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          )}
+          <span className="hidden sm:flex flex-col leading-tight">
+            <span>{brandName}</span>
+            {productSubLabel && (
+              <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                {productSubLabel}
+              </span>
+            )}
+          </span>
         </Link>
 
         {/* Desktop Nav */}
