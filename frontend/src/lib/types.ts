@@ -46,6 +46,27 @@ export interface QuoteBrandingRef {
   logo_url?: string | null;
 }
 
+export interface OrganizationBrandingSettings {
+  organization_name: string;
+  organization_slug: string;
+  display_name: string;
+  legal_name?: string;
+  support_email?: string;
+  support_phone?: string;
+  website_url?: string;
+  address_lines?: string;
+  quote_footer_text?: string;
+  public_quote_tagline?: string;
+  email_signature_text?: string;
+  primary_color?: string;
+  accent_color?: string;
+  logo_primary?: string | null;
+  logo_primary_url?: string | null;
+  logo_small?: string | null;
+  logo_small_url?: string | null;
+  is_active: boolean;
+}
+
 // --- PARTIES (COMPANY/CONTACT) TYPES ---
 export interface Company {
   id: string; // UUID

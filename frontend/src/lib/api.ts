@@ -17,6 +17,7 @@ import {
   QuoteVersionCreatePayload,
   StationSummary,
   QuoteComputeResult,
+  OrganizationBrandingSettings,
   PaginatedResponse,
 } from './types';
 
@@ -141,6 +142,62 @@ export async function getMe(): Promise<User> {
 
   if (!response.ok) {
     throw new Error('Failed to fetch user data.');
+  }
+
+  return response.json();
+}
+
+export async function getOrganizationBrandingSettings(): Promise<OrganizationBrandingSettings> {
+  const url = API_BASE_URL + '/api/v3/branding/organization/';
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load branding settings: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function updateOrganizationBrandingSettings(
+  data: Partial<OrganizationBrandingSettings> & {
+    logo_primary_file?: File | null;
+    logo_small_file?: File | null;
+  },
+): Promise<OrganizationBrandingSettings> {
+  const url = API_BASE_URL + '/api/v3/branding/organization/';
+  const formData = new FormData();
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === undefined || value === null || key === 'logo_primary_file' || key === 'logo_small_file') {
+      return;
+    }
+    formData.append(key, typeof value === 'boolean' ? String(value) : String(value));
+  });
+
+  if (data.logo_primary_file) {
+    formData.append('logo_primary', data.logo_primary_file);
+  }
+  if (data.logo_small_file) {
+    formData.append('logo_small', data.logo_small_file);
+  }
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update branding settings: ${detail}`);
   }
 
   return response.json();

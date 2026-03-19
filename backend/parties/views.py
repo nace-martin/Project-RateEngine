@@ -5,13 +5,17 @@ V3 API views for the parties app.
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch, Q
 from rest_framework import generics, permissions, viewsets
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import BasePermission
+from rest_framework.views import APIView
+from rest_framework.response import Response
 
-from .models import Company, Contact, Address
+from .models import Address, Company, Contact, Organization, OrganizationBranding
 from .serializers import (
-    CustomerV3Serializer,
     CompanySearchV3Serializer,
     ContactV3Serializer,
+    CustomerV3Serializer,
+    OrganizationBrandingSettingsSerializer,
 )
 from accounts.models import CustomUser
 
@@ -36,6 +40,23 @@ class CustomerAccessPermission(BasePermission):
         
         # For write methods, only Admin allowed
         return request.user.role == CustomUser.ROLE_ADMIN
+
+
+class SystemSettingsPermission(BasePermission):
+    message = "Admin access required."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == CustomUser.ROLE_ADMIN)
+
+
+def resolve_active_organization() -> Organization:
+    organization = Organization.objects.filter(is_active=True).order_by("name").first()
+    if organization:
+        return organization
+    organization = Organization.objects.order_by("name").first()
+    if organization:
+        return organization
+    raise Organization.DoesNotExist("No organization configured.")
 
 
 class CustomerV3ViewSet(viewsets.ModelViewSet):
@@ -110,3 +131,38 @@ class CompanyContactListV3View(generics.ListAPIView):
         company_id = self.kwargs.get("company_id")
         company = get_object_or_404(Company, pk=company_id)
         return company.contacts.filter(is_active=True).order_by("last_name", "first_name")
+
+
+class OrganizationBrandingSettingsView(APIView):
+    permission_classes = [permissions.IsAuthenticated, SystemSettingsPermission]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_object(self) -> OrganizationBranding:
+        organization = resolve_active_organization()
+        branding, _ = OrganizationBranding.objects.get_or_create(
+            organization=organization,
+            defaults={
+                "display_name": organization.name,
+                "is_active": True,
+            },
+        )
+        return branding
+
+    def get(self, request):
+        serializer = OrganizationBrandingSettingsSerializer(
+            self.get_object(),
+            context={"request": request},
+        )
+        return Response(serializer.data)
+
+    def patch(self, request):
+        branding = self.get_object()
+        serializer = OrganizationBrandingSettingsSerializer(
+            branding,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

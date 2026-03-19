@@ -1,7 +1,8 @@
 # backend/parties/serializers.py
 
 from rest_framework import serializers
-from .models import Company, Contact
+
+from .models import Company, Contact, OrganizationBranding
 
 class CustomerV3Serializer(serializers.ModelSerializer):
     """Serialize customer companies for the v3 API."""
@@ -102,3 +103,63 @@ class ContactV3Serializer(serializers.ModelSerializer):
             "company_name",
         ]
         read_only_fields = ["id", "company", "company_name"]
+
+
+class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
+    organization_slug = serializers.CharField(source="organization.slug", read_only=True)
+    logo_primary_url = serializers.SerializerMethodField()
+    logo_small_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrganizationBranding
+        fields = [
+            "organization_name",
+            "organization_slug",
+            "display_name",
+            "legal_name",
+            "support_email",
+            "support_phone",
+            "website_url",
+            "address_lines",
+            "quote_footer_text",
+            "public_quote_tagline",
+            "email_signature_text",
+            "primary_color",
+            "accent_color",
+            "logo_primary",
+            "logo_primary_url",
+            "logo_small",
+            "logo_small_url",
+            "is_active",
+        ]
+        extra_kwargs = {
+            "logo_primary": {"required": False, "allow_null": True},
+            "logo_small": {"required": False, "allow_null": True},
+            "display_name": {"required": False},
+            "legal_name": {"required": False},
+            "support_email": {"required": False},
+            "support_phone": {"required": False},
+            "website_url": {"required": False},
+            "address_lines": {"required": False},
+            "quote_footer_text": {"required": False},
+            "public_quote_tagline": {"required": False},
+            "email_signature_text": {"required": False},
+            "primary_color": {"required": False},
+            "accent_color": {"required": False},
+            "is_active": {"required": False},
+        }
+
+    def get_logo_primary_url(self, obj):
+        request = self.context.get("request")
+        if not obj.logo_primary:
+            return None
+        url = obj.logo_primary.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_logo_small_url(self, obj):
+        request = self.context.get("request")
+        if not obj.logo_small:
+            return None
+        url = obj.logo_small.url
+        return request.build_absolute_uri(url) if request else url

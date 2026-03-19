@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import OrganizationBrandingSettings from '@/components/OrganizationBrandingSettings';
 import { usePermissions } from '@/hooks/usePermissions';
 import FxRateManagement from '@/components/FxRateManagement';
 
@@ -43,6 +44,17 @@ export default function SettingsPage() {
 
             {/* FX Rate Management */}
             <FxRateManagement canEditFxRates={canEditFXRates} />
+          </>
+        )}
+
+        {isAdmin && (
+          <>
+            <div className="border-t pt-4">
+              <h2 className="text-lg font-semibold mb-4 text-muted-foreground">
+                Branding
+              </h2>
+            </div>
+            <OrganizationBrandingSettings />
           </>
         )}
       </div>

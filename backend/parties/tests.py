@@ -4,13 +4,15 @@ from io import StringIO
 import csv
 
 from django.core.management import call_command
+from django.urls import reverse
 from django.test import TestCase
 from rest_framework.test import APIClient, APITestCase
+from rest_framework import status
 
 from accounts.models import CustomUser
 from core.models import Country, City
 from core.models import Currency
-from parties.models import Company, Contact, Address
+from parties.models import Company, Contact, Address, Organization, OrganizationBranding
 
 
 class CustomerSeedCommandTests(TestCase):
@@ -259,3 +261,75 @@ class CustomerListAPITests(APITestCase):
         returned_ids = {row["id"] for row in response.data}
         self.assertIn(str(active.id), returned_ids)
         self.assertNotIn(str(archived.id), returned_ids)
+
+
+class OrganizationBrandingSettingsAPITests(APITestCase):
+    def setUp(self):
+        self.admin = CustomUser.objects.create_user(
+            username="branding-admin",
+            password="testpass123",
+            role=CustomUser.ROLE_ADMIN,
+        )
+        self.sales = CustomUser.objects.create_user(
+            username="branding-sales",
+            password="testpass123",
+            role=CustomUser.ROLE_SALES,
+        )
+        pgk = Currency.objects.filter(code="PGK").first() or Currency.objects.create(
+            code="PGK",
+            name="Papua New Guinean Kina",
+        )
+        self.organization, _ = Organization.objects.get_or_create(
+            slug="efm-express-air-cargo",
+            defaults={
+                "name": "EFM Express Air Cargo",
+                "default_currency": pgk,
+                "is_active": True,
+            },
+        )
+        self.branding, _ = OrganizationBranding.objects.update_or_create(
+            organization=self.organization,
+            defaults={
+                "display_name": "EFM Express Air Cargo",
+                "support_email": "quotes@efmexpress.com",
+                "support_phone": "+675 325 8500",
+                "primary_color": "#0F2A56",
+                "accent_color": "#D71920",
+            },
+        )
+        self.url = reverse("parties:organization-branding-settings-v3")
+
+    def test_admin_can_get_branding_settings(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["display_name"], "EFM Express Air Cargo")
+        self.assertEqual(response.data["organization_slug"], "efm-express-air-cargo")
+
+    def test_sales_cannot_get_branding_settings(self):
+        self.client.force_authenticate(user=self.sales)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_admin_can_patch_branding_settings(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            self.url,
+            {
+                "display_name": "EFM Cargo",
+                "support_phone": "+675 123 4567",
+                "public_quote_tagline": "Fast PNG airfreight quotes",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.branding.refresh_from_db()
+        self.assertEqual(self.branding.display_name, "EFM Cargo")
+        self.assertEqual(self.branding.support_phone, "+675 123 4567")
+        self.assertEqual(self.branding.public_quote_tagline, "Fast PNG airfreight quotes")
