@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from quotes.branding import get_quote_branding
 from quotes.models import Quote, QuoteLine, QuoteTotal
 from quotes.public_links import get_public_quote_id_from_token
 
@@ -233,7 +234,10 @@ class QuotePublicDetailAPIView(APIView):
         if not quote_id:
             return Response({'detail': 'Link expired or invalid.'}, status=status.HTTP_403_FORBIDDEN)
 
-        quote = get_object_or_404(Quote, id=quote_id)
+        quote = get_object_or_404(
+            Quote.objects.select_related("customer", "contact", "organization", "organization__branding"),
+            id=quote_id,
+        )
         if quote.status not in [Quote.Status.FINALIZED, Quote.Status.SENT]:
             return Response({'detail': 'Quote is not available for sharing.'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -261,6 +265,7 @@ class QuotePublicDetailAPIView(APIView):
         origin_code, origin_name = _parse_location_label(quote.origin_location)
         destination_code, destination_name = _parse_location_label(quote.destination_location)
         resolved_service_scope = _resolve_service_scope(quote, version)
+        branding = get_quote_branding(quote)
 
         response_data = {
             'quote_number': quote.quote_number,
@@ -283,6 +288,17 @@ class QuotePublicDetailAPIView(APIView):
                 'origin_name': origin_name,
                 'destination_code': destination_code,
                 'destination_name': destination_name,
+            },
+            'branding': {
+                'display_name': branding.display_name,
+                'support_email': branding.support_email,
+                'support_phone': branding.support_phone,
+                'website_url': branding.website_url,
+                'address_lines': branding.address_lines,
+                'public_quote_tagline': branding.public_quote_tagline,
+                'primary_color': branding.primary_color,
+                'accent_color': branding.accent_color,
+                'logo_url': branding.logo_url,
             },
             'currency': currency,
             'totals': _calculate_public_totals(totals, currency),

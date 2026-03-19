@@ -6,7 +6,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.models import Location
-from parties.models import Company
+from parties.models import Company, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
 from quotes.public_links import build_public_quote_token
 from services.models import ServiceComponent
@@ -21,6 +21,21 @@ class QuotePublicDetailAPITest(APITestCase):
             email="public_quote_tester@example.com",
         )
         self.customer = Company.objects.create(name="Seed Customer")
+        self.organization, _ = Organization.objects.get_or_create(
+            slug="efm-express-air-cargo",
+            defaults={"name": "EFM Express Air Cargo"},
+        )
+        self.branding, _ = OrganizationBranding.objects.update_or_create(
+            organization=self.organization,
+            defaults={
+                "display_name": "EFM Express Air Cargo",
+                "support_email": "quotes@efmexpress.com",
+                "support_phone": "+675 325 8500",
+                "public_quote_tagline": "Air cargo quotations from EFM Express Air Cargo",
+                "primary_color": "#0F2A56",
+                "accent_color": "#D71920",
+            },
+        )
         self.origin = Location.objects.create(code="POM", name="Port Moresby Jacksons Intl")
         self.destination = Location.objects.create(code="HKG", name="Hong Kong Intl")
         self.url = reverse("quotes:quote-public-detail")
@@ -34,6 +49,7 @@ class QuotePublicDetailAPITest(APITestCase):
     ) -> Quote:
         quote = Quote.objects.create(
             customer=self.customer,
+            organization=self.organization,
             mode="AIR",
             shipment_type=Quote.ShipmentType.EXPORT,
             payment_term=Quote.PaymentTerm.PREPAID,
@@ -74,6 +90,8 @@ class QuotePublicDetailAPITest(APITestCase):
         payload = response.json()
         self.assertEqual(payload["shipment"]["service_scope"], "A2D")
         self.assertEqual(payload["route"]["origin_name"], "Port Moresby Jacksons Intl")
+        self.assertEqual(payload["branding"]["display_name"], "EFM Express Air Cargo")
+        self.assertEqual(payload["branding"]["public_quote_tagline"], "Air cargo quotations from EFM Express Air Cargo")
 
     def test_public_quote_falls_back_to_version_payload_scope(self):
         quote = self._create_quote(service_scope=None, payload_json={"service_scope": "d2d"})
@@ -209,3 +227,17 @@ class QuotePublicDetailAPITest(APITestCase):
 
         self.assertEqual(len(origin_lines), 1)
         self.assertEqual(origin_lines[0]["description"], "AWB Fee")
+
+    def test_public_quote_includes_branding_payload(self):
+        quote = self._create_quote(service_scope="D2D")
+        token = build_public_quote_token(str(quote.id))
+
+        response = self.client.get(self.url, {"token": token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertEqual(payload["branding"]["display_name"], "EFM Express Air Cargo")
+        self.assertEqual(payload["branding"]["support_email"], "quotes@efmexpress.com")
+        self.assertEqual(payload["branding"]["support_phone"], "+675 325 8500")
+        self.assertEqual(payload["branding"]["primary_color"], "#0F2A56")
+        self.assertEqual(payload["branding"]["accent_color"], "#D71920")

@@ -4,12 +4,12 @@ from django.test import TestCase
 
 from core.models import City, Country, Location
 from parties.models import Company, Organization, OrganizationBranding
+from quotes.branding import get_quote_branding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
 from quotes.pdf_service import (
     _extract_location_info,
     _get_chargeable_weight,
     _get_location_country_code,
-    _get_quote_branding,
     generate_quote_pdf,
 )
 
@@ -172,13 +172,15 @@ class QuotePDFExportTest(TestCase):
             shipment_type="EXPORT",
         )
 
-        branding = _get_quote_branding(quote)
+        branding = get_quote_branding(quote)
 
         self.assertEqual(branding.display_name, "EFM Express Air Cargo")
         self.assertEqual(branding.support_email, "quotes@efmexpress.com")
         self.assertEqual(branding.support_phone, "+675 325 8500")
-        self.assertEqual(branding.primary_color, (15, 42, 86))
-        self.assertEqual(branding.accent_color, (215, 25, 32))
+        self.assertEqual(branding.primary_color, "#0F2A56")
+        self.assertEqual(branding.accent_color, "#D71920")
+        self.assertEqual(branding.primary_color_rgb, (15, 42, 86))
+        self.assertEqual(branding.accent_color_rgb, (215, 25, 32))
         self.assertIn("Port Moresby", branding.address_lines)
 
     def test_quote_branding_falls_back_when_organization_missing(self):
@@ -192,7 +194,7 @@ class QuotePDFExportTest(TestCase):
             shipment_type="EXPORT",
         )
 
-        branding = _get_quote_branding(quote)
+        branding = get_quote_branding(quote)
 
         self.assertEqual(branding.display_name, "EFM Express Air Cargo")
         self.assertEqual(branding.support_email, "quotes@efmexpress.com")

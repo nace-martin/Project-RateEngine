@@ -9,17 +9,15 @@ Clean table-style layout matching customer requirements.
 import logging
 import math
 from decimal import Decimal, ROUND_UP
-from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass
 
 from django.conf import settings
-from django.contrib.staticfiles import finders
 from django.utils import timezone
 
 from fpdf import FPDF
 
 from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE, commodity_label
+from .branding import QuoteBrandingContext, get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .public_links import build_public_quote_url
 
@@ -29,19 +27,6 @@ logger = logging.getLogger(__name__)
 class QuotePDFGenerationError(Exception):
     """Raised when PDF generation fails."""
     pass
-
-
-@dataclass(frozen=True)
-class QuoteBrandingContext:
-    display_name: str
-    support_email: str
-    support_phone: str
-    website_url: str
-    address_lines: list[str]
-    quote_footer_text: str
-    primary_color: tuple[int, int, int]
-    accent_color: tuple[int, int, int]
-    logo_path: Optional[str] = None
 
 
 def format_currency(amount) -> str:
@@ -110,12 +95,12 @@ class QuotePDF(FPDF):
         super().__init__(orientation='L', unit='mm', format='A4')
         self.quote = quote
         self.show_watermark = show_watermark
-        self.branding = _get_quote_branding(quote)
+        self.branding = get_quote_branding(quote)
         self.set_auto_page_break(auto=True, margin=15)
         
         # Colors
-        self.dark_blue = self.branding.primary_color
-        self.red = self.branding.accent_color
+        self.dark_blue = self.branding.primary_color_rgb
+        self.red = self.branding.accent_color_rgb
         self.gray = (71, 85, 105)  # #475569
         self.light_gray = (241, 245, 249)  # #F1F5F9
         self.white = (255, 255, 255)
@@ -871,77 +856,3 @@ def _build_branding_contact_line(branding: QuoteBrandingContext) -> str:
         segments.append(branding.website_url)
     return " | ".join(segments)
 
-
-def _hex_to_rgb(value: str, default: tuple[int, int, int]) -> tuple[int, int, int]:
-    raw = str(value or "").strip()
-    if not raw:
-        return default
-    if raw.startswith("#"):
-        raw = raw[1:]
-    if len(raw) != 6:
-        return default
-    try:
-        return tuple(int(raw[i : i + 2], 16) for i in (0, 2, 4))
-    except ValueError:
-        return default
-
-
-def _get_quote_branding(quote) -> QuoteBrandingContext:
-    branding = getattr(getattr(quote, "organization", None), "branding", None)
-    display_name = getattr(branding, "display_name", "") or getattr(getattr(quote, "organization", None), "name", "") or "EFM Express Air Cargo"
-    support_email = getattr(branding, "support_email", "") or "quotes@efmexpress.com"
-    support_phone = getattr(branding, "support_phone", "") or "+675 325 8500"
-    website_url = getattr(branding, "website_url", "") or ""
-    address_lines = [
-        line.strip()
-        for line in str(getattr(branding, "address_lines", "") or "PO Box 1791\nPort Moresby\nPapua New Guinea").splitlines()
-        if line.strip()
-    ]
-    quote_footer_text = getattr(branding, "quote_footer_text", "") or ""
-    primary_color = _hex_to_rgb(getattr(branding, "primary_color", ""), (15, 42, 86))
-    accent_color = _hex_to_rgb(getattr(branding, "accent_color", ""), (215, 25, 32))
-    logo_path = _get_logo_path(getattr(branding, "logo_primary", None))
-
-    return QuoteBrandingContext(
-        display_name=display_name,
-        support_email=support_email,
-        support_phone=support_phone,
-        website_url=website_url,
-        address_lines=address_lines,
-        quote_footer_text=quote_footer_text,
-        primary_color=primary_color,
-        accent_color=accent_color,
-        logo_path=logo_path,
-    )
-
-
-def _get_logo_path(logo_field=None) -> Optional[str]:
-    """Resolve uploaded branding logo first, then fall back to bundled defaults."""
-    try:
-        if logo_field:
-            uploaded_path = getattr(logo_field, "path", None)
-            if uploaded_path and Path(uploaded_path).exists():
-                return uploaded_path
-
-        # Try the cropped logo first (no padding, proper aspect ratio)
-        logo_path = finders.find('images/efm_logo_cropped.png')
-        if logo_path and Path(logo_path).exists():
-            return logo_path
-        
-        # Fallback to cropped logo in static folder
-        fallback = Path(settings.BASE_DIR) / 'static' / 'images' / 'efm_logo_cropped.png'
-        if fallback.exists():
-            return str(fallback)
-        
-        # Second fallback - original new logo
-        new_logo = finders.find('images/efm_logo_new.png')
-        if new_logo and Path(new_logo).exists():
-            return new_logo
-        
-        # Old logo fallback
-        old_logo = finders.find('images/eac_logo.png')
-        if old_logo and Path(old_logo).exists():
-            return old_logo
-    except Exception as e:
-        logger.warning(f"Could not load logo: {e}")
-    return None
