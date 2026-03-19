@@ -25,6 +25,13 @@ interface ReplyPasteCardProps {
     speId?: string;
     missingComponents?: string[];
     sourceBatchId?: string | null;
+    title?: string;
+    description?: string;
+    sourceKind?: "AIRLINE" | "AGENT" | "MANUAL" | "OTHER";
+    targetBucket?: "airfreight" | "origin_charges" | "destination_charges" | "mixed";
+    sourceLabel?: string;
+    sourceReference?: string;
+    hideMissingMessage?: boolean;
 }
 
 export function ReplyPasteCard({
@@ -33,6 +40,13 @@ export function ReplyPasteCard({
     speId,
     missingComponents = [],
     sourceBatchId = null,
+    title = "Reply Intake",
+    description = "Paste the rate reply you received from the agent or carrier, or upload a PDF quote. The system will extract and classify the information for review.",
+    sourceKind = "OTHER",
+    targetBucket = "mixed",
+    sourceLabel = "Primary SPOT Source",
+    sourceReference,
+    hideMissingMessage = false,
 }: ReplyPasteCardProps) {
     const [text, setText] = useState("");
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -125,10 +139,10 @@ export function ReplyPasteCard({
                 assertions: [],
                 speId,
                 sourceBatchId: sourceBatchId || undefined,
-                sourceKind: "OTHER",
-                targetBucket: "mixed",
-                label: "Primary SPOT Source",
-                sourceReference: selectedFile?.name || undefined,
+                sourceKind,
+                targetBucket,
+                label: sourceLabel,
+                sourceReference: sourceReference || selectedFile?.name || undefined,
                 useAi: true,
             });
             onAnalysisComplete(result);
@@ -148,16 +162,13 @@ export function ReplyPasteCard({
             <CardHeader className="pb-3">
                 <CardTitle className="text-lg flex items-center gap-2">
                     <Mail className="h-5 w-5 text-slate-600" />
-                    Reply Intake
+                    {title}
                 </CardTitle>
-                <CardDescription>
-                    Paste the rate reply you received from the agent or carrier, or upload a PDF quote.
-                    The system will extract and classify the information for review.
-                </CardDescription>
+                <CardDescription>{description}</CardDescription>
             </CardHeader>
 
             <CardContent className="space-y-4">
-                {getMissingMessage()}
+                {!hideMissingMessage && getMissingMessage()}
 
                 {sourceBatchId && (
                     <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
