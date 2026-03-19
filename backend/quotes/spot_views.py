@@ -51,6 +51,7 @@ from quotes.spot_schemas import (
 )
 from quotes.spot_models import (
     SpotPricingEnvelopeDB,
+    SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
     SPEManagerApprovalDB,
@@ -84,6 +85,15 @@ def _get_spe_or_404(user, envelope_id, queryset=None):
     if not _user_can_access_spe(user, spe_db):
         raise PermissionDenied("You do not have access to this SPOT envelope.")
     return spe_db
+
+
+def _spe_queryset():
+    return SpotPricingEnvelopeDB.objects.prefetch_related(
+        'charge_lines__source_batch',
+        'source_batches__charge_lines',
+        'acknowledgement',
+        'manager_approval',
+    )
 
 
 def _resolve_country_pair(
@@ -120,6 +130,106 @@ def _normalize_shipment_context(ctx: dict) -> dict:
     elif "payment_term" in normalized:
         normalized.pop("payment_term", None)
     return normalized
+
+
+def _normalize_source_kind(value: Optional[str]) -> str:
+    normalized = str(value or SPESourceBatchDB.SourceKind.AGENT).strip().upper()
+    valid = {choice for choice, _ in SPESourceBatchDB.SourceKind.choices}
+    return normalized if normalized in valid else SPESourceBatchDB.SourceKind.OTHER
+
+
+def _normalize_source_type(value: Optional[str], pdf_file=None) -> str:
+    if pdf_file is not None:
+        return SPESourceBatchDB.SourceType.PDF
+    normalized = str(value or SPESourceBatchDB.SourceType.TEXT).strip().upper()
+    valid = {choice for choice, _ in SPESourceBatchDB.SourceType.choices}
+    return normalized if normalized in valid else SPESourceBatchDB.SourceType.TEXT
+
+
+def _normalize_target_bucket(value: Optional[str]) -> str:
+    normalized = str(value or SPESourceBatchDB.TargetBucket.MIXED).strip().lower()
+    valid = {choice for choice, _ in SPESourceBatchDB.TargetBucket.choices}
+    return normalized if normalized in valid else SPESourceBatchDB.TargetBucket.MIXED
+
+
+def _default_source_label(source_kind: str, target_bucket: str) -> str:
+    bucket_labels = {
+        SPESourceBatchDB.TargetBucket.AIRFREIGHT: "Freight Source",
+        SPESourceBatchDB.TargetBucket.ORIGIN_CHARGES: "Origin Charges Source",
+        SPESourceBatchDB.TargetBucket.DESTINATION_CHARGES: "Destination Charges Source",
+        SPESourceBatchDB.TargetBucket.MIXED: "Primary SPOT Source",
+    }
+    kind_prefix = {
+        SPESourceBatchDB.SourceKind.AIRLINE: "Airline",
+        SPESourceBatchDB.SourceKind.AGENT: "Agent",
+        SPESourceBatchDB.SourceKind.MANUAL: "Manual",
+        SPESourceBatchDB.SourceKind.OTHER: "Other",
+    }
+    return f"{kind_prefix.get(source_kind, 'Other')} {bucket_labels.get(target_bucket, 'Source')}"
+
+
+def _get_or_create_source_batch(
+    *,
+    spe_db: SpotPricingEnvelopeDB,
+    request,
+    source_batch_id: Optional[str],
+    source_kind: str,
+    source_type: str,
+    target_bucket: str,
+    label: str,
+    source_reference: str,
+    raw_text: str,
+    file_name: str = "",
+    file_content_type: str = "",
+    analysis_summary_json: Optional[dict] = None,
+) -> SPESourceBatchDB:
+    batch = None
+    if source_batch_id:
+        batch = get_object_or_404(spe_db.source_batches, id=source_batch_id)
+    else:
+        batch = (
+            spe_db.source_batches
+            .filter(
+                source_kind=source_kind,
+                target_bucket=target_bucket,
+                label=label,
+            )
+            .order_by('-updated_at')
+            .first()
+        )
+        if batch is None:
+            batch = SPESourceBatchDB.objects.create(
+                envelope=spe_db,
+                source_kind=source_kind,
+                source_type=source_type,
+                target_bucket=target_bucket,
+                label=label,
+                source_reference=source_reference,
+                raw_text=raw_text,
+                file_name=file_name,
+                file_content_type=file_content_type,
+                analysis_summary_json=analysis_summary_json or {},
+                created_by=request.user,
+            )
+            return batch
+
+    batch.source_kind = source_kind
+    batch.source_type = source_type
+    batch.target_bucket = target_bucket
+    batch.label = label
+    batch.source_reference = source_reference
+    batch.raw_text = raw_text
+    batch.file_name = file_name
+    batch.file_content_type = file_content_type
+    batch.analysis_summary_json = analysis_summary_json or {}
+    batch.save(
+        update_fields=[
+            'source_kind', 'source_type', 'target_bucket', 'label',
+            'source_reference', 'raw_text', 'file_name', 'file_content_type',
+            'analysis_summary_json', 'updated_at',
+        ]
+    )
+    return batch
 
 
 def _resolve_output_currency_for_shipment(
@@ -530,7 +640,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def get(self, request):
         """List SPEs created by user."""
-        spe_qs = SpotPricingEnvelopeDB.objects.all()
+        spe_qs = _spe_queryset()
         if not _user_is_manager_or_admin(request.user):
             spe_qs = spe_qs.filter(created_by=request.user)
 
@@ -726,9 +836,7 @@ class SpotEnvelopeDetailAPIView(APIView):
         spe_db = _get_spe_or_404(
             request.user,
             envelope_id,
-            SpotPricingEnvelopeDB.objects.prefetch_related(
-                'charge_lines', 'acknowledgement', 'manager_approval'
-            ),
+            _spe_queryset(),
         )
         
         serializer = SpotPricingEnvelopeSerializer(spe_db)
@@ -997,9 +1105,7 @@ class SpotEnvelopeComputeAPIView(APIView):
         spe_db = _get_spe_or_404(
             request.user,
             envelope_id,
-            SpotPricingEnvelopeDB.objects.prefetch_related(
-                'charge_lines', 'acknowledgement', 'manager_approval'
-            ),
+            _spe_queryset(),
         )
         
         # Build Pydantic SPE for validation
@@ -1179,6 +1285,10 @@ class SpotReplyAnalysisAPIView(APIView):
         text = request.data.get('text', '')
         pdf_file = request.FILES.get('file')
         spe_id = request.data.get('spe_id')
+        source_batch_id = request.data.get('source_batch_id')
+        source_kind = _normalize_source_kind(request.data.get('source_kind'))
+        target_bucket = _normalize_target_bucket(request.data.get('target_bucket'))
+        source_type = _normalize_source_type(request.data.get('source_type'), pdf_file=pdf_file)
         manual_assertions = request.data.get('assertions', [])
         use_ai = request.data.get('use_ai', True)
         pdf_warnings = []
@@ -1300,18 +1410,44 @@ class SpotReplyAnalysisAPIView(APIView):
                     except (InvalidOperation, ValueError):
                         return None
 
+                source_reference = str(
+                    request.data.get('source_reference')
+                    or (pdf_file.name if pdf_file else "Agent reply (AI)")
+                )
+                source_label = str(
+                    request.data.get('label')
+                    or _default_source_label(source_kind, target_bucket)
+                )
+                batch = _get_or_create_source_batch(
+                    spe_db=spe_db,
+                    request=request,
+                    source_batch_id=source_batch_id,
+                    source_kind=source_kind,
+                    source_type=source_type,
+                    target_bucket=target_bucket,
+                    label=source_label,
+                    source_reference=source_reference,
+                    raw_text=text,
+                    file_name=pdf_file.name if pdf_file else "",
+                    file_content_type=getattr(pdf_file, "content_type", "") if pdf_file else "",
+                    analysis_summary_json={
+                        "warnings": list(result.warnings or []),
+                        "assertion_count": len(result.assertions or []),
+                        "can_proceed": getattr(result.summary, "can_proceed", None),
+                    },
+                )
+
                 auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
                     result,
-                    source_reference="Agent reply (AI)",
+                    source_reference=source_reference,
                     shipment_context=shipment_context,
                 )
 
                 now = timezone.now()
-                if auto_charges:
-                    # Replace prior AI-extracted lines with fresh ones.
-                    # Non-AI lines (standard/manual) are left untouched.
-                    spe_db.charge_lines.filter(source_reference__startswith="Agent reply (AI)").delete()
+                # Replace only this batch's prior AI-imported lines.
+                batch.charge_lines.all().delete()
 
+                if auto_charges:
                     for charge in auto_charges:
                         amount_val = _to_decimal(charge.get("amount"))
                         if amount_val is None or amount_val <= 0:
@@ -1321,6 +1457,7 @@ class SpotReplyAnalysisAPIView(APIView):
 
                         SPEChargeLineDB.objects.create(
                             envelope=spe_db,
+                            source_batch=batch,
                             code=charge["code"],
                             description=charge["description"],
                             amount=amount_val,
@@ -1346,12 +1483,17 @@ class SpotReplyAnalysisAPIView(APIView):
                             entered_at=now,
                         )
 
-                    # Update conditional flag in SPE conditions
-                    if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():
-                        conditions = spe_db.conditions_json or {}
-                        conditions["conditional_charges_present"] = True
-                        spe_db.conditions_json = conditions
-                        spe_db.save(update_fields=["conditions_json"])
+                # Update conditional flag in SPE conditions
+                if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():
+                    conditions = spe_db.conditions_json or {}
+                    conditions["conditional_charges_present"] = True
+                    spe_db.conditions_json = conditions
+                    spe_db.save(update_fields=["conditions_json"])
+
+                result_payload = result.model_dump()
+                result_payload["source_batch_id"] = str(batch.id)
+                result_payload["source_batch_label"] = batch.label
+                return Response(result_payload)
         
         return Response(result.model_dump())
 
@@ -1378,7 +1520,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         spe_db = _get_spe_or_404(
             request.user, 
             envelope_id,
-            SpotPricingEnvelopeDB.objects.prefetch_related('charge_lines', 'acknowledgement', 'manager_approval')
+            _spe_queryset(),
         )
         
         # --- 1. Re-run Computation (Same as ComputeView) ---

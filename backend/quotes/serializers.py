@@ -359,12 +359,30 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
 
 from quotes.spot_models import (
     SpotPricingEnvelopeDB,
+    SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
     SPEManagerApprovalDB,
 )
 
+class SPESourceBatchSerializer(serializers.ModelSerializer):
+    charge_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SPESourceBatchDB
+        fields = (
+            'id', 'source_kind', 'source_type', 'target_bucket', 'label',
+            'source_reference', 'file_name', 'file_content_type',
+            'analysis_summary_json', 'created_at', 'updated_at', 'charge_count',
+        )
+
+    def get_charge_count(self, obj):
+        return obj.charge_lines.count()
+
+
 class SPEChargeLineSerializer(serializers.ModelSerializer):
+    source_batch_id = serializers.SerializerMethodField()
+    source_batch_label = serializers.SerializerMethodField()
     min_charge = serializers.SerializerMethodField()
     amount = serializers.SerializerMethodField()
     rate = serializers.SerializerMethodField()
@@ -379,9 +397,16 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
             'id', 'code', 'description', 'amount', 'currency', 'unit',
             'bucket', 'is_primary_cost', 'conditional', 'min_charge',
             'note', 'exclude_from_totals', 'percentage_basis', 'source_reference',
+            'source_batch_id', 'source_batch_label',
             'calculation_type', 'unit_type', 'rate', 'min_amount', 'max_amount',
             'percent', 'percent_basis', 'rule_meta', 'rule_display'
         )
+
+    def get_source_batch_id(self, obj):
+        return str(obj.source_batch_id) if obj.source_batch_id else None
+
+    def get_source_batch_label(self, obj):
+        return obj.source_batch.label if obj.source_batch_id else None
 
     def get_amount(self, obj):
         # Return as string to match original serialization
@@ -460,6 +485,7 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     shipment = serializers.JSONField(source='shipment_context_json')
     conditions = serializers.JSONField(source='conditions_json')
     charges = SPEChargeLineSerializer(source='charge_lines', many=True, read_only=True)
+    sources = SPESourceBatchSerializer(source='source_batches', many=True, read_only=True)
     acknowledgement = SPEAcknowledgementSerializer(read_only=True)
     manager_approval = SPEManagerApprovalSerializer(read_only=True)
     
@@ -476,7 +502,7 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
             'created_at', 'expires_at', 'is_expired',
             'shipment_context_hash', 'context_integrity_valid',
             'has_acknowledgement', 'acknowledgement', 'manager_approval',
-            'missing_mandatory_fields', 'can_proceed', 'charges'
+            'missing_mandatory_fields', 'can_proceed', 'sources', 'charges'
         )
         read_only_fields = fields
 

@@ -33,7 +33,12 @@ from quotes.reply_schemas import (
     AnalysisSummary,
 )
 from quotes.ai_intake_schemas import RawExtractedCharge, NormalizedCharge, ExtractionAuditResult
-from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
+from quotes.spot_models import (
+    SpotPricingEnvelopeDB,
+    SPESourceBatchDB,
+    SPEChargeLineDB,
+    SPEAcknowledgementDB,
+)
 from quotes.spot_services import ReplyAnalysisService, SpotTriggerReason
 
 
@@ -235,6 +240,147 @@ def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
     assert COMPONENT_ORIGIN_LOCAL in {c.code for c in charges}
     assert COMPONENT_DESTINATION_LOCAL in {c.code for c in charges}
     assert any(c.is_primary_cost for c in charges if c.bucket == "airfreight")
+
+
+def test_ai_reply_analysis_creates_source_batch_and_links_lines(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "airline freight and local costs",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AIRLINE",
+            "target_bucket": "airfreight",
+            "label": "PX Freight Quote",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    source_batch = SPESourceBatchDB.objects.get(id=payload["source_batch_id"])
+    assert source_batch.envelope_id == spe.id
+    assert source_batch.source_kind == SPESourceBatchDB.SourceKind.AIRLINE
+    assert source_batch.target_bucket == SPESourceBatchDB.TargetBucket.AIRFREIGHT
+    assert source_batch.label == "PX Freight Quote"
+    assert source_batch.charge_lines.count() == 3
+    assert spe.charge_lines.exclude(source_batch=source_batch).count() == 0
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert len(detail_payload["sources"]) == 1
+    assert detail_payload["sources"][0]["label"] == "PX Freight Quote"
+    assert detail_payload["sources"][0]["charge_count"] == 3
+    assert {charge["source_batch_id"] for charge in detail_payload["charges"]} == {str(source_batch.id)}
+
+
+def test_ai_reply_analysis_reuses_matching_batch_and_preserves_other_batches(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    first_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "airline quote v1",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AIRLINE",
+            "target_bucket": "airfreight",
+            "label": "PX Freight Quote",
+        },
+        format="json",
+    )
+    assert first_response.status_code == 200
+    first_batch_id = first_response.json()["source_batch_id"]
+
+    second_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "agent destination quote",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "KUL Agent Charges",
+        },
+        format="json",
+    )
+    assert second_response.status_code == 200
+    second_batch_id = second_response.json()["source_batch_id"]
+    assert second_batch_id != first_batch_id
+
+    third_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "airline quote v2",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AIRLINE",
+            "target_bucket": "airfreight",
+            "label": "PX Freight Quote",
+        },
+        format="json",
+    )
+    assert third_response.status_code == 200
+    assert third_response.json()["source_batch_id"] == first_batch_id
+
+    first_batch = SPESourceBatchDB.objects.get(id=first_batch_id)
+    second_batch = SPESourceBatchDB.objects.get(id=second_batch_id)
+    assert first_batch.charge_lines.count() == 3
+    assert second_batch.charge_lines.count() == 3
+    assert spe.source_batches.count() == 2
+    assert spe.charge_lines.count() == 6
 
 
 def test_ai_reply_analysis_accepts_pdf_upload(monkeypatch):

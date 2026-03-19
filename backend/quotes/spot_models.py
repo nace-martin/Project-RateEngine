@@ -115,6 +115,62 @@ class SpotPricingEnvelopeDB(models.Model):
         return timezone.now() >= self.expires_at
 
 
+class SPESourceBatchDB(models.Model):
+    """Source bundle for one airline/agent/manual intake within an SPE."""
+
+    class SourceKind(models.TextChoices):
+        AIRLINE = 'AIRLINE', _('Airline')
+        AGENT = 'AGENT', _('Agent')
+        MANUAL = 'MANUAL', _('Manual')
+        OTHER = 'OTHER', _('Other')
+
+    class SourceType(models.TextChoices):
+        TEXT = 'TEXT', _('Text')
+        PDF = 'PDF', _('PDF')
+        EMAIL = 'EMAIL', _('Email')
+        MANUAL = 'MANUAL', _('Manual')
+
+    class TargetBucket(models.TextChoices):
+        AIRFREIGHT = 'airfreight', _('Airfreight')
+        ORIGIN_CHARGES = 'origin_charges', _('Origin Charges')
+        DESTINATION_CHARGES = 'destination_charges', _('Destination Charges')
+        MIXED = 'mixed', _('Mixed')
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    envelope = models.ForeignKey(
+        SpotPricingEnvelopeDB,
+        on_delete=models.CASCADE,
+        related_name='source_batches',
+    )
+    source_kind = models.CharField(max_length=20, choices=SourceKind.choices, default=SourceKind.AGENT)
+    source_type = models.CharField(max_length=20, choices=SourceType.choices, default=SourceType.TEXT)
+    target_bucket = models.CharField(max_length=30, choices=TargetBucket.choices, default=TargetBucket.MIXED)
+    label = models.CharField(max_length=255, blank=True, default="")
+    source_reference = models.CharField(max_length=500, blank=True, default="")
+    raw_text = models.TextField(blank=True, default="")
+    file_name = models.CharField(max_length=255, blank=True, default="")
+    file_content_type = models.CharField(max_length=100, blank=True, default="")
+    analysis_summary_json = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'spe_source_batches'
+        ordering = ['created_at']
+        verbose_name = 'SPE Source Batch'
+        verbose_name_plural = 'SPE Source Batches'
+
+    def __str__(self):
+        return self.label or f"{self.source_kind} {self.source_type} source"
+
+
 class SPEChargeLineDB(models.Model):
     """
     Single charge line within a Spot Pricing Envelope.
@@ -164,6 +220,13 @@ class SPEChargeLineDB(models.Model):
         SpotPricingEnvelopeDB,
         on_delete=models.CASCADE,
         related_name='charge_lines'
+    )
+    source_batch = models.ForeignKey(
+        SPESourceBatchDB,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='charge_lines',
     )
     
     code = models.CharField(
