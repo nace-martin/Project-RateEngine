@@ -132,6 +132,12 @@ def _resolve_line_sell_value(line, quote_currency: str) -> Decimal:
     return line.sell_pgk or Decimal("0")
 
 
+def _should_include_public_line(line, quote_currency: str) -> bool:
+    if getattr(line, "is_informational", False):
+        return True
+    return _resolve_line_sell_value(line, quote_currency) > Decimal("0")
+
+
 def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
     buckets = {
         'ORIGIN': {'name': 'Origin Charges', 'lines': [], 'subtotal': Decimal('0')},
@@ -140,6 +146,8 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
     }
 
     for line in lines:
+        if not _should_include_public_line(line, currency):
+            continue
         leg = _resolve_bucket_key(line)
         if line.service_component:
             description = line.cost_source_description or line.service_component.description

@@ -75,6 +75,13 @@ function readStringField(obj: unknown, key: string): string | undefined {
     return typeof value === "string" ? value : undefined;
 }
 
+function getDisplaySellAmount(line: BreakdownLine, isShowingFCY: boolean): number {
+    const rawValue = isShowingFCY
+        ? (line.sell_fcy || line.sell_pgk)
+        : (line.sell_pgk || line.sell_fcy);
+    return parseFloat(String(rawValue || "0"));
+}
+
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
     // BACKWARD COMPATIBILITY FIX: 
@@ -90,7 +97,9 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     const isShowingFCY = displayCurrency !== 'PGK';
 
     // Separate informational (conditional) charges from priced lines
-    const pricedLines = sell_lines.filter((line) => !line.is_informational);
+    const pricedLines = sell_lines.filter(
+        (line) => !line.is_informational && getDisplaySellAmount(line, isShowingFCY) > 0
+    );
     const informationalLines = sell_lines.filter((line) => line.is_informational);
 
     // Group PRICED lines by bucket (not informational ones)

@@ -147,6 +147,8 @@ export default function QuoteDetailPage() {
   const displayAmount = Number(displayAmountRaw || 0);
   const shipmentMetrics = computeShipmentMetrics(quote);
   const fxEntries = buildFxEntries(quote, computeResult);
+  const isDomesticQuote = (quote.shipment_type || "").toUpperCase() === "DOMESTIC";
+  const resolvedServiceScope = formatServiceScope(quote.service_scope);
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -282,19 +284,25 @@ export default function QuoteDetailPage() {
                 </div>
               </div>
 
-              {/* FX Rate */}
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
-                <div className="font-medium text-slate-900 text-xs">
-                  {fxEntries.length > 0 ? (
-                    fxEntries.map(([currency, rate]) => (
-                      <div key={currency}>{currency}: {String(rate)}</div>
-                    ))
-                  ) : (
-                    <span className="text-slate-400 italic">Base (PGK)</span>
-                  )}
+              {isDomesticQuote ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Service Scope</p>
+                  <p className="font-medium text-slate-900">{resolvedServiceScope}</p>
                 </div>
-              </div>
+              ) : (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
+                  <div className="font-medium text-slate-900 text-xs">
+                    {fxEntries.length > 0 ? (
+                      fxEntries.map(([currency, rate]) => (
+                        <div key={currency}>{currency}: {String(rate)}</div>
+                      ))
+                    ) : (
+                      <span className="text-slate-400 italic">Base (PGK)</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Total Weight */}
               <div>
@@ -861,4 +869,16 @@ function buildFxEntries(
   const sorted = visible.sort((a, b) => a[0].localeCompare(b[0]));
   if (sorted.length > 0) return sorted;
   return [["PGK/PGK", "1.000000"]];
+}
+
+function formatServiceScope(scope?: string | null): string {
+  const normalized = (scope || "").toUpperCase().trim();
+  const labels: Record<string, string> = {
+    D2D: "Door-to-Door",
+    D2A: "Door-to-Airport",
+    A2D: "Airport-to-Door",
+    A2A: "Airport-to-Airport",
+    P2P: "Airport-to-Airport",
+  };
+  return labels[normalized] || "N/A";
 }

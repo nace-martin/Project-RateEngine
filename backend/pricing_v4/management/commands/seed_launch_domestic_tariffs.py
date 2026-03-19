@@ -78,7 +78,7 @@ SELL_ROUTE_RATES: tuple[RouteRate, ...] = (
     RouteRate("POM", "KOM", "16.25"),
     RouteRate("POM", "UNG", "18.65"),
     RouteRate("POM", "CMU", "8.40"),
-    RouteRate("POM", "LAE", "7.10"),
+    RouteRate("POM", "LAE", "7.30"),
     RouteRate("POM", "LNV", "21.75"),
     RouteRate("POM", "LSA", "9.30"),
     RouteRate("POM", "MAG", "10.15"),

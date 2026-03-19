@@ -155,3 +155,57 @@ class QuotePublicDetailAPITest(APITestCase):
             "Airline Export Fuel Surcharge",
             [line["description"] for line in buckets["Origin Charges"]["lines"]],
         )
+
+    def test_public_quote_hides_cost_only_lines_from_charge_breakdown(self):
+        quote = self._create_quote(service_scope="D2D")
+        version = quote.versions.get(version_number=1)
+
+        awb_component = ServiceComponent.objects.create(
+            code="DOM-AWB",
+            description="AWB Fee",
+            mode="AIR",
+            leg="ORIGIN",
+            category="DOCUMENTATION",
+        )
+        doc_component = ServiceComponent.objects.create(
+            code="DOM-DOC",
+            description="Documentation Fee",
+            mode="AIR",
+            leg="ORIGIN",
+            category="DOCUMENTATION",
+        )
+
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=awb_component,
+            sell_pgk=Decimal("70.00"),
+            sell_fcy=Decimal("70.00"),
+            sell_fcy_currency="PGK",
+            sell_fcy_incl_gst=Decimal("77.00"),
+            cost_source_description="AWB Fee",
+            leg="ORIGIN",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=doc_component,
+            sell_pgk=Decimal("0.00"),
+            sell_fcy=Decimal("0.00"),
+            sell_fcy_currency="PGK",
+            sell_fcy_incl_gst=Decimal("0.00"),
+            cost_pgk=Decimal("35.00"),
+            cost_source_description="Documentation Fee",
+            leg="ORIGIN",
+            bucket="origin_charges",
+        )
+
+        token = build_public_quote_token(str(quote.id))
+        response = self.client.get(self.url, {"token": token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        buckets = {bucket["name"]: bucket for bucket in payload["charge_buckets"]}
+        origin_lines = buckets["Origin Charges"]["lines"]
+
+        self.assertEqual(len(origin_lines), 1)
+        self.assertEqual(origin_lines[0]["description"], "AWB Fee")

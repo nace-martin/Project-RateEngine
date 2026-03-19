@@ -48,7 +48,7 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             valid_from="2026-01-01",
         )
         self.assertEqual(str(pom_lae_cogs.rate_per_kg), "6.1000")
-        self.assertEqual(str(pom_lae_sell.rate_per_kg), "7.1000")
+        self.assertEqual(str(pom_lae_sell.rate_per_kg), "7.3000")
         self.assertEqual(str(lae_pom_sell.rate_per_kg), "7.1000")
 
         security_sell = Surcharge.objects.get(
