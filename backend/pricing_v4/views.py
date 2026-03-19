@@ -127,6 +127,15 @@ class IsManagerOrAdmin(permissions.BasePermission):
         return getattr(request.user, 'role', None) in ['manager', 'admin']
 
 
+class CanViewLogicalRateCards(permissions.BasePermission):
+    """Restrict logical pricing architecture views to managers and admins."""
+
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        return getattr(request.user, 'role', None) in ['manager', 'admin']
+
+
 class V4RateCardUploadView(APIView):
     """
     Bulk import V4 SELL rate rows from CSV into Export/Import/Domestic rate tables.
@@ -334,23 +343,20 @@ class LocalCOGSRateViewSet(viewsets.ModelViewSet):
 # LOGICAL RATE CARDS VIEW
 # =============================================================================
 
-from rest_framework.views import APIView
 from .rate_card_config import LOGICAL_RATE_CARDS
+from .models import ImportCOGS
 from .serializers import ExportSellRateSerializer, ImportSellRateSerializer, DomesticSellRateSerializer
 
 
 class LogicalRateCardsView(APIView):
     """
-    Returns the 5 logical rate cards with their associated rate lines.
-    
+    Returns logical V4 pricing cards aligned to the current rate architecture.
+
     Path: /api/v4/rate-cards/
-    
-    This is a read-only view layer over existing rate data.
-    No impact on pricing calculations.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, CanViewLogicalRateCards]
     
-    def get(self, request):
+    def _legacy_get_unused(self, request):
         result = []
         
         for card_config in LOGICAL_RATE_CARDS:
@@ -360,18 +366,21 @@ class LogicalRateCardsView(APIView):
                 'description': card_config['description'],
                 'service_scope': card_config.get('service_scope'),
                 'domain': card_config['domain'],
+                'pricing_model': card_config['pricing_model'],
+                'source_tables': card_config['source_tables'],
+                'notes': card_config.get('notes', []),
                 'lines': [],
                 'line_count': 0,
                 'currencies': set(),
-                'corridors': set(),
+                'coverage': set(),
             }
             
-            # Get the appropriate queryset
-            lines = self._get_rate_lines(card_config)
+            for source in card_config.get('sources', []):
+                lines = self._legacy_get_rate_lines_unused(card_config)
             
             # Serialize and add metadata
             for line in lines:
-                card_data['lines'].append(self._serialize_line(line, card_config))
+                card_data['lines'].append(self._legacy_serialize_line_unused(line, card_config))
                 card_data['currencies'].add(line.currency)
                 origin = getattr(line, 'origin_airport', None) or getattr(line, 'origin_zone', None)
                 dest = getattr(line, 'destination_airport', None) or getattr(line, 'destination_zone', None)
@@ -386,7 +395,7 @@ class LogicalRateCardsView(APIView):
         
         return Response(result)
     
-    def _get_rate_lines(self, config):
+    def _legacy_get_rate_lines_unused(self, config):
         """Query the appropriate rate table with filters."""
         table_name = config['rate_table']
         currency_filter = config.get('currency_filter', [])
@@ -425,7 +434,7 @@ class LogicalRateCardsView(APIView):
         
         return []
     
-    def _serialize_line(self, line, config):
+    def _legacy_serialize_line_unused(self, line, config):
         """Serialize a rate line to dict."""
         table_name = config['rate_table']
         
@@ -435,6 +444,208 @@ class LogicalRateCardsView(APIView):
             return ImportSellRateSerializer(line).data
         elif table_name == 'DomesticSellRate':
             return DomesticSellRateSerializer(line).data
+        return {}
+
+    def get(self, request):
+        result = []
+
+        for card_config in LOGICAL_RATE_CARDS:
+            card_data = {
+                "id": card_config["id"],
+                "name": card_config["name"],
+                "description": card_config["description"],
+                "service_scope": card_config.get("service_scope"),
+                "domain": card_config["domain"],
+                "pricing_model": card_config["pricing_model"],
+                "source_tables": card_config["source_tables"],
+                "notes": card_config.get("notes", []),
+                "lines": [],
+                "line_count": 0,
+                "currencies": set(),
+                "coverage": set(),
+            }
+
+            for source in card_config.get("sources", []):
+                for line in self._get_source_queryset(source):
+                    serialized = self._serialize_logical_line(line, source)
+                    card_data["lines"].append(serialized)
+                    if serialized["currency"]:
+                        card_data["currencies"].add(serialized["currency"])
+                    if serialized["coverage_label"]:
+                        card_data["coverage"].add(serialized["coverage_label"])
+
+            card_data["line_count"] = len(card_data["lines"])
+            card_data["currencies"] = sorted(card_data["currencies"])
+            card_data["coverage"] = sorted(card_data["coverage"])
+            result.append(card_data)
+
+        return Response(result)
+
+    def _get_source_queryset(self, source):
+        table_name = source["table"]
+        currency_filter = source.get("currency_filter")
+        direction = source.get("direction")
+        payment_term = source.get("payment_term")
+
+        if table_name == "ExportSellRate":
+            qs = ExportSellRate.objects.select_related("product_code")
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            return qs.order_by("origin_airport", "destination_airport", "product_code__code")
+
+        if table_name == "LocalSellRate":
+            qs = LocalSellRate.objects.select_related("product_code")
+            if direction:
+                qs = qs.filter(direction=direction)
+            if payment_term:
+                qs = qs.filter(payment_term=payment_term)
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            return qs.order_by("location", "product_code__code")
+
+        if table_name == "ImportCOGS":
+            qs = ImportCOGS.objects.select_related("product_code", "agent", "carrier")
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            return qs.order_by("origin_airport", "destination_airport", "product_code__code")
+
+        if table_name == "DomesticSellRate":
+            qs = DomesticSellRate.objects.select_related("product_code")
+            if currency_filter:
+                qs = qs.filter(currency__in=currency_filter)
+            return qs.order_by("origin_zone", "destination_zone", "product_code__code")
+
+        return []
+
+    def _serialize_logical_line(self, line, source):
+        table_name = source["table"]
+
+        if table_name == "ExportSellRate":
+            return {
+                "id": f"ExportSellRate:{line.pk}",
+                "source_table": table_name,
+                "source_label": source["label"],
+                "pricing_role": source["pricing_role"],
+                "product_code": line.product_code_id,
+                "product_code_code": line.product_code.code,
+                "product_code_description": line.product_code.description,
+                "currency": line.currency,
+                "coverage_label": f"{line.origin_airport}->{line.destination_airport}",
+                "origin_code": line.origin_airport,
+                "destination_code": line.destination_airport,
+                "location_code": None,
+                "direction": None,
+                "payment_term": None,
+                "rate_type": "LANE_SELL",
+                "rate_per_kg": str(line.rate_per_kg) if line.rate_per_kg is not None else None,
+                "rate_per_shipment": str(line.rate_per_shipment) if line.rate_per_shipment is not None else None,
+                "amount": None,
+                "min_charge": str(line.min_charge) if line.min_charge is not None else None,
+                "max_charge": str(line.max_charge) if line.max_charge is not None else None,
+                "percent_rate": str(line.percent_rate) if line.percent_rate is not None else None,
+                "weight_breaks": line.weight_breaks,
+                "is_additive": line.is_additive,
+                "valid_from": line.valid_from.isoformat(),
+                "valid_until": line.valid_until.isoformat(),
+                "counterparty": None,
+            }
+
+        if table_name == "LocalSellRate":
+            return {
+                "id": f"LocalSellRate:{line.pk}",
+                "source_table": table_name,
+                "source_label": source["label"],
+                "pricing_role": source["pricing_role"],
+                "product_code": line.product_code_id,
+                "product_code_code": line.product_code.code,
+                "product_code_description": line.product_code.description,
+                "currency": line.currency,
+                "coverage_label": line.location,
+                "origin_code": None,
+                "destination_code": None,
+                "location_code": line.location,
+                "direction": line.direction,
+                "payment_term": line.payment_term,
+                "rate_type": line.rate_type,
+                "rate_per_kg": None,
+                "rate_per_shipment": None,
+                "amount": str(line.amount) if line.amount is not None else None,
+                "min_charge": str(line.min_charge) if line.min_charge is not None else None,
+                "max_charge": str(line.max_charge) if line.max_charge is not None else None,
+                "percent_rate": None,
+                "weight_breaks": line.weight_breaks,
+                "is_additive": line.is_additive,
+                "valid_from": line.valid_from.isoformat(),
+                "valid_until": line.valid_until.isoformat(),
+                "counterparty": None,
+            }
+
+        if table_name == "ImportCOGS":
+            counterparty = None
+            if line.agent_id:
+                counterparty = f"Agent:{line.agent.code}"
+            elif line.carrier_id:
+                counterparty = f"Carrier:{line.carrier.code}"
+
+            return {
+                "id": f"ImportCOGS:{line.pk}",
+                "source_table": table_name,
+                "source_label": source["label"],
+                "pricing_role": source["pricing_role"],
+                "product_code": line.product_code_id,
+                "product_code_code": line.product_code.code,
+                "product_code_description": line.product_code.description,
+                "currency": line.currency,
+                "coverage_label": f"{line.origin_airport}->{line.destination_airport}",
+                "origin_code": line.origin_airport,
+                "destination_code": line.destination_airport,
+                "location_code": None,
+                "direction": None,
+                "payment_term": None,
+                "rate_type": "LANE_COGS",
+                "rate_per_kg": str(line.rate_per_kg) if line.rate_per_kg is not None else None,
+                "rate_per_shipment": str(line.rate_per_shipment) if line.rate_per_shipment is not None else None,
+                "amount": None,
+                "min_charge": str(line.min_charge) if line.min_charge is not None else None,
+                "max_charge": str(line.max_charge) if line.max_charge is not None else None,
+                "percent_rate": None,
+                "weight_breaks": line.weight_breaks,
+                "is_additive": line.is_additive,
+                "valid_from": line.valid_from.isoformat(),
+                "valid_until": line.valid_until.isoformat(),
+                "counterparty": counterparty,
+            }
+
+        if table_name == "DomesticSellRate":
+            return {
+                "id": f"DomesticSellRate:{line.pk}",
+                "source_table": table_name,
+                "source_label": source["label"],
+                "pricing_role": source["pricing_role"],
+                "product_code": line.product_code_id,
+                "product_code_code": line.product_code.code,
+                "product_code_description": line.product_code.description,
+                "currency": line.currency,
+                "coverage_label": f"{line.origin_zone}->{line.destination_zone}",
+                "origin_code": line.origin_zone,
+                "destination_code": line.destination_zone,
+                "location_code": None,
+                "direction": None,
+                "payment_term": None,
+                "rate_type": "DOMESTIC_SELL",
+                "rate_per_kg": str(line.rate_per_kg) if line.rate_per_kg is not None else None,
+                "rate_per_shipment": str(line.rate_per_shipment) if line.rate_per_shipment is not None else None,
+                "amount": None,
+                "min_charge": str(line.min_charge) if line.min_charge is not None else None,
+                "max_charge": str(line.max_charge) if line.max_charge is not None else None,
+                "percent_rate": str(line.percent_rate) if line.percent_rate is not None else None,
+                "weight_breaks": line.weight_breaks,
+                "is_additive": line.is_additive,
+                "valid_from": line.valid_from.isoformat(),
+                "valid_until": line.valid_until.isoformat(),
+                "counterparty": None,
+            }
+
         return {}
 
 

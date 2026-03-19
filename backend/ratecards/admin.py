@@ -1,51 +1,73 @@
 # backend/ratecards/admin.py
 
 from django.contrib import admin
-from .models import (
-    PartnerRateCard, PartnerRateLane, PartnerRate
-)
+
+from .models import PartnerRateCard, PartnerRateLane, PartnerRate
 
 
-class PartnerRateInline(admin.TabularInline):
-    model = PartnerRate
-    extra = 1
-    fields = (
+class LegacyReferenceAdmin(admin.ModelAdmin):
+    actions = None
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PartnerRateCard)
+class PartnerRateCardAdmin(LegacyReferenceAdmin):
+    list_display = (
+        'name',
+        'supplier',
+        'currency_code',
+        'rate_type',
+        'valid_from',
+        'valid_until',
+        'legacy_status',
+    )
+    list_filter = ('supplier', 'currency_code', 'rate_type')
+    search_fields = ('name', 'supplier__name')
+    readonly_fields = [field.name for field in PartnerRateCard._meta.fields]
+
+    def legacy_status(self, _obj):
+        return 'Legacy V3 reference only'
+    legacy_status.short_description = 'Status'
+
+
+@admin.register(PartnerRateLane)
+class PartnerRateLaneAdmin(LegacyReferenceAdmin):
+    list_display = (
+        'rate_card',
+        'direction',
+        'payment_term',
+        'origin_airport',
+        'destination_airport',
+        'legacy_status',
+    )
+    list_filter = ('direction', 'payment_term', 'mode')
+    search_fields = ('rate_card__name', 'origin_airport__iata_code', 'destination_airport__iata_code')
+    readonly_fields = [field.name for field in PartnerRateLane._meta.fields]
+
+    def legacy_status(self, _obj):
+        return 'Superseded by pricing_v4'
+    legacy_status.short_description = 'Status'
+
+
+@admin.register(PartnerRate)
+class PartnerRateAdmin(LegacyReferenceAdmin):
+    list_display = (
+        'lane',
         'service_component',
         'unit',
         'rate_per_kg_fcy',
         'rate_per_shipment_fcy',
-        'min_charge_fcy',
+        'legacy_status',
     )
+    list_filter = ('unit',)
+    search_fields = ('lane__rate_card__name', 'service_component__code')
+    readonly_fields = [field.name for field in PartnerRate._meta.fields]
 
-
-class PartnerRateLaneAdmin(admin.ModelAdmin):
-    model = PartnerRateLane
-    list_display = (
-        'id',
-        'rate_card',
-        'mode',
-        'shipment_type',
-        'origin_airport',
-        'destination_airport',
-    )
-    list_filter = ('rate_card', 'mode', 'shipment_type')
-    inlines = [PartnerRateInline]
-    fields = ('rate_card', 'mode', 'shipment_type', 'origin_airport', 'destination_airport')
-
-
-class PartnerRateLaneInline(admin.TabularInline):
-    model = PartnerRateLane
-    fields = ('mode', 'shipment_type', 'origin_airport', 'destination_airport')
-    extra = 1
-
-
-class PartnerRateCardAdmin(admin.ModelAdmin):
-    model = PartnerRateCard
-    list_display = ('name', 'supplier', 'currency_code', 'valid_from', 'valid_until')
-    list_filter = ('supplier', 'currency_code')
-    inlines = [PartnerRateLaneInline]
-
-
-admin.site.register(PartnerRateCard, PartnerRateCardAdmin)
-admin.site.register(PartnerRateLane, PartnerRateLaneAdmin)
-admin.site.register(PartnerRate)
+    def legacy_status(self, _obj):
+        return 'Legacy V3 reference only'
+    legacy_status.short_description = 'Status'

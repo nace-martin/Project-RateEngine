@@ -1768,10 +1768,42 @@ export interface LogicalRateCard {
   description: string;
   service_scope: string | null;
   domain: string;
-  lines: V4SellRate[];
+  pricing_model: string;
+  source_tables: string[];
+  notes: string[];
+  lines: LogicalRateCardLine[];
   line_count: number;
   currencies: string[];
-  corridors: string[];
+  coverage: string[];
+}
+
+export interface LogicalRateCardLine {
+  id: string;
+  source_table: string;
+  source_label: string;
+  pricing_role: string;
+  product_code: number;
+  product_code_code: string;
+  product_code_description: string;
+  currency: string | null;
+  coverage_label: string | null;
+  origin_code: string | null;
+  destination_code: string | null;
+  location_code: string | null;
+  direction: string | null;
+  payment_term: string | null;
+  rate_type: string | null;
+  rate_per_kg: string | null;
+  rate_per_shipment: string | null;
+  amount: string | null;
+  min_charge: string | null;
+  max_charge: string | null;
+  percent_rate: string | null;
+  weight_breaks: { min_kg: number; rate: string }[] | null;
+  is_additive: boolean;
+  valid_from: string;
+  valid_until: string;
+  counterparty: string | null;
 }
 
 export interface V4RateCardUploadSuccessResponse {
