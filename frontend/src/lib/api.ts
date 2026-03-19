@@ -1250,24 +1250,44 @@ export async function computeSpotQuote(
  * Analyze agent rate reply text and return assertions.
  */
 export async function analyzeSpotReply(
-  text: string,
-  assertions: import('./spot-types').ExtractedAssertion[] = [],
-  speId?: string,
-  useAi: boolean = true
+  options: {
+    text?: string;
+    file?: File | null;
+    assertions?: import('./spot-types').ExtractedAssertion[];
+    speId?: string;
+    useAi?: boolean;
+  }
 ): Promise<ReplyAnalysisResult> {
+  const {
+    text = '',
+    file = null,
+    assertions = [],
+    speId,
+    useAi = true,
+  } = options;
   const url = API_BASE_URL + '/api/v3/spot/analyze-reply/';
+  const formData = new FormData();
+
+  if (text.trim()) {
+    formData.append('text', text);
+  }
+  if (file) {
+    formData.append('file', file);
+  }
+  if (assertions.length > 0) {
+    formData.append('assertions', JSON.stringify(assertions));
+  }
+  if (speId) {
+    formData.append('spe_id', speId);
+  }
+  formData.append('use_ai', String(useAi));
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       Authorization: `Token ${resolveAuthToken()}`,
     },
-    body: JSON.stringify({
-      text,
-      assertions,
-      spe_id: speId,
-      use_ai: useAi
-    }),
+    body: formData,
   });
 
   if (!response.ok) {

@@ -13,6 +13,7 @@ Endpoints:
 """
 
 import logging
+import json
 import uuid
 from typing import Optional
 from datetime import datetime, timedelta
@@ -1182,6 +1183,15 @@ class SpotReplyAnalysisAPIView(APIView):
         use_ai = request.data.get('use_ai', True)
         pdf_warnings = []
         shipment_context = None
+
+        if isinstance(manual_assertions, str):
+            try:
+                manual_assertions = json.loads(manual_assertions)
+            except json.JSONDecodeError:
+                manual_assertions = []
+
+        if isinstance(use_ai, str):
+            use_ai = use_ai.strip().lower() not in {"false", "0", "no", "off"}
 
         if spe_id:
             try:
