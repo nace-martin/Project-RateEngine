@@ -31,7 +31,7 @@ Reason:
 | Policy hygiene | DONE | Pricing | Single active launch policy |
 | Local development readiness | DONE | Eng | Current local environment is launch-like |
 | Domestic tariff/routing coverage | DONE | Pricing / Eng | Launch domestic tariff sheet seeded and verified locally |
-| Production users on prod env | REMAINING | Admin / Security | Must verify on actual production DB |
+| Production users on prod env | IN PROGRESS | Admin / Security | Named launch users are defined; must verify on actual production DB |
 | Production env vars / deploy config | REMAINING | Platform / DevOps | Must verify on actual server |
 | Scheduler / cron jobs | REMAINING | Platform / DevOps | FX refresh and housekeeping still need prod wiring |
 | Launch customer/contact completeness | IN PROGRESS | Customer Ops | Need final real production import verification |
@@ -58,7 +58,7 @@ Reason:
 | Seed import special local tariffs for `DG` / `AVI` / `HVC` | DONE | High | Pricing | None | Import `A2D` standard quotes include special local lines |
 | Verify import `A2D` `DG` / `AVI` / `HVC` live behavior | DONE | High | Eng / QA | None | `201` standard quote responses confirmed locally |
 | Seed domestic launch tariffs and commodity uplifts | DONE | High | Pricing / Eng | None | Domestic tariff sheet is seeded and domestic special cargo routes correctly |
-| Create/verify real prod admin + role users | REMAINING | High | Admin / Security | Needs prod env access | `admin`, `manager`, `finance`, `sales` log in on production |
+| Create/verify real prod admin + role users | IN PROGRESS | High | Admin / Security | Needs prod env access | system admin, `manager`, and `sales` log in on production; `finance` optional for this phase |
 | Verify customer/contact production seed | IN PROGRESS | High | Customer Ops | Need final customer seed files | Launch customers selectable, with real contacts |
 | Verify launch corridor list | IN PROGRESS | High | Pricing / Business | Business confirmation needed | Written list of go-live lanes approved against `docs/launch-corridor-matrix.md` |
 | Seed PNG destination-local special tariffs beyond `POM` if needed | REMAINING | Medium | Pricing | Need confirmed launch stations | Each non-`POM` PNG destination in scope has matching local tariffs |

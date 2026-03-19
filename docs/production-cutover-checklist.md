@@ -14,7 +14,7 @@ Use it with:
 Do not launch if any of these fail:
 
 - launch corridor list is not explicitly approved
-- production `admin`, `manager`, `finance`, and `sales` users are not verified
+- production `system admin`, `manager`, and `sales` users are not verified
 - production env vars are not verified
 - migrations or static collection fail
 - FX snapshot is stale or missing
@@ -112,12 +112,17 @@ Evidence:
 
 Owner: Admin / Security
 
+Planned launch users:
+- system admin: `Nace Martin` <`nason.s.martin@gmail.com`>
+- manager: `Evgenii Tsoi` <`evgenii.tsoi@efmpng.com`>
+- sales: `Julie-Anne Hasing` <`julie-anne.hasing@efmpng.com`>
+- finance: not required for this launch phase
+
 Pass criteria:
-- `admin` login verified
+- `system admin` login verified
 - `manager` login verified
-- `finance` login verified
 - `sales` login verified
-- API token generation works for the production admin
+- API token generation works for the production system admin
 
 Evidence:
 - successful login check for each role
@@ -230,7 +235,9 @@ Fill this in at cutover time.
 | Customer/contact import |  |  |  |
 | Production env vars |  |  |  |
 | Migrations/static |  |  |  |
-| Production users |  |  |  |
+| System admin user |  |  |  |
+| Manager user |  |  |  |
+| Sales user |  |  |  |
 | FX current |  |  |  |
 | Policy verified |  |  |  |
 | Export UAT |  |  |  |

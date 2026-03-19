@@ -17,7 +17,7 @@ For current readiness state, owner tracking, and go/no-go status, also see:
 Do not launch if any of these are false:
 
 - A real `admin` user can log in and obtain an API token.
-- Real `manager`, `finance`, and `sales` users exist.
+- Real `manager` and `sales` users exist.
 - Launch customers and contacts are seeded.
 - Launch stations exist as active `Location` records.
 - A current FX snapshot exists.
@@ -30,7 +30,7 @@ Do not launch if any of these are false:
 - Platform/DevOps: environment, deploy, DB, static assets, schedulers
 - Admin/Security: users, tokens, permissions
 - Pricing Owner: product codes, policies, rate seeds, corridor coverage
-- Finance: FX readiness and monitoring
+- Finance: FX readiness and monitoring, even if no dedicated finance user is live yet
 - Customer Ops: customers, contacts, discounts
 - QA/Business: end-to-end smoke tests
 
@@ -78,8 +78,14 @@ python manage.py drf_create_token <admin_username>
 After that:
 
 - Create at least one named `manager` user.
-- Create at least one named `finance` user.
 - Create at least one named `sales` user.
+- `finance` is optional for the current launch phase.
+
+Named launch users currently approved:
+
+- system admin: `Nace Martin` <`nason.s.martin@gmail.com`>
+- manager: `Evgenii Tsoi` <`evgenii.tsoi@efmpng.com`>
+- sales: `Julie-Anne Hasing` <`julie-anne.hasing@efmpng.com`>
 
 Pass criteria:
 
