@@ -22,6 +22,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -1171,20 +1172,17 @@ class SpotReplyAnalysisAPIView(APIView):
     Analyze agent rate reply text and return assertions.
     """
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def post(self, request):
         text = request.data.get('text', '')
+        pdf_file = request.FILES.get('file')
         spe_id = request.data.get('spe_id')
         manual_assertions = request.data.get('assertions', [])
         use_ai = request.data.get('use_ai', True)
-        
-        if not text:
-            return Response(
-                {'error': 'No text provided'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-            
+        pdf_warnings = []
         shipment_context = None
+
         if spe_id:
             try:
                 spe_db = _get_spe_or_404(request.user, spe_id)
@@ -1198,6 +1196,25 @@ class SpotReplyAnalysisAPIView(APIView):
                     shipment_context["payment_term"] = str(spe_db.quote.payment_term).upper()
             except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
                 pass
+
+        if pdf_file:
+            from quotes.ai_intake_service import extract_rate_quote_text_from_pdf
+
+            extraction_result = extract_rate_quote_text_from_pdf(pdf_file.read(), context=shipment_context)
+            if not extraction_result.success:
+                return Response(
+                    {'error': extraction_result.error or 'PDF extraction failed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            text = extraction_result.text or ''
+            pdf_warnings = list(extraction_result.warnings or [])
+        
+        if not text:
+            return Response(
+                {'error': 'Either "text" or "file" is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         if shipment_context:
             # Enrich with real names for the AI prompt
@@ -1251,6 +1268,9 @@ class SpotReplyAnalysisAPIView(APIView):
                 raw_text=text,
                 assertions=manual_assertions
             )
+
+        if pdf_warnings:
+            result.warnings.extend(pdf_warnings)
 
         # Auto-populate SPE with AI-extracted charges (draft only)
         if use_ai and not manual_assertions and spe_id and shipment_context:

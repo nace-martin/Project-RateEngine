@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -234,6 +235,92 @@ def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
     assert COMPONENT_ORIGIN_LOCAL in {c.code for c in charges}
     assert COMPONENT_DESTINATION_LOCAL in {c.code for c in charges}
     assert any(c.is_primary_cost for c in charges if c.bucket == "airfreight")
+
+
+def test_ai_reply_analysis_accepts_pdf_upload(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    captured = {}
+
+    def _fake_analyze_with_ai(*, raw_text, shipment_context=None, availability=None):
+        captured["raw_text"] = raw_text
+        return analysis_result
+
+    class _ExtractionResult:
+        success = True
+        text = "PDF extracted rate reply"
+        warnings = ["Used Gemini multimodal PDF extraction fallback."]
+        error = None
+
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", _fake_analyze_with_ai)
+    monkeypatch.setattr("quotes.ai_intake_service.extract_rate_quote_text_from_pdf", lambda _content, context=None: _ExtractionResult())
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "file": SimpleUploadedFile("quote.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+            "spe_id": str(spe.id),
+            "use_ai": "true",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["raw_text"] == "PDF extracted rate reply"
+    assert any("multimodal PDF extraction fallback" in warning for warning in payload["warnings"])
+
+    spe.refresh_from_db()
+    assert spe.charge_lines.count() == 3
+
+
+def test_ai_reply_analysis_pdf_extraction_failure_returns_400(monkeypatch):
+    user, _, _ = _setup_user_and_locations()
+
+    class _ExtractionResult:
+        success = False
+        text = ""
+        warnings = []
+        error = "PDF extraction failed"
+
+    monkeypatch.setattr("quotes.ai_intake_service.extract_rate_quote_text_from_pdf", lambda _content, context=None: _ExtractionResult())
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "file": SimpleUploadedFile("quote.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+            "use_ai": "true",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "PDF extraction failed"
 
 
 def test_ai_rule_meta_null_is_accepted_and_persisted(monkeypatch):

@@ -99,6 +99,14 @@ class AIRateIntakePipelineResult(BaseModel):
     extraction_audit: Optional[ExtractionAuditResult] = None
 
 
+class PDFRateQuoteTextResult(BaseModel):
+    success: bool
+    text: str = ""
+    warnings: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+    extraction_method: str = "PDF_TEXT"
+
+
 class _GenAIResponseAdapter:
     """Normalize google.genai responses to the legacy `.text` interface."""
 
@@ -380,6 +388,94 @@ def _call_gemini_structured(model, prompt: str, response_schema: type[BaseModel]
     raise RuntimeError(f"{stage_name} failed after {MAX_RETRIES + 1} attempts: {last_error}")
 
 
+def _extract_pdf_text_with_gemini(pdf_content: bytes, context: Optional[dict] = None) -> str:
+    """Use Gemini multimodal input to transcribe a PDF when text extraction is insufficient."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+
+    try:
+        from google import genai as genai_sdk
+    except ImportError as exc:
+        raise RuntimeError("google-genai is required for multimodal PDF extraction") from exc
+
+    prompt = (
+        "Read this freight rate quote PDF and extract the visible commercial content as plain text.\n"
+        "Preserve table rows, charge labels, rates, currencies, units, min charges, validity, and notes.\n"
+        "Do not summarize. Do not explain. Do not invent values.\n"
+        "Return only the extracted quote content.\n"
+    )
+    if context:
+        prompt += f"\nShipment context for disambiguation only:\n{_dump_json(context)}\n"
+
+    client = genai_sdk.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[
+            prompt,
+            genai_sdk.types.Part.from_bytes(data=pdf_content, mime_type="application/pdf"),
+        ],
+        config={"temperature": 0.1},
+    )
+    text = _GenAIResponseAdapter(response).text.strip()
+    if not text:
+        raise RuntimeError("Gemini multimodal PDF extraction returned empty text")
+    return text
+
+
+def extract_rate_quote_text_from_pdf(
+    pdf_content: bytes,
+    context: Optional[dict] = None,
+) -> PDFRateQuoteTextResult:
+    """Extract quote text from a PDF using text extraction first, then Gemini multimodal fallback."""
+    from .pdf_extraction import extract_text_from_pdf, MIN_EXPECTED_CHARS
+
+    extraction_result = extract_text_from_pdf(pdf_content)
+    warnings = list(extraction_result.warnings or [])
+    extracted_text = (extraction_result.text or "").strip()
+
+    if extraction_result.success and len(extracted_text) >= MIN_EXPECTED_CHARS:
+        return PDFRateQuoteTextResult(
+            success=True,
+            text=extracted_text,
+            warnings=warnings,
+            extraction_method=extraction_result.method_used or "PDF_TEXT",
+        )
+
+    try:
+        multimodal_text = _extract_pdf_text_with_gemini(pdf_content, context=context).strip()
+        if len(multimodal_text) < MIN_EXPECTED_CHARS:
+            warnings.append("Gemini multimodal PDF extraction returned limited text; review carefully.")
+        else:
+            warnings = [
+                w for w in warnings
+                if "This may be a scanned PDF" not in w
+            ]
+        warnings.append("Used Gemini multimodal PDF extraction fallback.")
+        return PDFRateQuoteTextResult(
+            success=True,
+            text=multimodal_text,
+            warnings=warnings,
+            extraction_method="GEMINI_MULTIMODAL",
+        )
+    except Exception as multimodal_error:
+        if extraction_result.success and extracted_text:
+            warnings.append(f"Gemini multimodal fallback unavailable: {multimodal_error}")
+            return PDFRateQuoteTextResult(
+                success=True,
+                text=extracted_text,
+                warnings=warnings,
+                extraction_method=extraction_result.method_used or "PDF_TEXT",
+            )
+        return PDFRateQuoteTextResult(
+            success=False,
+            text="",
+            warnings=warnings,
+            error=extraction_result.error or str(multimodal_error),
+            extraction_method="PDF_TEXT",
+        )
+
+
 def _extract_raw_charges(model, text: str, shipment_context: Optional[dict] = None) -> List[RawExtractedCharge]:
     """Agent 1 (Extractor): prompt Gemini to extract verbatim raw charge candidates."""
     prompt = _build_extractor_prompt(text=text, shipment_context=shipment_context)
@@ -589,11 +685,8 @@ def parse_pdf_rate_quote(pdf_content: bytes, context: Optional[dict] = None) -> 
     
     Combines PDF extraction with AI parsing in one call.
     """
-    from .pdf_extraction import extract_text_from_pdf
-    
-    # Step 1: Extract text from PDF
-    extraction_result = extract_text_from_pdf(pdf_content)
-    
+    extraction_result = extract_rate_quote_text_from_pdf(pdf_content, context=context)
+
     if not extraction_result.success:
         return AIRateIntakePipelineResult(
             success=False,
