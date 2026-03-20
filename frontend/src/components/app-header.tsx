@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu, Percent } from 'lucide-react';
+import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -57,11 +57,6 @@ export default function AppHeader() {
   // Rate Cards
   if (canEditRateCards) {
     moreItems.push({ href: '/pricing/rate-cards', label: 'Rate Cards', icon: Database });
-  }
-
-  // Discounts
-  if (isManager || isAdmin) {
-    moreItems.push({ href: '/pricing/discounts', label: 'Discounts', icon: Percent });
   }
 
   // Settings
