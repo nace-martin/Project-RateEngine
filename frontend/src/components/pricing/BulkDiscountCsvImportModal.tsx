@@ -20,6 +20,7 @@ import {
   getProductCodes,
   ProductCodeOption,
 } from '@/lib/api';
+import { DISCOUNT_CSV_TEMPLATE, downloadDiscountCsvTemplate } from '@/components/pricing/discount-csv-template';
 
 interface BulkDiscountCsvImportModalProps {
   open: boolean;
@@ -213,6 +214,15 @@ export default function BulkDiscountCsvImportModal({
         </DialogHeader>
 
         <div className="space-y-4">
+          <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 p-3">
+            <p className="text-sm text-slate-600">
+              Download the template first if you want the exact column order and sample rows.
+            </p>
+            <Button type="button" variant="outline" onClick={downloadDiscountCsvTemplate}>
+              Download Template
+            </Button>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="discount-csv-file">Upload CSV File</Label>
             <Input id="discount-csv-file" type="file" accept=".csv,text/csv" onChange={handleFileChange} />
@@ -225,11 +235,7 @@ export default function BulkDiscountCsvImportModal({
               rows={14}
               value={csvText}
               onChange={(e) => setCsvText(e.target.value)}
-              placeholder={
-                "product_code,discount_type,discount_value,currency,min_charge,max_charge,valid_from,valid_until,notes\n" +
-                "IMP-CLEAR,PERCENTAGE,10,PGK,,,2026-01-01,2026-12-31,Contract discount\n" +
-                "IMP-DOC-DEST,FLAT_AMOUNT,15,PGK,,,,,Docs reduction"
-              }
+              placeholder={DISCOUNT_CSV_TEMPLATE}
             />
           </div>
 

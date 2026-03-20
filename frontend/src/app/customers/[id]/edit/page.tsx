@@ -15,6 +15,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
 import BulkDiscountFormModal from "@/components/pricing/BulkDiscountFormModal";
 import BulkDiscountCsvImportModal from "@/components/pricing/BulkDiscountCsvImportModal";
+import { downloadDiscountCsvTemplate } from "@/components/pricing/discount-csv-template";
 import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
@@ -682,6 +683,9 @@ export default function EditCustomerPage() {
           </div>
           {canManageCommercialTerms && customer && (
             <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={downloadDiscountCsvTemplate}>
+                Download Template
+              </Button>
               <Button type="button" variant="outline" onClick={() => setIsCsvImportModalOpen(true)}>
                 Import CSV
               </Button>
