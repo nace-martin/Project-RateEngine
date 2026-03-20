@@ -3,8 +3,14 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 
-from .serializers import QuoteRequestSerializerV4, scrub_pricing_result_payload
+from .serializers import (
+    CustomerDiscountBulkUpsertSerializer,
+    CustomerDiscountListSerializer,
+    QuoteRequestSerializerV4,
+    scrub_pricing_result_payload,
+)
 from .engine import PricingEngineFactory
 from .engine.export_engine import ExportPricingEngine
 from .services.csv_importer import (
@@ -236,6 +242,66 @@ class CustomerDiscountViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+
+class CustomerDiscountBulkUpsertAPIView(APIView):
+    """
+    Bulk create/update customer discounts for a single customer account.
+    Keeps the underlying CustomerDiscount rows intact so pricing behavior does not change.
+    """
+
+    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+
+    def post(self, request):
+        serializer = CustomerDiscountBulkUpsertSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        customer = serializer.validated_data['customer']
+        lines = serializer.validated_data['lines']
+        saved_discounts = []
+
+        with transaction.atomic():
+            for line in lines:
+                discount_id = line.pop('id', None)
+                defaults = {
+                    **line,
+                    'created_by': request.user,
+                }
+
+                if discount_id:
+                    discount = CustomerDiscount.objects.filter(
+                        id=discount_id,
+                        customer=customer,
+                    ).first()
+                    if not discount:
+                        return Response(
+                            {'detail': f'Discount {discount_id} not found for this customer.'},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+                    for field_name, value in defaults.items():
+                        setattr(discount, field_name, value)
+                    discount.save()
+                else:
+                    discount, created = CustomerDiscount.objects.update_or_create(
+                        customer=customer,
+                        product_code=line['product_code'],
+                        defaults=defaults,
+                    )
+                    if created and not discount.created_by_id:
+                        discount.created_by = request.user
+                        discount.save(update_fields=['created_by'])
+
+                saved_discounts.append(discount)
+
+        response_serializer = CustomerDiscountListSerializer(saved_discounts, many=True)
+        return Response(
+            {
+                'customer': str(customer.id),
+                'saved_count': len(saved_discounts),
+                'discounts': response_serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProductCodeListViewSet(viewsets.ReadOnlyModelViewSet):

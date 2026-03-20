@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     PricingEngineView, CustomerDiscountViewSet, ProductCodeListViewSet,
+    CustomerDiscountBulkUpsertAPIView,
     ExportSellRateViewSet, ImportSellRateViewSet, DomesticSellRateViewSet,
     LocalSellRateViewSet, LocalCOGSRateViewSet,
     LogicalRateCardsView, V4RateCardUploadView
@@ -24,6 +25,7 @@ router.register(r'rates/local-cogs', LocalCOGSRateViewSet, basename='local-cogs-
 
 urlpatterns = [
     path('quote/calculate/', PricingEngineView.as_view(), name='pricing-v4-calculate'),
+    path('discounts/bulk-upsert/', CustomerDiscountBulkUpsertAPIView.as_view(), name='customer-discounts-bulk-upsert'),
     path('rates/upload/', V4RateCardUploadView.as_view(), name='pricing-v4-rates-upload'),
     path('rate-cards/', LogicalRateCardsView.as_view(), name='logical-rate-cards'),
     path('', include(router.urls)),

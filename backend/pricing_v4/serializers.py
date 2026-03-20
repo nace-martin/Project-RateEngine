@@ -1,5 +1,6 @@
 from typing import Any
 
+from django.db import models
 from rest_framework import serializers
 from pricing_v4.category_rules import is_local_rate_category
 from .models import (
@@ -128,6 +129,37 @@ class CustomerDiscountListSerializer(serializers.ModelSerializer):
         if obj.valid_until and today > obj.valid_until:
             return False
         return True
+
+
+class CustomerDiscountBulkLineSerializer(serializers.Serializer):
+    id = serializers.IntegerField(required=False)
+    product_code = serializers.PrimaryKeyRelatedField(queryset=ProductCode.objects.all())
+    discount_type = serializers.ChoiceField(choices=CustomerDiscount.DISCOUNT_TYPE_CHOICES)
+    discount_value = serializers.DecimalField(max_digits=10, decimal_places=4)
+    currency = serializers.CharField(max_length=3, required=False, default='PGK')
+    min_charge = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    max_charge = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    valid_from = serializers.DateField(required=False, allow_null=True)
+    valid_until = serializers.DateField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        discount_type = attrs.get('discount_type')
+        discount_value = attrs.get('discount_value')
+        if discount_type == CustomerDiscount.TYPE_PERCENTAGE and (
+            discount_value < 0 or discount_value > 100
+        ):
+            raise serializers.ValidationError({'discount_value': 'Percentage discount must be between 0 and 100.'})
+        if discount_value < 0:
+            raise serializers.ValidationError({'discount_value': 'Discount value cannot be negative.'})
+        return attrs
+
+
+class CustomerDiscountBulkUpsertSerializer(serializers.Serializer):
+    customer = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.filter(models.Q(is_customer=True) | models.Q(company_type='CUSTOMER'))
+    )
+    lines = CustomerDiscountBulkLineSerializer(many=True)
 
 # =============================================================================
 # V4 QUOTE REQUEST SERIALIZER

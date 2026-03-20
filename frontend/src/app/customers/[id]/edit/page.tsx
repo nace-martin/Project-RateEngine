@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
+import BulkDiscountFormModal from "@/components/pricing/BulkDiscountFormModal";
 import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
@@ -53,6 +54,7 @@ export default function EditCustomerPage() {
   const [isLoadingDiscounts, setIsLoadingDiscounts] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
+  const [isBulkDiscountModalOpen, setIsBulkDiscountModalOpen] = useState(false);
   const [editingDiscount, setEditingDiscount] = useState<api.CustomerDiscount | null>(null);
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
   const router = useRouter();
@@ -677,9 +679,14 @@ export default function EditCustomerPage() {
             </p>
           </div>
           {canManageCommercialTerms && customer && (
-            <Button type="button" onClick={handleAddDiscount}>
-              Add Negotiated Line
-            </Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => setIsBulkDiscountModalOpen(true)}>
+                Bulk Add Lines
+              </Button>
+              <Button type="button" onClick={handleAddDiscount}>
+                Add Negotiated Line
+              </Button>
+            </div>
           )}
         </CardHeader>
         <CardContent className="space-y-3">
@@ -745,6 +752,16 @@ export default function EditCustomerPage() {
             await refreshDiscounts();
           }}
           lockedCustomer={{ id: customer.id, name: customer.company_name }}
+        />
+      )}
+      {customer && (
+        <BulkDiscountFormModal
+          open={isBulkDiscountModalOpen}
+          onOpenChange={setIsBulkDiscountModalOpen}
+          customer={{ id: customer.id, name: customer.company_name }}
+          onSuccess={async () => {
+            await refreshDiscounts();
+          }}
         />
       )}
     </div>

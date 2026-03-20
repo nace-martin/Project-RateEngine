@@ -52,3 +52,54 @@ class CustomerDiscountAPITests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["customer_name"], "Customer A")
+
+    def test_bulk_upsert_creates_and_updates_customer_discount_rows(self):
+        other_product = ProductCode.objects.create(
+            id=1006,
+            code="EXP-CLEAR",
+            description="Export Clearance",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_CLEARANCE,
+            is_gst_applicable=True,
+            gst_rate=Decimal("0.1000"),
+            gl_revenue_code="4000",
+            gl_cost_code="5000",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+        existing = CustomerDiscount.objects.get(customer=self.customer_a, product_code=self.product)
+
+        response = self.client.post(
+            "/api/v4/discounts/bulk-upsert/",
+            {
+                "customer": str(self.customer_a.id),
+                "lines": [
+                    {
+                        "id": str(existing.id),
+                        "product_code": self.product.id,
+                        "discount_type": "FLAT_AMOUNT",
+                        "discount_value": "15.00",
+                        "currency": "PGK",
+                        "notes": "Updated existing",
+                    },
+                    {
+                        "product_code": other_product.id,
+                        "discount_type": "PERCENTAGE",
+                        "discount_value": "7.50",
+                        "currency": "PGK",
+                        "notes": "New row",
+                    },
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["saved_count"], 2)
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.discount_type, CustomerDiscount.TYPE_FLAT_AMOUNT)
+        self.assertEqual(existing.discount_value, Decimal("15.00"))
+
+        created = CustomerDiscount.objects.get(customer=self.customer_a, product_code=other_product)
+        self.assertEqual(created.discount_type, CustomerDiscount.TYPE_PERCENTAGE)
+        self.assertEqual(created.discount_value, Decimal("7.50"))

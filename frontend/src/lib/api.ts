@@ -1696,6 +1696,19 @@ export interface CustomerDiscount {
   created_by?: string | null;
 }
 
+export interface CustomerDiscountBulkLine {
+  id?: string;
+  product_code: string;
+  discount_type: DiscountType;
+  discount_value: string;
+  currency: string;
+  min_charge?: string | null;
+  max_charge?: string | null;
+  valid_from?: string | null;
+  valid_until?: string | null;
+  notes?: string | null;
+}
+
 export interface ProductCodeOption {
   id: number | string;
   code: string;
@@ -1778,6 +1791,26 @@ export async function deleteCustomerDiscount(id: string): Promise<void> {
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to delete discount: ${detail}`);
   }
+}
+
+export async function bulkUpsertCustomerDiscounts(payload: {
+  customer: string;
+  lines: CustomerDiscountBulkLine[];
+}): Promise<{ customer: string; saved_count: number; discounts: CustomerDiscount[] }> {
+  const url = API_BASE_URL + '/api/v4/discounts/bulk-upsert/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to save negotiated pricing: ${detail}`);
+  }
+  return response.json();
 }
 
 export async function getProductCodes(params?: {
