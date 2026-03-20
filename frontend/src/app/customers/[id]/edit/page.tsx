@@ -3,7 +3,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -420,266 +420,285 @@ export default function EditCustomerPage() {
         note="Customer master data is still shared in this beta, but all quote outputs and branding follow the quote organization."
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Edit Customer: {customer.company_name}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Customer Details */}
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <form onSubmit={handleSubmit} className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Customer Profile</CardTitle>
+            <CardDescription>
+              Maintain the customer’s company information, address, and primary contact details.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <Label htmlFor="company_name">Company Name</Label>
                 <Input id="company_name" name="company_name" value={customer.company_name} onChange={handleChange} required />
               </div>
               <div>
                 <Label htmlFor="audience_type">Audience Type</Label>
-                 <Select value={customer.audience_type} onValueChange={handleAudienceChange}>
-                    <SelectTrigger>
-                        <SelectValue placeholder="Select an audience type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="LOCAL_PNG_CUSTOMER">Local PNG Customer</SelectItem>
-                        <SelectItem value="OVERSEAS_PARTNER_AU">Overseas Partner (AU)</SelectItem>
-                        <SelectItem value="OVERSEAS_PARTNER_NON_AU">Overseas Partner (Non-AU)</SelectItem>
-                    </SelectContent>
+                <Select value={customer.audience_type} onValueChange={handleAudienceChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an audience type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="LOCAL_PNG_CUSTOMER">Local PNG Customer</SelectItem>
+                    <SelectItem value="OVERSEAS_PARTNER_AU">Overseas Partner (AU)</SelectItem>
+                    <SelectItem value="OVERSEAS_PARTNER_NON_AU">Overseas Partner (Non-AU)</SelectItem>
+                  </SelectContent>
                 </Select>
               </div>
             </div>
-            {!isOverseas && (
-              <div>
-                <Label htmlFor="address_description">Address Description</Label>
-                <Input
-                  id="address_description"
-                  name="address_description"
-                  value={customer.address_description ?? ''}
-                  onChange={handleChange}
-                />
-              </div>
-            )}
 
-            {/* Address Details - Conditional */}
-            <h3 className="text-lg font-semibold border-t pt-4 mt-4">Primary Address</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <div>
-                  <Label htmlFor="address_line_1">Street / Road</Label>
-                  <Input id="address_line_1" name="address_line_1" value={customer.primary_address?.address_line_1 ?? ''} onChange={handleAddressChange} />
-                </div>
+            <div className="space-y-4 border-t pt-5">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Address</h3>
+                <p className="text-sm text-muted-foreground">
+                  Keep local PNG customers simple, and capture full overseas address details when needed.
+                </p>
+              </div>
+              {!isOverseas ? (
                 <div>
-                  <Label htmlFor="city">City / Suburb</Label>
-                  <Combobox
-                    value={customer.primary_address?.city_id ?? ''}
-                    onChange={handleCityChange}
-                    options={cityOptions}
-                    placeholder="Search city..."
-                    emptyMessage={selectedCountryCode ? "No city found." : "Select country first."}
-                    disabled={!selectedCountryCode || isLoadingCities}
+                  <Label htmlFor="address_description">Address</Label>
+                  <Input
+                    id="address_description"
+                    name="address_description"
+                    value={customer.address_description ?? ''}
+                    onChange={handleChange}
                   />
                 </div>
-                <div>
-                  <Label htmlFor="state_province">State / Province</Label>
-                  <Input id="state_province" name="state_province" value={customer.primary_address?.state_province ?? ''} onChange={handleAddressChange} />
-                </div>
-              {isOverseas && (
-                <div>
-                  <Label htmlFor="postcode">Postcode / ZIP</Label>
-                  <Input id="postcode" name="postcode" value={customer.primary_address?.postcode ?? ''} onChange={handleAddressChange} />
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="address_line_1">Street / Road</Label>
+                    <Input id="address_line_1" name="address_line_1" value={customer.primary_address?.address_line_1 ?? ''} onChange={handleAddressChange} />
+                  </div>
+                  <div>
+                    <Label htmlFor="country">Country</Label>
+                    <Select
+                      value={customer.primary_address?.country ?? ''}
+                      onValueChange={handleCountryChange}
+                    >
+                      <SelectTrigger id="country">
+                        <SelectValue placeholder="Select country" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {countries.map((country) => (
+                          <SelectItem key={country.code} value={country.code}>
+                            {country.code} - {country.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="city">City / Suburb</Label>
+                    <Combobox
+                      value={customer.primary_address?.city_id ?? ''}
+                      onChange={handleCityChange}
+                      options={cityOptions}
+                      placeholder="Search city..."
+                      emptyMessage={selectedCountryCode ? "No city found." : "Select country first."}
+                      disabled={!selectedCountryCode || isLoadingCities}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="state_province">State / Province</Label>
+                    <Input id="state_province" name="state_province" value={customer.primary_address?.state_province ?? ''} onChange={handleAddressChange} />
+                  </div>
+                  <div>
+                    <Label htmlFor="postcode">Postcode / ZIP</Label>
+                    <Input id="postcode" name="postcode" value={customer.primary_address?.postcode ?? ''} onChange={handleAddressChange} />
+                  </div>
                 </div>
               )}
-               <div>
-                  <Label htmlFor="country">Country</Label>
-                  <Select
-                    value={customer.primary_address?.country ?? ''}
-                    onValueChange={handleCountryChange}
-                  >
-                    <SelectTrigger id="country">
-                      <SelectValue placeholder="Select country" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {countries.map((country) => (
-                        <SelectItem key={country.code} value={country.code}>
-                          {country.code} - {country.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
             </div>
 
-
-            {/* Contact Person Details */}
-            <h3 className="text-lg font-semibold border-t pt-4 mt-4">Contact Person</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-4 border-t pt-5">
               <div>
-                <Label htmlFor="contact_person_name">Name</Label>
-                <Input id="contact_person_name" name="contact_person_name" value={customer.contact_person_name} onChange={handleChange} />
+                <h3 className="text-base font-semibold text-slate-900">Contact Person</h3>
+                <p className="text-sm text-muted-foreground">
+                  Set the primary contact used when quotes and updates are sent to this customer.
+                </p>
               </div>
-              <div>
-                <Label htmlFor="contact_person_email">Email</Label>
-                <Input id="contact_person_email" name="contact_person_email" type="email" value={customer.contact_person_email} onChange={handleChange} />
-              </div>
-              <div>
-                <Label htmlFor="contact_person_phone">Phone</Label>
-                <Input id="contact_person_phone" name="contact_person_phone" value={customer.contact_person_phone} onChange={handleChange} />
-              </div>
-            </div>
-
-            <h3 className="text-lg font-semibold border-t pt-4 mt-4">Commercial Setup</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label htmlFor="preferred_quote_currency">Preferred Quote Currency</Label>
-                <Select
-                  value={commercialProfile.preferred_quote_currency || ''}
-                  onValueChange={(value) =>
-                    setCustomer((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            commercial_profile: {
-                              ...normalizeCommercialProfile(prev.commercial_profile),
-                              preferred_quote_currency: value,
-                            },
-                          }
-                        : null,
-                    )
-                  }
-                >
-                  <SelectTrigger id="preferred_quote_currency">
-                    <SelectValue placeholder="Select currency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PGK">PGK</SelectItem>
-                    <SelectItem value="AUD">AUD</SelectItem>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="SGD">SGD</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="default_margin_percent">Default Margin %</Label>
-                <Input
-                  id="default_margin_percent"
-                  value={commercialProfile.default_margin_percent || ''}
-                  onChange={(e) =>
-                    setCustomer((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            commercial_profile: {
-                              ...normalizeCommercialProfile(prev.commercial_profile),
-                              default_margin_percent: e.target.value,
-                            },
-                          }
-                        : null,
-                    )
-                  }
-                />
-              </div>
-              <div>
-                <Label htmlFor="min_margin_percent">Minimum Margin %</Label>
-                <Input
-                  id="min_margin_percent"
-                  value={commercialProfile.min_margin_percent || ''}
-                  onChange={(e) =>
-                    setCustomer((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            commercial_profile: {
-                              ...normalizeCommercialProfile(prev.commercial_profile),
-                              min_margin_percent: e.target.value,
-                            },
-                          }
-                        : null,
-                    )
-                  }
-                />
-              </div>
-              <div>
-                <Label htmlFor="payment_term_default">Default Payment Term</Label>
-                <Select
-                  value={commercialProfile.payment_term_default || ''}
-                  onValueChange={(value) =>
-                    setCustomer((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            commercial_profile: {
-                              ...normalizeCommercialProfile(prev.commercial_profile),
-                              payment_term_default: value,
-                            },
-                          }
-                        : null,
-                    )
-                  }
-                >
-                  <SelectTrigger id="payment_term_default">
-                    <SelectValue placeholder="Select payment term" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PREPAID">Prepaid</SelectItem>
-                    <SelectItem value="COLLECT">Collect</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {error && <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{error}</p>}
-            {!canEditCustomerMaster && (
-              <p className="text-amber-700 p-2 bg-amber-50 border border-amber-200 rounded-md">
-                Customer master data is admin-only. You can still manage negotiated pricing below.
-              </p>
-            )}
-            <div className="flex items-center justify-between space-x-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div>
-                  {isAdmin && (
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => handleArchiveToggle(customer.is_active !== false)}
-                        disabled={isSaving || isDeleting || isArchiving}
-                      >
-                        {isArchiving
-                          ? (customer.is_active !== false ? "Archiving..." : "Restoring...")
-                          : (customer.is_active !== false ? "Archive Customer" : "Restore Customer")}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        onClick={handleDelete}
-                        disabled={isSaving || isDeleting || isArchiving}
-                      >
-                        {isDeleting ? "Deleting..." : "Delete Customer"}
-                      </Button>
-                    </div>
-                  )}
+                  <Label htmlFor="contact_person_name">Contact Person</Label>
+                  <Input id="contact_person_name" name="contact_person_name" value={customer.contact_person_name} onChange={handleChange} />
                 </div>
-                <div className="flex space-x-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => router.push('/customers')}
-                    disabled={isSaving || isDeleting || isArchiving}
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={!canEditCustomerMaster || isSaving || isDeleting || isArchiving}>
-                    {isSaving ? "Saving..." : "Save Changes"}
-                  </Button>
+                <div>
+                  <Label htmlFor="contact_person_email">Email</Label>
+                  <Input id="contact_person_email" name="contact_person_email" type="email" value={customer.contact_person_email} onChange={handleChange} />
                 </div>
+                <div>
+                  <Label htmlFor="contact_person_phone">Phone</Label>
+                  <Input id="contact_person_phone" name="contact_person_phone" value={customer.contact_person_phone} onChange={handleChange} />
+                </div>
+              </div>
             </div>
-          </form>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Commercial Terms</CardTitle>
+            <CardDescription>
+              Define the default currency, margin, and payment-term settings that should guide quoting for this customer.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <Label htmlFor="preferred_quote_currency">Preferred Currency</Label>
+              <Select
+                value={commercialProfile.preferred_quote_currency || ''}
+                onValueChange={(value) =>
+                  setCustomer((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          commercial_profile: {
+                            ...normalizeCommercialProfile(prev.commercial_profile),
+                            preferred_quote_currency: value,
+                          },
+                        }
+                      : null,
+                  )
+                }
+              >
+                <SelectTrigger id="preferred_quote_currency">
+                  <SelectValue placeholder="Select currency" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PGK">PGK</SelectItem>
+                  <SelectItem value="AUD">AUD</SelectItem>
+                  <SelectItem value="USD">USD</SelectItem>
+                  <SelectItem value="SGD">SGD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="default_margin_percent">Default Margin %</Label>
+              <Input
+                id="default_margin_percent"
+                value={commercialProfile.default_margin_percent || ''}
+                onChange={(e) =>
+                  setCustomer((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          commercial_profile: {
+                            ...normalizeCommercialProfile(prev.commercial_profile),
+                            default_margin_percent: e.target.value,
+                          },
+                        }
+                      : null,
+                  )
+                }
+              />
+            </div>
+            <div>
+              <Label htmlFor="min_margin_percent">Minimum Margin %</Label>
+              <Input
+                id="min_margin_percent"
+                value={commercialProfile.min_margin_percent || ''}
+                onChange={(e) =>
+                  setCustomer((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          commercial_profile: {
+                            ...normalizeCommercialProfile(prev.commercial_profile),
+                            min_margin_percent: e.target.value,
+                          },
+                        }
+                      : null,
+                  )
+                }
+              />
+            </div>
+            <div>
+              <Label htmlFor="payment_term_default">Payment Terms</Label>
+              <Select
+                value={commercialProfile.payment_term_default || ''}
+                onValueChange={(value) =>
+                  setCustomer((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          commercial_profile: {
+                            ...normalizeCommercialProfile(prev.commercial_profile),
+                            payment_term_default: value,
+                          },
+                        }
+                      : null,
+                  )
+                }
+              >
+                <SelectTrigger id="payment_term_default">
+                  <SelectValue placeholder="Select payment term" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="PREPAID">Prepaid</SelectItem>
+                  <SelectItem value="COLLECT">Collect</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {error && <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{error}</p>}
+        {!canEditCustomerMaster && (
+          <p className="text-amber-700 p-2 bg-amber-50 border border-amber-200 rounded-md">
+            Customer profile and commercial terms are admin-only. You can still review the pricing overrides below.
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            {isAdmin && (
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleArchiveToggle(customer.is_active !== false)}
+                  disabled={isSaving || isDeleting || isArchiving}
+                >
+                  {isArchiving
+                    ? (customer.is_active !== false ? "Archiving..." : "Restoring...")
+                    : (customer.is_active !== false ? "Archive Customer" : "Restore Customer")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={isSaving || isDeleting || isArchiving}
+                >
+                  {isDeleting ? "Deleting..." : "Delete Customer"}
+                </Button>
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => router.push('/customers')}
+              disabled={isSaving || isDeleting || isArchiving}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canEditCustomerMaster || isSaving || isDeleting || isArchiving}>
+              {isSaving ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      </form>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle>Negotiated Pricing</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Manage this customer&apos;s negotiated line-item discounts in one place.
-            </p>
+            <CardTitle>Pricing Overrides</CardTitle>
+            <CardDescription className="mt-1">
+              Manage line-item discounts and negotiated pricing overrides for this customer account.
+            </CardDescription>
           </div>
           {canManageCommercialTerms && customer && (
             <div className="flex gap-2">
@@ -703,10 +722,10 @@ export default function EditCustomerPage() {
             <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{discountError}</p>
           )}
           {isLoadingDiscounts ? (
-            <p className="text-sm text-muted-foreground">Loading negotiated pricing...</p>
+            <p className="text-sm text-muted-foreground">Loading pricing overrides...</p>
           ) : discounts.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No customer-specific negotiated line items are configured yet.
+              No pricing overrides are configured for this customer yet.
             </p>
           ) : (
             discounts.map((discount) => (
