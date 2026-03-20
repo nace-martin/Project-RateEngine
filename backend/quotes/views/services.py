@@ -14,8 +14,8 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 
-from parties.models import Company, Contact, Address
-from core.models import Country, City, Airport
+from parties.models import Address, Company, Contact, CustomerCommercialProfile
+from core.models import Airport, City, Country, Currency
 from ratecards.models import PartnerRateCard
 from quotes.models import Quote
 
@@ -95,6 +95,7 @@ class CustomerDetailAPIView(APIView):
                 company.save(update_fields=['name', 'audience_type', 'address_description'])
                 self._sync_contact(company, data)
                 self._sync_primary_address(company, data.get('primary_address'))
+                self._sync_commercial_profile(company, data.get('commercial_profile'))
         except ValidationError as exc:
             return Response({'error': str(exc.detail)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self._serialize_customer(company))
@@ -133,10 +134,22 @@ class CustomerDetailAPIView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _get_company(self, company_id):
-        queryset = Company.objects.prefetch_related('contacts', 'addresses__city__country').filter(
+        queryset = Company.objects.select_related(
+            'commercial_profile__preferred_quote_currency'
+        ).prefetch_related('contacts', 'addresses__city__country').filter(
             Q(is_customer=True) | Q(company_type='CUSTOMER')
         )
         return get_object_or_404(queryset, pk=company_id)
+
+    def _serialize_commercial_profile(self, company: Company) -> dict:
+        profile = getattr(company, 'commercial_profile', None)
+        preferred_currency = getattr(profile, 'preferred_quote_currency', None)
+        return {
+            'preferred_quote_currency': preferred_currency.code if preferred_currency else '',
+            'default_margin_percent': self._format_decimal(getattr(profile, 'default_margin_percent', None)),
+            'min_margin_percent': self._format_decimal(getattr(profile, 'min_margin_percent', None)),
+            'payment_term_default': getattr(profile, 'payment_term_default', '') or '',
+        }
 
     def _serialize_customer(self, company: Company) -> dict:
         contact = company.contacts.filter(is_active=True).order_by('-is_primary', 'last_name').first()
@@ -170,7 +183,58 @@ class CustomerDetailAPIView(APIView):
             'contact_person_name': contact_name or '',
             'contact_person_email': contact.email if contact else '',
             'contact_person_phone': contact.phone if contact else '',
+            'commercial_profile': self._serialize_commercial_profile(company),
         }
+
+    def _sync_commercial_profile(self, company: Company, payload: dict | None) -> None:
+        if payload is None:
+            return
+
+        profile, _ = CustomerCommercialProfile.objects.get_or_create(company=company)
+
+        preferred_quote_currency = (payload.get('preferred_quote_currency') or '').strip().upper()
+        default_margin_percent = payload.get('default_margin_percent')
+        min_margin_percent = payload.get('min_margin_percent')
+        payment_term_default = (payload.get('payment_term_default') or '').strip().upper()
+
+        if preferred_quote_currency:
+            currency = Currency.objects.filter(code=preferred_quote_currency).first()
+            if not currency:
+                raise ValidationError({'commercial_profile.preferred_quote_currency': 'Currency not found in reference data'})
+            profile.preferred_quote_currency = currency
+        else:
+            profile.preferred_quote_currency = None
+
+        profile.default_margin_percent = self._parse_optional_decimal(
+            default_margin_percent,
+            'commercial_profile.default_margin_percent',
+        )
+        profile.min_margin_percent = self._parse_optional_decimal(
+            min_margin_percent,
+            'commercial_profile.min_margin_percent',
+        )
+
+        if payment_term_default and payment_term_default not in {'PREPAID', 'COLLECT'}:
+            raise ValidationError(
+                {'commercial_profile.payment_term_default': 'Payment term default must be PREPAID or COLLECT'}
+            )
+        profile.payment_term_default = payment_term_default or None
+        profile.updated_by = self.request.user
+        profile.save()
+
+    def _parse_optional_decimal(self, raw_value, error_key: str):
+        if raw_value in (None, ''):
+            return None
+        try:
+            return Decimal(str(raw_value))
+        except Exception as exc:
+            raise ValidationError({error_key: 'Must be a valid decimal number'}) from exc
+
+    def _format_decimal(self, value: Decimal | None) -> str:
+        if value is None:
+            return ''
+        normalized = value.quantize(Decimal('0.01'))
+        return format(normalized, 'f')
 
     def _sync_contact(self, company: Company, data: dict) -> None:
         name = (data.get('contact_person_name') or '').strip()

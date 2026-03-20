@@ -138,6 +138,13 @@ export interface CustomerAddress {
   country_name?: string;
 }
 
+export interface CustomerCommercialProfile {
+  preferred_quote_currency: string;
+  default_margin_percent?: string;
+  min_margin_percent?: string;
+  payment_term_default?: string;
+}
+
 export interface Customer {
   id: string;
   company_name: string;
@@ -148,6 +155,7 @@ export interface Customer {
   contact_person_name?: string;
   contact_person_email?: string;
   contact_person_phone?: string;
+  commercial_profile?: CustomerCommercialProfile | null;
 }
 
 export interface CountryOption {

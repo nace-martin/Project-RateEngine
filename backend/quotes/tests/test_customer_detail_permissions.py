@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
 from core.models import City, Country
+from core.models import Currency
 from parties.models import Address, Company, Contact
 
 
@@ -28,6 +29,7 @@ def test_customer_detail_get_allowed_for_authenticated_user():
     response = client.get(f"/api/v3/customer-details/{company.id}/")
     assert response.status_code == 200
     assert response.data["company_name"] == "Seed Customer"
+    assert "commercial_profile" in response.data
 
 
 def test_customer_detail_put_forbidden_for_non_admin():
@@ -60,6 +62,36 @@ def test_customer_detail_put_allowed_for_admin():
     assert response.status_code == 200
     company.refresh_from_db()
     assert company.name == "Renamed Customer"
+
+
+def test_customer_detail_put_updates_commercial_profile():
+    admin = _mk_user("admin_put_commercial", "admin")
+    company = Company.objects.create(name="Commercial Customer", is_customer=True, company_type="CUSTOMER")
+    Currency.objects.create(code="AUD", name="Australian Dollar")
+    client = APIClient()
+    client.force_authenticate(user=admin)
+
+    response = client.put(
+        f"/api/v3/customer-details/{company.id}/",
+        {
+            "company_name": "Commercial Customer",
+            "commercial_profile": {
+                "preferred_quote_currency": "AUD",
+                "default_margin_percent": "12.50",
+                "min_margin_percent": "8.00",
+                "payment_term_default": "PREPAID",
+            },
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    company.refresh_from_db()
+    profile = company.commercial_profile
+    assert profile.preferred_quote_currency.code == "AUD"
+    assert str(profile.default_margin_percent) == "12.50"
+    assert str(profile.min_margin_percent) == "8.00"
+    assert profile.payment_term_default == "PREPAID"
 
 
 def test_customer_detail_put_updates_extended_customer_fields():

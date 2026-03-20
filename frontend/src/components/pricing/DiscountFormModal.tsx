@@ -36,6 +36,10 @@ interface DiscountFormModalProps {
     onOpenChange: (open: boolean) => void;
     discount: CustomerDiscount | null;
     onSuccess: () => void;
+    lockedCustomer?: {
+        id: string;
+        name: string;
+    } | null;
 }
 
 const DISCOUNT_TYPES: { value: DiscountType; label: string; description: string }[] = [
@@ -50,7 +54,8 @@ export default function DiscountFormModal({
     open,
     onOpenChange,
     discount,
-    onSuccess
+    onSuccess,
+    lockedCustomer = null,
 }: DiscountFormModalProps) {
     const isEditing = !!discount;
     const { toast } = useToast();
@@ -108,9 +113,9 @@ export default function DiscountFormModal({
             setNotes(discount.notes || '');
         } else {
             // Reset form for new discount
-            setCustomerId('');
-            setCustomerName('');
-            setSelectedCompany(null);
+            setCustomerId(lockedCustomer?.id || '');
+            setCustomerName(lockedCustomer?.name || '');
+            setSelectedCompany(lockedCustomer || null);
             setProductCodeId('');
             setDiscountType('PERCENTAGE');
             setDiscountValue('');
@@ -122,7 +127,7 @@ export default function DiscountFormModal({
             setNotes('');
             setProductFilter('');
         }
-    }, [discount, open]);
+    }, [discount, open, lockedCustomer]);
 
     const handleCustomerSelect = (company: { id: string; name: string } | null) => {
         setSelectedCompany(company);
@@ -232,7 +237,7 @@ export default function DiscountFormModal({
                     {/* Customer Selection */}
                     <div className="space-y-2">
                         <Label htmlFor="customer">Customer</Label>
-                        {isEditing ? (
+                        {(isEditing || lockedCustomer) ? (
                             <Input value={customerName} disabled />
                         ) : (
                             <CompanySearchCombobox

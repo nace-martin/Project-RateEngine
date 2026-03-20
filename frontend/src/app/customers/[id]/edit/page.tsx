@@ -6,12 +6,14 @@ import { useRouter, useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
+import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 
@@ -30,6 +32,13 @@ const isErrorWithResponse = (error: unknown): error is ErrorWithResponse => {
   return "response" in error;
 };
 
+const normalizeCommercialProfile = (profile?: Customer["commercial_profile"] | null) => ({
+  preferred_quote_currency: profile?.preferred_quote_currency || "",
+  default_margin_percent: profile?.default_margin_percent || "",
+  min_margin_percent: profile?.min_margin_percent || "",
+  payment_term_default: profile?.payment_term_default || "",
+});
+
 export default function EditCustomerPage() {
   // Use our strong types instead of 'any'
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -40,11 +49,19 @@ export default function EditCustomerPage() {
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [cities, setCities] = useState<CityOption[]>([]);
   const [isLoadingCities, setIsLoadingCities] = useState(false);
+  const [discounts, setDiscounts] = useState<api.CustomerDiscount[]>([]);
+  const [isLoadingDiscounts, setIsLoadingDiscounts] = useState(false);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+  const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
+  const [editingDiscount, setEditingDiscount] = useState<api.CustomerDiscount | null>(null);
+  const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
   const router = useRouter();
   const params = useParams();
   const { id } = params;
   const { token } = useAuth();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isManager } = usePermissions();
+  const canEditCustomerMaster = isAdmin;
+  const canManageCommercialTerms = isAdmin || isManager;
 
   useEffect(() => {
     if (id && token) {
@@ -110,6 +127,36 @@ export default function EditCustomerPage() {
       cancelled = true;
     };
   }, [token, selectedCountryCode]);
+
+  useEffect(() => {
+    if (!token || !id) return;
+    let cancelled = false;
+
+    const loadDiscounts = async () => {
+      try {
+        setIsLoadingDiscounts(true);
+        setDiscountError(null);
+        const data = await api.getCustomerDiscounts({ customer: id as string });
+        if (!cancelled) {
+          setDiscounts(data);
+        }
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setDiscountError("Failed to load negotiated pricing.");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingDiscounts(false);
+        }
+      }
+    };
+
+    loadDiscounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, id]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -205,6 +252,10 @@ export default function EditCustomerPage() {
       setError("Authentication error or missing customer data.");
       return;
     }
+    if (!canEditCustomerMaster) {
+      setError("Only admins can edit customer master data.");
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -231,6 +282,62 @@ export default function EditCustomerPage() {
       }
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const refreshDiscounts = async () => {
+    if (!id) return;
+    setIsLoadingDiscounts(true);
+    setDiscountError(null);
+    try {
+      const data = await api.getCustomerDiscounts({ customer: id as string });
+      setDiscounts(data);
+    } catch (err) {
+      console.error(err);
+      setDiscountError("Failed to load negotiated pricing.");
+    } finally {
+      setIsLoadingDiscounts(false);
+    }
+  };
+
+  const handleAddDiscount = () => {
+    setEditingDiscount(null);
+    setIsDiscountModalOpen(true);
+  };
+
+  const handleEditDiscount = (discount: api.CustomerDiscount) => {
+    setEditingDiscount(discount);
+    setIsDiscountModalOpen(true);
+  };
+
+  const handleDeleteDiscount = async (discount: api.CustomerDiscount) => {
+    const confirmed = window.confirm(
+      `Delete negotiated pricing for ${discount.product_code_code || discount.product_code_display || "this line item"}?`,
+    );
+    if (!confirmed) return;
+
+    setIsDeletingDiscount(discount.id);
+    setDiscountError(null);
+    try {
+      await api.deleteCustomerDiscount(discount.id);
+      await refreshDiscounts();
+    } catch (err) {
+      console.error(err);
+      setDiscountError(err instanceof Error ? err.message : "Failed to delete negotiated pricing.");
+    } finally {
+      setIsDeletingDiscount(null);
+    }
+  };
+
+  const formatDiscountValue = (discount: api.CustomerDiscount) => {
+    switch (discount.discount_type) {
+      case "PERCENTAGE":
+      case "MARGIN_OVERRIDE":
+        return `${discount.discount_value}%`;
+      case "RATE_REDUCTION":
+        return `${discount.currency} ${discount.discount_value}/kg`;
+      default:
+        return `${discount.currency} ${discount.discount_value}`;
     }
   };
 
@@ -298,6 +405,7 @@ export default function EditCustomerPage() {
     value: city.id,
     label: city.display_name,
   }));
+  const commercialProfile = normalizeCommercialProfile(customer.commercial_profile);
 
   return (
     <div className="container mx-auto p-4">
@@ -411,7 +519,112 @@ export default function EditCustomerPage() {
               </div>
             </div>
 
+            <h3 className="text-lg font-semibold border-t pt-4 mt-4">Commercial Setup</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="preferred_quote_currency">Preferred Quote Currency</Label>
+                <Select
+                  value={commercialProfile.preferred_quote_currency || ''}
+                  onValueChange={(value) =>
+                    setCustomer((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            commercial_profile: {
+                              ...normalizeCommercialProfile(prev.commercial_profile),
+                              preferred_quote_currency: value,
+                            },
+                          }
+                        : null,
+                    )
+                  }
+                >
+                  <SelectTrigger id="preferred_quote_currency">
+                    <SelectValue placeholder="Select currency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PGK">PGK</SelectItem>
+                    <SelectItem value="AUD">AUD</SelectItem>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="SGD">SGD</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="default_margin_percent">Default Margin %</Label>
+                <Input
+                  id="default_margin_percent"
+                  value={commercialProfile.default_margin_percent || ''}
+                  onChange={(e) =>
+                    setCustomer((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            commercial_profile: {
+                              ...normalizeCommercialProfile(prev.commercial_profile),
+                              default_margin_percent: e.target.value,
+                            },
+                          }
+                        : null,
+                    )
+                  }
+                />
+              </div>
+              <div>
+                <Label htmlFor="min_margin_percent">Minimum Margin %</Label>
+                <Input
+                  id="min_margin_percent"
+                  value={commercialProfile.min_margin_percent || ''}
+                  onChange={(e) =>
+                    setCustomer((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            commercial_profile: {
+                              ...normalizeCommercialProfile(prev.commercial_profile),
+                              min_margin_percent: e.target.value,
+                            },
+                          }
+                        : null,
+                    )
+                  }
+                />
+              </div>
+              <div>
+                <Label htmlFor="payment_term_default">Default Payment Term</Label>
+                <Select
+                  value={commercialProfile.payment_term_default || ''}
+                  onValueChange={(value) =>
+                    setCustomer((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            commercial_profile: {
+                              ...normalizeCommercialProfile(prev.commercial_profile),
+                              payment_term_default: value,
+                            },
+                          }
+                        : null,
+                    )
+                  }
+                >
+                  <SelectTrigger id="payment_term_default">
+                    <SelectValue placeholder="Select payment term" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PREPAID">Prepaid</SelectItem>
+                    <SelectItem value="COLLECT">Collect</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
             {error && <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{error}</p>}
+            {!canEditCustomerMaster && (
+              <p className="text-amber-700 p-2 bg-amber-50 border border-amber-200 rounded-md">
+                Customer master data is admin-only. You can still manage negotiated pricing below.
+              </p>
+            )}
             <div className="flex items-center justify-between space-x-2">
                 <div>
                   {isAdmin && (
@@ -446,7 +659,7 @@ export default function EditCustomerPage() {
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={isSaving || isDeleting || isArchiving}>
+                  <Button type="submit" disabled={!canEditCustomerMaster || isSaving || isDeleting || isArchiving}>
                     {isSaving ? "Saving..." : "Save Changes"}
                   </Button>
                 </div>
@@ -454,6 +667,86 @@ export default function EditCustomerPage() {
           </form>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Negotiated Pricing</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Manage this customer&apos;s negotiated line-item discounts in one place.
+            </p>
+          </div>
+          {canManageCommercialTerms && customer && (
+            <Button type="button" onClick={handleAddDiscount}>
+              Add Negotiated Line
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {discountError && (
+            <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{discountError}</p>
+          )}
+          {isLoadingDiscounts ? (
+            <p className="text-sm text-muted-foreground">Loading negotiated pricing...</p>
+          ) : discounts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No customer-specific negotiated line items are configured yet.
+            </p>
+          ) : (
+            discounts.map((discount) => (
+              <div
+                key={discount.id}
+                className="rounded-lg border border-slate-200 p-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-sm">{discount.product_code_code}</span>
+                    <Badge variant="outline">{discount.discount_type_display || discount.discount_type}</Badge>
+                    {discount.is_active === false && <Badge variant="secondary">Inactive</Badge>}
+                  </div>
+                  <p className="text-sm font-medium">{discount.product_code_description}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDiscountValue(discount)}
+                    {discount.valid_until ? ` · valid until ${new Date(discount.valid_until).toLocaleDateString()}` : ""}
+                  </p>
+                  {discount.notes && (
+                    <p className="text-sm text-muted-foreground">{discount.notes}</p>
+                  )}
+                </div>
+                {canManageCommercialTerms && (
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" onClick={() => handleEditDiscount(discount)}>
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => handleDeleteDiscount(discount)}
+                      disabled={isDeletingDiscount === discount.id}
+                    >
+                      {isDeletingDiscount === discount.id ? "Deleting..." : "Delete"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      {customer && (
+        <DiscountFormModal
+          open={isDiscountModalOpen}
+          onOpenChange={setIsDiscountModalOpen}
+          discount={editingDiscount}
+          onSuccess={async () => {
+            setIsDiscountModalOpen(false);
+            setEditingDiscount(null);
+            await refreshDiscounts();
+          }}
+          lockedCustomer={{ id: customer.id, name: customer.company_name }}
+        />
+      )}
     </div>
   );
 }

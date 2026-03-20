@@ -212,10 +212,20 @@ class CustomerDiscountViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         role = getattr(self.request.user, 'role', None)
+        customer = self.request.query_params.get('customer')
+        product_code = self.request.query_params.get('product_code')
+        discount_type = self.request.query_params.get('discount_type')
 
         # Sales users must not enumerate commercial discount tables.
         if role == 'sales':
             return qs.none()
+
+        if customer:
+            qs = qs.filter(customer_id=customer)
+        if product_code:
+            qs = qs.filter(product_code_id=product_code)
+        if discount_type:
+            qs = qs.filter(discount_type=discount_type)
 
         return qs
     
