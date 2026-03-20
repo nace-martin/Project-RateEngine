@@ -8,6 +8,7 @@ Use it with:
 - [pre-production-runbook.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/pre-production-runbook.md)
 - [go-live-status-tracker.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/go-live-status-tracker.md)
 - [launch-corridor-matrix.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/launch-corridor-matrix.md)
+- [vercel-render-beta-deploy.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/vercel-render-beta-deploy.md)
 
 ## Hard Stop Rules
 
@@ -78,7 +79,10 @@ Required env vars:
 - `CORS_ALLOWED_ORIGINS`
 - `CSRF_TRUSTED_ORIGINS`
 - `FRONTEND_BASE_URL`
+- `GEMINI_API_KEY`
 - `USE_X_FORWARDED_PROTO=true` if TLS terminates upstream
+- `SERVE_STATIC_FILES=true`
+- `SERVE_MEDIA_FILES=true`
 
 Pass criteria:
 - production settings load without error
@@ -190,15 +194,11 @@ Owner: Platform / DevOps
 
 Required recurring jobs:
 - FX refresh
-- stale-draft cleanup
-- quote archive job
 
 Commands used by schedulers:
 
 ```bash
 python manage.py fetch_fx --pairs USD:PGK,PGK:USD,AUD:PGK,PGK:AUD
-python manage.py cleanup_stale_drafts
-python manage.py archive_quotes
 ```
 
 Pass criteria:

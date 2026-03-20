@@ -2,8 +2,11 @@
 
 from typing import List, Dict
 
+from django.db import connection
 from django.db.models import Q  # Import Q for complex lookups
+from django.db.utils import OperationalError
 from rest_framework import generics, filters
+from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -104,6 +107,33 @@ class LocationV3SearchView(APIView):
         results = _build_location_results(query)
         serializer = LocationSearchSerializer(results, many=True)
         return Response(serializer.data)
+
+
+class HealthCheckAPIView(APIView):
+    """
+    Lightweight unauthenticated health endpoint for load balancers and Render.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, *args, **kwargs):
+        database_ok = True
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+        except OperationalError:
+            database_ok = False
+
+        status_code = 200 if database_ok else 503
+        return Response(
+            {
+                "status": "ok" if database_ok else "degraded",
+                "database": "ok" if database_ok else "unavailable",
+            },
+            status=status_code,
+        )
 
 
 class AirportSearchAPIView(generics.ListAPIView):

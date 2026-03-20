@@ -265,7 +265,7 @@ class QuotePublicDetailAPIView(APIView):
         origin_code, origin_name = _parse_location_label(quote.origin_location)
         destination_code, destination_name = _parse_location_label(quote.destination_location)
         resolved_service_scope = _resolve_service_scope(quote, version)
-        branding = get_quote_branding(quote)
+        branding = get_quote_branding(quote, request=request)
 
         response_data = {
             'quote_number': quote.quote_number,

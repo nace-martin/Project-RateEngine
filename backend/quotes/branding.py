@@ -66,17 +66,19 @@ def _fallback_logo_path() -> Optional[str]:
     return None
 
 
-def _resolve_uploaded_logo(logo_field) -> tuple[Optional[str], Optional[str]]:
+def _resolve_uploaded_logo(logo_field, request=None) -> tuple[Optional[str], Optional[str]]:
     if not logo_field:
         return None, None
     file_path = getattr(logo_field, "path", None)
     file_url = getattr(logo_field, "url", None)
+    if file_url and request is not None:
+        file_url = request.build_absolute_uri(file_url)
     if file_path and Path(file_path).exists():
         return file_path, file_url
     return None, file_url
 
 
-def get_quote_branding(quote) -> QuoteBrandingContext:
+def get_quote_branding(quote, request=None) -> QuoteBrandingContext:
     branding = getattr(getattr(quote, "organization", None), "branding", None)
     organization = getattr(quote, "organization", None)
 
@@ -95,7 +97,10 @@ def get_quote_branding(quote) -> QuoteBrandingContext:
     primary_color = getattr(branding, "primary_color", "") or "#0F2A56"
     accent_color = getattr(branding, "accent_color", "") or "#D71920"
 
-    uploaded_logo_path, uploaded_logo_url = _resolve_uploaded_logo(getattr(branding, "logo_primary", None))
+    uploaded_logo_path, uploaded_logo_url = _resolve_uploaded_logo(
+        getattr(branding, "logo_primary", None),
+        request=request,
+    )
     logo_path = uploaded_logo_path or _fallback_logo_path()
 
     return QuoteBrandingContext(
@@ -112,4 +117,3 @@ def get_quote_branding(quote) -> QuoteBrandingContext:
         logo_path=logo_path,
         logo_url=uploaded_logo_url,
     )
-

@@ -36,8 +36,8 @@ Reason:
 | In-app branding management | DONE | Eng / Admin | Admins can upload branding and manage settings in-app |
 | User organization assignment | DONE | Eng / Admin | User management now supports organization assignment |
 | Production users on prod env | IN PROGRESS | Admin / Security | Named launch users are defined; must verify on actual production DB |
-| Production env vars / deploy config | REMAINING | Platform / DevOps | Must verify on actual server |
-| Scheduler / cron jobs | REMAINING | Platform / DevOps | FX refresh and housekeeping still need prod wiring |
+| Production env vars / deploy config | IN PROGRESS | Platform / DevOps | Render/Vercel deployment blueprint now exists; actual deployed env still needs verification |
+| Scheduler / cron jobs | IN PROGRESS | Platform / DevOps | FX refresh cron is defined for Render; actual deployed job still needs verification |
 | Launch customer/contact completeness | IN PROGRESS | Customer Ops | Need final real production import verification |
 | Launch corridor signoff | IN PROGRESS | Pricing / Business | Seeded coverage is now documented; explicit business approval still needed |
 | PNG destination coverage beyond POM | IN PROGRESS | Pricing | Special local tariffs currently confirmed for `POM`; other stations only if in launch scope |
@@ -72,8 +72,8 @@ Reason:
 | Seed PNG destination-local special tariffs beyond `POM` if needed | REMAINING | Medium | Pricing | Need confirmed launch stations | Each non-`POM` PNG destination in scope has matching local tariffs |
 | Verify production env vars | REMAINING | High | Platform / DevOps | Needs production deployment pass | App boots correctly in prod mode |
 | Run prod migrations / static collection | REMAINING | High | Platform / DevOps | Needs deployment window | Migrations and static build succeed on prod |
-| Configure FX refresh job | REMAINING | High | Platform / DevOps / Finance | Needs scheduler | Fresh FX snapshot appears daily |
-| Configure housekeeping jobs | REMAINING | Medium | Platform / DevOps | Needs scheduler | Draft cleanup/archive jobs run cleanly |
+| Configure FX refresh job | IN PROGRESS | High | Platform / DevOps / Finance | Needs deployed Render cron | Fresh FX snapshot appears daily |
+| Configure Vercel + Render beta deployment | IN PROGRESS | High | Platform / DevOps | Needs actual platform setup | Backend health, frontend auth, branding media, and FX cron all work in deployed beta |
 | Final UAT: export standard quote | REMAINING | High | QA / Business | Needs staging/prod-like env | Quote computes, finalizes, PDF works |
 | Final UAT: import standard quote | REMAINING | High | QA / Business | Needs staging/prod-like env | Quote computes, finalizes, PDF works |
 | Final UAT: import `A2D` `DG` | REMAINING | High | QA / Business | Needs staging/prod-like env | Standard Quote, no unwanted SPOT |

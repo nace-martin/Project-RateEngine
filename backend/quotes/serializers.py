@@ -316,7 +316,8 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         return {'id': str(latest.id)}
 
     def get_branding(self, obj):
-        branding = get_quote_branding(obj)
+        request = self.context.get("request")
+        branding = get_quote_branding(obj, request=request)
         return QuoteBrandingSerializer(branding).data
 
     class Meta:
@@ -361,7 +362,8 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
         return {'id': str(latest.id)}
 
     def get_branding(self, obj):
-        branding = get_quote_branding(obj)
+        request = self.context.get("request")
+        branding = get_quote_branding(obj, request=request)
         return QuoteBrandingSerializer(branding).data
 
     class Meta:
