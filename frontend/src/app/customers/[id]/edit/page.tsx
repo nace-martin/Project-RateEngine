@@ -14,6 +14,7 @@ import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
 import BulkDiscountFormModal from "@/components/pricing/BulkDiscountFormModal";
+import BulkDiscountCsvImportModal from "@/components/pricing/BulkDiscountCsvImportModal";
 import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
@@ -55,15 +56,16 @@ export default function EditCustomerPage() {
   const [discountError, setDiscountError] = useState<string | null>(null);
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
   const [isBulkDiscountModalOpen, setIsBulkDiscountModalOpen] = useState(false);
+  const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
   const [editingDiscount, setEditingDiscount] = useState<api.CustomerDiscount | null>(null);
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
   const router = useRouter();
   const params = useParams();
   const { id } = params;
   const { token } = useAuth();
-  const { isAdmin, isManager } = usePermissions();
+  const { isAdmin } = usePermissions();
   const canEditCustomerMaster = isAdmin;
-  const canManageCommercialTerms = isAdmin || isManager;
+  const canManageCommercialTerms = isAdmin;
 
   useEffect(() => {
     if (id && token) {
@@ -680,6 +682,9 @@ export default function EditCustomerPage() {
           </div>
           {canManageCommercialTerms && customer && (
             <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={() => setIsCsvImportModalOpen(true)}>
+                Import CSV
+              </Button>
               <Button type="button" variant="outline" onClick={() => setIsBulkDiscountModalOpen(true)}>
                 Bulk Add Lines
               </Button>
@@ -758,6 +763,16 @@ export default function EditCustomerPage() {
         <BulkDiscountFormModal
           open={isBulkDiscountModalOpen}
           onOpenChange={setIsBulkDiscountModalOpen}
+          customer={{ id: customer.id, name: customer.company_name }}
+          onSuccess={async () => {
+            await refreshDiscounts();
+          }}
+        />
+      )}
+      {customer && (
+        <BulkDiscountCsvImportModal
+          open={isCsvImportModalOpen}
+          onOpenChange={setIsCsvImportModalOpen}
           customer={{ id: customer.id, name: customer.company_name }}
           onSuccess={async () => {
             await refreshDiscounts();

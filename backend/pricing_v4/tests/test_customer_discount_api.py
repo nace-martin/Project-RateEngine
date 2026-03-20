@@ -10,12 +10,17 @@ from pricing_v4.models import CustomerDiscount, ProductCode
 class CustomerDiscountAPITests(APITestCase):
     def setUp(self):
         User = get_user_model()
+        self.admin = User.objects.create_user(
+            username="discount-admin",
+            password="testpass123",
+            role="admin",
+        )
         self.manager = User.objects.create_user(
             username="discount-manager",
             password="testpass123",
             role="manager",
         )
-        self.client.force_authenticate(user=self.manager)
+        self.client.force_authenticate(user=self.admin)
 
         self.customer_a = Company.objects.create(name="Customer A", is_customer=True, company_type="CUSTOMER")
         self.customer_b = Company.objects.create(name="Customer B", is_customer=True, company_type="CUSTOMER")
@@ -103,3 +108,53 @@ class CustomerDiscountAPITests(APITestCase):
         created = CustomerDiscount.objects.get(customer=self.customer_a, product_code=other_product)
         self.assertEqual(created.discount_type, CustomerDiscount.TYPE_PERCENTAGE)
         self.assertEqual(created.discount_value, Decimal("7.50"))
+
+    def test_manager_cannot_bulk_upsert_discounts(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            "/api/v4/discounts/bulk-upsert/",
+            {
+                "customer": str(self.customer_a.id),
+                "lines": [
+                    {
+                        "product_code": self.product.id,
+                        "discount_type": "PERCENTAGE",
+                        "discount_value": "6.00",
+                        "currency": "PGK",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_manager_cannot_update_discount_rows(self):
+        self.client.force_authenticate(user=self.manager)
+        discount = CustomerDiscount.objects.get(customer=self.customer_a, product_code=self.product)
+
+        response = self.client.patch(
+            f"/api/v4/discounts/{discount.id}/",
+            {"discount_value": "9.00"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_manager_cannot_create_discount_rows(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            "/api/v4/discounts/",
+            {
+                "customer": str(self.customer_a.id),
+                "product_code": self.product.id,
+                "discount_type": "PERCENTAGE",
+                "discount_value": "4.00",
+                "currency": "PGK",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)

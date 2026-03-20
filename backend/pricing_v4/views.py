@@ -4,6 +4,7 @@ from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from accounts.permissions import IsAdmin
 
 from .serializers import (
     CustomerDiscountBulkUpsertSerializer,
@@ -212,7 +213,7 @@ class CustomerDiscountViewSet(viewsets.ModelViewSet):
         if self.request.method in permissions.SAFE_METHODS:
             permission_classes = [permissions.IsAuthenticated]
         else:
-            permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+            permission_classes = [permissions.IsAuthenticated, IsAdmin]
         return [permission() for permission in permission_classes]
 
     def get_queryset(self):
@@ -250,7 +251,7 @@ class CustomerDiscountBulkUpsertAPIView(APIView):
     Keeps the underlying CustomerDiscount rows intact so pricing behavior does not change.
     """
 
-    permission_classes = [permissions.IsAuthenticated, IsManagerOrAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def post(self, request):
         serializer = CustomerDiscountBulkUpsertSerializer(data=request.data)

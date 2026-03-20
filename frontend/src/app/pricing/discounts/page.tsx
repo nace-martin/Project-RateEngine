@@ -65,8 +65,8 @@ export default function DiscountsPage() {
     const [editingDiscount, setEditingDiscount] = useState<CustomerDiscount | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<CustomerDiscount | null>(null);
 
-    const { isAdmin, isManager } = usePermissions();
-    const canManage = isAdmin || isManager;
+    const { isAdmin } = usePermissions();
+    const canManage = isAdmin;
     const { toast } = useToast();
 
     const fetchDiscounts = useCallback(async () => {
