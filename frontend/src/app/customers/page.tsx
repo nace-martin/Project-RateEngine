@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from '@/lib/api';
+import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import ProtectedRoute from '@/components/protected-route';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -115,36 +116,44 @@ export default function CustomersPage() {
 
   return (
     <ProtectedRoute>
-      <div className="container mx-auto py-8 max-w-7xl">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-6">
-            <div className="space-y-1.5">
-              <CardTitle>Customers</CardTitle>
-              <CardDescription>
-                A list of all customers, agents, and partners in the system.
-              </CardDescription>
-            </div>
-            {isAdmin && (
+      <StandardPageContainer>
+        <PageHeader
+          title="Customers"
+          description="A list of all customers, agents, and partners in the system."
+          actions={
+            isAdmin ? (
               <Link href="/customers/new">
                 <Button>Add New Customer</Button>
               </Link>
-            )}
+            ) : null
+          }
+        />
+
+        <Card className="border-slate-200 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Customer Register</CardTitle>
+            <CardDescription>
+              Search and review customer records with consistent spacing and filters.
+            </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-5 px-6 pb-6 pt-2">
             {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-            <div className="mb-4 grid gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
               <Input
+                className="md:col-span-3"
                 placeholder="Search company name"
                 value={companyFilter}
                 onChange={(e) => setCompanyFilter(e.target.value)}
               />
               <Input
+                className="md:col-span-3"
                 placeholder="Search contact person"
                 value={contactFilter}
                 onChange={(e) => setContactFilter(e.target.value)}
               />
               <Input
+                className="md:col-span-3"
                 placeholder="Filter by country code"
                 value={countryFilter}
                 onChange={(e) => setCountryFilter(e.target.value)}
@@ -154,22 +163,23 @@ export default function CustomersPage() {
                 variant="outline"
                 onClick={clearFilters}
                 disabled={!companyFilter && !contactFilter && !countryFilter}
+                className="w-full md:col-span-3"
               >
                 Clear Filters
               </Button>
             </div>
 
-            <p className="mb-3 text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Showing {filteredCustomers.length} of {customers.length} customers
             </p>
 
-            <div className="rounded-md border border-slate-200">
+            <div className="overflow-hidden rounded-md border border-slate-200">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[300px]">Company Name</TableHead>
                     <TableHead>Contact Person</TableHead>
-                    <TableHead>Country</TableHead>
+                    <TableHead className="w-[140px] text-center">Country</TableHead>
                     {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -187,7 +197,13 @@ export default function CustomersPage() {
                           {customer.company_name}
                         </TableCell>
                         <TableCell>{customer.contact_person_name}</TableCell>
-                        <TableCell>{customer.primary_address?.country || '-'}</TableCell>
+                        <TableCell className="text-center">
+                          {customer.primary_address?.country ? (
+                            <span className="font-medium text-slate-700">{customer.primary_address.country}</span>
+                          ) : (
+                            <span className="text-sm text-slate-400">-</span>
+                          )}
+                        </TableCell>
                         {isAdmin && (
                           <TableCell className="text-right">
                             <Button variant="ghost" size="sm" asChild>
@@ -205,7 +221,7 @@ export default function CustomersPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </StandardPageContainer>
     </ProtectedRoute>
   );
 }

@@ -17,6 +17,7 @@ import BulkDiscountFormModal from "@/components/pricing/BulkDiscountFormModal";
 import BulkDiscountCsvImportModal from "@/components/pricing/BulkDiscountCsvImportModal";
 import { downloadDiscountCsvTemplate } from "@/components/pricing/discount-csv-template";
 import DiscountFormModal from "@/components/pricing/DiscountFormModal";
+import { StandardPageContainer } from "@/components/layout/standard-page";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 
@@ -413,7 +414,7 @@ export default function EditCustomerPage() {
   const commercialProfile = normalizeCommercialProfile(customer.commercial_profile);
 
   return (
-    <div className="container mx-auto p-4">
+    <StandardPageContainer>
       <WorkspaceContextCard
         title="Customer Workspace"
         description="You are editing this customer from your current organization workspace."
@@ -421,20 +422,20 @@ export default function EditCustomerPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card>
+        <Card className="border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle>Customer Profile</CardTitle>
             <CardDescription>
               Maintain the customer’s company information, address, and primary contact details.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
+          <CardContent className="space-y-6 px-6 pb-6 pt-2">
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 md:col-span-6">
                 <Label htmlFor="company_name">Company Name</Label>
                 <Input id="company_name" name="company_name" value={customer.company_name} onChange={handleChange} required />
               </div>
-              <div>
+              <div className="col-span-12 md:col-span-6">
                 <Label htmlFor="audience_type">Audience Type</Label>
                 <Select value={customer.audience_type} onValueChange={handleAudienceChange}>
                   <SelectTrigger>
@@ -467,12 +468,12 @@ export default function EditCustomerPage() {
                   />
                 </div>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-12 md:col-span-6">
                     <Label htmlFor="address_line_1">Street / Road</Label>
                     <Input id="address_line_1" name="address_line_1" value={customer.primary_address?.address_line_1 ?? ''} onChange={handleAddressChange} />
                   </div>
-                  <div>
+                  <div className="col-span-12 md:col-span-6">
                     <Label htmlFor="country">Country</Label>
                     <Select
                       value={customer.primary_address?.country ?? ''}
@@ -490,7 +491,7 @@ export default function EditCustomerPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
+                  <div className="col-span-12 md:col-span-6">
                     <Label htmlFor="city">City / Suburb</Label>
                     <Combobox
                       value={customer.primary_address?.city_id ?? ''}
@@ -501,11 +502,11 @@ export default function EditCustomerPage() {
                       disabled={!selectedCountryCode || isLoadingCities}
                     />
                   </div>
-                  <div>
+                  <div className="col-span-12 md:col-span-6">
                     <Label htmlFor="state_province">State / Province</Label>
                     <Input id="state_province" name="state_province" value={customer.primary_address?.state_province ?? ''} onChange={handleAddressChange} />
                   </div>
-                  <div>
+                  <div className="col-span-12 md:col-span-6">
                     <Label htmlFor="postcode">Postcode / ZIP</Label>
                     <Input id="postcode" name="postcode" value={customer.primary_address?.postcode ?? ''} onChange={handleAddressChange} />
                   </div>
@@ -520,16 +521,16 @@ export default function EditCustomerPage() {
                   Set the primary contact used when quotes and updates are sent to this customer.
                 </p>
               </div>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div>
+              <div className="grid grid-cols-12 gap-4">
+                <div className="col-span-12 md:col-span-4">
                   <Label htmlFor="contact_person_name">Contact Person</Label>
                   <Input id="contact_person_name" name="contact_person_name" value={customer.contact_person_name} onChange={handleChange} />
                 </div>
-                <div>
+                <div className="col-span-12 md:col-span-4">
                   <Label htmlFor="contact_person_email">Email</Label>
                   <Input id="contact_person_email" name="contact_person_email" type="email" value={customer.contact_person_email} onChange={handleChange} />
                 </div>
-                <div>
+                <div className="col-span-12 md:col-span-4">
                   <Label htmlFor="contact_person_phone">Phone</Label>
                   <Input id="contact_person_phone" name="contact_person_phone" value={customer.contact_person_phone} onChange={handleChange} />
                 </div>
@@ -538,15 +539,15 @@ export default function EditCustomerPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle>Commercial Terms</CardTitle>
             <CardDescription>
               Define the default currency, margin, and payment-term settings that should guide quoting for this customer.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div>
+          <CardContent className="grid grid-cols-12 gap-4 px-6 pb-6 pt-2">
+            <div className="col-span-12 md:col-span-6 xl:col-span-3">
               <Label htmlFor="preferred_quote_currency">Preferred Currency</Label>
               <Select
                 value={commercialProfile.preferred_quote_currency || ''}
@@ -575,7 +576,7 @@ export default function EditCustomerPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
+            <div className="col-span-12 md:col-span-6 xl:col-span-3">
               <Label htmlFor="default_margin_percent">Default Margin %</Label>
               <Input
                 id="default_margin_percent"
@@ -595,7 +596,7 @@ export default function EditCustomerPage() {
                 }
               />
             </div>
-            <div>
+            <div className="col-span-12 md:col-span-6 xl:col-span-3">
               <Label htmlFor="min_margin_percent">Minimum Margin %</Label>
               <Input
                 id="min_margin_percent"
@@ -615,7 +616,7 @@ export default function EditCustomerPage() {
                 }
               />
             </div>
-            <div>
+            <div className="col-span-12 md:col-span-6 xl:col-span-3">
               <Label htmlFor="payment_term_default">Payment Terms</Label>
               <Select
                 value={commercialProfile.payment_term_default || ''}
@@ -651,49 +652,58 @@ export default function EditCustomerPage() {
             Customer profile and commercial terms are admin-only. You can still review the pricing overrides below.
           </p>
         )}
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            {isAdmin && (
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => handleArchiveToggle(customer.is_active !== false)}
-                  disabled={isSaving || isDeleting || isArchiving}
-                >
-                  {isArchiving
-                    ? (customer.is_active !== false ? "Archiving..." : "Restoring...")
-                    : (customer.is_active !== false ? "Archive Customer" : "Restore Customer")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={handleDelete}
-                  disabled={isSaving || isDeleting || isArchiving}
-                >
-                  {isDeleting ? "Deleting..." : "Delete Customer"}
-                </Button>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.push('/customers')}
-              disabled={isSaving || isDeleting || isArchiving}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canEditCustomerMaster || isSaving || isDeleting || isArchiving}>
-              {isSaving ? "Saving..." : "Save Changes"}
-            </Button>
-          </div>
-        </div>
+        <Card className="border-slate-200 shadow-sm">
+          <CardContent className="flex flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {isAdmin && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleArchiveToggle(customer.is_active !== false)}
+                    disabled={isSaving || isDeleting || isArchiving}
+                    className="min-w-[148px]"
+                  >
+                    {isArchiving
+                      ? (customer.is_active !== false ? "Archiving..." : "Restoring...")
+                      : (customer.is_active !== false ? "Archive Customer" : "Restore Customer")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={handleDelete}
+                    disabled={isSaving || isDeleting || isArchiving}
+                    className="min-w-[148px]"
+                  >
+                    {isDeleting ? "Deleting..." : "Delete Customer"}
+                  </Button>
+                </>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push('/customers')}
+                disabled={isSaving || isDeleting || isArchiving}
+                className="min-w-[140px]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!canEditCustomerMaster || isSaving || isDeleting || isArchiving}
+                className="min-w-[148px]"
+              >
+                {isSaving ? "Saving..." : "Save Changes"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </form>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+      <Card className="border-slate-200 bg-slate-50/60 shadow-sm">
+        <CardHeader className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50/80 md:flex-row md:items-start md:justify-between">
           <div>
             <CardTitle>Pricing Overrides</CardTitle>
             <CardDescription className="mt-1">
@@ -717,7 +727,7 @@ export default function EditCustomerPage() {
             </div>
           )}
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 px-6 py-6">
           {discountError && (
             <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{discountError}</p>
           )}
@@ -802,6 +812,6 @@ export default function EditCustomerPage() {
           }}
         />
       )}
-    </div>
+    </StandardPageContainer>
   );
 }
