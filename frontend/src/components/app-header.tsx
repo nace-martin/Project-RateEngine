@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu } from 'lucide-react';
+import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu, Building2, Settings2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -54,14 +54,24 @@ export default function AppHeader() {
   // 2. Secondary/Configuration Navigation (Dropdown)
   const moreItems: { href: string; label: string; icon: LucideIcon }[] = [];
 
-  // Rate Cards
-  if (canEditRateCards) {
-    moreItems.push({ href: '/pricing/rate-cards', label: 'Rate Cards', icon: Database });
+  // Pricing Engine
+  if (canEditFXRates) {
+    moreItems.push({ href: '/pricing/engine', label: 'Pricing Engine', icon: Settings2 });
   }
 
-  // Settings
+  // Rate Management
+  if (canEditRateCards) {
+    moreItems.push({ href: '/pricing/rate-cards', label: 'Rate Management', icon: Database });
+  }
+
+  // Branding
+  if (isAdmin) {
+    moreItems.push({ href: '/company/branding', label: 'Branding', icon: Building2 });
+  }
+
+  // Admin hub
   if (canEditFXRates) {
-    moreItems.push({ href: '/settings', label: 'Settings', icon: Settings });
+    moreItems.push({ href: '/settings', label: 'Admin Hub', icon: Settings });
   }
 
   // User Management (Manager/Admin only)

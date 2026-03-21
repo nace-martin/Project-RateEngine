@@ -1,63 +1,111 @@
 'use client';
 
 import Link from 'next/link';
+import { Building2, Database, Settings2, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import OrganizationBrandingSettings from '@/components/OrganizationBrandingSettings';
 import { usePermissions } from '@/hooks/usePermissions';
-import FxRateManagement from '@/components/FxRateManagement';
 
 export default function SettingsPage() {
-  const { canEditRateCards, canEditFXRates, isFinance, isAdmin } = usePermissions();
+  const { canEditRateCards, isFinance, isAdmin } = usePermissions();
 
-  // Check if user should see financial settings (Finance or Admin)
-  const showFinancialSettings = isFinance || isAdmin;
+  const showPricingEngine = isFinance || isAdmin;
+  const showUsers = isAdmin;
+  const showBranding = isAdmin;
 
   return (
-    <div className="container mx-auto p-4 space-y-6">
-      <h1 className="text-2xl font-bold mb-4">Settings</h1>
+    <StandardPageContainer>
+      <PageHeader
+        title="Admin Hub"
+        description="Use the functional modules below instead of one catch-all settings page."
+      />
 
-      <div className="grid gap-6">
-        {/* Rate Cards - Available to Manager/Admin */}
-        {canEditRateCards && (
-          <Card>
+      <div className="grid gap-6 lg:grid-cols-2">
+        {showPricingEngine && (
+          <Card className="border-slate-200 shadow-sm">
             <CardHeader>
-              <CardTitle>Rate Cards</CardTitle>
-              <CardDescription>Manage your rate cards and pricing data.</CardDescription>
+              <CardTitle className="flex items-center gap-2">
+                <Settings2 className="h-5 w-5 text-primary" />
+                Pricing Engine
+              </CardTitle>
+              <CardDescription>
+                Maintain FX rates and future pricing-engine controls such as policy, margin, and CAF settings.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild>
-                <Link href="/pricing/rate-cards">Go to Rate Cards</Link>
+                <Link href="/pricing/engine">Open Pricing Engine</Link>
               </Button>
             </CardContent>
           </Card>
         )}
 
-        {/* Financial Settings Section - Finance/Admin only */}
-        {showFinancialSettings && (
-          <>
-            <div className="border-t pt-4">
-              <h2 className="text-lg font-semibold mb-4 text-muted-foreground">
-                Financial Settings
-              </h2>
-            </div>
-
-            {/* FX Rate Management */}
-            <FxRateManagement canEditFxRates={canEditFXRates} />
-          </>
+        {canEditRateCards && (
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5 text-primary" />
+                Rate Management
+              </CardTitle>
+              <CardDescription>
+                Manage logical rate cards, tariffs, sell rates, and buy-side pricing data.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/pricing/rate-cards">Open Rate Management</Link>
+              </Button>
+            </CardContent>
+          </Card>
         )}
 
-        {isAdmin && (
-          <>
-            <div className="border-t pt-4">
-              <h2 className="text-lg font-semibold mb-4 text-muted-foreground">
-                Branding
-              </h2>
-            </div>
-            <OrganizationBrandingSettings />
-          </>
+        {showBranding && (
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Company Branding
+              </CardTitle>
+              <CardDescription>
+                Manage logo upload, colors, contact details, and customer-facing tenant branding.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/company/branding">Open Branding</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {showUsers && (
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-primary" />
+                System Admin
+              </CardTitle>
+              <CardDescription>
+                Manage user access and administrative controls without mixing them into pricing modules.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/settings/users">Open User Management</Link>
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </div>
-    </div>
+
+      {!showPricingEngine && !canEditRateCards && !showBranding && !showUsers && (
+        <Card className="border-slate-200 shadow-sm">
+          <CardContent className="px-6 py-5 text-sm text-muted-foreground">
+            No administrative modules are available for your role.
+          </CardContent>
+        </Card>
+      )}
+    </StandardPageContainer>
   );
 }

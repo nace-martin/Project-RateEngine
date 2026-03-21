@@ -211,8 +211,8 @@ export default function NewCustomerPage() {
     <div className="space-y-6">
       <WorkspaceContextCard
         title="Customer Workspace"
-        description="You are managing customer records from your current organization workspace."
-        note="Customer master data is still shared in this beta, but quotes and outbound branding resolve from the signed-in organization."
+        description="You are adding this customer under your current company account."
+        note="Quotes and customer-facing documents created from this workspace will use your company branding."
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">

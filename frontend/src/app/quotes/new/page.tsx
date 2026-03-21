@@ -176,8 +176,8 @@ export default function NewQuotePage() {
 
       <WorkspaceContextCard
         title="Quote Workspace"
-        description="New quotes created here inherit the signed-in organization and use that branding in PDFs, public quote pages, and quote emails."
-        note="This keeps the beta workflow simple while preparing the app for future multi-company rollout."
+        description="New quotes created here are issued under your current company account."
+        note="PDFs, public quote pages, and quote emails will use your company branding."
       />
 
       <QuoteForm
