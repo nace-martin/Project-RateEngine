@@ -82,10 +82,28 @@ class Command(BaseCommand):
                 def _q4(value: Decimal) -> Decimal:
                     return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
+                def _candidate_snapshot_keys(base_ccy: str, quote_ccy: str) -> List[str]:
+                    keys = [f"{base_ccy}/{quote_ccy}".upper()]
+                    base_u = (base_ccy or "").upper()
+                    quote_u = (quote_ccy or "").upper()
+                    # Support both pair-format keys (USD/PGK) and legacy bare keys (USD)
+                    # for PGK crosses written by prior snapshots.
+                    if base_u == "PGK" and quote_u != "PGK":
+                        keys.append(quote_u)
+                    elif quote_u == "PGK" and base_u != "PGK":
+                        keys.append(base_u)
+                    return keys
+
+                def _lookup_snapshot_values(base_ccy: str, quote_ccy: str):
+                    for key in _candidate_snapshot_keys(base_ccy, quote_ccy):
+                        values = snapshot_rates.get(key)
+                        if values:
+                            return values
+                    return None
+
                 for base, quote in pairs:
                     requested_key = f"{base}/{quote}".upper()
-                    inverse_key = f"{quote}/{base}".upper()
-                    values = snapshot_rates.get(requested_key)
+                    values = _lookup_snapshot_values(base, quote)
                     pair_rows_before = len(rows)
 
                     if values:
@@ -94,7 +112,7 @@ class Command(BaseCommand):
                         if 'tt_sell' in values:
                             rows.append(RateRow(fallback_as_of, base, quote, d(values['tt_sell']), "SELL", fallback_source))
                     else:
-                        inverse_values = snapshot_rates.get(inverse_key)
+                        inverse_values = _lookup_snapshot_values(quote, base)
                         if inverse_values:
                             # Reconstruct requested direction from inverse snapshot:
                             # BUY(base/quote) = 1 / SELL(quote/base)

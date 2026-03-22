@@ -24,10 +24,13 @@ class QuoteTotalsResponse(BaseModel):
     Response schema for quote totals.
     
     IMPORTANT: The `currency` field is the OUTPUT CURRENCY for display.
-    This is derived from the quote's output_currency based on:
-    - Export Collect D2A → Destination currency (AUD for AU)
-    - Import Prepaid A2D → Origin currency (AUD for AU)
-    - Other scenarios → PGK
+    This is derived from shipment/payment country rules:
+    - EXPORT PREPAID to AU -> AUD
+    - EXPORT PREPAID non-AU -> USD
+    - EXPORT COLLECT -> PGK
+    - IMPORT PREPAID from AU -> AUD
+    - IMPORT PREPAID non-AU -> USD
+    - IMPORT COLLECT -> PGK
     """
     model_config = ConfigDict(from_attributes=True)
     
@@ -206,3 +209,4 @@ class QuoteComputeResultResponse(BaseModel):
     exchange_rates: dict = Field(default={})
     computation_date: str
     routing: Optional[dict] = None
+

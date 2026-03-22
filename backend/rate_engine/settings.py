@@ -23,6 +23,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _env_list(name: str) -> list[str]:
+    raw = os.environ.get(name, '')
+    return [item.strip() for item in raw.split(',') if item.strip()]
+
+
 
 # (BASE_DIR defined above)
 
@@ -30,30 +42,72 @@ load_dotenv(BASE_DIR / '.env')
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
+# SECURITY: DEBUG defaults to False for safety
+DEBUG = _env_bool('DJANGO_DEBUG', False)
+
 # SECURITY: SECRET_KEY must be set in environment (no fallback in production)
-_secret_key = os.environ.get('DJANGO_SECRET_KEY')
+_dev_secret_key = 'django-insecure-dev-only-key-do-not-use-in-production'
+_secret_key = os.environ.get('DJANGO_SECRET_KEY', '').strip()
 if not _secret_key:
     # Only allow insecure default in explicit development mode
-    if os.environ.get('DJANGO_DEBUG', 'False').lower() == 'true':
-        _secret_key = 'django-insecure-dev-only-key-do-not-use-in-production'
+    if DEBUG:
+        _secret_key = _dev_secret_key
     else:
-        raise ValueError(
+        raise ImproperlyConfigured(
             "DJANGO_SECRET_KEY environment variable is required. "
             "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(50))\""
         )
+
+if not DEBUG:
+    if _secret_key == _dev_secret_key or _secret_key.lower().startswith('django-insecure'):
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is using an insecure development value. "
+            "Set a strong production secret key."
+        )
+    if len(_secret_key) < 50:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY is too short for production. "
+            "Use at least 50 characters of entropy."
+        )
+
 SECRET_KEY = _secret_key
 
-# SECURITY: DEBUG defaults to False for safety
-DEBUG = os.environ.get('DJANGO_DEBUG', 'False').lower() == 'true'
-
 # SECURITY: ALLOWED_HOSTS must be explicitly configured
-_allowed_hosts = os.environ.get('ALLOWED_HOSTS', '')
-if _allowed_hosts:
-    ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(',') if h.strip()]
-elif DEBUG:
+ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS')
+if not ALLOWED_HOSTS and DEBUG:
     ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]']
-else:
-    ALLOWED_HOSTS = []  # Will cause 400 Bad Request if not properly configured
+elif not ALLOWED_HOSTS and not DEBUG:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must be set in production")
+
+# ============================================================================
+# PRODUCTION SECURITY HARDENING
+# ============================================================================
+# These defaults are strict in production and can still be overridden with envs.
+SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', not DEBUG)
+CSRF_COOKIE_SECURE = _env_bool('CSRF_COOKIE_SECURE', not DEBUG)
+SESSION_COOKIE_HTTPONLY = _env_bool('SESSION_COOKIE_HTTPONLY', True)
+CSRF_COOKIE_HTTPONLY = _env_bool('CSRF_COOKIE_HTTPONLY', True)
+SESSION_COOKIE_SAMESITE = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
+CSRF_COOKIE_SAMESITE = os.environ.get('CSRF_COOKIE_SAMESITE', 'Lax')
+
+SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', not DEBUG)
+SECURE_CONTENT_TYPE_NOSNIFF = _env_bool('SECURE_CONTENT_TYPE_NOSNIFF', True)
+SECURE_REFERRER_POLICY = os.environ.get('SECURE_REFERRER_POLICY', 'strict-origin-when-cross-origin')
+X_FRAME_OPTIONS = os.environ.get('X_FRAME_OPTIONS', 'DENY')
+
+_hsts_default = '31536000' if not DEBUG else '0'
+_hsts_seconds_raw = os.environ.get('SECURE_HSTS_SECONDS', _hsts_default)
+try:
+    SECURE_HSTS_SECONDS = int(_hsts_seconds_raw)
+except ValueError as exc:
+    raise ImproperlyConfigured("SECURE_HSTS_SECONDS must be an integer") from exc
+
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool('SECURE_HSTS_INCLUDE_SUBDOMAINS', not DEBUG)
+SECURE_HSTS_PRELOAD = _env_bool('SECURE_HSTS_PRELOAD', not DEBUG)
+
+# Enable this when Django is behind a trusted reverse proxy forwarding HTTPS.
+if _env_bool('USE_X_FORWARDED_PROTO', False):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -171,6 +225,12 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']  # Project-level static files
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # Collected static files for production
+MEDIA_URL = '/media/'
+# Uploaded branding assets are currently stored under BASE_DIR/branding/... via upload_to.
+# Keeping MEDIA_ROOT at BASE_DIR preserves existing uploaded logo paths during beta.
+MEDIA_ROOT = BASE_DIR
+SERVE_STATIC_FILES = _env_bool('SERVE_STATIC_FILES', DEBUG)
+SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', DEBUG)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
@@ -180,9 +240,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 AUTH_USER_MODEL = 'accounts.CustomUser'
 
 # SECURITY: CORS configured from environment (no allow-all in production)
-_cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
+_cors_origins = _env_list('CORS_ALLOWED_ORIGINS')
 if _cors_origins:
-    CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_origins.split(',') if o.strip()]
+    CORS_ALLOWED_ORIGINS = _cors_origins
     CORS_ALLOW_ALL_ORIGINS = False
 elif DEBUG:
     # Allow localhost origins in development
@@ -197,12 +257,18 @@ else:
     CORS_ALLOWED_ORIGINS = []
     CORS_ALLOW_ALL_ORIGINS = False
 
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-]
+_csrf_trusted_origins = _env_list('CSRF_TRUSTED_ORIGINS')
+if _csrf_trusted_origins:
+    CSRF_TRUSTED_ORIGINS = _csrf_trusted_origins
+elif DEBUG:
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:3001',
+        'http://127.0.0.1:3001',
+    ]
+else:
+    CSRF_TRUSTED_ORIGINS = []
 
 REST_FRAMEWORK = {
     # Secure-by-default: endpoints must explicitly opt out (e.g. public quote links).
@@ -231,6 +297,12 @@ try:
     PUBLIC_QUOTE_LINK_TTL_SECONDS = int(_public_quote_ttl)
 except ValueError:
     PUBLIC_QUOTE_LINK_TTL_SECONDS = 60 * 60 * 24 * 7
+
+# AI intake model configuration (Gemini)
+GEMINI_MODEL_NAME = (
+    os.environ.get('GEMINI_MODEL_NAME', 'gemini-2.5-flash-lite').strip()
+    or 'gemini-2.5-flash-lite'
+)
 
 # Explicit SPOT coverage overrides for known lanes.
 SPOT_ROUTE_COVERAGE = {

@@ -2,7 +2,13 @@
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from core.commodity import (
+    COMMODITY_CODE_DG,
+    DEFAULT_COMMODITY_CODE,
+    validate_commodity_code,
+)
 
 # --- INPUT SCHEMAS (API Layer) ---
 
@@ -12,6 +18,7 @@ class DimensionInput(BaseModel):
     width_cm: Decimal = Field(..., gt=0)
     height_cm: Decimal = Field(..., gt=0)
     gross_weight_kg: Decimal = Field(..., gt=0)
+    package_type: str = "Box"
 
 class OverrideInput(BaseModel):
     service_component_id: UUID
@@ -35,15 +42,27 @@ class QuoteComputeRequest(BaseModel):
     destination_location_id: UUID
     incoterm: str
     payment_term: str
+    commodity_code: str = DEFAULT_COMMODITY_CODE
     is_dangerous_goods: bool = False
     dimensions: List[DimensionInput]
     overrides: List[OverrideInput] = []
     spot_rates: Dict[str, Any] = {}
 
+    @field_validator('commodity_code', mode='before')
+    @classmethod
+    def validate_commodity_code_field(cls, value):
+        return validate_commodity_code(value)
+
     @model_validator(mode='after')
     def validate_rules(self):
         if self.mode == 'AIR' and not self.dimensions:
              raise ValueError("Dimensions are required for AIR mode")
+        if self.is_dangerous_goods and self.commodity_code == DEFAULT_COMMODITY_CODE:
+            self.commodity_code = COMMODITY_CODE_DG
+        elif self.commodity_code == COMMODITY_CODE_DG:
+            self.is_dangerous_goods = True
+        elif self.is_dangerous_goods:
+            raise ValueError("is_dangerous_goods can only be true when commodity_code is DG.")
         return self
 
 # --- RESPONSE SCHEMAS (API Layer) ---
@@ -77,6 +96,7 @@ class PieceSchema(BaseModel):
     length_cm: Decimal
     width_cm: Decimal
     height_cm: Decimal
+    package_type: str = "Box"
     
     class Config:
         from_attributes = True
@@ -87,6 +107,7 @@ class ShipmentDetailsSchema(BaseModel):
     incoterm: str
     payment_term: str
     service_scope: str
+    commodity_code: str = DEFAULT_COMMODITY_CODE
     is_dangerous_goods: bool
     direction: Optional[str] = None
     origin_location: Optional[LocationRefSchema] = None

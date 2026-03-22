@@ -236,6 +236,17 @@ export const V3_CARGO_TYPES = {
   OVERSIZED: 'Oversized / OOG',
 } as const
 
+export const V3_PACKAGE_TYPES = {
+  BOX: 'Box',
+  PALLET: 'Pallet',
+  SKID: 'Skid',
+  CRATE: 'Crate',
+  CARTON: 'Carton',
+  DRUM: 'Drum',
+  BAG: 'Bag',
+  OTHER: 'Other',
+} as const
+
 const airportCodeSchema = z
   .string()
   .trim()
@@ -275,7 +286,7 @@ const dimensionLineSchema = z.object({
     .refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
       message: 'Kg must be > 0',
     }),
-  package_type: z.string().min(1, 'Type is required').default('Box'),
+  package_type: z.nativeEnum(V3_PACKAGE_TYPES).default(V3_PACKAGE_TYPES.BOX),
 })
 
 // Optional schema for manual overrides (Spot Rates)

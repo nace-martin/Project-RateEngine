@@ -1,0 +1,90 @@
+databases:
+  - name: rateengine-beta-db
+    databaseName: rateengine
+    user: rateengine
+    plan: basic-256mb
+    diskSizeGB: 15
+
+services:
+  - type: web
+    name: rateengine-beta-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    preDeployCommand: python manage.py migrate --noinput
+    startCommand: gunicorn rate_engine.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads 2 --access-logfile - --error-logfile -
+    healthCheckPath: /api/health/
+    disk:
+      name: branding-assets
+      mountPath: /opt/render/project/src/backend/branding
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rateengine-beta-db
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: FRONTEND_BASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: USE_X_FORWARDED_PROTO
+        value: "true"
+      - key: SERVE_STATIC_FILES
+        value: "true"
+      - key: SERVE_MEDIA_FILES
+        value: "true"
+
+  - type: cron
+    name: rateengine-beta-fetch-fx
+    runtime: python
+    rootDir: backend
+    schedule: "0 7 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py fetch_fx --pairs USD:PGK,PGK:USD,AUD:PGK,PGK:AUD
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rateengine-beta-db
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          type: web
+          name: rateengine-beta-api
+          envVarKey: DJANGO_SECRET_KEY
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: ALLOWED_HOSTS
+        fromService:
+          type: web
+          name: rateengine-beta-api
+          envVarKey: ALLOWED_HOSTS
+      - key: CORS_ALLOWED_ORIGINS
+        fromService:
+          type: web
+          name: rateengine-beta-api
+          envVarKey: CORS_ALLOWED_ORIGINS
+      - key: CSRF_TRUSTED_ORIGINS
+        fromService:
+          type: web
+          name: rateengine-beta-api
+          envVarKey: CSRF_TRUSTED_ORIGINS
+      - key: FRONTEND_BASE_URL
+        fromService:
+          type: web
+          name: rateengine-beta-api
+          envVarKey: FRONTEND_BASE_URL
+      - key: USE_X_FORWARDED_PROTO
+        fromService:
+          type: web
+          name: rateengine-beta-api
+          envVarKey: USE_X_FORWARDED_PROTO

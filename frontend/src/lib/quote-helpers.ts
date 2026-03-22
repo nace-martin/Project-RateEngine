@@ -100,22 +100,6 @@ export const formatCurrency = (amountStr: string | undefined, currency: string |
     }).format(amount);
 };
 
-// Simple map for common regional ports to enable "City (Code)" format from just a code
-const AIRPORT_CITY_MAP: Record<string, string> = {
-    'POM': 'Port Moresby',
-    'LAE': 'Lae',
-    'BNE': 'Brisbane',
-    'HKG': 'Hong Kong',
-    'SIN': 'Singapore',
-    'SYD': 'Sydney',
-    'MEL': 'Melbourne',
-    'NAN': 'Nadi',
-    'AKL': 'Auckland',
-    'HGU': 'Mount Hagen',
-    'WWK': 'Wewak',
-    'RAB': 'Rabaul',
-};
-
 export const formatRoute = (location: string): string => {
     if (!location) return '';
 
@@ -161,7 +145,7 @@ export const getWeight = (quote: V3QuoteComputeResponse): string => {
             const total = dims.reduce((sum, d) => sum + (parseFloat(d.gross_weight_kg) || 0), 0);
             return `${total.toFixed(0)} kg`;
         }
-    } catch (e) {
+    } catch {
         // Fallback or ignore
     }
     return "-";

@@ -1,11 +1,18 @@
 # backend/quotes/serializers.py
 
 from decimal import Decimal
+import re
 from rest_framework import serializers
+from quotes.branding import get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
+from core.commodity import (
+    COMMODITY_CODE_DG,
+    DEFAULT_COMMODITY_CODE,
+    validate_commodity_code,
+)
 from core.models import Location
 from parties.serializers import CustomerV3Serializer, ContactV3Serializer
 # --- END IMPORTS ---
@@ -19,6 +26,7 @@ class V3DimensionInputSerializer(serializers.Serializer):
     width_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
     height_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
     gross_weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    package_type = serializers.CharField(max_length=50, required=False, default='Box')
 
 class V3ManualOverrideSerializer(serializers.Serializer):
     """Serializer for the 'overrides' list in the compute request."""
@@ -56,10 +64,17 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     
     incoterm = serializers.CharField(max_length=3)
     payment_term = serializers.ChoiceField(choices=Quote.PaymentTerm.choices)
+    commodity_code = serializers.CharField(max_length=10, required=False, default=DEFAULT_COMMODITY_CODE)
     is_dangerous_goods = serializers.BooleanField(default=False)
     dimensions = V3DimensionInputSerializer(many=True, required=True)
     overrides = V3ManualOverrideSerializer(many=True, required=False)
     spot_rates = serializers.DictField(required=False, allow_null=True)
+
+    def validate_commodity_code(self, value):
+        try:
+            return validate_commodity_code(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     def validate_dimensions(self, value):
         if not value or len(value) == 0:
@@ -76,6 +91,18 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
             legacy_errors['shipment_type'] = ["Shipment type is derived automatically and should not be provided."]
         if legacy_errors:
             raise serializers.ValidationError(legacy_errors)
+
+        commodity_code = attrs.get('commodity_code', DEFAULT_COMMODITY_CODE)
+        is_dangerous_goods = attrs.get('is_dangerous_goods', False)
+        if is_dangerous_goods and commodity_code == DEFAULT_COMMODITY_CODE:
+            commodity_code = COMMODITY_CODE_DG
+        elif commodity_code == COMMODITY_CODE_DG:
+            attrs['is_dangerous_goods'] = True
+        elif is_dangerous_goods:
+            raise serializers.ValidationError({
+                'is_dangerous_goods': ["is_dangerous_goods can only be true when commodity_code is DG."]
+            })
+        attrs['commodity_code'] = commodity_code
 
         return attrs
 
@@ -197,6 +224,18 @@ class V3QuoteVersionSummarySerializer(serializers.ModelSerializer):
         except (ValueError, TypeError, AttributeError):
             return 0
 
+
+class QuoteBrandingSerializer(serializers.Serializer):
+    display_name = serializers.CharField()
+    support_email = serializers.CharField(allow_blank=True)
+    support_phone = serializers.CharField(allow_blank=True)
+    website_url = serializers.CharField(allow_blank=True)
+    address_lines = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    public_quote_tagline = serializers.CharField(allow_blank=True)
+    primary_color = serializers.CharField(allow_blank=True)
+    accent_color = serializers.CharField(allow_blank=True)
+    logo_url = serializers.CharField(allow_null=True, allow_blank=True)
+
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
     The main serializer for the Quote model, used for GET requests
@@ -215,6 +254,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     created_by = serializers.SerializerMethodField()
     rate_provider = serializers.SerializerMethodField()
     spot_negotiation = serializers.SerializerMethodField()
+    branding = serializers.SerializerMethodField()
     
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -233,11 +273,34 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         # Optimization: This relies on lines being prefetched in the viewset query
         lines = obj.latest_version.lines.all()
         providers = set()
-        ignored_sources = {'V4 Engine', 'SPOT Envelope', 'N/A (Sell Only)', 'COGS', 'N/A', None, ''}
+        ignored_exact = {
+            'V4 ENGINE',
+            'SPOT ENVELOPE',
+            'N/A (SELL ONLY)',
+            'COGS',
+            'N/A',
+            'BASE_COST',
+            'DEFAULT',
+            'AGENT REPLY (AI)',
+            'SYSTEM',
+            '',
+        }
         
         for line in lines:
-            if line.cost_source and line.cost_source not in ignored_sources:
-                providers.add(line.cost_source)
+            source = str(line.cost_source or '').strip()
+            if not source:
+                continue
+
+            source_upper = source.upper()
+            # Internal/system markers should never be shown as "Rate Provider".
+            if source_upper in ignored_exact:
+                continue
+            if source_upper.startswith('DEFAULT '):
+                continue
+            if re.search(r'\b\d+(?:\.\d+)?%\s+OF\s+COGS\b', source_upper):
+                continue
+
+            providers.add(source)
         
         if not providers:
             return "Internal"
@@ -253,14 +316,20 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             return None
         return {'id': str(latest.id)}
 
+    def get_branding(self, obj):
+        request = self.context.get("request")
+        branding = get_quote_branding(obj, request=request)
+        return QuoteBrandingSerializer(branding).data
+
     class Meta:
         model = Quote
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
-            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
+            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version', 'spot_negotiation',
-            'created_by', 'rate_provider'
+            'status', 'valid_until', 'created_at',
+            'latest_version', 'request_details_json', 'spot_negotiation',
+            'created_by', 'rate_provider', 'branding'
         )
 
 class QuoteListSerializerV3(serializers.ModelSerializer):
@@ -275,6 +344,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
     destination_location = serializers.StringRelatedField()
     created_by = serializers.SerializerMethodField()
     spot_negotiation = serializers.SerializerMethodField()
+    branding = serializers.SerializerMethodField()
 
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -292,13 +362,19 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             return None
         return {'id': str(latest.id)}
 
+    def get_branding(self, obj):
+        request = self.context.get("request")
+        branding = get_quote_branding(obj, request=request)
+        return QuoteBrandingSerializer(branding).data
+
     class Meta:
         model = Quote
         fields = (
             'id', 'quote_number', 'customer', 'contact', 'mode', 
-            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'output_currency', 
+            'shipment_type', 'incoterm', 'payment_term', 'service_scope', 'commodity_code', 'output_currency', 
             'origin_location', 'destination_location',
-            'status', 'valid_until', 'created_at', 'latest_version', 'created_by',
+            'status', 'valid_until', 'created_at',
+            'latest_version', 'created_by', 'branding',
             'spot_negotiation'
         )
 
@@ -309,12 +385,30 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
 
 from quotes.spot_models import (
     SpotPricingEnvelopeDB,
+    SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
     SPEManagerApprovalDB,
 )
 
+class SPESourceBatchSerializer(serializers.ModelSerializer):
+    charge_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SPESourceBatchDB
+        fields = (
+            'id', 'source_kind', 'source_type', 'target_bucket', 'label',
+            'source_reference', 'file_name', 'file_content_type',
+            'analysis_summary_json', 'created_at', 'updated_at', 'charge_count',
+        )
+
+    def get_charge_count(self, obj):
+        return obj.charge_lines.count()
+
+
 class SPEChargeLineSerializer(serializers.ModelSerializer):
+    source_batch_id = serializers.SerializerMethodField()
+    source_batch_label = serializers.SerializerMethodField()
     min_charge = serializers.SerializerMethodField()
     amount = serializers.SerializerMethodField()
     rate = serializers.SerializerMethodField()
@@ -329,9 +423,16 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
             'id', 'code', 'description', 'amount', 'currency', 'unit',
             'bucket', 'is_primary_cost', 'conditional', 'min_charge',
             'note', 'exclude_from_totals', 'percentage_basis', 'source_reference',
+            'source_batch_id', 'source_batch_label',
             'calculation_type', 'unit_type', 'rate', 'min_amount', 'max_amount',
             'percent', 'percent_basis', 'rule_meta', 'rule_display'
         )
+
+    def get_source_batch_id(self, obj):
+        return str(obj.source_batch_id) if obj.source_batch_id else None
+
+    def get_source_batch_label(self, obj):
+        return obj.source_batch.label if obj.source_batch_id else None
 
     def get_amount(self, obj):
         # Return as string to match original serialization
@@ -410,6 +511,7 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     shipment = serializers.JSONField(source='shipment_context_json')
     conditions = serializers.JSONField(source='conditions_json')
     charges = SPEChargeLineSerializer(source='charge_lines', many=True, read_only=True)
+    sources = SPESourceBatchSerializer(source='source_batches', many=True, read_only=True)
     acknowledgement = SPEAcknowledgementSerializer(read_only=True)
     manager_approval = SPEManagerApprovalSerializer(read_only=True)
     
@@ -426,13 +528,17 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
             'created_at', 'expires_at', 'is_expired',
             'shipment_context_hash', 'context_integrity_valid',
             'has_acknowledgement', 'acknowledgement', 'manager_approval',
-            'missing_mandatory_fields', 'can_proceed', 'charges'
+            'missing_mandatory_fields', 'can_proceed', 'sources', 'charges'
         )
         read_only_fields = fields
 
     def get_customer_name(self, obj):
         if obj.quote and obj.quote.customer:
             return obj.quote.customer.name
+        shipment_ctx = getattr(obj, "shipment_context_json", None) or {}
+        customer_name = shipment_ctx.get("customer_name")
+        if customer_name:
+            return str(customer_name)
         return None
 
     def get_has_acknowledgement(self, obj):

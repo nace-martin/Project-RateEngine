@@ -25,10 +25,11 @@ from pricing_v4.models import (
     ExportSellRate, ImportSellRate, ExportCOGS, ImportCOGS,
     LocalSellRate, LocalCOGSRate
 )
+from pricing_v4.category_rules import LOCAL_RATE_CATEGORIES
 
 
 # Categories considered "Local" (not lane-dependent)
-LOCAL_CATEGORIES = ['CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING']
+LOCAL_CATEGORIES = sorted(LOCAL_RATE_CATEGORIES)
 
 
 class Command(BaseCommand):
@@ -111,13 +112,9 @@ class Command(BaseCommand):
                 
                 # Delete ImportCOGS
                 deleted, _ = ImportCOGS.objects.filter(product_code__in=local_pcs).delete()
-                self.stdout.write(f'Deleted {deleted} ImportCOGS records')
+            self.stdout.write(f'Deleted {deleted} ImportCOGS records')
             
             self.stdout.write(self.style.SUCCESS('\nCleanup complete!'))
-            self.stdout.write(self.style.WARNING(
-                '\nNOTE: A2DDAPRate table still exists in ratecards app. '
-                'Consider creating a migration to remove it.'
-            ))
             
         except Exception as e:
             self.stdout.write(self.style.ERROR(f'ERROR during cleanup: {e}'))

@@ -13,6 +13,7 @@ Endpoints:
 """
 
 import logging
+import json
 import uuid
 from typing import Optional
 from datetime import datetime, timedelta
@@ -22,6 +23,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -49,12 +51,14 @@ from quotes.spot_schemas import (
 )
 from quotes.spot_models import (
     SpotPricingEnvelopeDB,
+    SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
     SPEManagerApprovalDB,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer
 from quotes.selectors import get_quote_for_user
+from quotes.currency_rules import determine_quote_currency
 
 
 logger = logging.getLogger(__name__)
@@ -81,6 +85,15 @@ def _get_spe_or_404(user, envelope_id, queryset=None):
     if not _user_can_access_spe(user, spe_db):
         raise PermissionDenied("You do not have access to this SPOT envelope.")
     return spe_db
+
+
+def _spe_queryset():
+    return SpotPricingEnvelopeDB.objects.prefetch_related(
+        'charge_lines__source_batch',
+        'source_batches__charge_lines',
+        'acknowledgement',
+        'manager_approval',
+    )
 
 
 def _resolve_country_pair(
@@ -111,7 +124,187 @@ def _normalize_shipment_context(ctx: dict) -> dict:
     normalized["destination_code"] = destination_code
     normalized["origin_country"] = origin_country
     normalized["destination_country"] = destination_country
+    payment_term = str(normalized.get("payment_term") or "").strip().upper()
+    if payment_term in {"PREPAID", "COLLECT"}:
+        normalized["payment_term"] = payment_term
+    elif "payment_term" in normalized:
+        normalized.pop("payment_term", None)
     return normalized
+
+
+def _normalize_source_kind(value: Optional[str]) -> str:
+    normalized = str(value or SPESourceBatchDB.SourceKind.AGENT).strip().upper()
+    valid = {choice for choice, _ in SPESourceBatchDB.SourceKind.choices}
+    return normalized if normalized in valid else SPESourceBatchDB.SourceKind.OTHER
+
+
+def _normalize_source_type(value: Optional[str], pdf_file=None) -> str:
+    if pdf_file is not None:
+        return SPESourceBatchDB.SourceType.PDF
+    normalized = str(value or SPESourceBatchDB.SourceType.TEXT).strip().upper()
+    valid = {choice for choice, _ in SPESourceBatchDB.SourceType.choices}
+    return normalized if normalized in valid else SPESourceBatchDB.SourceType.TEXT
+
+
+def _normalize_target_bucket(value: Optional[str]) -> str:
+    normalized = str(value or SPESourceBatchDB.TargetBucket.MIXED).strip().lower()
+    valid = {choice for choice, _ in SPESourceBatchDB.TargetBucket.choices}
+    return normalized if normalized in valid else SPESourceBatchDB.TargetBucket.MIXED
+
+
+def _default_source_label(source_kind: str, target_bucket: str) -> str:
+    bucket_labels = {
+        SPESourceBatchDB.TargetBucket.AIRFREIGHT: "Freight Source",
+        SPESourceBatchDB.TargetBucket.ORIGIN_CHARGES: "Origin Charges Source",
+        SPESourceBatchDB.TargetBucket.DESTINATION_CHARGES: "Destination Charges Source",
+        SPESourceBatchDB.TargetBucket.MIXED: "Primary SPOT Source",
+    }
+    kind_prefix = {
+        SPESourceBatchDB.SourceKind.AIRLINE: "Airline",
+        SPESourceBatchDB.SourceKind.AGENT: "Agent",
+        SPESourceBatchDB.SourceKind.MANUAL: "Manual",
+        SPESourceBatchDB.SourceKind.OTHER: "Other",
+    }
+    return f"{kind_prefix.get(source_kind, 'Other')} {bucket_labels.get(target_bucket, 'Source')}"
+
+
+def _get_or_create_source_batch(
+    *,
+    spe_db: SpotPricingEnvelopeDB,
+    request,
+    source_batch_id: Optional[str],
+    source_kind: str,
+    source_type: str,
+    target_bucket: str,
+    label: str,
+    source_reference: str,
+    raw_text: str,
+    file_name: str = "",
+    file_content_type: str = "",
+    analysis_summary_json: Optional[dict] = None,
+) -> SPESourceBatchDB:
+    batch = None
+    if source_batch_id:
+        batch = get_object_or_404(spe_db.source_batches, id=source_batch_id)
+    else:
+        batch = (
+            spe_db.source_batches
+            .filter(
+                source_kind=source_kind,
+                target_bucket=target_bucket,
+                label=label,
+            )
+            .order_by('-updated_at')
+            .first()
+        )
+        if batch is None:
+            batch = SPESourceBatchDB.objects.create(
+                envelope=spe_db,
+                source_kind=source_kind,
+                source_type=source_type,
+                target_bucket=target_bucket,
+                label=label,
+                source_reference=source_reference,
+                raw_text=raw_text,
+                file_name=file_name,
+                file_content_type=file_content_type,
+                analysis_summary_json=analysis_summary_json or {},
+                created_by=request.user,
+            )
+            return batch
+
+    batch.source_kind = source_kind
+    batch.source_type = source_type
+    batch.target_bucket = target_bucket
+    batch.label = label
+    batch.source_reference = source_reference
+    batch.raw_text = raw_text
+    batch.file_name = file_name
+    batch.file_content_type = file_content_type
+    batch.analysis_summary_json = analysis_summary_json or {}
+    batch.save(
+        update_fields=[
+            'source_kind', 'source_type', 'target_bucket', 'label',
+            'source_reference', 'raw_text', 'file_name', 'file_content_type',
+            'analysis_summary_json', 'updated_at',
+        ]
+    )
+    return batch
+
+
+def _resolve_output_currency_for_shipment(
+    shipment_type: str,
+    payment_term: str,
+    origin_location,
+    destination_location,
+) -> str:
+    return determine_quote_currency(
+        shipment_type=shipment_type,
+        payment_term=payment_term,
+        origin_country_code=getattr(origin_location, "country_code", None),
+        destination_country_code=getattr(destination_location, "country_code", None),
+    )
+
+
+def _normalize_missing_components(raw_value) -> Optional[list[str]]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        raw_list = [item.strip() for item in raw_value.split(",")]
+    elif isinstance(raw_value, (list, tuple, set)):
+        raw_list = list(raw_value)
+    else:
+        return []
+    return [str(item).upper() for item in raw_list if str(item).strip()]
+
+
+def _derive_missing_components_from_context(ctx: dict) -> Optional[list[str]]:
+    origin_code = str(ctx.get("origin_code") or "").upper()
+    destination_code = str(ctx.get("destination_code") or "").upper()
+    if not origin_code or not destination_code:
+        return None
+
+    service_scope = str(ctx.get("service_scope") or "P2P")
+    payment_term = str(ctx.get("payment_term") or "").upper() or None
+    origin_country, destination_country = _resolve_country_pair(
+        ctx.get("origin_country"),
+        ctx.get("destination_country"),
+        origin_code=origin_code,
+        destination_code=destination_code,
+    )
+    direction = _infer_shipment_type(origin_country, destination_country)
+
+    try:
+        from quotes.spot_services import RateAvailabilityService
+        from quotes.completeness import evaluate_from_availability
+
+        availability = RateAvailabilityService.get_availability(
+            origin_airport=origin_code,
+            destination_airport=destination_code,
+            direction=direction,
+            service_scope=service_scope,
+            payment_term=payment_term,
+        )
+        coverage = evaluate_from_availability(
+            component_availability=availability,
+            shipment_type=direction,
+            service_scope=service_scope,
+        )
+        return coverage.missing_required
+    except Exception:
+        logger.exception(
+            "Failed deriving missing components for SPOT context %s->%s",
+            origin_code,
+            destination_code,
+        )
+        return None
+
+
+def _resolve_missing_components_for_context(ctx: dict) -> Optional[list[str]]:
+    normalized = _normalize_missing_components(ctx.get("missing_components"))
+    if normalized is not None:
+        return normalized
+    return _derive_missing_components_from_context(ctx)
 
 
 def _infer_shipment_type(origin_country: str, destination_country: str) -> str:
@@ -146,36 +339,51 @@ def _build_spe_from_db(
             comment=mgr_db.comment,
         )
 
-    charges = [
-        SPEChargeLine(
-            code=cl.code,
-            description=cl.description,
-            amount=float(cl.amount),
-            currency=cl.currency,
-            unit=cl.unit,
-            bucket=cl.bucket,
-            is_primary_cost=cl.is_primary_cost,
-            conditional=cl.conditional,
-            source_reference=cl.source_reference,
-            entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
-            entered_at=cl.entered_at,
-            min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
-            note=cl.note,
-            exclude_from_totals=cl.exclude_from_totals,
-            percentage_basis=cl.percentage_basis,
-            calculation_type=cl.calculation_type,
-            unit_type=cl.unit_type,
-            rate=float(cl.rate) if cl.rate is not None else None,
-            min_amount=float(cl.min_amount) if cl.min_amount is not None else None,
-            max_amount=float(cl.max_amount) if cl.max_amount is not None else None,
-            percent=float(cl.percent) if cl.percent is not None else None,
-            percent_basis=cl.percent_basis,
-            rule_meta=cl.rule_meta or {},
+    charges = []
+    for cl in spe_db.charge_lines.all():
+        # Guard against legacy/invalid draft rows with zero amount.
+        # SPE schema requires amount > 0 and these rows should not block acknowledgement.
+        if cl.amount is None or cl.amount <= 0:
+            logger.warning(
+                "Skipping invalid SPE charge line with non-positive amount: spe=%s line=%s amount=%s",
+                spe_db.id,
+                cl.id,
+                cl.amount,
+            )
+            continue
+
+        charges.append(
+            SPEChargeLine(
+                code=cl.code,
+                description=cl.description,
+                amount=float(cl.amount),
+                currency=cl.currency,
+                unit=cl.unit,
+                bucket=cl.bucket,
+                is_primary_cost=cl.is_primary_cost,
+                conditional=cl.conditional,
+                source_reference=cl.source_reference,
+                entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
+                entered_at=cl.entered_at,
+                min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
+                note=cl.note,
+                exclude_from_totals=cl.exclude_from_totals,
+                percentage_basis=cl.percentage_basis,
+                calculation_type=cl.calculation_type,
+                unit_type=cl.unit_type,
+                rate=float(cl.rate) if cl.rate is not None else None,
+                min_amount=float(cl.min_amount) if cl.min_amount is not None else None,
+                max_amount=float(cl.max_amount) if cl.max_amount is not None else None,
+                percent=float(cl.percent) if cl.percent is not None else None,
+                percent_basis=cl.percent_basis,
+                rule_meta=cl.rule_meta or {},
+            )
         )
-        for cl in spe_db.charge_lines.all()
-    ]
 
     ctx = _normalize_shipment_context(spe_db.shipment_context_json)
+    if not ctx.get("payment_term") and getattr(spe_db, "quote", None) and getattr(spe_db.quote, "payment_term", None):
+        ctx["payment_term"] = str(spe_db.quote.payment_term).upper()
+    resolved_missing_components = _resolve_missing_components_for_context(ctx)
     status_value = status_override or spe_db.status
 
     return SpotPricingEnvelope(
@@ -190,6 +398,8 @@ def _build_spe_from_db(
             total_weight_kg=ctx.get('total_weight_kg', 1.0),
             pieces=ctx.get('pieces', 1),
             service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+            payment_term=(str(ctx.get('payment_term')).lower() if ctx.get('payment_term') else None),
+            missing_components=resolved_missing_components,
         ),
         charges=charges,
         conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
@@ -293,13 +503,29 @@ class SpotTriggerEvaluateAPIView(APIView):
         
         # Build component availability map from DB
         service_scope = request.data.get('service_scope', 'P2P')
+        payment_term = str(request.data.get('payment_term') or '').upper()
+        if payment_term not in {'PREPAID', 'COLLECT'}:
+            return Response(
+                {'error': "payment_term is required and must be PREPAID or COLLECT"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        from quotes.spot_services import RateAvailabilityService
+        from quotes.spot_services import CommodityRateRuleService, RateAvailabilityService
         component_availability = RateAvailabilityService.get_availability(
             origin_airport=origin_airport,
             destination_airport=destination_airport,
             direction=direction,
-            service_scope=service_scope
+            service_scope=service_scope,
+            payment_term=payment_term,
+        )
+        commodity = str(request.data.get('commodity') or 'GCR').upper()
+        commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            direction=direction,
+            service_scope=service_scope,
+            commodity_code=commodity,
+            payment_term=payment_term,
         )
 
         is_spot, trigger = SpotTriggerEvaluator.evaluate(
@@ -307,7 +533,9 @@ class SpotTriggerEvaluateAPIView(APIView):
             destination_country=destination_country,
             direction=direction,
             service_scope=service_scope,
-            component_availability=component_availability
+            component_availability=component_availability,
+            commodity_code=commodity,
+            commodity_coverage=commodity_coverage,
         )
         
         return Response({
@@ -316,6 +544,9 @@ class SpotTriggerEvaluateAPIView(APIView):
                 'code': trigger.code,
                 'text': trigger.text,
                 'missing_components': trigger.missing_components,
+                'missing_product_codes': trigger.missing_product_codes,
+                'spot_required_product_codes': trigger.spot_required_product_codes,
+                'manual_required_product_codes': trigger.manual_required_product_codes,
             } if trigger else None,
         })
 
@@ -337,6 +568,7 @@ class StandardChargesAPIView(APIView):
             "destination_code": "SIN",
             "direction": "EXPORT",
             "service_scope": "D2D",
+            "payment_term": "PREPAID",
             "weight_kg": 100,
             "commodity": "GCR"
         }
@@ -367,6 +599,12 @@ class StandardChargesAPIView(APIView):
         destination_code = request.data.get("destination_code", "").upper()
         direction = request.data.get("direction", "EXPORT").upper()
         service_scope = request.data.get("service_scope", "D2D").upper()
+        payment_term = str(request.data.get("payment_term") or "").upper()
+        if payment_term not in {"PREPAID", "COLLECT"}:
+            return Response(
+                {"error": "payment_term is required and must be PREPAID or COLLECT"},
+                status=400
+            )
         weight_kg = float(request.data.get("weight_kg", 100))
         commodity = request.data.get("commodity", "GCR").upper()
         
@@ -383,6 +621,7 @@ class StandardChargesAPIView(APIView):
             service_scope=service_scope,
             weight_kg=weight_kg,
             commodity=commodity,
+            payment_term=payment_term,
         )
         
         return Response({"charges": charges})
@@ -401,7 +640,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def get(self, request):
         """List SPEs created by user."""
-        spe_qs = SpotPricingEnvelopeDB.objects.all()
+        spe_qs = _spe_queryset()
         if not _user_is_manager_or_admin(request.user):
             spe_qs = spe_qs.filter(created_by=request.user)
 
@@ -412,17 +651,12 @@ class SpotEnvelopeListCreateAPIView(APIView):
 
         spes = spe_qs.order_by('-created_at')[:20]
         
-        spes = spe_qs.order_by('-created_at')[:20]
-        
         serializer = SpotPricingEnvelopeSerializer(spes, many=True)
         return Response(serializer.data)
     
     @transaction.atomic
     def post(self, request):
         """Create new SPE in DRAFT status."""
-        with open("debug_spe.log", "a") as f:
-            f.write(f"\n--- {timezone.now()} --- POST to envelopes ---\n")
-            f.write(f"Data: {request.data}\n")
         try:
             data = request.data
             quote = None
@@ -447,6 +681,16 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             # Create DB record
             ctx = _normalize_shipment_context(data['shipment_context'])
+            if (
+                not ctx.get("payment_term")
+                and quote is not None
+                and getattr(quote, "payment_term", None)
+            ):
+                ctx["payment_term"] = str(quote.payment_term).upper()
+            if "missing_components" not in ctx:
+                resolved_missing_components = _resolve_missing_components_for_context(ctx)
+                if resolved_missing_components is not None:
+                    ctx["missing_components"] = resolved_missing_components
             now = timezone.now()
             validity_hours = data.get('validity_hours', 72)
             
@@ -512,10 +756,6 @@ class SpotEnvelopeListCreateAPIView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.exception("Unexpected error creating SPE")
-            with open("debug_spe.log", "a") as f:
-                import traceback
-                f.write(f"ERROR: {str(e)}\n")
-                f.write(traceback.format_exc())
             return Response(
                 {'error': f"Internal Server Error: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -526,6 +766,9 @@ class SpotEnvelopeListCreateAPIView(APIView):
     def _validate_spe(self, spe_db):
         """Validate SPE via Pydantic schemas."""
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
+        if not ctx.get("payment_term") and getattr(spe_db, "quote", None) and getattr(spe_db.quote, "payment_term", None):
+            ctx["payment_term"] = str(spe_db.quote.payment_term).upper()
+        resolved_missing_components = _resolve_missing_components_for_context(ctx)
         charges = [
             SPEChargeLine(
                 code=cl.code,
@@ -568,6 +811,8 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 total_weight_kg=ctx.get('total_weight_kg', 1.0),
                 pieces=ctx.get('pieces', 1),
                 service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
+                payment_term=(str(ctx.get('payment_term')).lower() if ctx.get('payment_term') else None),
+                missing_components=resolved_missing_components,
             ),
             charges=charges,
             conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
@@ -591,9 +836,7 @@ class SpotEnvelopeDetailAPIView(APIView):
         spe_db = _get_spe_or_404(
             request.user,
             envelope_id,
-            SpotPricingEnvelopeDB.objects.prefetch_related(
-                'charge_lines', 'acknowledgement', 'manager_approval'
-            ),
+            _spe_queryset(),
         )
         
         serializer = SpotPricingEnvelopeSerializer(spe_db)
@@ -618,31 +861,37 @@ class SpotEnvelopeDetailAPIView(APIView):
             
         # Update charges (replace all)
         if 'charges' in data:
+            from decimal import Decimal, InvalidOperation
+
+            def _to_decimal(val):
+                if val is None or val == "":
+                    return None
+                try:
+                    return Decimal(str(val))
+                except (InvalidOperation, ValueError):
+                    return None
+
             # Delete existing
             spe_db.charge_lines.all().delete()
             
             # Create new
             for charge in data['charges']:
                 # Sanitize decimal fields
-                amount_val = charge.get('amount')
-                if amount_val == "":
-                    amount_val = None
+                amount_val = _to_decimal(charge.get('amount'))
+                if amount_val is None or amount_val <= 0:
+                    logger.warning(
+                        "Skipping non-positive SPE charge on PATCH: spe=%s code=%s amount=%s",
+                        spe_db.id,
+                        charge.get('code'),
+                        charge.get('amount'),
+                    )
+                    continue
                     
-                min_charge_val = charge.get('min_charge')
-                if min_charge_val == "":
-                    min_charge_val = None
-                rate_val = charge.get('rate')
-                if rate_val == "":
-                    rate_val = None
-                min_amount_val = charge.get('min_amount')
-                if min_amount_val == "":
-                    min_amount_val = None
-                max_amount_val = charge.get('max_amount')
-                if max_amount_val == "":
-                    max_amount_val = None
-                percent_val = charge.get('percent')
-                if percent_val == "":
-                    percent_val = None
+                min_charge_val = _to_decimal(charge.get('min_charge'))
+                rate_val = _to_decimal(charge.get('rate'))
+                min_amount_val = _to_decimal(charge.get('min_amount'))
+                max_amount_val = _to_decimal(charge.get('max_amount'))
+                percent_val = _to_decimal(charge.get('percent'))
 
                 # Map Special Units
                 unit_val = charge['unit']
@@ -683,7 +932,18 @@ class SpotEnvelopeDetailAPIView(APIView):
         serializer = SpotPricingEnvelopeSerializer(spe_db)
         return Response(serializer.data)
 
-
+    def delete(self, request, envelope_id):
+        """Delete a DRAFT SPE."""
+        spe_db = _get_spe_or_404(request.user, envelope_id)
+        
+        if spe_db.status != 'draft':
+            return Response(
+                {'error': f"Cannot delete SPE in status '{spe_db.status}'"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        spe_db.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SpotEnvelopeAcknowledgeAPIView(APIView):
@@ -845,9 +1105,7 @@ class SpotEnvelopeComputeAPIView(APIView):
         spe_db = _get_spe_or_404(
             request.user,
             envelope_id,
-            SpotPricingEnvelopeDB.objects.prefetch_related(
-                'charge_lines', 'acknowledgement', 'manager_approval'
-            ),
+            _spe_queryset(),
         )
         
         # Build Pydantic SPE for validation
@@ -913,6 +1171,7 @@ class SpotEnvelopeComputeAPIView(APIView):
             shipment_type=shipment_type,
             incoterm=quote_data.get('incoterm', 'DAP'),
             payment_term=quote_data.get('payment_term', 'PREPAID'),
+            commodity_code=ctx.get('commodity') or 'GCR',
             is_dangerous_goods=ctx.get('commodity') == 'DG',
             pieces=[
                 Piece(
@@ -927,13 +1186,20 @@ class SpotEnvelopeComputeAPIView(APIView):
             origin_location=origin_ref,
             destination_location=dest_ref,
         )
+
+        resolved_output_currency = _resolve_output_currency_for_shipment(
+            shipment_type=shipment.shipment_type,
+            payment_term=shipment.payment_term,
+            origin_location=origin_ref,
+            destination_location=dest_ref,
+        )
         
         quote_input = QuoteInput(
             customer_id=getattr(spe_db.quote, 'customer_id', None) or uuid.uuid4(),
             contact_id=getattr(spe_db.quote, 'contact_id', None) or uuid.uuid4(),
             shipment=shipment,
             quote_date=date.today(),
-            output_currency=quote_data.get('output_currency', 'PGK'),
+            output_currency=resolved_output_currency,
         )
         
         # Call adapter with spot_envelope_id
@@ -1013,26 +1279,62 @@ class SpotReplyAnalysisAPIView(APIView):
     Analyze agent rate reply text and return assertions.
     """
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def post(self, request):
         text = request.data.get('text', '')
+        pdf_file = request.FILES.get('file')
         spe_id = request.data.get('spe_id')
+        source_batch_id = request.data.get('source_batch_id')
+        source_kind = _normalize_source_kind(request.data.get('source_kind'))
+        target_bucket = _normalize_target_bucket(request.data.get('target_bucket'))
+        source_type = _normalize_source_type(request.data.get('source_type'), pdf_file=pdf_file)
         manual_assertions = request.data.get('assertions', [])
         use_ai = request.data.get('use_ai', True)
-        
-        if not text:
-            return Response(
-                {'error': 'No text provided'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-            
+        pdf_warnings = []
         shipment_context = None
+
+        if isinstance(manual_assertions, str):
+            try:
+                manual_assertions = json.loads(manual_assertions)
+            except json.JSONDecodeError:
+                manual_assertions = []
+
+        if isinstance(use_ai, str):
+            use_ai = use_ai.strip().lower() not in {"false", "0", "no", "off"}
+
         if spe_id:
             try:
                 spe_db = _get_spe_or_404(request.user, spe_id)
                 shipment_context = _normalize_shipment_context(spe_db.shipment_context_json)
+                if (
+                    shipment_context is not None
+                    and not shipment_context.get("payment_term")
+                    and getattr(spe_db, "quote", None)
+                    and getattr(spe_db.quote, "payment_term", None)
+                ):
+                    shipment_context["payment_term"] = str(spe_db.quote.payment_term).upper()
             except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
                 pass
+
+        if pdf_file:
+            from quotes.ai_intake_service import extract_rate_quote_text_from_pdf
+
+            extraction_result = extract_rate_quote_text_from_pdf(pdf_file.read(), context=shipment_context)
+            if not extraction_result.success:
+                return Response(
+                    {'error': extraction_result.error or 'PDF extraction failed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            text = extraction_result.text or ''
+            pdf_warnings = list(extraction_result.warnings or [])
+        
+        if not text:
+            return Response(
+                {'error': 'Either "text" or "file" is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
             
         if shipment_context:
             # Enrich with real names for the AI prompt
@@ -1059,7 +1361,8 @@ class SpotReplyAnalysisAPIView(APIView):
                 origin_airport=shipment_context.get('origin_code', ''),
                 destination_airport=shipment_context.get('destination_code', ''),
                 direction=direction,
-                service_scope=shipment_context.get('service_scope', 'P2P')
+                service_scope=shipment_context.get('service_scope', 'P2P'),
+                payment_term=shipment_context.get('payment_term'),
             )
             
             # Enrich context with missing status to guide AI
@@ -1073,12 +1376,21 @@ class SpotReplyAnalysisAPIView(APIView):
                 shipment_context=shipment_context,
                 availability=availability
             )
+            logger.info(
+                "analyze-reply AI result: assertions=%d, warnings=%d, can_proceed=%s",
+                len(result.assertions), len(result.warnings), result.summary.can_proceed,
+            )
+            if not result.assertions:
+                logger.warning("analyze-reply returned 0 assertions for text of length %d", len(text))
         else:
             # Manual edit flow or fallback
             result = ReplyAnalysisService.analyze_manual(
                 raw_text=text,
                 assertions=manual_assertions
             )
+
+        if pdf_warnings:
+            result.warnings.extend(pdf_warnings)
 
         # Auto-populate SPE with AI-extracted charges (draft only)
         if use_ai and not manual_assertions and spe_id and shipment_context:
@@ -1098,17 +1410,44 @@ class SpotReplyAnalysisAPIView(APIView):
                     except (InvalidOperation, ValueError):
                         return None
 
+                source_reference = str(
+                    request.data.get('source_reference')
+                    or (pdf_file.name if pdf_file else "Agent reply (AI)")
+                )
+                source_label = str(
+                    request.data.get('label')
+                    or _default_source_label(source_kind, target_bucket)
+                )
+                batch = _get_or_create_source_batch(
+                    spe_db=spe_db,
+                    request=request,
+                    source_batch_id=source_batch_id,
+                    source_kind=source_kind,
+                    source_type=source_type,
+                    target_bucket=target_bucket,
+                    label=source_label,
+                    source_reference=source_reference,
+                    raw_text=text,
+                    file_name=pdf_file.name if pdf_file else "",
+                    file_content_type=getattr(pdf_file, "content_type", "") if pdf_file else "",
+                    analysis_summary_json={
+                        "warnings": list(result.warnings or []),
+                        "assertion_count": len(result.assertions or []),
+                        "can_proceed": getattr(result.summary, "can_proceed", None),
+                    },
+                )
+
                 auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
                     result,
-                    source_reference="Agent reply (AI)",
+                    source_reference=source_reference,
                     shipment_context=shipment_context,
                 )
 
                 now = timezone.now()
-                if auto_charges:
-                    # Replace existing draft charges
-                    spe_db.charge_lines.all().delete()
+                # Replace only this batch's prior AI-imported lines.
+                batch.charge_lines.all().delete()
 
+                if auto_charges:
                     for charge in auto_charges:
                         amount_val = _to_decimal(charge.get("amount"))
                         if amount_val is None or amount_val <= 0:
@@ -1118,6 +1457,7 @@ class SpotReplyAnalysisAPIView(APIView):
 
                         SPEChargeLineDB.objects.create(
                             envelope=spe_db,
+                            source_batch=batch,
                             code=charge["code"],
                             description=charge["description"],
                             amount=amount_val,
@@ -1143,12 +1483,17 @@ class SpotReplyAnalysisAPIView(APIView):
                             entered_at=now,
                         )
 
-                    # Update conditional flag in SPE conditions
-                    if any(c.get("conditional") for c in auto_charges):
-                        conditions = spe_db.conditions_json or {}
-                        conditions["conditional_charges_present"] = True
-                        spe_db.conditions_json = conditions
-                        spe_db.save(update_fields=["conditions_json"])
+                # Update conditional flag in SPE conditions
+                if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():
+                    conditions = spe_db.conditions_json or {}
+                    conditions["conditional_charges_present"] = True
+                    spe_db.conditions_json = conditions
+                    spe_db.save(update_fields=["conditions_json"])
+
+                result_payload = result.model_dump()
+                result_payload["source_batch_id"] = str(batch.id)
+                result_payload["source_batch_label"] = batch.label
+                return Response(result_payload)
         
         return Response(result.model_dump())
 
@@ -1175,7 +1520,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         spe_db = _get_spe_or_404(
             request.user, 
             envelope_id,
-            SpotPricingEnvelopeDB.objects.prefetch_related('charge_lines', 'acknowledgement', 'manager_approval')
+            _spe_queryset(),
         )
         
         # --- 1. Re-run Computation (Same as ComputeView) ---
@@ -1219,6 +1564,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             shipment_type=shipment_type,
             incoterm=quote_data.get('incoterm', 'DAP'),
             payment_term=quote_data.get('payment_term', 'PREPAID'),
+            commodity_code=ctx.get('commodity') or 'GCR',
             is_dangerous_goods=ctx.get('commodity') == 'DG',
             pieces=[Piece(
                 pieces=ctx.get('pieces', 1),
@@ -1226,6 +1572,13 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 gross_weight_kg=ctx.get('total_weight_kg', 0) / max(ctx.get('pieces', 1), 1),
             )],
             service_scope=quote_data.get('service_scope', 'D2D'),
+            origin_location=origin_ref,
+            destination_location=dest_ref,
+        )
+
+        resolved_output_currency = _resolve_output_currency_for_shipment(
+            shipment_type=shipment.shipment_type,
+            payment_term=shipment.payment_term,
             origin_location=origin_ref,
             destination_location=dest_ref,
         )
@@ -1239,16 +1592,35 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             cont_id = spe_db.quote.contact_id
 
         if not cust_id:
-             req_cust = request.data.get('customer_id')
+             req_cust = (
+                 request.data.get('customer_id')
+                 or quote_data.get('customer_id')
+             )
              if req_cust:
-                 cust_id = UUID(req_cust)
-             else:
-                 # Last resort: Try "Cash Customer" or similar
-                 cust = Company.objects.first()
-                 if cust: cust_id = cust.id
+                 try:
+                     cust_id = UUID(str(req_cust))
+                 except (TypeError, ValueError):
+                     return Response(
+                         {'error': f'Invalid customer_id: {req_cust}'},
+                         status=status.HTTP_400_BAD_REQUEST
+                     )
+
+        # Backward compatibility for older envelopes without explicit customer_id:
+        # resolve by customer_name from shipment context if available.
+        if not cust_id:
+            customer_name = str(ctx.get('customer_name') or '').strip()
+            if customer_name:
+                cust = Company.objects.filter(name__iexact=customer_name).first()
+                if not cust:
+                    cust = Company.objects.filter(name__icontains=customer_name).first()
+                if cust:
+                    cust_id = cust.id
         
         if not cust_id:
-            return Response({'error': 'Customer required to create quote'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Customer is required to create quote. Provide customer_id or link SPE to an existing quote.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Create QuoteInput
         # Note: If QuoteInput enforces contact_id is not None, we might need to fake it if cont_id is None.
@@ -1262,7 +1634,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             contact_id=qi_contact_id, 
             shipment=shipment,
             quote_date=date.today(),
-            output_currency=quote_data.get('output_currency', 'PGK'),
+            output_currency=resolved_output_currency,
         )
         
         adapter = PricingServiceV4Adapter(quote_input=quote_input, spot_envelope_id=UUID(str(spe_db.id)))
@@ -1327,6 +1699,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 output_currency=quote_input.output_currency,
                 is_dangerous_goods=shipment.is_dangerous_goods,
                 created_by=request.user,
+                organization=getattr(request.user, 'organization', None),
                 status=Quote.Status.DRAFT,
                 request_details_json=quote_input.model_dump(mode='json'),
             )
@@ -1373,7 +1746,13 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 cost_source=line_data.cost_source,
                 cost_source_description=line_data.cost_source_description,
                 is_rate_missing=line_data.is_rate_missing,
-                is_informational=getattr(line_data, 'is_informational', False)
+                is_informational=getattr(line_data, 'is_informational', False),
+                leg=getattr(line_data, 'leg', None),
+                bucket=getattr(line_data, 'bucket', None),
+                gst_category=getattr(line_data, 'gst_category', None),
+                gst_rate=getattr(line_data, 'gst_rate', 0),
+                gst_amount=getattr(line_data, 'gst_amount', 0),
+                conditional=getattr(line_data, 'conditional', False),
             )
 
         # --- 5. Save Totals ---
@@ -1394,3 +1773,4 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             'quote_id': str(quote.id),
             'quote_number': quote.quote_number
         })
+

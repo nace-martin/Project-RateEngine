@@ -1,11 +1,13 @@
 import Link from 'next/link';
 
+import PageBackButton from '@/components/navigation/PageBackButton';
 import { RateCardUploader } from '@/components/pricing/RateCardUploader';
 
 export default function RateCardBulkUploadPage() {
   return (
     <div className="container mx-auto max-w-6xl space-y-6 py-8">
       <div className="space-y-2">
+        <PageBackButton fallbackHref="/pricing/rate-cards" />
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
           Pricing Command Center
         </div>

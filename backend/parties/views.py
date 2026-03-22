@@ -3,14 +3,19 @@ V3 API views for the parties app.
 """
 
 from django.shortcuts import get_object_or_404
+from django.db.models import Prefetch, Q
 from rest_framework import generics, permissions, viewsets
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import BasePermission
+from rest_framework.views import APIView
+from rest_framework.response import Response
 
-from .models import Company, Contact
+from .models import Address, Company, Contact, Organization, OrganizationBranding
 from .serializers import (
-    CustomerV3Serializer,
     CompanySearchV3Serializer,
     ContactV3Serializer,
+    CustomerV3Serializer,
+    OrganizationBrandingSettingsSerializer,
 )
 from accounts.models import CustomUser
 
@@ -37,6 +42,29 @@ class CustomerAccessPermission(BasePermission):
         return request.user.role == CustomUser.ROLE_ADMIN
 
 
+class SystemSettingsPermission(BasePermission):
+    message = "Admin access required."
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == CustomUser.ROLE_ADMIN)
+
+
+def resolve_active_organization(user=None) -> Organization:
+    user_organization = getattr(user, "organization", None)
+    if user_organization and user_organization.is_active:
+        return user_organization
+    if user_organization:
+        return user_organization
+
+    organization = Organization.objects.filter(is_active=True).order_by("name").first()
+    if organization:
+        return organization
+    organization = Organization.objects.order_by("name").first()
+    if organization:
+        return organization
+    raise Organization.DoesNotExist("No organization configured.")
+
+
 class CustomerV3ViewSet(viewsets.ModelViewSet):
     """
     V3 ViewSet for managing customer companies.
@@ -51,10 +79,24 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "put", "patch"]
 
     def get_queryset(self):
+        customer_filter = Q(is_customer=True) | Q(company_type="CUSTOMER")
         return (
-            Company.objects.filter(is_customer=True)
+            Company.objects.filter(customer_filter, is_active=True)
             .order_by("name")
-            .prefetch_related("contacts")
+            .prefetch_related(
+                Prefetch(
+                    "contacts",
+                    queryset=Contact.objects.filter(is_active=True).order_by(
+                        "-is_primary", "last_name", "first_name"
+                    ),
+                ),
+                Prefetch(
+                    "addresses",
+                    queryset=Address.objects.select_related("city__country", "country").order_by(
+                        "-is_primary", "id"
+                    ),
+                ),
+            )
         )
 
     def perform_create(self, serializer):
@@ -76,7 +118,11 @@ class CompanyV3SearchView(generics.ListAPIView):
         query = self.request.query_params.get("q", "").strip()
         if len(query) < 2:
             return Company.objects.none()
-        return Company.objects.filter(name__icontains=query, is_customer=True).order_by("name")[:20]
+        return (
+            Company.objects.filter(name__icontains=query, is_active=True)
+            .filter(Q(is_customer=True) | Q(company_type="CUSTOMER"))
+            .order_by("name")[:20]
+        )
 
 
 class CompanyContactListV3View(generics.ListAPIView):
@@ -90,4 +136,39 @@ class CompanyContactListV3View(generics.ListAPIView):
     def get_queryset(self):
         company_id = self.kwargs.get("company_id")
         company = get_object_or_404(Company, pk=company_id)
-        return company.contacts.all().order_by("last_name", "first_name")
+        return company.contacts.filter(is_active=True).order_by("last_name", "first_name")
+
+
+class OrganizationBrandingSettingsView(APIView):
+    permission_classes = [permissions.IsAuthenticated, SystemSettingsPermission]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_object(self) -> OrganizationBranding:
+        organization = resolve_active_organization(self.request.user)
+        branding, _ = OrganizationBranding.objects.get_or_create(
+            organization=organization,
+            defaults={
+                "display_name": organization.name,
+                "is_active": True,
+            },
+        )
+        return branding
+
+    def get(self, request):
+        serializer = OrganizationBrandingSettingsSerializer(
+            self.get_object(),
+            context={"request": request},
+        )
+        return Response(serializer.data)
+
+    def patch(self, request):
+        branding = self.get_object()
+        serializer = OrganizationBrandingSettingsSerializer(
+            branding,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

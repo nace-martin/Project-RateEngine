@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 export default function Template({ children }: { children: React.ReactNode }) {
     // We can add a small delay or state if needed, but simple CSS animation on mount works best with template.tsx
     // The key is that template.tsx remounts on navigation.

@@ -12,6 +12,7 @@ interface QuoteVerificationPanelProps {
     isLoading?: boolean;
     shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
     serviceScope?: string;
+    missingComponents?: string[];
 }
 
 // Helper to escape regex special characters
@@ -114,7 +115,8 @@ export function QuoteVerificationPanel({
     onSubmit,
     isLoading,
     shipmentType,
-    serviceScope
+    serviceScope,
+    missingComponents,
 }: QuoteVerificationPanelProps) {
     return (
         <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)] min-h-[600px]">
@@ -138,7 +140,7 @@ export function QuoteVerificationPanel({
                     <div className="mb-6 space-y-1">
                         <h2 className="text-xl font-bold tracking-tight">Verify Spot Quote</h2>
                         <p className="text-sm text-muted-foreground">
-                            Review extracted charges against the source text. Confirm all costs before generating quote.
+                            Review the extracted agent charges against the source text before generating the quote.
                         </p>
                     </div>
 
@@ -149,6 +151,7 @@ export function QuoteVerificationPanel({
                         isLoading={isLoading}
                         shipmentType={shipmentType}
                         serviceScope={serviceScope}
+                        missingComponents={missingComponents}
                     />
                 </div>
             </div>

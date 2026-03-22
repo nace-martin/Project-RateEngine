@@ -64,8 +64,7 @@ class EnvProvider:
 
 def compute_tt_buy_sell(
     mid_rate: Decimal,
-    spread_bps: int = 100,
-    caf_pct: Decimal = Decimal("0.0")
+    spread_bps: int = 100
 ) -> tuple[Decimal, Decimal]:
     """
     Calculate TT Buy and TT Sell rates from a mid rate.
@@ -73,7 +72,6 @@ def compute_tt_buy_sell(
     Args:
         mid_rate: The mid-market rate
         spread_bps: Spread in basis points (e.g., 100 = 1%)
-        caf_pct: Currency Adjustment Factor percentage
     
     Returns:
         Tuple of (tt_buy, tt_sell)
@@ -81,11 +79,8 @@ def compute_tt_buy_sell(
     spread_pct = Decimal(spread_bps) / Decimal("10000")
     half_spread = spread_pct / 2
     
-    # Apply CAF if specified
-    effective_mid = mid_rate * (1 + caf_pct)
-    
-    tt_buy = effective_mid * (1 - half_spread)
-    tt_sell = effective_mid * (1 + half_spread)
+    tt_buy = mid_rate * (1 - half_spread)
+    tt_sell = mid_rate * (1 + half_spread)
     
     # Round to 4 decimal places
     tt_buy = tt_buy.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
@@ -141,15 +136,22 @@ def upsert_rate(
     # Update the rates JSON
     rates = snapshot.rates or {}
     
-    # Key by full currency pair (BASE/QUOTE format)
-    pair_key = f"{base_ccy.upper()}/{quote_ccy.upper()}"
-    if pair_key not in rates:
-        rates[pair_key] = {}
+    # Determine the remote currency code for the dictionary key (e.g. 'USD')
+    if base_ccy.upper() == 'PGK':
+        curr_key = quote_ccy.upper()
+    elif quote_ccy.upper() == 'PGK':
+        curr_key = base_ccy.upper()
+    else:
+        # Fallback for cross-rates
+        curr_key = f"{base_ccy.upper()}/{quote_ccy.upper()}"
+        
+    if curr_key not in rates:
+        rates[curr_key] = {}
     
     if rate_type == 'BUY':
-        rates[pair_key]['tt_buy'] = str(rate)
+        rates[curr_key]['tt_buy'] = str(rate)
     elif rate_type == 'SELL':
-        rates[pair_key]['tt_sell'] = str(rate)
+        rates[curr_key]['tt_sell'] = str(rate)
     
     snapshot.rates = rates
     snapshot.as_of_timestamp = as_of

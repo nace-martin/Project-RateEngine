@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from parties.models import Company, Contact
+from parties.models import Company, Contact, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.spot_models import SpotPricingEnvelopeDB
 from core.models import Location
@@ -30,6 +30,20 @@ class QuoteRetrieveV3APITest(APITestCase):
 
     def _create_quote_with_versions(self):
         customer = Company.objects.create(name="Test Customer Co.")
+        organization, _ = Organization.objects.get_or_create(
+            slug="efm-express-air-cargo",
+            defaults={"name": "EFM Express Air Cargo"},
+        )
+        OrganizationBranding.objects.update_or_create(
+            organization=organization,
+            defaults={
+                "display_name": "EFM Express Air Cargo",
+                "support_email": "quotes@efmexpress.com",
+                "support_phone": "+675 325 8500",
+                "primary_color": "#0F2A56",
+                "accent_color": "#D71920",
+            },
+        )
         contact = Contact.objects.create(
             company=customer,
             first_name="Jane",
@@ -48,6 +62,7 @@ class QuoteRetrieveV3APITest(APITestCase):
 
         quote = Quote.objects.create(
             customer=customer,
+            organization=organization,
             contact=contact,
             mode="AIR",
             shipment_type=Quote.ShipmentType.IMPORT,
@@ -114,6 +129,8 @@ class QuoteRetrieveV3APITest(APITestCase):
         self.assertEqual(data["id"], str(self.quote.id))
         self.assertEqual(data["latest_version"]["version_number"], 2)
         self.assertEqual(len(data["latest_version"]["lines"]), 1)
+        self.assertEqual(data["branding"]["display_name"], "EFM Express Air Cargo")
+        self.assertEqual(data["branding"]["support_email"], "quotes@efmexpress.com")
 
         totals = data["latest_version"]["totals"]
         self.assertEqual(totals["total_sell_fcy"], "55.00")
@@ -178,6 +195,53 @@ class QuoteRetrieveV3APITest(APITestCase):
             list_data["spot_negotiation"]["id"],
             str(second_envelope.id),
         )
+
+    def test_rate_provider_ignores_internal_source_labels(self):
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=None,
+            sell_pgk=Decimal("10.00"),
+            sell_pgk_incl_gst=Decimal("10.00"),
+            sell_fcy=Decimal("3.00"),
+            sell_fcy_incl_gst=Decimal("3.00"),
+            sell_fcy_currency="USD",
+            cost_source="10.0000% of COGS",
+            is_rate_missing=False,
+        )
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=None,
+            sell_pgk=Decimal("10.00"),
+            sell_pgk_incl_gst=Decimal("10.00"),
+            sell_fcy=Decimal("3.00"),
+            sell_fcy_incl_gst=Decimal("3.00"),
+            sell_fcy_currency="USD",
+            cost_source="Default",
+            is_rate_missing=False,
+        )
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["rate_provider"], "Internal")
+
+    def test_rate_provider_returns_real_provider_name(self):
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=None,
+            sell_pgk=Decimal("10.00"),
+            sell_pgk_incl_gst=Decimal("10.00"),
+            sell_fcy=Decimal("3.00"),
+            sell_fcy_incl_gst=Decimal("3.00"),
+            sell_fcy_currency="USD",
+            cost_source="SPOT-MATRIX-AGENT",
+            is_rate_missing=False,
+        )
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["rate_provider"], "SPOT-MATRIX-AGENT")
 
 
 class QuoteListV3APITest(APITestCase):

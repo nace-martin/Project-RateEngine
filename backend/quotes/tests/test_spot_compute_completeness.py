@@ -96,6 +96,38 @@ def _patch_calculate_charges(monkeypatch, bucket: str):
     monkeypatch.setattr(PricingServiceV4Adapter, "calculate_charges", fake_calculate)
 
 
+def _quote_charges_for_buckets(buckets: list[str]) -> QuoteCharges:
+    lines: list[CalculatedChargeLine] = []
+    for idx, bucket in enumerate(buckets, start=1):
+        lines.append(
+            CalculatedChargeLine(
+                service_component_id=uuid.uuid4(),
+                service_component_code=f"TEST_COMPONENT_{idx}",
+                service_component_desc=f"Test Component {idx}",
+                leg="MAIN",
+                cost_pgk=Decimal("0.0"),
+                sell_pgk=Decimal("10.0"),
+                sell_pgk_incl_gst=Decimal("10.0"),
+                sell_fcy=Decimal("10.0"),
+                sell_fcy_incl_gst=Decimal("10.0"),
+                cost_source="SPOT",
+                bucket=bucket,
+            )
+        )
+
+    totals = CalculatedTotals(
+        total_cost_pgk=Decimal("0.0"),
+        total_sell_pgk=Decimal("30.0"),
+        total_sell_pgk_incl_gst=Decimal("30.0"),
+        total_sell_fcy=Decimal("30.0"),
+        total_sell_fcy_incl_gst=Decimal("30.0"),
+        total_sell_fcy_currency="PGK",
+        has_missing_rates=False,
+        notes=None,
+    )
+    return QuoteCharges(lines=lines, totals=totals)
+
+
 def _setup_user_and_locations():
     currency = Currency.objects.create(code="PGK", name="Papua New Guinea Kina")
     pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=currency)
@@ -173,3 +205,87 @@ def test_spot_create_quote_blocks_on_missing_components(monkeypatch):
     assert data["has_missing_rates"] is True
     assert "DESTINATION_LOCAL" in data["missing_components"]
     assert Quote.objects.count() == initial_count
+
+
+def test_spot_compute_uses_import_prepaid_fcy_output_currency(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_calculate(self):
+        self.pricing_mode = PricingMode.SPOT
+        captured["output_currency"] = self.quote_input.output_currency
+        return _quote_charges_with_bucket("airfreight")
+
+    monkeypatch.setattr(PricingServiceV4Adapter, "calculate_charges", fake_calculate)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/compute/",
+        {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "output_currency": "PGK"}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert captured.get("output_currency") == "AUD"
+
+
+def test_spot_create_quote_uses_export_prepaid_pgk_output_currency(monkeypatch):
+    pgk = Currency.objects.create(code="PGK", name="Papua New Guinea Kina")
+    usd = Currency.objects.create(code="USD", name="US Dollar")
+    pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
+    hk = Country.objects.create(code="HK", name="Hong Kong", currency=usd)
+
+    origin = _create_location("POM", pg)
+    destination = _create_location("HKG", hk)
+    user = get_user_model().objects.create_user(username="spotcurrency", password="testpass")
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="PG",
+        dest_country="HK",
+        service_scope="D2D",
+    )
+
+    captured: dict[str, str] = {}
+
+    def fake_calculate(self):
+        self.pricing_mode = PricingMode.SPOT
+        captured["output_currency"] = self.quote_input.output_currency
+        return _quote_charges_for_buckets(["origin_charges", "airfreight", "destination_charges"])
+
+    monkeypatch.setattr(PricingServiceV4Adapter, "calculate_charges", fake_calculate)
+
+    customer = Company.objects.create(
+        name="Spot Currency Customer",
+        is_customer=True,
+        company_type="CUSTOMER",
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "D2D", "payment_term": "PREPAID", "output_currency": "PGK", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+
+    quote = Quote.objects.get(id=payload["quote_id"])
+    assert captured.get("output_currency") == "PGK"
+    assert quote.output_currency == "PGK"

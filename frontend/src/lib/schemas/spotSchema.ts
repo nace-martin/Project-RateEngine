@@ -4,8 +4,8 @@ export const chargeLineSchema = z.object({
     id: z.string().optional(),
     code: z.string().optional(),
     description: z.string().min(1, "Description is required"),
-    amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) >= 0, {
-        message: "Amount must be a positive number",
+    amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
+        message: "Amount must be greater than 0",
     }),
     currency: z.enum(["SGD", "USD", "AUD", "PGK", "NZD", "HKD"]),
     unit: z.enum([
@@ -17,7 +17,9 @@ export const chargeLineSchema = z.object({
     conditional: z.boolean().default(false),
     source_reference: z.string().min(1, "Source reference is required"),
     min_charge: z.string().optional().nullable(), // Form handles as string, converted later
+    percentage_basis: z.string().optional().nullable(),
     note: z.string().optional(),
+    exclude_from_totals: z.boolean().optional(),
 });
 
 export const spotFormSchema = z.object({

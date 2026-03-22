@@ -9,12 +9,15 @@ import {
   Contact,
   AirportSearchResult,
   LocationSearchResult,
+  CountryOption,
+  CityOption,
   V3QuoteComputeRequest,
   V3QuoteComputeResponse,
   Customer,
   QuoteVersionCreatePayload,
   StationSummary,
   QuoteComputeResult,
+  OrganizationBrandingSettings,
   PaginatedResponse,
 } from './types';
 
@@ -118,9 +121,15 @@ export async function login(
     username:
       ((rawUser && typeof rawUser.username === 'string') ? rawUser.username : undefined) ??
       (typeof result.username === 'string' ? result.username : data.username),
+    email:
+      ((rawUser && typeof rawUser.email === 'string') ? rawUser.email : undefined) ?? null,
     role:
       ((rawUser && typeof rawUser.role === 'string') ? rawUser.role : undefined) ??
       (typeof result.role === 'string' ? result.role : 'sales'),
+    organization:
+      rawUser && rawUser.organization && typeof rawUser.organization === 'object'
+        ? (rawUser.organization as User['organization'])
+        : null,
   };
 
   return {
@@ -130,15 +139,72 @@ export async function login(
 }
 
 export async function getMe(): Promise<User> {
-  const url = API_BASE_URL + '/api/accounts/me/';
+  const url = API_BASE_URL + '/api/auth/me/';
   const response = await fetch(url, {
     headers: {
-      Authorization: `Token ${getToken()}`,
+      Authorization: `Token ${resolveAuthToken()}`,
     },
+    cache: 'no-store',
   });
 
   if (!response.ok) {
     throw new Error('Failed to fetch user data.');
+  }
+
+  return response.json();
+}
+
+export async function getOrganizationBrandingSettings(): Promise<OrganizationBrandingSettings> {
+  const url = API_BASE_URL + '/api/v3/branding/organization/';
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load branding settings: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function updateOrganizationBrandingSettings(
+  data: Partial<OrganizationBrandingSettings> & {
+    logo_primary_file?: File | null;
+    logo_small_file?: File | null;
+  },
+): Promise<OrganizationBrandingSettings> {
+  const url = API_BASE_URL + '/api/v3/branding/organization/';
+  const formData = new FormData();
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === undefined || value === null || key === 'logo_primary_file' || key === 'logo_small_file') {
+      return;
+    }
+    formData.append(key, typeof value === 'boolean' ? String(value) : String(value));
+  });
+
+  if (data.logo_primary_file) {
+    formData.append('logo_primary', data.logo_primary_file);
+  }
+  if (data.logo_small_file) {
+    formData.append('logo_small', data.logo_small_file);
+  }
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update branding settings: ${detail}`);
   }
 
   return response.json();
@@ -368,13 +434,13 @@ function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComp
       gst_amount: (
         displayCurrency.toUpperCase() !== 'PGK'
           ? (
-              (parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')) -
-              (parseFloat(totals?.total_sell_fcy || '0'))
-            )
+            (parseFloat(totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || '0')) -
+            (parseFloat(totals?.total_sell_fcy || '0'))
+          )
           : (
-              (parseFloat(totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0')) -
-              (parseFloat(totals?.total_sell_pgk || '0'))
-            )
+            (parseFloat(totals?.total_sell_pgk_incl_gst || totals?.total_sell_pgk || '0')) -
+            (parseFloat(totals?.total_sell_pgk || '0'))
+          )
       ).toFixed(2),
       caf_pgk: '0',
       currency: displayCurrency,
@@ -424,7 +490,7 @@ export async function getQuoteCompute(
 
 export async function getCustomer(tokenOverride: string | null | undefined, customerId: string): Promise<Customer> {
   const token = resolveAuthToken(tokenOverride);
-  const url = API_BASE_URL + `/api/v3/customers/${customerId}/`;
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
   const response = await fetch(url, {
     headers: {
       Authorization: `Token ${token}`,
@@ -445,7 +511,7 @@ export async function updateCustomer(
   payload: Partial<Customer>,
 ): Promise<Customer> {
   const token = resolveAuthToken(tokenOverride);
-  const url = API_BASE_URL + `/api/v3/customers/${customerId}/`;
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
   const response = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -458,6 +524,91 @@ export async function updateCustomer(
   if (!response.ok) {
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to update customer: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function listCountries(query?: string): Promise<CountryOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v3/core/countries/');
+  if (query && query.trim()) {
+    url.searchParams.append('q', query.trim());
+  }
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch countries');
+  }
+
+  return response.json();
+}
+
+export async function listCities(params?: {
+  country_code?: string;
+  query?: string;
+}): Promise<CityOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v3/core/cities/');
+  if (params?.country_code) {
+    url.searchParams.append('country', params.country_code);
+  }
+  if (params?.query && params.query.trim()) {
+    url.searchParams.append('q', params.query.trim());
+  }
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch cities');
+  }
+
+  return response.json();
+}
+
+export async function deleteCustomer(
+  tokenOverride: string | null | undefined,
+  customerId: string,
+): Promise<void> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Token ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete customer: ${detail}`);
+  }
+}
+
+export async function setCustomerArchived(
+  tokenOverride: string | null | undefined,
+  customerId: string,
+  archived: boolean,
+): Promise<Customer> {
+  const token = resolveAuthToken(tokenOverride);
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${token}`,
+    },
+    body: JSON.stringify({ is_active: !archived }),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to ${archived ? 'archive' : 'restore'} customer: ${detail}`);
   }
 
   return response.json();
@@ -1163,24 +1314,69 @@ export async function computeSpotQuote(
  * Analyze agent rate reply text and return assertions.
  */
 export async function analyzeSpotReply(
-  text: string,
-  assertions: import('./spot-types').ExtractedAssertion[] = [],
-  speId?: string,
-  useAi: boolean = true
+  options: {
+    text?: string;
+    file?: File | null;
+    assertions?: import('./spot-types').ExtractedAssertion[];
+    speId?: string;
+    sourceBatchId?: string;
+    sourceKind?: 'AIRLINE' | 'AGENT' | 'MANUAL' | 'OTHER';
+    targetBucket?: 'airfreight' | 'origin_charges' | 'destination_charges' | 'mixed';
+    label?: string;
+    sourceReference?: string;
+    useAi?: boolean;
+  }
 ): Promise<ReplyAnalysisResult> {
+  const {
+    text = '',
+    file = null,
+    assertions = [],
+    speId,
+    sourceBatchId,
+    sourceKind,
+    targetBucket,
+    label,
+    sourceReference,
+    useAi = true,
+  } = options;
   const url = API_BASE_URL + '/api/v3/spot/analyze-reply/';
+  const formData = new FormData();
+
+  if (text.trim()) {
+    formData.append('text', text);
+  }
+  if (file) {
+    formData.append('file', file);
+  }
+  if (assertions.length > 0) {
+    formData.append('assertions', JSON.stringify(assertions));
+  }
+  if (speId) {
+    formData.append('spe_id', speId);
+  }
+  if (sourceBatchId) {
+    formData.append('source_batch_id', sourceBatchId);
+  }
+  if (sourceKind) {
+    formData.append('source_kind', sourceKind);
+  }
+  if (targetBucket) {
+    formData.append('target_bucket', targetBucket);
+  }
+  if (label) {
+    formData.append('label', label);
+  }
+  if (sourceReference) {
+    formData.append('source_reference', sourceReference);
+  }
+  formData.append('use_ai', String(useAi));
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
       Authorization: `Token ${resolveAuthToken()}`,
     },
-    body: JSON.stringify({
-      text,
-      assertions,
-      spe_id: speId,
-      use_ai: useAi
-    }),
+    body: formData,
   });
 
   if (!response.ok) {
@@ -1196,6 +1392,7 @@ export async function getSpotStandardCharges(request: {
   destination_code: string;
   direction: 'EXPORT' | 'IMPORT' | 'DOMESTIC';
   service_scope: string;
+  payment_term: 'PREPAID' | 'COLLECT';
   weight_kg: number;
   commodity: SPECommodity;
 }): Promise<SPEChargeLine[]> {
@@ -1298,6 +1495,7 @@ export interface DashboardMetricsData {
   timeframe: DashboardTimeframe;
   start_date: string;
   end_date: string;
+  activity_label: string;
 
   // Pipeline metrics
   pipeline_count: number;
@@ -1499,6 +1697,19 @@ export interface CustomerDiscount {
   created_by?: string | null;
 }
 
+export interface CustomerDiscountBulkLine {
+  id?: string;
+  product_code: string;
+  discount_type: DiscountType;
+  discount_value: string;
+  currency: string;
+  min_charge?: string | null;
+  max_charge?: string | null;
+  valid_from?: string | null;
+  valid_until?: string | null;
+  notes?: string | null;
+}
+
 export interface ProductCodeOption {
   id: number | string;
   code: string;
@@ -1581,6 +1792,26 @@ export async function deleteCustomerDiscount(id: string): Promise<void> {
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to delete discount: ${detail}`);
   }
+}
+
+export async function bulkUpsertCustomerDiscounts(payload: {
+  customer: string;
+  lines: CustomerDiscountBulkLine[];
+}): Promise<{ customer: string; saved_count: number; discounts: CustomerDiscount[] }> {
+  const url = API_BASE_URL + '/api/v4/discounts/bulk-upsert/';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to save negotiated pricing: ${detail}`);
+  }
+  return response.json();
 }
 
 export async function getProductCodes(params?: {
@@ -1680,10 +1911,42 @@ export interface LogicalRateCard {
   description: string;
   service_scope: string | null;
   domain: string;
-  lines: V4SellRate[];
+  pricing_model: string;
+  source_tables: string[];
+  notes: string[];
+  lines: LogicalRateCardLine[];
   line_count: number;
   currencies: string[];
-  corridors: string[];
+  coverage: string[];
+}
+
+export interface LogicalRateCardLine {
+  id: string;
+  source_table: string;
+  source_label: string;
+  pricing_role: string;
+  product_code: number;
+  product_code_code: string;
+  product_code_description: string;
+  currency: string | null;
+  coverage_label: string | null;
+  origin_code: string | null;
+  destination_code: string | null;
+  location_code: string | null;
+  direction: string | null;
+  payment_term: string | null;
+  rate_type: string | null;
+  rate_per_kg: string | null;
+  rate_per_shipment: string | null;
+  amount: string | null;
+  min_charge: string | null;
+  max_charge: string | null;
+  percent_rate: string | null;
+  weight_breaks: { min_kg: number; rate: string }[] | null;
+  is_additive: boolean;
+  valid_from: string;
+  valid_until: string;
+  counterparty: string | null;
 }
 
 export interface V4RateCardUploadSuccessResponse {
@@ -1763,4 +2026,26 @@ export async function getLogicalRateCards(): Promise<LogicalRateCard[]> {
   return response.json();
 }
 
+export async function deleteQuoteV3(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v3/quotes/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete quote: ${detail}`);
+  }
+}
 
+export async function deleteSpotEnvelopeDraft(id: string): Promise<void> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to delete SPE draft: ${detail}`);
+  }
+}

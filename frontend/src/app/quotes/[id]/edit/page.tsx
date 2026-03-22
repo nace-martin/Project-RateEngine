@@ -4,11 +4,14 @@ import { useEffect, useState, use } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
 import { getQuoteV3, computeQuoteV3, getContactsForCompany } from "@/lib/api";
-import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES } from "@/lib/schemas/quoteSchema";
+import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES, V3_PACKAGE_TYPES } from "@/lib/schemas/quoteSchema";
 import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 import { Loader2 } from "lucide-react";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useReturnTo } from "@/hooks/useReturnTo";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -45,6 +48,7 @@ const buildQuoteComputePayload = (
             width_cm: dimension.width_cm,
             height_cm: dimension.height_cm,
             gross_weight_kg: dimension.gross_weight_kg,
+            package_type: dimension.package_type,
         })),
         overrides: data.overrides?.map((override) => ({
             service_component_id: override.service_component_id,
@@ -87,6 +91,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
     const [isLoading, setIsLoading] = useState(true);
     const [initialData, setInitialData] = useState<Partial<QuoteFormSchemaV3> | null>(null);
+    const [isFormDirty, setIsFormDirty] = useState(false);
 
     // Hydrated State for Form UI
     const [initialCustomer, setInitialCustomer] = useState<CompanySearchResult | undefined>(undefined);
@@ -100,7 +105,8 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
     // Missing Rates State
     const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
     const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
-    const [pendingFormData, setPendingFormData] = useState<QuoteFormSchemaV3 | null>(null);
+    const confirmLeave = useUnsavedChangesGuard(isFormDirty);
+    const returnTo = useReturnTo() || `/quotes/${id}`;
 
     useEffect(() => {
         const loadQuote = async () => {
@@ -114,11 +120,19 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     setApiError(message);
                     return;
                 }
-                const payload = quote.latest_version?.payload_json;
-                if (!payload) throw new Error("No payload found checks quote");
+                const payload =
+                    (quote.latest_version?.payload_json as Record<string, unknown> | undefined)
+                    ?? (quote.request_details_json as Record<string, unknown> | undefined);
+                if (!payload) throw new Error("No payload found on quote");
+
+                const shipmentPayload = (
+                    payload.shipment && typeof payload.shipment === "object"
+                        ? (payload.shipment as Record<string, unknown>)
+                        : undefined
+                );
 
                 // 1. Prepare Initial Form Data
-                let dimensions = [{
+                let dimensions: QuoteFormSchemaV3["dimensions"] = [{
                     pieces: 1,
                     length_cm: "",
                     width_cm: "",
@@ -127,14 +141,22 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     package_type: "Box",
                 }];
 
-                if (payload.dimensions && payload.dimensions.length > 0) {
-                    dimensions = payload.dimensions.map((d: V3DimensionInput) => ({
+                const rawDimensions = Array.isArray(payload.dimensions)
+                    ? (payload.dimensions as V3DimensionInput[])
+                    : Array.isArray(shipmentPayload?.pieces)
+                        ? (shipmentPayload.pieces as V3DimensionInput[])
+                        : [];
+
+                if (rawDimensions.length > 0) {
+                    dimensions = rawDimensions.map((d: V3DimensionInput) => ({
                         pieces: d.pieces,
                         length_cm: String(d.length_cm),
                         width_cm: String(d.width_cm),
                         height_cm: String(d.height_cm),
                         gross_weight_kg: String(d.gross_weight_kg),
-                        package_type: "Box",
+                        package_type: Object.values(V3_PACKAGE_TYPES).includes(d.package_type as typeof V3_PACKAGE_TYPES[keyof typeof V3_PACKAGE_TYPES])
+                            ? (d.package_type as typeof V3_PACKAGE_TYPES[keyof typeof V3_PACKAGE_TYPES])
+                            : V3_PACKAGE_TYPES.BOX,
                     }));
                 }
 
@@ -153,21 +175,44 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 const originAirportCode = extractAirportCode(quote.origin_location as string);
                 const destinationAirportCode = extractAirportCode(quote.destination_location as string);
 
+                const customerId = String(payload.customer_id || "");
+                const contactId = String(
+                    payload.contact_id
+                    || (quote.contact as QuoteContactRef)?.id
+                    || ""
+                );
+                const originLocationId = String(
+                    payload.origin_location_id
+                    || ((shipmentPayload?.origin_location as Record<string, unknown> | undefined)?.id ?? "")
+                );
+                const destinationLocationId = String(
+                    payload.destination_location_id
+                    || ((shipmentPayload?.destination_location as Record<string, unknown> | undefined)?.id ?? "")
+                );
+                const mode = String(payload.mode || shipmentPayload?.mode || "AIR");
+                const incoterm = String(payload.incoterm || shipmentPayload?.incoterm || "EXW");
+                const paymentTerm = String(payload.payment_term || shipmentPayload?.payment_term || "PREPAID");
+                const serviceScope = String(payload.service_scope || shipmentPayload?.service_scope || "A2A");
+                const isDangerousGoods = Boolean(
+                    payload.is_dangerous_goods
+                    ?? shipmentPayload?.is_dangerous_goods
+                );
+
                 const formData: Partial<QuoteFormSchemaV3> = {
                     quote_id: quote.id, // Important for tracking updates
-                    customer_id: payload.customer_id,
-                    contact_id: payload.contact_id || (quote.contact as QuoteContactRef)?.id || "",
-                    mode: (payload.mode as QuoteFormSchemaV3['mode']) || "AIR",
-                    incoterm: (payload.incoterm as QuoteFormSchemaV3['incoterm']) || "EXW",
-                    payment_term: (payload.payment_term as QuoteFormSchemaV3['payment_term']) || "PREPAID",
-                    service_scope: (payload.service_scope as QuoteFormSchemaV3['service_scope']) || "A2A",
+                    customer_id: customerId,
+                    contact_id: contactId,
+                    mode: (mode as QuoteFormSchemaV3['mode']) || "AIR",
+                    incoterm: (incoterm as QuoteFormSchemaV3['incoterm']) || "EXW",
+                    payment_term: (paymentTerm as QuoteFormSchemaV3['payment_term']) || "PREPAID",
+                    service_scope: (serviceScope as QuoteFormSchemaV3['service_scope']) || "A2A",
                     origin_airport: originAirportCode,
                     destination_airport: destinationAirportCode,
-                    origin_location_id: payload.origin_location_id || "",
-                    destination_location_id: payload.destination_location_id || "",
+                    origin_location_id: originLocationId,
+                    destination_location_id: destinationLocationId,
                     origin_location_type: V3_LOCATION_TYPES.AIRPORT,
                     destination_location_type: V3_LOCATION_TYPES.AIRPORT,
-                    cargo_type: (payload.is_dangerous_goods) ? V3_CARGO_TYPES.DANGEROUS_GOODS : V3_CARGO_TYPES.GENERAL,
+                    cargo_type: isDangerousGoods ? V3_CARGO_TYPES.DANGEROUS_GOODS : V3_CARGO_TYPES.GENERAL,
                     dimensions: dimensions,
                 };
 
@@ -176,17 +221,17 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 // 2. Hydrate UI State (Customer, Contacts, Locations)
 
                 // Customer
-                if (payload.customer_id) {
+                if (customerId) {
                     const custRef = quote.customer as QuoteCustomerRef;
                     if (custRef && typeof custRef === 'object') {
                         setInitialCustomer({
-                            id: custRef.id || payload.customer_id,
+                            id: custRef.id || customerId,
                             name: custRef.company_name || custRef.name || "Customer",
                         } as CompanySearchResult);
                     }
                     // Fetch contacts!
                     try {
-                        const contacts = await getContactsForCompany(payload.customer_id);
+                        const contacts = await getContactsForCompany(customerId);
                         setInitialContacts(contacts);
                     } catch (e) {
                         console.error("Failed to fetch contacts", e);
@@ -194,20 +239,20 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 }
 
                 // Locations
-                if (payload.origin_location_id) {
+                if (originLocationId) {
                     setInitialOrigin({
-                        id: payload.origin_location_id,
-                        display_name: quote.origin_location as string || payload.origin_location_id,
+                        id: originLocationId,
+                        display_name: quote.origin_location as string || originLocationId,
                         code: originAirportCode || "ORG",
                         type: 'AIRPORT',
                         country_code: 'PG'
                     } as LocationSearchResult);
                 }
 
-                if (payload.destination_location_id) {
+                if (destinationLocationId) {
                     setInitialDestination({
-                        id: payload.destination_location_id,
-                        display_name: quote.destination_location as string || payload.destination_location_id,
+                        id: destinationLocationId,
+                        display_name: quote.destination_location as string || destinationLocationId,
                         code: destinationAirportCode || "DST",
                         type: 'AIRPORT',
                         country_code: 'AU'
@@ -258,7 +303,6 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
                 if (missingCarrier || missingAgent) {
                     setMissingRates({ carrier: missingCarrier, agent: missingAgent });
-                    setPendingFormData(data);
                     setShowMissingRatesModal(true);
                     setIsSubmitting(false);
                     return;
@@ -302,6 +346,12 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
     return (
         <div className="container mx-auto max-w-5xl p-4 pb-32">
+            <PageBackButton
+                fallbackHref={`/quotes/${id}`}
+                returnTo={returnTo}
+                isDirty={isFormDirty}
+                confirmLeave={confirmLeave}
+            />
             <Breadcrumb className="mb-6">
                 <BreadcrumbList>
                     <BreadcrumbItem>
@@ -333,6 +383,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     isSubmitting={isSubmitting}
                     serverError={apiError}
                     isEditMode={true}
+                    onDirtyChange={setIsFormDirty}
                 />
             )}
 

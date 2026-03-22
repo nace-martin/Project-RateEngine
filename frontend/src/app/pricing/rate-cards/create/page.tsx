@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createRateCardV3, searchCompanies, searchLocations } from '@/lib/api';
 import { CompanySearchResult, LocationSearchResult } from '@/lib/types';
@@ -15,7 +15,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { ArrowLeft, Check, ChevronsUpDown } from 'lucide-react';
+import { Check, ChevronsUpDown } from 'lucide-react';
 import {
     Command,
     CommandEmpty,
@@ -29,6 +29,9 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import PageBackButton from '@/components/navigation/PageBackButton';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { useReturnTo } from '@/hooks/useReturnTo';
 export default function CreateRateCardPage() {
     const router = useRouter();
     const [suppliers, setSuppliers] = useState<CompanySearchResult[]>([]);
@@ -51,6 +54,12 @@ export default function CreateRateCardPage() {
     const [scope, setScope] = useState('BUY');
     const [priority, setPriority] = useState('100');
     const [validFrom, setValidFrom] = useState('');
+    const isDirty = useMemo(
+        () => Boolean(name || supplierId || originLocationId || destinationLocationId || mode !== 'AIR' || currency !== 'AUD' || scope !== 'BUY' || priority !== '100' || validFrom),
+        [name, supplierId, originLocationId, destinationLocationId, mode, currency, scope, priority, validFrom]
+    );
+    const confirmLeave = useUnsavedChangesGuard(isDirty);
+    const returnTo = useReturnTo();
 
     useEffect(() => {
         async function loadData() {
@@ -95,11 +104,8 @@ export default function CreateRateCardPage() {
 
     return (
         <div className="container mx-auto py-8 space-y-6">
-            <div className="flex items-center gap-4">
-                <Button variant="ghost" onClick={() => router.back()}>
-                    <ArrowLeft className="w-4 h-4 mr-2" />
-                    Back
-                </Button>
+            <div>
+                <PageBackButton fallbackHref="/pricing/rate-cards" returnTo={returnTo} isDirty={isDirty} confirmLeave={confirmLeave} />
                 <h1 className="text-3xl font-bold tracking-tight">Create Rate Card</h1>
             </div>
 

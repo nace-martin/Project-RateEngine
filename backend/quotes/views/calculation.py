@@ -20,9 +20,11 @@ from quotes.state_machine import (
     assert_quote_mutable_for_action,
     is_quote_editable,
 )
+from quotes.currency_rules import determine_quote_currency
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
+from core.commodity import DEFAULT_COMMODITY_CODE
 from parties.models import Company, Contact
 
 # Pricing Dispatcher - Single Entry Point
@@ -118,13 +120,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
         
-        # --- MVP CHECK: Block DG ---
-        if payload.is_dangerous_goods:
-            return Response(
-                {"detail": "Dangerous Goods (DG) shipments are not yet supported."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-            
         origin_location = get_object_or_404(Location, pk=payload.origin_location_id, is_active=True)
         destination_location = get_object_or_404(Location, pk=payload.destination_location_id, is_active=True)
 
@@ -138,6 +133,33 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         customer = get_object_or_404(Company, id=payload.customer_id)
+
+        if payload.commodity_code != DEFAULT_COMMODITY_CODE:
+            from quotes.spot_services import CommodityRateRuleService, SpotTriggerEvaluator
+
+            commodity_coverage = CommodityRateRuleService.evaluate_coverage(
+                origin_airport=origin_location.code,
+                destination_airport=destination_location.code,
+                direction=shipment_type,
+                service_scope=payload.service_scope,
+                commodity_code=payload.commodity_code,
+                payment_term=payload.payment_term,
+            )
+            commodity_trigger = SpotTriggerEvaluator.build_commodity_trigger(commodity_coverage)
+            if commodity_trigger:
+                return Response(
+                    {
+                        "detail": commodity_trigger.text,
+                        "spot_trigger": {
+                            "code": commodity_trigger.code,
+                            "text": commodity_trigger.text,
+                            "missing_product_codes": commodity_trigger.missing_product_codes,
+                            "spot_required_product_codes": commodity_trigger.spot_required_product_codes,
+                            "manual_required_product_codes": commodity_trigger.manual_required_product_codes,
+                        },
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         try:
             # 1. Enforce Business Rules for EXPORT Incoterms
@@ -155,7 +177,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 shipment_type,
                 origin_location,
                 destination_location,
-                customer
             )
             
             # 3. Call the pricing dispatcher (single entry point)
@@ -221,7 +242,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Re-raise so Django's exception handler can do its job (or return generic 500)
             raise
 
-    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location, customer: Company):
+    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location):
         """Helper to convert Pydantic model to PricingService dataclasses."""
 
         origin_ref = self._location_to_ref(origin_location)
@@ -232,6 +253,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             shipment_type=shipment_type,
             incoterm=data.incoterm,
             payment_term=data.payment_term,
+            commodity_code=data.commodity_code,
             is_dangerous_goods=data.is_dangerous_goods,
             pieces=[Piece(**p.model_dump()) for p in data.dimensions],
             service_scope=data.service_scope,
@@ -247,7 +269,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             data.payment_term,
             origin_location,
             destination_location,
-            customer
         )
 
         return QuoteInput(
@@ -274,42 +295,16 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             currency_code=currency_code,
         )
 
-    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location, customer: Company) -> str:
-        """
-        Determine the correct output currency based on customer preference or shipment type.
-        
-        Priority:
-        1. Customer Preferred Currency (if set in Commercial Profile)
-        2. Standard Logic (based on shipment terms)
-        """
-        # 1. Customer Preference Override (ignore PGK since it's the default)
-        if hasattr(customer, 'commercial_profile') and customer.commercial_profile.preferred_quote_currency:
-            preferred_code = customer.commercial_profile.preferred_quote_currency.code
-            if preferred_code and preferred_code != 'PGK':
-                return preferred_code
-
-        # 2. Standard Logic
-        if shipment_type == Quote.ShipmentType.IMPORT:
-            if payment_term == Quote.PaymentTerm.PREPAID:
-                if origin_location.country and origin_location.country.currency:
-                    return origin_location.country.currency.code
-                return 'AUD'  # Fallback FCY for prepaid imports
-            return 'PGK'
-        
-        if shipment_type == Quote.ShipmentType.EXPORT:
-            if payment_term == Quote.PaymentTerm.COLLECT:
-                # Export Collect: Customer (consignee) pays overseas
-                # AUD only if destination is Australia, otherwise USD
-                if destination_location.country:
-                    if destination_location.country.code == 'AU':
-                        return 'AUD'
-                    else:
-                        return 'USD'  # Default for all other international destinations
-                return 'USD'  # Fallback
-            return 'PGK'  # Export PREPAID: Customer pays in PNG
-        
-        # Domestic: Always PGK
-        return 'PGK'
+    def _derive_output_currency(self, shipment_type: str, payment_term: str, origin_location: Location, destination_location: Location) -> str:
+        """Determine output currency using global shipment/payment/country rules only."""
+        origin_country_code = origin_location.country.code if origin_location.country else None
+        destination_country_code = destination_location.country.code if destination_location.country else None
+        return determine_quote_currency(
+            shipment_type=shipment_type,
+            payment_term=payment_term,
+            origin_country_code=origin_country_code,
+            destination_country_code=destination_country_code,
+        )
 
     @transaction.atomic
     def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None, engine_version: str = 'V4'):
@@ -331,6 +326,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 incoterm=validated_data.incoterm,
                 payment_term=validated_data.payment_term,
                 service_scope=validated_data.service_scope,
+                commodity_code=validated_data.commodity_code,
                 output_currency=output_currency or 'PGK',
                 origin_location_id=validated_data.origin_location_id,
                 destination_location_id=validated_data.destination_location_id,
@@ -339,7 +335,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 is_dangerous_goods=validated_data.is_dangerous_goods,
                 status=initial_status,
                 request_details_json=validated_data.model_dump(mode='json'),
-                created_by=request.user
+                created_by=request.user,
+                organization=getattr(request.user, 'organization', None),
             )
             version_number = 1
         else:
@@ -351,6 +348,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.incoterm = validated_data.incoterm
             quote.payment_term = validated_data.payment_term
             quote.service_scope = validated_data.service_scope
+            quote.commodity_code = validated_data.commodity_code
             quote.output_currency = output_currency or 'PGK'
             quote.origin_location_id = validated_data.origin_location_id
             quote.destination_location_id = validated_data.destination_location_id
@@ -359,6 +357,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.is_dangerous_goods = validated_data.is_dangerous_goods
             quote.status = initial_status
             quote.request_details_json = validated_data.model_dump(mode='json')
+            if quote.organization_id is None and getattr(request.user, 'organization_id', None):
+                quote.organization = request.user.organization
             quote.save(update_fields=[
                 'customer',
                 'contact',
@@ -367,6 +367,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'incoterm',
                 'payment_term',
                 'service_scope',
+                'commodity_code',
                 'output_currency',
                 'origin_location',
                 'destination_location',
@@ -375,6 +376,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'is_dangerous_goods',
                 'status',
                 'request_details_json',
+                'organization',
             ])
 
             latest_version = quote.versions.order_by('-version_number').first()

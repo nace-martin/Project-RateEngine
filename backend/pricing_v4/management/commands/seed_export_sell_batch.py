@@ -2,7 +2,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
 from datetime import date
-from pricing_v4.models import ProductCode, ExportSellRate
+from pricing_v4.models import ProductCode
+from pricing_v4.management.commands._sell_seed_utils import seed_export_sell_rate
 
 class Command(BaseCommand):
     help = 'Seeds Export SELL Rates for multiple corridors'
@@ -157,14 +158,25 @@ class Command(BaseCommand):
         if 'is_additive' not in defaults:
             defaults['is_additive'] = False
 
-        obj, created = ExportSellRate.objects.update_or_create(
-            product_code_id=product_id,
+        product_code = ProductCode.objects.get(id=product_id)
+        percent_of_product = ProductCode.objects.get(id=1050) if product_id == 1060 else None
+        result = seed_export_sell_rate(
+            product_code=product_code,
             origin_airport='POM',
             destination_airport=dest,
+            currency=defaults.get('currency', 'PGK'),
             valid_from=date(2025, 1, 1),
-            defaults=defaults
+            valid_until=defaults['valid_until'],
+            rate_per_shipment=defaults.get('rate_per_shipment'),
+            rate_per_kg=defaults.get('rate_per_kg'),
+            min_charge=defaults.get('min_charge'),
+            max_charge=defaults.get('max_charge'),
+            weight_breaks=defaults.get('weight_breaks'),
+            percent_rate=defaults.get('percent_rate'),
+            is_additive=defaults.get('is_additive', False),
+            payment_term='PREPAID',
+            percent_of_product_code=percent_of_product,
         )
-        
-        action = "Created" if created else "Updated"
-        pc_code = ProductCode.objects.get(id=product_id).code
-        self.stdout.write(f"  - {action} {pc_code}")
+
+        action = "Created" if result.created else "Updated"
+        self.stdout.write(f"  - {action} {result.table_name} {product_code.code}")

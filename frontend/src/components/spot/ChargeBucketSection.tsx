@@ -99,6 +99,7 @@ export function ChargeBucketSection({
                                                     index={index}
                                                     currencyName={`charges.${index}.currency`}
                                                     amountName={`charges.${index}.amount`}
+                                                    unit={unitField.value}
                                                     showMinCharge={unitField.value === 'min_or_per_kg'}
                                                     minChargeName={`charges.${index}.min_charge`}
                                                 />
@@ -110,20 +111,35 @@ export function ChargeBucketSection({
                                             control={control}
                                             name={`charges.${index}.unit`}
                                             render={({ field }) => (
-                                                <FormItem>
-                                                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                                        <FormControl>
-                                                            <SelectTrigger className="h-9">
-                                                                <SelectValue />
-                                                            </SelectTrigger>
-                                                        </FormControl>
-                                                        <SelectContent>
-                                                            {CHARGE_UNITS.map(u => (
-                                                                <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
-                                                            ))}
-                                                        </SelectContent>
-                                                    </Select>
-                                                </FormItem>
+                                                <div className="space-y-2">
+                                                    <FormItem>
+                                                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                                            <FormControl>
+                                                                <SelectTrigger className="h-9">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                            </FormControl>
+                                                            <SelectContent>
+                                                                {CHARGE_UNITS.map(u => (
+                                                                    <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </FormItem>
+                                                    {field.value === "percentage" && (
+                                                        <FormField
+                                                            control={control}
+                                                            name={`charges.${index}.percentage_basis`}
+                                                            render={({ field: basisField }) => (
+                                                                <FormItem>
+                                                                    <FormControl>
+                                                                        <Input placeholder="Basis e.g. FREIGHT" {...basisField} value={basisField.value || ""} className="h-8 text-xs" />
+                                                                    </FormControl>
+                                                                </FormItem>
+                                                            )}
+                                                        />
+                                                    )}
+                                                </div>
                                             )}
                                         />
                                     </TableCell>

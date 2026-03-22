@@ -21,6 +21,8 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 from django.core.exceptions import ValidationError
+from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
+from pricing_v4.category_rules import is_local_rate_category
 
 
 # =============================================================================
@@ -315,6 +317,10 @@ class ExportCOGS(models.Model):
             raise ValidationError("Cannot set both carrier and agent. Choose one.")
         if not self.carrier and not self.agent:
             raise ValidationError("Must set either carrier or agent.")
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalCOGSRate, not ExportCOGS."
+            )
     
     def __str__(self):
         counterparty = self.carrier or self.agent
@@ -376,6 +382,12 @@ class ExportSellRate(models.Model):
         ordering = ['product_code', 'origin_airport', 'destination_airport']
         verbose_name = 'Export Sell Rate'
         verbose_name_plural = 'Export Sell Rates'
+
+    def clean(self):
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalSellRate, not ExportSellRate."
+            )
     
     def __str__(self):
         return f"SELL: {self.product_code.code} {self.origin_airport}→{self.destination_airport}"
@@ -470,6 +482,10 @@ class ImportCOGS(models.Model):
             raise ValidationError("Cannot set both carrier and agent. Choose one.")
         if not self.carrier and not self.agent:
             raise ValidationError("Must set either carrier or agent.")
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalCOGSRate, not ImportCOGS."
+            )
     
     def __str__(self):
         counterparty = self.carrier or self.agent
@@ -528,6 +544,12 @@ class ImportSellRate(models.Model):
         ordering = ['product_code', 'origin_airport', 'destination_airport']
         verbose_name = 'Import Sell Rate'
         verbose_name_plural = 'Import Sell Rates'
+
+    def clean(self):
+        if self.product_code and is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is a local charge and must be stored in LocalSellRate, not ImportSellRate."
+            )
     
     def __str__(self):
         return f"SELL: {self.product_code.code} {self.origin_airport}→{self.destination_airport}"
@@ -1038,7 +1060,6 @@ class LocalSellRate(models.Model):
     Replaces:
     - Local portions of ExportSellRate (Origin charges)
     - Local portions of ImportSellRate (Destination charges)
-    - A2DDAPRate (Passthrough pricing)
     
     Design:
     - location: Single IATA code (origin for EXPORT, destination for IMPORT)
@@ -1164,6 +1185,16 @@ class LocalSellRate(models.Model):
     
     def __str__(self):
         return f"SELL: {self.product_code.code} @ {self.location} ({self.direction}, {self.payment_term})"
+
+    def clean(self):
+        if self.product_code and not is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is lane-based and must be stored in ExportSellRate/ImportSellRate."
+            )
+        if self.product_code and self.direction == 'EXPORT' and self.product_code.domain != ProductCode.DOMAIN_EXPORT:
+            raise ValidationError("EXPORT local rates must reference Export ProductCodes (1xxx).")
+        if self.product_code and self.direction == 'IMPORT' and self.product_code.domain != ProductCode.DOMAIN_IMPORT:
+            raise ValidationError("IMPORT local rates must reference Import ProductCodes (2xxx).")
 
     # Compatibility helpers for shared pricing logic
     @property
@@ -1337,6 +1368,14 @@ class LocalCOGSRate(models.Model):
             raise ValidationError("Cannot set both carrier and agent. Choose one.")
         if not self.carrier and not self.agent:
             raise ValidationError("Must set either carrier or agent.")
+        if self.product_code and not is_local_rate_category(self.product_code.category):
+            raise ValidationError(
+                f"{self.product_code.code} is lane-based and must be stored in ExportCOGS/ImportCOGS."
+            )
+        if self.product_code and self.direction == 'EXPORT' and self.product_code.domain != ProductCode.DOMAIN_EXPORT:
+            raise ValidationError("EXPORT local COGS rates must reference Export ProductCodes (1xxx).")
+        if self.product_code and self.direction == 'IMPORT' and self.product_code.domain != ProductCode.DOMAIN_IMPORT:
+            raise ValidationError("IMPORT local COGS rates must reference Import ProductCodes (2xxx).")
     
     def __str__(self):
         counterparty = self.carrier or self.agent
@@ -1362,3 +1401,130 @@ class LocalCOGSRate(models.Model):
         if self.rate_type == 'PERCENT':
             return self.amount
         return None
+
+
+class CommodityChargeRule(models.Model):
+    """
+    Data-driven commodity trigger rules for standard pricing availability.
+
+    These rules do not calculate amounts themselves. They define which
+    ProductCodes become relevant for a shipment when commodity, scope, and
+    optional lane filters match.
+    """
+
+    SHIPMENT_TYPE_EXPORT = ProductCode.DOMAIN_EXPORT
+    SHIPMENT_TYPE_IMPORT = ProductCode.DOMAIN_IMPORT
+    SHIPMENT_TYPE_DOMESTIC = ProductCode.DOMAIN_DOMESTIC
+    SHIPMENT_TYPE_CHOICES = ProductCode.DOMAIN_CHOICES
+
+    SERVICE_SCOPE_A2A = 'A2A'
+    SERVICE_SCOPE_A2D = 'A2D'
+    SERVICE_SCOPE_D2A = 'D2A'
+    SERVICE_SCOPE_D2D = 'D2D'
+    SERVICE_SCOPE_CHOICES = [
+        (SERVICE_SCOPE_A2A, 'Airport to Airport'),
+        (SERVICE_SCOPE_A2D, 'Airport to Door'),
+        (SERVICE_SCOPE_D2A, 'Door to Airport'),
+        (SERVICE_SCOPE_D2D, 'Door to Door'),
+    ]
+
+    LEG_ORIGIN = 'ORIGIN'
+    LEG_MAIN = 'MAIN'
+    LEG_DESTINATION = 'DESTINATION'
+    LEG_CHOICES = [
+        (LEG_ORIGIN, 'Origin'),
+        (LEG_MAIN, 'Main Freight'),
+        (LEG_DESTINATION, 'Destination'),
+    ]
+
+    TRIGGER_MODE_AUTO = 'AUTO'
+    TRIGGER_MODE_OPTIONAL = 'OPTIONAL'
+    TRIGGER_MODE_REQUIRES_SPOT = 'REQUIRES_SPOT'
+    TRIGGER_MODE_REQUIRES_MANUAL = 'REQUIRES_MANUAL'
+    TRIGGER_MODE_CHOICES = [
+        (TRIGGER_MODE_AUTO, 'Auto Include'),
+        (TRIGGER_MODE_OPTIONAL, 'Optional'),
+        (TRIGGER_MODE_REQUIRES_SPOT, 'Requires SPOT'),
+        (TRIGGER_MODE_REQUIRES_MANUAL, 'Requires Manual Entry'),
+    ]
+
+    PAYMENT_TERM_PREPAID = 'PREPAID'
+    PAYMENT_TERM_COLLECT = 'COLLECT'
+    PAYMENT_TERM_CHOICES = [
+        (PAYMENT_TERM_PREPAID, 'Prepaid'),
+        (PAYMENT_TERM_COLLECT, 'Collect'),
+    ]
+
+    shipment_type = models.CharField(max_length=10, choices=SHIPMENT_TYPE_CHOICES, db_index=True)
+    service_scope = models.CharField(max_length=3, choices=SERVICE_SCOPE_CHOICES, db_index=True)
+    commodity_code = models.CharField(
+        max_length=10,
+        choices=COMMODITY_CHOICES,
+        default=DEFAULT_COMMODITY_CODE,
+        db_index=True,
+    )
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        related_name='commodity_charge_rules',
+    )
+    leg = models.CharField(max_length=11, choices=LEG_CHOICES, db_index=True)
+    trigger_mode = models.CharField(max_length=20, choices=TRIGGER_MODE_CHOICES, default=TRIGGER_MODE_AUTO)
+    origin_code = models.CharField(max_length=3, null=True, blank=True, db_index=True)
+    destination_code = models.CharField(max_length=3, null=True, blank=True, db_index=True)
+    payment_term = models.CharField(
+        max_length=10,
+        choices=PAYMENT_TERM_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'commodity_charge_rules'
+        ordering = ['shipment_type', 'service_scope', 'commodity_code', 'product_code__id']
+        verbose_name = 'Commodity Charge Rule'
+        verbose_name_plural = 'Commodity Charge Rules'
+        indexes = [
+            models.Index(
+                fields=['shipment_type', 'service_scope', 'commodity_code', 'is_active'],
+                name='commodity_rule_lookup_idx',
+            ),
+            models.Index(
+                fields=['origin_code', 'destination_code', 'payment_term'],
+                name='commodity_rule_lane_idx',
+            ),
+        ]
+
+    def clean(self):
+        if self.product_code and self.product_code.domain != self.shipment_type:
+            raise ValidationError(
+                {
+                    'product_code': (
+                        f"{self.shipment_type} commodity rules must reference "
+                        f"{self.shipment_type.lower()} ProductCodes."
+                    )
+                }
+            )
+
+        if self.effective_to and self.effective_to < self.effective_from:
+            raise ValidationError({'effective_to': 'effective_to must be on or after effective_from.'})
+
+    def __str__(self):
+        lane = []
+        if self.origin_code:
+            lane.append(self.origin_code)
+        if self.destination_code:
+            lane.append(self.destination_code)
+        lane_display = " -> ".join(lane) if lane else "ALL LANES"
+        return (
+            f"{self.shipment_type} {self.service_scope} {self.commodity_code} "
+            f"{self.product_code.code} ({self.trigger_mode}) [{lane_display}]"
+        )
+

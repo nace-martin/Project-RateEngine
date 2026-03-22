@@ -1,0 +1,191 @@
+code,name,minor_units
+XUA,ADB Unit of Account,2
+AFN,Afghani,2
+DZD,Algerian Dinar,2
+XAD,Arab Accounting Dinar,2
+ARS,Argentine Peso,2
+AMD,Armenian Dram,2
+AWG,Aruban Florin,2
+AUD,Australian Dollar,2
+AZN,Azerbaijan Manat,2
+BSD,Bahamian Dollar,2
+BHD,Bahraini Dinar,3
+THB,Baht,2
+PAB,Balboa,2
+BBD,Barbados Dollar,2
+BYN,Belarusian Ruble,2
+BZD,Belize Dollar,2
+BMD,Bermudian Dollar,2
+BOB,Boliviano,2
+VED,Bolívar Soberano,2
+VES,Bolívar Soberano,2
+XBA,Bond Markets Unit European Composite Unit (EURCO),2
+XBB,Bond Markets Unit European Monetary Unit (E.M.U.-6,2
+XBD,Bond Markets Unit European Unit of Account 17 (E.U,2
+XBC,Bond Markets Unit European Unit of Account 9 (E.U.,2
+BRL,Brazilian Real,2
+BND,Brunei Dollar,2
+BGN,Bulgarian lev,2
+BIF,Burundi Franc,0
+XOF,CFA Franc BCEAO,0
+XAF,CFA Franc BEAC,0
+XPF,CFP Franc,0
+CVE,Cabo Verde Escudo,2
+CAD,Canadian Dollar,2
+XCG,Caribbean Guilder,2
+KYD,Cayman Islands Dollar,2
+CLP,Chilean Peso,0
+XTS,Codes specifically reserved for testing purposes,2
+COP,Colombian Peso,2
+KMF,Comorian Franc,0
+CDF,Congolese Franc,2
+BAM,Convertible Mark,2
+CKD,Cook Islands dollar,2
+NIO,Cordoba Oro,2
+CRC,Costa Rican Colon,2
+CUP,Cuban Peso,2
+CUC,Cuban convertible peso,2
+CZK,Czech Koruna,2
+GMD,Dalasi,2
+DKK,Danish Krone,2
+MKD,Denar,2
+DJF,Djibouti Franc,0
+STN,Dobra,2
+DOP,Dominican Peso,2
+VND,Dong,0
+XCD,East Caribbean Dollar,2
+EGP,Egyptian Pound,2
+SVC,El Salvador Colon,2
+ETB,Ethiopian Birr,2
+EUR,Euro,2
+FKP,Falkland Islands Pound,2
+FOK,Faroese króna,2
+FJD,Fiji Dollar,2
+HUF,Forint,2
+GHS,Ghana Cedi,2
+GIP,Gibraltar Pound,2
+XAU,Gold,2
+HTG,Gourde,2
+PYG,Guarani,0
+GGP,Guernsey pound,2
+GNF,Guinean Franc,0
+GYD,Guyana Dollar,2
+HKD,Hong Kong Dollar,2
+UAH,Hryvnia,2
+ISK,Iceland Krona,0
+INR,Indian Rupee,2
+IRR,Iranian Rial,2
+IQD,Iraqi Dinar,3
+JMD,Jamaican Dollar,2
+JEP,Jersey pound,2
+JOD,Jordanian Dinar,3
+KES,Kenyan Shilling,2
+PGK,Kina,2
+KID,Kiribati dollar,2
+KWD,Kuwaiti Dinar,3
+AOA,Kwanza,2
+MMK,Kyat,2
+LAK,Lao Kip,2
+GEL,Lari,2
+LBP,Lebanese Pound,2
+ALL,Lek,2
+HNL,Lempira,2
+SLE,Leone,2
+LRD,Liberian Dollar,2
+LYD,Libyan Dinar,3
+SZL,Lilangeni,2
+LSL,Loti,2
+MGA,Malagasy Ariary,2
+MWK,Malawi Kwacha,2
+MYR,Malaysian Ringgit,2
+IMP,Manx pound,2
+MUR,Mauritius Rupee,2
+MXN,Mexican Peso,2
+MXV,Mexican Unidad de Inversion (UDI),2
+MDL,Moldovan Leu,2
+MAD,Moroccan Dirham,2
+MZN,Mozambique Metical,2
+BOV,Mvdol,2
+NGN,Naira,2
+ERN,Nakfa,2
+NAD,Namibia Dollar,2
+NPR,Nepalese Rupee,2
+ANG,Netherlands Antillean guilder,2
+ILS,New Israeli Sheqel,2
+TWD,New Taiwan Dollar,2
+NZD,New Zealand Dollar,2
+BTN,Ngultrum,2
+KPW,North Korean Won,2
+NOK,Norwegian Krone,2
+MRU,Ouguiya,2
+PKR,Pakistan Rupee,2
+XPD,Palladium,2
+MOP,Pataca,2
+TOP,Pa’anga,2
+UYU,Peso Uruguayo,2
+PHP,Philippine Peso,2
+XPT,Platinum,2
+GBP,Pound Sterling,2
+BWP,Pula,2
+QAR,Qatari Rial,2
+GTQ,Quetzal,2
+ZAR,Rand,2
+OMR,Rial Omani,3
+KHR,Riel,2
+RON,Romanian Leu,2
+MVR,Rufiyaa,2
+IDR,Rupiah,2
+RUB,Russian Ruble,2
+RWF,Rwanda Franc,0
+XDR,SDR (Special Drawing Right),2
+SHP,Saint Helena Pound,2
+SAR,Saudi Riyal,2
+RSD,Serbian Dinar,2
+SCR,Seychelles Rupee,2
+SLL,Sierra Leonean leone,2
+XAG,Silver,2
+SGD,Singapore Dollar,2
+PEN,Sol,2
+SBD,Solomon Islands Dollar,2
+KGS,Som,2
+SOS,Somali Shilling,2
+TJS,Somoni,2
+SSP,South Sudanese Pound,2
+LKR,Sri Lanka Rupee,2
+XSU,Sucre,2
+SDG,Sudanese Pound,2
+SRD,Surinam Dollar,2
+SEK,Swedish Krona,2
+CHF,Swiss Franc,2
+SYP,Syrian Pound,2
+BDT,Taka,2
+WST,Tala,2
+TZS,Tanzanian Shilling,2
+KZT,Tenge,2
+XXX,The codes assigned for transactions where no curre,2
+TTD,Trinidad and Tobago Dollar,2
+MNT,Tugrik,2
+TND,Tunisian Dinar,3
+TRY,Turkish Lira,2
+TMT,Turkmenistan New Manat,2
+TVD,Tuvaluan dollar,2
+AED,UAE Dirham,2
+USD,US Dollar,2
+USN,US Dollar (Next day),2
+UGX,Uganda Shilling,0
+UYW,Unidad Previsional,4
+CLF,Unidad de Fomento,4
+COU,Unidad de Valor Real,2
+UYI,Uruguay Peso en Unidades Indexadas (UI),0
+UZS,Uzbekistan Sum,2
+VUV,Vatu,0
+CHE,WIR Euro,2
+CHW,WIR Franc,2
+KRW,Won,0
+YER,Yemeni Rial,2
+JPY,Yen,0
+CNY,Yuan Renminbi,2
+ZMW,Zambian Kwacha,2
+ZWG,Zimbabwe Gold,2
+ZWB,Zimbabwean bonds,2
+PLN,Zloty,2

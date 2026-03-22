@@ -1,0 +1,33 @@
+code,name,currency_code
+AU,Australia,AUD
+BN,Brunei,SGD
+KH,Cambodia,USD
+CN,China,CNY
+FJ,Fiji,FJD
+DE,Germany,EUR
+IN,India,INR
+ID,Indonesia,
+JP,Japan,JPY
+KI,Kiribati,
+LA,Laos,
+MY,Malaysia,
+MH,Marshall Islands,USD
+FM,Micronesia,
+MM,Myanmar,
+NR,Nauru,AUD
+NL,Netherlands,EUR
+NZ,New Zealand,NZD
+PW,Palau,USD
+PG,Papua New Guinea,PGK
+PH,Philippines,PHP
+WS,Samoa,WST
+SG,Singapore,SGD
+SB,Solomon Islands,SBD
+KR,South Korea,
+TH,Thailand,THB
+TL,Timor-Leste,USD
+TO,Tonga,TOP
+TV,Tuvalu,
+GB,United Kingdom,GBP
+VU,Vanuatu,VUV
+VN,Vietnam,

@@ -2,14 +2,22 @@
 
 from typing import List, Dict
 
+from django.db import connection
 from django.db.models import Q  # Import Q for complex lookups
+from django.db.utils import OperationalError
 from rest_framework import generics, filters
+from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Airport, Location
-from .serializers import LocationSearchSerializer, AirportSearchSerializer
+from .models import Airport, City, Country, Location
+from .serializers import (
+    LocationSearchSerializer,
+    AirportSearchSerializer,
+    CountryOptionSerializer,
+    CityOptionSerializer,
+)
 
 def _format_location_display(location: Location, code: str) -> str:
     """
@@ -101,6 +109,33 @@ class LocationV3SearchView(APIView):
         return Response(serializer.data)
 
 
+class HealthCheckAPIView(APIView):
+    """
+    Lightweight unauthenticated health endpoint for load balancers and Render.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, *args, **kwargs):
+        database_ok = True
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+        except OperationalError:
+            database_ok = False
+
+        status_code = 200 if database_ok else 503
+        return Response(
+            {
+                "status": "ok" if database_ok else "degraded",
+                "database": "ok" if database_ok else "unavailable",
+            },
+            status=status_code,
+        )
+
+
 class AirportSearchAPIView(generics.ListAPIView):
     """
     Provides a searchable list of airports.
@@ -116,3 +151,38 @@ class AirportSearchAPIView(generics.ListAPIView):
         Optimize the query by pre-fetching the related city and country.
         """
         return Airport.objects.select_related('city__country').all()
+
+
+class CountryListAPIView(generics.ListAPIView):
+    """
+    Provides a searchable country reference list.
+    Usage: /api/v3/core/countries/?q=au
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = CountryOptionSerializer
+
+    def get_queryset(self):
+        query = (self.request.query_params.get('q') or '').strip()
+        queryset = Country.objects.all().order_by('name')
+        if query:
+            queryset = queryset.filter(Q(name__icontains=query) | Q(code__icontains=query))
+        return queryset[:250]
+
+
+class CityListAPIView(generics.ListAPIView):
+    """
+    Provides a searchable city reference list, optionally scoped by country.
+    Usage: /api/v3/core/cities/?country=PG&q=port
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = CityOptionSerializer
+
+    def get_queryset(self):
+        query = (self.request.query_params.get('q') or '').strip()
+        country_code = (self.request.query_params.get('country') or '').strip().upper()
+        queryset = City.objects.select_related('country').all()
+        if country_code:
+            queryset = queryset.filter(country__code=country_code)
+        if query:
+            queryset = queryset.filter(name__icontains=query)
+        return queryset.order_by('name')[:250]

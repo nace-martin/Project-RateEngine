@@ -1,27 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/auth-context";
 import {
-  createSpotEnvelope,
-  evaluateSpotTrigger,
   getQuoteV3,
   getQuoteCompute,
   downloadQuotePDF,
   transitionQuoteStatus,
-  validateSpotScope,
 } from "@/lib/api";
 import {
   V3QuoteComputeResponse,
   QuoteComputeResult,
-  V3DimensionInput,
 } from "@/lib/types";
-import QuoteResultDisplay from "@/components/QuoteResultDisplay";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
-import QuoteSettings from "@/components/QuoteSettings";
+
 import RoutingWarning from "@/components/RoutingWarning";
-import { SpotChargeResultDisplay } from "@/components/pricing/SpotChargeResultDisplay";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -47,8 +41,18 @@ export default function QuoteDetailPage() {
   const [computeResult, setComputeResult] = useState<QuoteComputeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hasSpotCharges, setHasSpotCharges] = useState(false);
   const [pdfDownloading, setPdfDownloading] = useState(false);
+  const redirectingSpotRef = useRef(false);
+  const spotWorkflowHref = (() => {
+    if (!quote) return null;
+    const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
+    if (currentStatus !== "INCOMPLETE") return null;
+    const existingSpotEnvelopeId = quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
+    if (!existingSpotEnvelopeId) return null;
+    const params = buildSpotWorkflowParams(quote);
+    params.set("returnTo", `/quotes/${quote.id}`);
+    return `/quotes/spot/${existingSpotEnvelopeId}?${params.toString()}`;
+  })();
 
   useEffect(() => {
     if (id && user) {
@@ -59,11 +63,6 @@ export default function QuoteDetailPage() {
           // Use the new V3 API function
           const data = await getQuoteV3(id);
           setQuote(data);
-          const spotLines = data.latest_version?.lines || [];
-          const hasSpot =
-            !!data.spot_negotiation?.id ||
-            spotLines.some((line) => line.cost_source === "SPOT Envelope");
-          setHasSpotCharges(hasSpot);
 
           // Fetch compute result (ChargeEngine)
           try {
@@ -84,6 +83,14 @@ export default function QuoteDetailPage() {
       fetchQuote();
     }
   }, [id, user]);
+
+  useEffect(() => {
+    if (!spotWorkflowHref || redirectingSpotRef.current) {
+      return;
+    }
+    redirectingSpotRef.current = true;
+    router.replace(spotWorkflowHref);
+  }, [router, spotWorkflowHref]);
 
 
   if (loading) {
@@ -124,16 +131,64 @@ export default function QuoteDetailPage() {
   const isArchived = quote.is_archived;
   const canDownloadPDF = (effectiveStatus === "FINALIZED" || effectiveStatus === "SENT");
   const displayTotals = computeResult?.totals ?? quote.latest_version?.totals;
-  const displayCurrency =
+  const displayCurrency = (
     displayTotals?.currency ||
+    displayTotals?.total_sell_fcy_currency ||
+    quote.latest_version?.totals?.currency ||
     quote.latest_version?.totals?.total_sell_fcy_currency ||
-    "PGK";
-  const displayAmount =
-    displayTotals?.total_sell_fcy_incl_gst ||
-    displayTotals?.sell_pgk_incl_gst ||
-    quote.latest_version?.totals?.total_sell_fcy_incl_gst ||
-    quote.latest_version?.totals?.total_sell_pgk_incl_gst ||
-    "0";
+    quote.output_currency ||
+    "PGK"
+  ).toUpperCase();
+  const displayAmountRaw = displayCurrency === "PGK"
+    ? (
+      displayTotals?.total_quote_amount ||
+      displayTotals?.total_sell_pgk_incl_gst ||
+      displayTotals?.sell_pgk_incl_gst ||
+      displayTotals?.total_sell_pgk ||
+      quote.latest_version?.totals?.total_sell_pgk_incl_gst ||
+      quote.latest_version?.totals?.sell_pgk_incl_gst ||
+      quote.latest_version?.totals?.total_sell_pgk ||
+      "0"
+    )
+    : (
+      displayTotals?.total_quote_amount ||
+      displayTotals?.total_sell_fcy_incl_gst ||
+      displayTotals?.sell_fcy_incl_gst ||
+      displayTotals?.total_sell_fcy ||
+      quote.latest_version?.totals?.total_sell_fcy_incl_gst ||
+      quote.latest_version?.totals?.sell_fcy_incl_gst ||
+      quote.latest_version?.totals?.total_sell_fcy ||
+      "0"
+    );
+  const displayAmount = Number(displayAmountRaw || 0);
+  const shipmentMetrics = computeShipmentMetrics(quote);
+  const fxEntries = buildFxEntries(quote, computeResult);
+  const isDomesticQuote = (quote.shipment_type || "").toUpperCase() === "DOMESTIC";
+  const resolvedServiceScope = formatServiceScope(quote.service_scope);
+
+  if (spotWorkflowHref) {
+    return (
+      <div className="container mx-auto max-w-3xl p-6">
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-lg">Continuing SPOT Workflow</CardTitle>
+            <CardDescription>
+              This incomplete quote already has an active SPOT envelope. Redirecting you to the live SPOT workflow now.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Opening {quote.quote_number} in SPOT mode...
+            </div>
+            <Button onClick={() => router.replace(spotWorkflowHref)}>
+              Open SPOT Now
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6 space-y-6">
@@ -198,9 +253,9 @@ export default function QuoteDetailPage() {
                   // The original code: router.push(`/quotes/spot/${speId}`);
                   // We need to keep that logic if possible
                   const speId = quote.spot_negotiation.id;
-                  router.push(`/quotes/spot/${speId}`);
+                  router.push(`/quotes/spot/${speId}?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
                 } else {
-                  router.push(`/quotes/${quote.id}/edit`);
+                  router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
                 }
               }}
               className="gap-2"
@@ -234,7 +289,7 @@ export default function QuoteDetailPage() {
               INTERNAL USE ONLY
             </div>
 
-            <AlertDescription className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm mt-1">
+            <AlertDescription className="grid grid-cols-2 lg:grid-cols-5 gap-4 text-sm mt-1">
               {/* Customer */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Customer</p>
@@ -269,87 +324,71 @@ export default function QuoteDetailPage() {
                 </div>
               </div>
 
-              {/* FX Rate */}
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
-                <div className="font-medium text-slate-900 text-xs">
-                  {(() => {
-                    if (!computeResult?.exchange_rates) return <span className="text-slate-400 italic">N/A</span>;
-
-                    const relevantCurrencies = new Set<string>();
-
-                    // Helper to safely add currency
-                    const addCurrency = (c: string | null | undefined) => {
-                      if (c && c.toUpperCase() !== 'PGK' && c.trim() !== '') {
-                        relevantCurrencies.add(c.toUpperCase());
-                      }
-                    };
-
-                    // 1. Output Currency
-                    addCurrency(quote.output_currency);
-                    addCurrency(quote.latest_version?.totals?.currency);
-                    addCurrency(computeResult.totals?.currency);
-
-                    // 2. Lines from latest_version (Stored State)
-                    quote.latest_version?.lines?.forEach(line => {
-                      addCurrency(line.cost_fcy_currency);
-                      addCurrency(line.sell_fcy_currency);
-                    });
-
-                    // 3. Lines from computeResult (Calculated State)
-                    computeResult.buy_lines?.forEach(line => addCurrency(line.currency));
-                    computeResult.sell_lines?.forEach(line => addCurrency(line.sell_currency));
-
-                    // Filter rates that match relevant currencies
-                    const ratesToShow = Object.entries(computeResult.exchange_rates).filter(([key]) => {
-                      const upperKey = key.toUpperCase();
-                      // If key is exactly one of the relevant currencies (e.g. "AUD")
-                      if (relevantCurrencies.has(upperKey)) return true;
-
-                      // If key is a pair containing one of the relevant currencies (e.g. "AUD/PGK")
-                      for (const code of Array.from(relevantCurrencies)) {
-                        if (upperKey.includes(`${code}/`) || upperKey.includes(`/${code}`)) return true;
-                        if (upperKey.includes(code)) return true; // Broad match fallback
-                      }
-                      return false;
-                    });
-
-                    if (ratesToShow.length === 0) {
-                      // If we have rates but filtered them all out, it implies everything is PGK.
-                      // But usually we shouldn't be here if there are foreign currencies involved.
-                      // Check if we actually found relevant currencies
-                      if (relevantCurrencies.size === 0) {
-                        // User feedback: "if app is converting AUD to PGK then I want that particular FX rate"
-                        // If we didn't find "AUD" in the lines, then we missed it.
-                        // Fallback: show ALL rates if no foreign currency detected but exchange rates exist?
-                        // No, user specifically said "not all".
-                        // Let's assume if it says "Base (PGK)" it's because the data doesn't have the currency tag.
-                        return <span className="text-slate-400 italic">Base (PGK)</span>;
-                      }
-                      return <span className="text-slate-400 italic">None</span>;
-                    }
-
-                    // Sort to put pairs first if possible, or just standard sort
-                    return ratesToShow.sort().map(([currency, rate]) => (
-                      <div key={currency}>{currency}: {rate}</div>
-                    ));
-                  })()}
+              {isDomesticQuote ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Service Scope</p>
+                  <p className="font-medium text-slate-900">{resolvedServiceScope}</p>
                 </div>
-              </div>
+              ) : (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
+                  <div className="font-medium text-slate-900 text-xs">
+                    {fxEntries.length > 0 ? (
+                      fxEntries.map(([currency, rate]) => (
+                        <div key={currency}>{currency}: {String(rate)}</div>
+                      ))
+                    ) : (
+                      <span className="text-slate-400 italic">Base (PGK)</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
-              {/* Chargeable Weight */}
+              {/* Total Weight */}
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase">Total Weight</p>
                 <p className="font-medium text-slate-900">
-                  {/* Calculate Gross Weight from payload */}
+                  {shipmentMetrics.totalWeightKg > 0
+                    ? `${shipmentMetrics.totalWeightKg.toLocaleString()} kg`
+                    : "0 kg"}
+                </p>
+              </div>
+
+              {/* Volumetric Weight */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Volumetric Weight</p>
+                <p className="font-medium text-slate-900">
+                  {shipmentMetrics.volumetricWeightKg > 0
+                    ? `${shipmentMetrics.volumetricWeightKg.toLocaleString()} kg`
+                    : "0 kg"}
+                </p>
+              </div>
+
+              {/* Chargeable Weight (CW) */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Chargeable Weight (CW)</p>
+                <p className="font-medium text-slate-900">
+                  {shipmentMetrics.chargeableWeightKg > 0
+                    ? `${shipmentMetrics.chargeableWeightKg.toLocaleString()} kg`
+                    : "0 kg"}
+                </p>
+              </div>
+
+              {/* Validity */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Validity</p>
+                <p className="font-medium text-slate-900">
+                  7 Days
+                </p>
+              </div>
+
+              {/* Payment Terms */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase">Payment Terms</p>
+                <p className="font-medium text-slate-900">
                   {(() => {
-                    const dims = quote.latest_version?.payload_json?.dimensions || [];
-                    const totalKg = dims.reduce((sum: number, d: V3DimensionInput) => {
-                      const pcs = d.pieces || 1;
-                      const weight = parseFloat(d.gross_weight_kg || "0");
-                      return sum + (weight * pcs);
-                    }, 0);
-                    return totalKg > 0 ? `${totalKg.toLocaleString()} kg` : "0 kg";
+                    const term = (quote.payment_term || "Collect").toLowerCase();
+                    return term === 'credit' ? 'Credit (30 Days)' : term.charAt(0).toUpperCase() + term.slice(1);
                   })()}
                 </p>
               </div>
@@ -364,25 +403,15 @@ export default function QuoteDetailPage() {
 
         {/* Main Content Area */}
         {isIncomplete ? (
-          <SpotNegotiationCard quote={quote} />
+          <SpotWorkflowUnavailableCard quoteId={quote.id} />
         ) : (
-          /* Two-Column Layout for Finalized Quotes */
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Financial Breakdown (2/3 width) */}
-            <div className="lg:col-span-2 space-y-6">
-              {hasSpotCharges ? (
-                <SpotChargeResultDisplay quote={quote} />
-              ) : computeResult ? (
-                <QuoteFinancialBreakdown result={computeResult} />
-              ) : (
-                <QuoteResultDisplay quote={quote} />
-              )}
-            </div>
-
-            {/* Right Column - Document Preview & Settings (1/3 width) */}
-            <div className="space-y-6">
-              <QuoteSettings defaultPaymentTerm={quote.payment_term?.toLowerCase()} />
-            </div>
+          /* Full-width Layout for Finalized Quotes */
+          <div className="space-y-6">
+            {computeResult ? (
+              <QuoteFinancialBreakdown result={computeResult} />
+            ) : (
+              <QuoteFinancialBreakdown result={quote} />
+            )}
           </div>
         )}
       </div>
@@ -392,9 +421,9 @@ export default function QuoteDetailPage() {
         <div className="container mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <div>
-              <p className="text-xs text-slate-500 uppercase font-semibold">Total Estimated Cost</p>
+              <p className="text-xs text-slate-500 uppercase font-semibold">Total Quote Amount</p>
               <p className="text-2xl font-bold text-slate-900">
-                {displayCurrency} {parseFloat(displayAmount).toLocaleString()}
+                {displayCurrency} {displayAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
               <p className="text-[10px] text-slate-400">
                 Inc. GST
@@ -459,9 +488,15 @@ export default function QuoteDetailPage() {
                   className="gap-2 mr-2 hidden sm:flex"
                   onClick={() => {
                     if (quote.shipment_type === "SPOT_NEGOTIATION" && quote.spot_negotiation) {
-                      router.push(`/quotes/spot/${quote.spot_negotiation.id}`);
+                      const params = new URLSearchParams({
+                        customer_name: getCustomerName(quote.customer),
+                        service_scope: quote.service_scope || "D2D",
+                        payment_term: quote.payment_term || "PREPAID",
+                      });
+                      params.set("returnTo", `/quotes/${quote.id}`);
+                      router.push(`/quotes/spot/${quote.spot_negotiation.id}?${params.toString()}`);
                     } else {
-                      router.push(`/quotes/${quote.id}/edit`);
+                        router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
                     }
                   }}
                 >
@@ -488,137 +523,40 @@ export default function QuoteDetailPage() {
   );
 }
 
-function SpotNegotiationCard({ quote }: { quote: V3QuoteComputeResponse }) {
+function SpotWorkflowUnavailableCard({ quoteId }: { quoteId: string }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleOpenSpot = async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const existingSpeId =
-        quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
-      if (existingSpeId) {
-        router.push(`/quotes/spot/${existingSpeId}`);
-        return;
-      }
-
-      const originLocation = quote.origin_location;
-      const destinationLocation = quote.destination_location;
-
-      const originCode =
-        extractIataCode(originLocation) ||
-        (quote.latest_version?.payload_json?.origin_airport || "").toUpperCase();
-      const destinationCode =
-        extractIataCode(destinationLocation) ||
-        (quote.latest_version?.payload_json?.destination_airport || "").toUpperCase();
-      const originCountry = extractCountryCode(originLocation, originCode) || "OTHER";
-      const destinationCountry = extractCountryCode(destinationLocation, destinationCode) || "OTHER";
-
-      const weightInfo = computeChargeableWeight(quote);
-      const commodity =
-        quote.latest_version?.payload_json?.is_dangerous_goods ? "DG" : "GCR";
-
-      const scopeCheck = await validateSpotScope({
-        origin_country: originCountry,
-        destination_country: destinationCountry,
-        origin_code: originCode || "",
-        destination_code: destinationCode || "",
-      });
-      if (!scopeCheck.is_valid) {
-        throw new Error(scopeCheck.error || "Shipment is out of SPOT scope.");
-      }
-
-      const triggerResult = await evaluateSpotTrigger({
-        origin_country: originCountry,
-        destination_country: destinationCountry,
-        commodity,
-        origin_airport: originCode || "",
-        destination_airport: destinationCode || "",
-        has_valid_buy_rate: false,
-        service_scope: quote.service_scope,
-      });
-
-      const triggerCode = triggerResult.trigger?.code || "MISSING_RATES";
-      const triggerText =
-        triggerResult.trigger?.text || "Missing rates require manual sourcing.";
-
-      const spe = await createSpotEnvelope({
-        shipment_context: {
-          origin_country: originCountry,
-          destination_country: destinationCountry,
-          origin_code: originCode || "",
-          destination_code: destinationCode || "",
-          commodity,
-          total_weight_kg: weightInfo.chargeableWeight,
-          pieces: weightInfo.pieces,
-          service_scope: (quote.service_scope || "P2P").toLowerCase(),
-        },
-        charges: [],
-        trigger_code: triggerCode,
-        trigger_text: triggerText,
-        conditions: { rate_validity_hours: 72 },
-        quote_id: quote.id,
-      });
-
-      if (spe?.id) {
-        storeSpotEnvelopeId(quote.id, spe.id);
-      }
-
-      const params = new URLSearchParams({
-        origin_country: originCountry,
-        dest_country: destinationCountry,
-        origin_code: originCode || "",
-        dest_code: destinationCode || "",
-        commodity,
-        weight: String(weightInfo.chargeableWeight),
-        pieces: String(weightInfo.pieces),
-        trigger_code: triggerCode,
-        trigger_text: triggerText,
-        service_scope: quote.service_scope,
-        payment_term: quote.payment_term,
-        output_currency: quote.output_currency || "PGK",
-        shipment_type: quote.shipment_type,
-      });
-      if (triggerResult.trigger?.missing_components?.length) {
-        params.append("missing_components", triggerResult.trigger.missing_components.join(","));
-      }
-
-      router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to open SPOT flow.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <Card className="border-amber-200 bg-amber-50/40">
       <CardHeader>
-        <CardTitle className="text-lg text-amber-800">SPOT Rate Required</CardTitle>
+        <CardTitle className="text-lg text-amber-800">SPOT Workflow Required</CardTitle>
         <CardDescription>
-          This quote has missing rates. Continue in the SPOT workflow to source
-          agent pricing and finalize the quote.
+          This quote is incomplete, but it no longer uses the legacy in-page SPOT launcher.
+          Re-open the quote from the edit flow if you need to re-enter SPOT.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex items-center justify-between">
         <div className="text-sm text-muted-foreground">
-          We will open the SPOT envelope flow for this shipment.
+          No active SPOT envelope is linked to this quote detail view.
         </div>
-        <Button onClick={handleOpenSpot} disabled={loading}>
-          {loading ? "Opening..." : "Open SPOT Workflow"}
+        <Button onClick={() => router.push(`/quotes/${quoteId}/edit`)}>
+          Return To Quote Edit
         </Button>
       </CardContent>
-      {error && (
-        <CardContent className="pt-0">
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        </CardContent>
-      )}
     </Card>
   );
+}
+
+function buildSpotWorkflowParams(quote: V3QuoteComputeResponse): URLSearchParams {
+  const weightInfo = computeChargeableWeight(quote);
+  return new URLSearchParams({
+    customer_name: getCustomerName(quote.customer),
+    service_scope: quote.service_scope || "D2D",
+    payment_term: quote.payment_term || "PREPAID",
+    output_currency: quote.output_currency || "PGK",
+    shipment_type: quote.shipment_type,
+    weight: String(weightInfo.chargeableWeight),
+    pieces: String(weightInfo.pieces),
+  });
 }
 
 const SPOT_ENVELOPE_STORAGE_KEY = "spotEnvelopeByQuoteId";
@@ -635,65 +573,32 @@ function readSpotEnvelopeId(quoteId: string): string | null {
   }
 }
 
-function storeSpotEnvelopeId(quoteId: string, speId: string) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(SPOT_ENVELOPE_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {};
-    parsed[quoteId] = speId;
-    window.localStorage.setItem(SPOT_ENVELOPE_STORAGE_KEY, JSON.stringify(parsed));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
-function extractIataCode(location?: string): string | undefined {
-  if (!location) return undefined;
-  const iataMatch = location.match(/\(([A-Z]{3})\)/i);
-  if (iataMatch) return iataMatch[1].toUpperCase();
-  const prefixMatch = location.match(/^([A-Z]{3})(?:\s*[-,/]|$)/i);
-  if (prefixMatch) return prefixMatch[1].toUpperCase();
-  const trimmed = location.trim();
-  if (trimmed.length === 3) return trimmed.toUpperCase();
-  return undefined;
-}
-
-function extractCountryCode(location?: string, iataCode?: string): string | undefined {
-  if (!location) return undefined;
-  const countryMatch = location.match(/,\s*([A-Z]{2})\s*$/i);
-  if (countryMatch) return countryMatch[1].toUpperCase();
-
-  const airportCountryMap: Record<string, string> = {
-    BNE: "AU", SYD: "AU", MEL: "AU", PER: "AU", ADL: "AU", CBR: "AU",
-    DRW: "AU", CNS: "AU", OOL: "AU", HBA: "AU",
-    LAX: "US", JFK: "US", SFO: "US", ORD: "US", MIA: "US", DFW: "US",
-    ATL: "US", SEA: "US", DEN: "US",
-    PVG: "CN", PEK: "CN", CAN: "CN", SZX: "CN", CTU: "CN",
-    HKG: "HK",
-    SIN: "SG",
-    AKL: "NZ", WLG: "NZ", CHC: "NZ",
-    LHR: "GB", LGW: "GB", MAN: "GB", STN: "GB",
-    POM: "PG", LAE: "PG",
-    NRT: "JP", HND: "JP", KIX: "JP",
-    ICN: "KR", GMP: "KR",
-    BKK: "TH", DMK: "TH",
-    KUL: "MY",
-    CGK: "ID", DPS: "ID",
-    MNL: "PH", CEB: "PH",
-    DEL: "IN", BOM: "IN", BLR: "IN",
-    DXB: "AE", AUH: "AE",
-  };
-  const code = iataCode || extractIataCode(location);
-  return code ? airportCountryMap[code] : undefined;
-}
-
 function computeChargeableWeight(quote: V3QuoteComputeResponse) {
-  const dims = quote.latest_version?.payload_json?.dimensions || [];
+  const shipmentMetrics = computeShipmentMetrics(quote);
+  const fallbackPieces = quote.latest_version?.payload_json && "pieces" in quote.latest_version.payload_json
+    ? Number((quote.latest_version.payload_json as Record<string, unknown>).pieces || 0)
+    : 0;
+
+  return {
+    pieces: shipmentMetrics.pieces > 0 ? shipmentMetrics.pieces : Math.max(fallbackPieces, 1),
+    chargeableWeight: shipmentMetrics.chargeableWeightKg > 0 ? shipmentMetrics.chargeableWeightKg : 1,
+  };
+}
+
+function computeShipmentMetrics(quote: V3QuoteComputeResponse) {
+  const payload = quote.latest_version?.payload_json as Record<string, unknown> | undefined;
+  const dimsRaw = Array.isArray(payload?.dimensions)
+    ? payload?.dimensions
+    : Array.isArray((payload?.shipment as Record<string, unknown> | undefined)?.pieces)
+      ? ((payload?.shipment as Record<string, unknown>).pieces as unknown[])
+      : [];
+
   let pieces = 0;
   let totalActual = 0;
   let totalVolumetric = 0;
 
-  for (const dim of dims) {
+  for (const piece of dimsRaw) {
+    const dim = piece as Record<string, unknown>;
     const pcs = Number(dim.pieces || 0);
     const l = Number(dim.length_cm || 0);
     const w = Number(dim.width_cm || 0);
@@ -707,10 +612,148 @@ function computeChargeableWeight(quote: V3QuoteComputeResponse) {
     }
   }
 
+  if (totalActual <= 0) {
+    const payloadTotal =
+      payload && "total_weight_kg" in payload
+        ? Number(payload.total_weight_kg || 0)
+        : payload && payload.shipment && typeof payload.shipment === "object" && "total_weight_kg" in (payload.shipment as Record<string, unknown>)
+          ? Number(((payload.shipment as Record<string, unknown>).total_weight_kg as string | number) || 0)
+          : 0;
+    const versionTotal = Number(quote.latest_version?.total_weight_kg || 0);
+    totalActual = Math.max(payloadTotal, versionTotal, 0);
+  }
+
   const chargeableWeight = Math.ceil(Math.max(totalActual, totalVolumetric, 0));
 
   return {
-    pieces: Math.max(pieces, 1),
-    chargeableWeight: chargeableWeight || 1,
+    pieces: Math.max(pieces, 0),
+    totalWeightKg: Math.ceil(totalActual),
+    volumetricWeightKg: Math.ceil(totalVolumetric),
+    chargeableWeightKg: chargeableWeight,
   };
+}
+
+function buildFxEntries(
+  quote: V3QuoteComputeResponse,
+  computeResult: QuoteComputeResult | null
+): Array<[string, string]> {
+  const relevantCurrencies = new Set<string>();
+  const addCurrency = (currency: string | null | undefined) => {
+    if (!currency) return;
+    const code = currency.toUpperCase().trim();
+    if (!code || code === "PGK") return;
+    relevantCurrencies.add(code);
+  };
+
+  addCurrency(quote.output_currency);
+  addCurrency(quote.latest_version?.totals?.currency);
+  addCurrency(computeResult?.totals?.currency);
+
+  quote.latest_version?.lines?.forEach((line) => {
+    addCurrency(line.cost_fcy_currency);
+    addCurrency(line.sell_fcy_currency);
+  });
+  computeResult?.buy_lines?.forEach((line) => addCurrency(line.currency));
+  computeResult?.sell_lines?.forEach((line) => addCurrency(line.sell_currency));
+
+  const rates: Record<string, string> = {
+    ...(computeResult?.exchange_rates || {}),
+  };
+
+  // Fallback for legacy/spot paths where compute_v3 returns empty exchange_rates.
+  if (Object.keys(rates).length === 0) {
+    for (const line of quote.latest_version?.lines || []) {
+      const rate = line.exchange_rate;
+      if (!rate) continue;
+      const ccy = (line.sell_fcy_currency || line.cost_fcy_currency || "").toUpperCase();
+      if (!ccy || ccy === "PGK") continue;
+      rates[`${ccy}/PGK`] = String(rate);
+    }
+  }
+
+  // Derive FX from line-level FCY/PGK totals when explicit rate fields are absent.
+  if (Object.keys(rates).length === 0) {
+    const sums: Record<string, { fcy: number; pgk: number }> = {};
+    const add = (currency: string | null | undefined, fcyRaw: string | null | undefined, pgkRaw: string | null | undefined) => {
+      const ccy = (currency || "").toUpperCase().trim();
+      if (!ccy || ccy === "PGK") return;
+      const fcy = Number(fcyRaw || 0);
+      const pgk = Number(pgkRaw || 0);
+      if (!Number.isFinite(fcy) || !Number.isFinite(pgk) || fcy <= 0 || pgk <= 0) return;
+      if (!sums[ccy]) sums[ccy] = { fcy: 0, pgk: 0 };
+      sums[ccy].fcy += fcy;
+      sums[ccy].pgk += pgk;
+    };
+
+    for (const line of quote.latest_version?.lines || []) {
+      add(line.sell_fcy_currency, line.sell_fcy, line.sell_pgk);
+    }
+    for (const line of computeResult?.sell_lines || []) {
+      add(line.sell_currency, line.sell_fcy, line.sell_pgk);
+    }
+
+    for (const [ccy, totals] of Object.entries(sums)) {
+      if (totals.fcy > 0 && totals.pgk > 0) {
+        rates[`${ccy}/PGK`] = (totals.pgk / totals.fcy).toFixed(6);
+      }
+    }
+  }
+
+  // Fallback when explicit FX lines are absent but quote is in non-PGK output.
+  if (Object.keys(rates).length === 0) {
+    const displayCurrency =
+      computeResult?.totals?.currency ||
+      quote.latest_version?.totals?.currency ||
+      quote.output_currency ||
+      "PGK";
+
+    const totalFcy = Number(
+      computeResult?.totals?.total_sell_fcy ||
+      quote.latest_version?.totals?.total_sell_fcy ||
+      0
+    );
+    const totalPgk = Number(
+      computeResult?.totals?.sell_pgk ||
+      quote.latest_version?.totals?.total_sell_pgk ||
+      0
+    );
+
+    if (displayCurrency.toUpperCase() !== "PGK" && totalFcy > 0 && totalPgk > 0) {
+      rates[`${displayCurrency.toUpperCase()}/PGK`] = (totalPgk / totalFcy).toFixed(6);
+    }
+  }
+
+  let visible = Object.entries(rates).filter(([key]) => {
+    const upper = key.toUpperCase();
+    if (relevantCurrencies.has(upper)) return true;
+    for (const code of Array.from(relevantCurrencies)) {
+      if (upper.includes(`${code}/`) || upper.includes(`/${code}`) || upper.includes(code)) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  if (visible.length === 0 && relevantCurrencies.size > 0) {
+    visible = Object.entries(rates).filter(([key]) => {
+      const upper = key.toUpperCase();
+      return upper !== "PGK" && upper !== "BASE_CURRENCY";
+    });
+  }
+
+  const sorted = visible.sort((a, b) => a[0].localeCompare(b[0]));
+  if (sorted.length > 0) return sorted;
+  return [["PGK/PGK", "1.000000"]];
+}
+
+function formatServiceScope(scope?: string | null): string {
+  const normalized = (scope || "").toUpperCase().trim();
+  const labels: Record<string, string> = {
+    D2D: "Door-to-Door",
+    D2A: "Door-to-Airport",
+    A2D: "Airport-to-Door",
+    A2A: "Airport-to-Airport",
+    P2P: "Airport-to-Airport",
+  };
+  return labels[normalized] || "N/A";
 }

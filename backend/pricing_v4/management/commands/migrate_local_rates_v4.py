@@ -7,7 +7,6 @@ This command migrates local service rates from lane-based tables to location-bas
 Sell Side:
 - ExportSellRate (local categories) -> LocalSellRate (direction=EXPORT)
 - ImportSellRate (local categories) -> LocalSellRate (direction=IMPORT)
-- A2DDAPRate -> LocalSellRate (direction=IMPORT, supports PERCENT type)
 
 Buy Side:
 - ExportCOGS (local categories) -> LocalCOGSRate (direction=EXPORT)
@@ -19,7 +18,6 @@ Usage:
 """
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.db.models import Q
 from decimal import Decimal
 from collections import defaultdict
 
@@ -27,12 +25,12 @@ from pricing_v4.models import (
     ProductCode,
     ExportSellRate, ImportSellRate, ExportCOGS, ImportCOGS,
     LocalSellRate, LocalCOGSRate,
-    Agent
 )
+from pricing_v4.category_rules import LOCAL_RATE_CATEGORIES
 
 
 # Categories considered "Local" (not lane-dependent)
-LOCAL_CATEGORIES = ['CLEARANCE', 'CARTAGE', 'HANDLING', 'DOCUMENTATION', 'SCREENING']
+LOCAL_CATEGORIES = sorted(LOCAL_RATE_CATEGORIES)
 
 
 class Command(BaseCommand):
@@ -60,7 +58,6 @@ class Command(BaseCommand):
                 # Phase 1: Sell Side Migration
                 self.migrate_export_sell_rates()
                 self.migrate_import_sell_rates()
-                self.migrate_a2d_dap_rates()
                 
                 # Phase 2: COGS Side Migration
                 self.migrate_export_cogs()
@@ -150,47 +147,6 @@ class Command(BaseCommand):
                 payment_term='COLLECT',  # Import local = Collect by default
                 currency=rate.currency,
                 rate=rate
-            )
-    
-    def migrate_a2d_dap_rates(self):
-        """Migrate A2DDAPRate to LocalSellRate (IMPORT)."""
-        self.stdout.write('\n--- Migrating A2DDAPRate -> LocalSellRate (IMPORT) ---')
-        
-        try:
-            from ratecards.models import A2DDAPRate
-        except ImportError:
-            self.stdout.write(self.style.WARNING('  A2DDAPRate model not found, skipping...'))
-            return
-        
-        rates = A2DDAPRate.objects.all()
-        
-        for rate in rates:
-            # Determine rate_type from A2DDAPRate fields
-            rate_type = 'FIXED'
-            amount = rate.rate or Decimal('0')
-            
-            if rate.percent_of_component:
-                rate_type = 'PERCENT'
-                amount = rate.percent_of_component
-            elif rate.unit_basis == 'KG':
-                rate_type = 'PER_KG'
-            
-            # Map payment_term
-            payment_term = rate.payment_term if rate.payment_term in ['PREPAID', 'COLLECT'] else 'ANY'
-            
-            # Create LocalSellRate
-            self._create_local_sell_rate_direct(
-                product_code_id=rate.product_code_id if hasattr(rate, 'product_code_id') else None,
-                location=rate.destination if hasattr(rate, 'destination') else rate.airport_code,
-                direction='IMPORT',
-                payment_term=payment_term,
-                currency=rate.currency,
-                rate_type=rate_type,
-                amount=amount,
-                min_charge=rate.min_charge,
-                max_charge=rate.max_charge,
-                valid_from=rate.valid_from if hasattr(rate, 'valid_from') else rate.effective_from,
-                valid_until=rate.valid_until if hasattr(rate, 'valid_until') else rate.effective_until
             )
     
     def migrate_export_cogs(self):

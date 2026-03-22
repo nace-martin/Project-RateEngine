@@ -1,86 +1,168 @@
 # backend/pricing_v4/rate_card_config.py
 """
-Logical Rate Card Definitions
+Logical V4 pricing views for admin/reporting screens.
 
-These define the 5 business-level rate cards as configured views over
-existing V4 rate data. This is a read-only view layer - no impact on
-pricing calculations or database schema.
+These definitions are intentionally aligned to the current V4 pricing
+architecture, not the legacy V3 partner-rate-card model.
 
-Each card is defined by:
-- name: Display name
-- description: What this card contains
-- domain: EXPORT/IMPORT/DOMESTIC
-- rate_table: Which model to query (ExportSellRate, ImportSellRate, DomesticSellRate)
-- currency_filter: PGK or FCY currencies (AUD/USD/etc.)
-- origin_filter: Optional origin airport/zone filter
-- destination_filter: Optional destination airport/zone filter
+Each logical card describes:
+- the business use-case shown in the UI
+- the underlying source tables that currently support that use-case
+- the pricing model used by the engine
+
+This layer is read-only and exists to explain the current commercial model.
+It does not drive quote calculations.
 """
 
-# FCY = Foreign Currencies (non-PGK)
-FCY_CURRENCIES = ['AUD', 'USD', 'NZD', 'EUR', 'GBP', 'SGD', 'JPY', 'CNY']
+FCY_CURRENCIES = ["AUD", "USD", "NZD", "EUR", "GBP", "SGD", "JPY", "CNY"]
+
 
 LOGICAL_RATE_CARDS = [
     {
-        'id': 'export-prepaid-d2a',
-        'name': 'Export Prepaid D2A',
-        'description': 'Origin, Clearance, Collection charges + Freight (PGK)',
-        'service_scope': 'D2A',
-        'domain': 'EXPORT',
-        'rate_table': 'ExportSellRate',
-        'currency_filter': ['PGK'],
-        'origin_filter': None,  # All PNG origins
-        'destination_filter': None,  # All destinations
+        "id": "export-collect-d2a",
+        "name": "Export Collect D2A",
+        "description": "Export collect pricing for PNG-origin shipments with local origin sell plus PGK lane sell.",
+        "service_scope": "D2A",
+        "domain": "EXPORT",
+        "pricing_model": "Explicit sell rates",
+        "source_tables": ["LocalSellRate", "ExportSellRate"],
+        "notes": [
+            "Local PNG export sell charges come from LocalSellRate with direction EXPORT.",
+            "Lane-specific export sell charges come from ExportSellRate.",
+            "Legacy Partner Rate Cards are not part of this pricing path.",
+        ],
+        "sources": [
+            {
+                "table": "LocalSellRate",
+                "label": "Origin local sell",
+                "pricing_role": "SELL",
+                "direction": "EXPORT",
+                "payment_term": "COLLECT",
+                "currency_filter": ["PGK"],
+            },
+            {
+                "table": "ExportSellRate",
+                "label": "Lane sell",
+                "pricing_role": "SELL",
+                "currency_filter": ["PGK"],
+            },
+        ],
     },
     {
-        'id': 'export-collect-d2a',
-        'name': 'Export Collect D2A',
-        'description': 'Origin, Clearance, Collection charges + Freight (FCY)',
-        'service_scope': 'D2A',
-        'domain': 'EXPORT',
-        'rate_table': 'ExportSellRate',
-        'currency_filter': FCY_CURRENCIES,
-        'origin_filter': None,
-        'destination_filter': None,
+        "id": "export-prepaid-d2a",
+        "name": "Export Prepaid D2A",
+        "description": "Export prepaid pricing with PNG-origin local sell plus FCY lane sell.",
+        "service_scope": "D2A",
+        "domain": "EXPORT",
+        "pricing_model": "Explicit sell rates",
+        "source_tables": ["LocalSellRate", "ExportSellRate"],
+        "notes": [
+            "Local PNG export sell charges come from LocalSellRate with direction EXPORT.",
+            "Lane-specific export sell charges come from ExportSellRate.",
+            "Foreign-currency lane sell is maintained separately from local PGK sell.",
+        ],
+        "sources": [
+            {
+                "table": "LocalSellRate",
+                "label": "Origin local sell",
+                "pricing_role": "SELL",
+                "direction": "EXPORT",
+                "payment_term": "PREPAID",
+                "currency_filter": ["PGK"],
+            },
+            {
+                "table": "ExportSellRate",
+                "label": "Lane sell",
+                "pricing_role": "SELL",
+                "currency_filter": FCY_CURRENCIES,
+            },
+        ],
     },
     {
-        'id': 'import-collect-d2d',
-        'name': 'Import Collect D2D',
-        'description': 'Origin charges + Freight + Clearance & Delivery (PGK)',
-        'service_scope': 'D2D',
-        'domain': 'IMPORT',
-        'rate_table': 'ImportSellRate',
-        'currency_filter': ['PGK'],
-        'origin_filter': None,
-        'destination_filter': None,
+        "id": "import-collect-a2d",
+        "name": "Import Collect A2D",
+        "description": "Import collect pricing with destination local sell and lane buy inputs used for cost-plus calculation.",
+        "service_scope": "A2D",
+        "domain": "IMPORT",
+        "pricing_model": "Mixed: explicit local sell + cost-plus lane pricing",
+        "source_tables": ["LocalSellRate", "ImportCOGS"],
+        "notes": [
+            "Destination local import sell charges come from LocalSellRate with direction IMPORT.",
+            "Lane-specific import buy inputs come from ImportCOGS.",
+            "The engine derives lane sell from buy-side inputs plus FX, CAF, and policy margin.",
+            "ImportSellRate is not the primary launch data source for this flow.",
+        ],
+        "sources": [
+            {
+                "table": "LocalSellRate",
+                "label": "Destination local sell",
+                "pricing_role": "SELL",
+                "direction": "IMPORT",
+                "payment_term": "COLLECT",
+            },
+            {
+                "table": "ImportCOGS",
+                "label": "Lane buy inputs",
+                "pricing_role": "COGS",
+            },
+        ],
     },
     {
-        'id': 'import-prepaid-a2d',
-        'name': 'Import Prepaid A2D',
-        'description': 'Destination, Clearance & Delivery charges (FCY)',
-        'service_scope': 'A2D',
-        'domain': 'IMPORT',
-        'rate_table': 'ImportSellRate',
-        'currency_filter': FCY_CURRENCIES,
-        'origin_filter': None,
-        'destination_filter': None,
+        "id": "import-prepaid-a2d",
+        "name": "Import Prepaid A2D",
+        "description": "Import prepaid pricing with destination local sell and lane buy inputs used for cost-plus calculation.",
+        "service_scope": "A2D",
+        "domain": "IMPORT",
+        "pricing_model": "Mixed: explicit local sell + cost-plus lane pricing",
+        "source_tables": ["LocalSellRate", "ImportCOGS"],
+        "notes": [
+            "Destination local import sell charges come from LocalSellRate with direction IMPORT.",
+            "Lane-specific import buy inputs come from ImportCOGS.",
+            "The engine derives lane sell from buy-side inputs plus FX, CAF, and policy margin.",
+            "ImportSellRate is not the primary launch data source for this flow.",
+        ],
+        "sources": [
+            {
+                "table": "LocalSellRate",
+                "label": "Destination local sell",
+                "pricing_role": "SELL",
+                "direction": "IMPORT",
+                "payment_term": "PREPAID",
+            },
+            {
+                "table": "ImportCOGS",
+                "label": "Lane buy inputs",
+                "pricing_role": "COGS",
+            },
+        ],
     },
     {
-        'id': 'domestic-ex-pom',
-        'name': 'Domestic ex-POM',
-        'description': 'Domestic rates from Port Moresby (PGK)',
-        'service_scope': None,
-        'domain': 'DOMESTIC',
-        'rate_table': 'DomesticSellRate',
-        'currency_filter': ['PGK'],
-        'origin_filter': ['POM'],  # POM zone only
-        'destination_filter': None,
+        "id": "domestic-launch-sell",
+        "name": "Domestic Launch Sell",
+        "description": "Domestic sell tariffs for the launch corridors.",
+        "service_scope": "A2A",
+        "domain": "DOMESTIC",
+        "pricing_model": "Explicit sell rates",
+        "source_tables": ["DomesticSellRate"],
+        "notes": [
+            "Domestic customer-facing sell tariffs come from DomesticSellRate.",
+            "Domestic buy-side rates remain separate in DomesticCOGS.",
+        ],
+        "sources": [
+            {
+                "table": "DomesticSellRate",
+                "label": "Domestic sell",
+                "pricing_role": "SELL",
+                "currency_filter": ["PGK"],
+            }
+        ],
     },
 ]
 
 
 def get_rate_card_config(card_id: str) -> dict | None:
-    """Get a specific card config by ID."""
+    """Get a specific logical card definition by ID."""
     for card in LOGICAL_RATE_CARDS:
-        if card['id'] == card_id:
+        if card["id"] == card_id:
             return card
     return None

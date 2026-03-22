@@ -1,10 +1,10 @@
-import { useEffect } from "react";
 import { useQuoteLogic } from "@/hooks/useQuoteLogic";
 import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import {
     V3_SERVICE_SCOPES,
     V3_LOCATION_TYPES,
     V3_CARGO_TYPES,
+    V3_PACKAGE_TYPES,
     V3_INCOTERMS,
     V3_PAYMENT_TERMS
 } from "@/lib/schemas/quoteSchema";
@@ -15,11 +15,16 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Trash2, AlertTriangle, Plane, Ship, Package } from "lucide-react";
 import CompanySearch from "@/components/CompanySearchCombobox";
 import LocationSearch from "@/components/LocationSearchCombobox";
 import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
+import { useEffect } from "react";
+
+const getCompletedFieldClass = (isComplete: boolean) =>
+    isComplete
+        ? "border-primary bg-primary text-white ring-1 ring-primary/25 hover:border-primary hover:bg-primary/95 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 [&_svg]:text-white/80"
+        : "";
 
 interface QuoteFormProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
@@ -32,6 +37,7 @@ interface QuoteFormProps {
     isSubmitting?: boolean;
     serverError?: string | null;
     isEditMode?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
 }
 
 export function QuoteForm({
@@ -45,6 +51,7 @@ export function QuoteForm({
     isSubmitting = false,
     serverError,
     isEditMode = false,
+    onDirtyChange,
 }: QuoteFormProps) {
     const {
         form,
@@ -78,6 +85,11 @@ export function QuoteForm({
     });
 
     const isImport = destinationLocation?.country_code === 'PG';
+    const submitBusy = isSubmitting || form.formState.isSubmitting;
+
+    useEffect(() => {
+        onDirtyChange?.(form.formState.isDirty);
+    }, [form.formState.isDirty, onDirtyChange]);
 
     // Log validation errors for debugging
     const onFormError = (errors: Record<string, unknown>) => {
@@ -109,7 +121,7 @@ export function QuoteForm({
                         <FormField
                             control={form.control}
                             name="customer_id"
-                            render={({ field }) => (
+                            render={({ field, fieldState }) => (
                                 <FormItem className="col-span-1 md:col-span-2">
                                     <FormLabel>Customer</FormLabel>
                                     <FormControl>
@@ -123,6 +135,7 @@ export function QuoteForm({
                                             }}
                                             value={selectedCustomer}
                                             placeholder="Search for a customer..."
+                                            inputClassName={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}
                                         />
                                     </FormControl>
                                     <FormMessage />
@@ -133,7 +146,7 @@ export function QuoteForm({
                         <FormField
                             control={form.control}
                             name="contact_id"
-                            render={({ field }) => (
+                            render={({ field, fieldState }) => (
                                 <FormItem>
                                     <FormLabel>Contact Person</FormLabel>
                                     <Select
@@ -142,7 +155,7 @@ export function QuoteForm({
                                         disabled={!selectedCustomerId || isLoadingContacts}
                                     >
                                         <FormControl>
-                                            <SelectTrigger>
+                                            <SelectTrigger className={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}>
                                                 <SelectValue placeholder={
                                                     isLoadingContacts ? "Loading..." :
                                                         (!selectedCustomerId ? "Select customer first" : "Select contact")
@@ -238,14 +251,14 @@ export function QuoteForm({
                             {/* Connector Line (Visual) */}
                             <div className="hidden md:block absolute top-10 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-border z-0" />
 
-                            <FormField
-                                control={form.control}
-                                name="origin_location_id"
-                                render={({ field }) => (
-                                    <FormItem className="z-10">
-                                        <FormLabel>Origin ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
-                                        <FormControl>
-                                            <LocationSearch
+                        <FormField
+                            control={form.control}
+                            name="origin_location_id"
+                            render={({ field, fieldState }) => (
+                                <FormItem className="z-10">
+                                    <FormLabel>Origin ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
+                                    <FormControl>
+                                        <LocationSearch
                                                 onSelect={(loc) => {
                                                     setOriginLocation(loc);
                                                     setLocationFields("origin", loc, field.onChange);
@@ -253,6 +266,7 @@ export function QuoteForm({
                                                 value={field.value}
                                                 selectedLabel={originLocation ? `${originLocation.display_name} (${originLocation.code})` : undefined}
                                                 placeholder="Search airport..."
+                                                triggerClassName={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}
                                             />
                                         </FormControl>
                                         <FormDescription>
@@ -263,14 +277,14 @@ export function QuoteForm({
                                 )}
                             />
 
-                            <FormField
-                                control={form.control}
-                                name="destination_location_id"
-                                render={({ field }) => (
-                                    <FormItem className="z-10">
-                                        <FormLabel>Destination ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
-                                        <FormControl>
-                                            <LocationSearch
+                        <FormField
+                            control={form.control}
+                            name="destination_location_id"
+                            render={({ field, fieldState }) => (
+                                <FormItem className="z-10">
+                                    <FormLabel>Destination ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
+                                    <FormControl>
+                                        <LocationSearch
                                                 onSelect={(loc) => {
                                                     setDestinationLocation(loc);
                                                     setLocationFields("destination", loc, field.onChange);
@@ -278,6 +292,7 @@ export function QuoteForm({
                                                 value={field.value}
                                                 selectedLabel={destinationLocation ? `${destinationLocation.display_name} (${destinationLocation.code})` : undefined}
                                                 placeholder="Search airport..."
+                                                triggerClassName={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}
                                             />
                                         </FormControl>
                                         <FormDescription>
@@ -351,27 +366,6 @@ export function QuoteForm({
                             )}
                         />
 
-                        <FormField
-                            control={form.control}
-                            name="is_dangerous_goods"
-                            render={({ field }) => (
-                                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                                    <div className="space-y-0.5">
-                                        <FormLabel className="text-base">Dangerous Goods</FormLabel>
-                                        <FormDescription>
-                                            Requires checking (DGR fee)
-                                        </FormDescription>
-                                    </div>
-                                    <FormControl>
-                                        <Switch
-                                            checked={field.value}
-                                            onCheckedChange={field.onChange}
-                                            disabled // Disabled for MVP V3 as per spec
-                                        />
-                                    </FormControl>
-                                </FormItem>
-                            )}
-                        />
                     </CardContent>
                 </Card>
 
@@ -392,7 +386,7 @@ export function QuoteForm({
                             control={form.control}
                             name="cargo_type"
                             render={({ field }) => (
-                                <FormItem>
+                                <FormItem className="max-w-md">
                                     <FormLabel>Cargo Type</FormLabel>
                                     <Select onValueChange={field.onChange} value={field.value}>
                                         <FormControl>
@@ -406,6 +400,9 @@ export function QuoteForm({
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    <FormDescription>
+                                        Use cargo type to identify DG, live animals, perishables, valuables, and other special handling.
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
@@ -413,8 +410,11 @@ export function QuoteForm({
 
                         <div className="space-y-4">
                             {fields.map((fieldItem, index) => (
-                                <div key={fieldItem.id} className="grid grid-cols-12 gap-2 items-end border-b pb-4 last:border-0">
-                                    <div className="col-span-2">
+                                <div
+                                    key={fieldItem.id}
+                                    className="grid grid-cols-12 items-end gap-3 rounded-lg border p-4 md:flex md:items-end"
+                                >
+                                    <div className="col-span-6 md:min-w-[120px] md:flex-[0.9]">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.pieces`}
@@ -425,10 +425,35 @@ export function QuoteForm({
                                                         <Input type="number" {...field} min={1} />
                                                     </FormControl>
                                                 </FormItem>
+                                                )}
+                                            />
+                                    </div>
+                                    <div className="col-span-6 md:min-w-[160px] md:flex-[1.15]">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.package_type`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Package Type</FormLabel>
+                                                    <Select onValueChange={field.onChange} value={field.value}>
+                                                        <FormControl>
+                                                            <SelectTrigger className="w-full">
+                                                                <SelectValue placeholder="Select type" />
+                                                            </SelectTrigger>
+                                                        </FormControl>
+                                                        <SelectContent>
+                                                            {Object.values(V3_PACKAGE_TYPES).map((packageType) => (
+                                                                <SelectItem key={packageType} value={packageType}>
+                                                                    {packageType}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </FormItem>
                                             )}
                                         />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.length_cm`}
@@ -439,10 +464,10 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.width_cm`}
@@ -453,10 +478,10 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.height_cm`}
@@ -467,10 +492,10 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.gross_weight_kg`}
@@ -481,15 +506,15 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-12 md:flex-none md:self-end">
                                         <Button
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            className="text-destructive"
+                                            className="text-destructive md:ml-1"
                                             onClick={() => remove(index)}
                                             disabled={fields.length === 1}
                                         >
@@ -511,8 +536,8 @@ export function QuoteForm({
                 </Card>
 
                 <div className="flex justify-end gap-4">
-                    <Button type="submit" size="lg" disabled={isSubmitting}>
-                        {isSubmitting ? (
+                    <Button type="submit" size="lg" disabled={submitBusy}>
+                        {submitBusy ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 Calculating...

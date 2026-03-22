@@ -9,15 +9,15 @@ Clean table-style layout matching customer requirements.
 import logging
 import math
 from decimal import Decimal, ROUND_UP
-from pathlib import Path
 from typing import Optional
 
 from django.conf import settings
-from django.contrib.staticfiles import finders
 from django.utils import timezone
 
 from fpdf import FPDF
 
+from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE, commodity_label
+from .branding import QuoteBrandingContext, get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .public_links import build_public_quote_url
 
@@ -95,11 +95,12 @@ class QuotePDF(FPDF):
         super().__init__(orientation='L', unit='mm', format='A4')
         self.quote = quote
         self.show_watermark = show_watermark
+        self.branding = get_quote_branding(quote)
         self.set_auto_page_break(auto=True, margin=15)
         
         # Colors
-        self.dark_blue = (15, 42, 86)  # #0F2A56
-        self.red = (215, 25, 32)  # #D71920
+        self.dark_blue = self.branding.primary_color_rgb
+        self.red = self.branding.accent_color_rgb
         self.gray = (71, 85, 105)  # #475569
         self.light_gray = (241, 245, 249)  # #F1F5F9
         self.white = (255, 255, 255)
@@ -125,7 +126,7 @@ def generate_quote_pdf(
     try:
         # Fetch quote with related data
         quote = Quote.objects.select_related(
-            'customer', 'contact', 'origin_location', 'destination_location'
+            'customer', 'contact', 'origin_location', 'destination_location', 'organization', 'organization__branding'
         ).get(id=quote_id)
         
         # Get the version to display
@@ -187,7 +188,8 @@ def _build_header(pdf: QuotePDF, quote):
     """Build header with logo anchored at the very top, quote info to the right."""
     # LOGO - anchored at absolute top of page
     logo_y = 10  # Start 10mm from top margin
-    logo_path = _get_logo_path()
+    branding = pdf.branding
+    logo_path = branding.logo_path
     
     # Cropped logo is 608x205 pixels (aspect ratio ~3:1)
     # At 55mm width, height will be ~18.5mm
@@ -201,11 +203,14 @@ def _build_header(pdf: QuotePDF, quote):
         # Fallback text logo
         pdf.set_font('Helvetica', 'B', 24)
         pdf.set_text_color(*pdf.dark_blue)
-        pdf.text(15, logo_y + 10, 'EFM')
+        display_name = branding.display_name or "RateEngine"
+        short_name = display_name.split()[0][:12].upper()
+        pdf.text(15, logo_y + 10, _clean_text(short_name))
         pdf.set_font('Helvetica', 'B', 9)
         pdf.set_text_color(*pdf.red)
-        pdf.text(47, logo_y + 10, 'EXPRESS')
-        pdf.text(47, logo_y + 14, 'AIR CARGO')
+        secondary = " ".join(display_name.split()[1:3]).upper()
+        if secondary:
+            pdf.text(47, logo_y + 10, _clean_text(secondary[:18]))
     
     # Quote number & status (right side, aligned with top of logo)
     pdf.set_font('Helvetica', 'B', 22)
@@ -287,13 +292,25 @@ def _build_shipment_bar(pdf: QuotePDF, quote, cargo_type, origin_code, origin_na
     x += col_widths[0]
     
     # Origin with country code
-    origin_display = f"{_extract_city_name(origin_name)}, AU"
+    origin_city = _extract_city_name(origin_name)
+    origin_country_code = _get_location_country_code(quote, "origin")
+    origin_display = (
+        f"{origin_city}, {origin_country_code}"
+        if origin_city and origin_country_code
+        else origin_city or origin_country_code
+    )
     pdf.set_xy(x, data_y)
     pdf.cell(col_widths[1], 8, _clean_text(origin_display), border=0, fill=True)
     x += col_widths[1]
     
     # Destination with country code
-    dest_display = f"{_extract_city_name(dest_name)}, PG"
+    dest_city = _extract_city_name(dest_name)
+    dest_country_code = _get_location_country_code(quote, "destination")
+    dest_display = (
+        f"{dest_city}, {dest_country_code}"
+        if dest_city and dest_country_code
+        else dest_city or dest_country_code
+    )
     pdf.set_xy(x, data_y)
     pdf.cell(col_widths[2], 8, _clean_text(dest_display), border=0, fill=True)
     x += col_widths[2]
@@ -459,58 +476,93 @@ def _build_totals_section(pdf: QuotePDF, quote, totals):
 def _build_footer(pdf: QuotePDF, quote, version):
     """Build footer with contact info, terms, and public quote link."""
     start_y = pdf.get_y()
+    branding = pdf.branding
     
     # Separator
     pdf.set_draw_color(*pdf.light_border)
     pdf.set_line_width(0.3)
     pdf.line(15, start_y, 282, start_y)
-    
-    # Public Quote Link - Clean text hyperlink
+
+    content_top = start_y + 4
+
+    # Public Quote Link - prominent button-style CTA
     public_url = build_public_quote_url(str(quote.id))
-    pdf.set_font('Helvetica', 'U', 9) # Underlined and slightly larger
-    pdf.set_text_color(0, 102, 204)  # Blue link color
-    pdf.set_xy(15, start_y + 5)
-    
-    # Make the text itself the clickable link
-    pdf.cell(0, 5, '>> Click here to view Itemized Charge Breakdown <<', link=public_url)
-    
-    # Company contact (left, below link)
-    pdf.set_font('Helvetica', 'B', 7)
-    pdf.set_text_color(15, 23, 42)
-    pdf.set_xy(15, start_y + 14)
-    pdf.cell(0, 4, 'EFM EXPRESS AIR CARGO')
+    button_x = 15
+    button_y = content_top
+    button_w = 110
+    button_h = 10
+
+    # Outer button border
+    pdf.set_draw_color(9, 30, 61)
+    pdf.set_line_width(0.4)
+    pdf.rect(button_x, button_y, button_w, button_h, "D")
+
+    # Inner button fill
+    pdf.set_fill_color(*pdf.dark_blue)
+    pdf.set_text_color(*pdf.white)
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.set_xy(button_x, button_y)
+    pdf.cell(
+        button_w,
+        button_h,
+        'OPEN DETAILED CHARGE BREAKDOWN',
+        border=0,
+        align='C',
+        fill=True,
+        link=public_url,
+    )
+
+    # Supporting helper text under button
     pdf.set_font('Helvetica', '', 7)
     pdf.set_text_color(*pdf.gray)
-    pdf.set_xy(15, start_y + 18)
-    pdf.cell(0, 4, 'Phone: +675 325 8500 | Email: quotes@efmexpress.com')
-    pdf.set_xy(15, start_y + 22)
-    pdf.cell(0, 4, 'PO Box 1791, Port Moresby, Papua New Guinea')
-    
-    # Terms (right)
+    pdf.set_xy(15, button_y + button_h + 2)
+    pdf.cell(132, 4, 'Secure online view with line-by-line charge details')
+
+    # Company contact block (left)
+    contact_y = button_y + button_h + 7
     pdf.set_font('Helvetica', 'B', 7)
     pdf.set_text_color(15, 23, 42)
-    pdf.set_xy(150, start_y + 14)
+    pdf.set_xy(15, contact_y)
+    pdf.cell(0, 4, _clean_text((branding.display_name or "RateEngine").upper()))
+
+    pdf.set_font('Helvetica', '', 7)
+    pdf.set_text_color(*pdf.gray)
+    contact_line = _build_branding_contact_line(branding)
+    if contact_line:
+        pdf.set_xy(15, contact_y + 4)
+        pdf.cell(0, 4, _clean_text(contact_line))
+    address_line = " | ".join(branding.address_lines[:2])
+    if address_line:
+        pdf.set_xy(15, contact_y + 8)
+        pdf.cell(0, 4, _clean_text(address_line))
+
+    # Terms block (right)
+    terms_x = 150
+    pdf.set_font('Helvetica', 'B', 7)
+    pdf.set_text_color(15, 23, 42)
+    pdf.set_xy(terms_x, content_top)
     pdf.cell(0, 4, 'TERMS & CONDITIONS')
-    
+
     pdf.set_font('Helvetica', '', 6)
     pdf.set_text_color(*pdf.gray)
     valid_until_str = (quote.valid_until or quote.created_at).strftime('%d %b %Y')
-    terms = [
-        f"Valid until {valid_until_str}",
-        "Space subject to availability",
-        "Final charges based on actual/volumetric weight",
-    ]
-    terms_y = start_y + 18
+    terms = _build_terms_and_conditions(quote, valid_until_str, branding)
+    terms_y = content_top + 4
     for term in terms:
-        pdf.set_xy(150, terms_y)
+        pdf.set_xy(terms_x, terms_y)
         pdf.cell(0, 3, _clean_text(f"- {term}"))
-        terms_y += 3
-    
-    # Generated timestamp
+        terms_y += 3.4
+
+    # Generated timestamp, positioned below both blocks
+    footer_bottom = max(contact_y + 12, terms_y) + 2
     pdf.set_font('Helvetica', 'I', 6)
     pdf.set_text_color(148, 163, 184)
-    pdf.set_xy(15, start_y + 28)
-    pdf.cell(0, 4, f"Generated by RateEngine v{version.version_number} | {timezone.now().strftime('%d %b %Y %H:%M')}")
+    pdf.set_xy(15, footer_bottom)
+    pdf.cell(
+        0,
+        4,
+        f"Generated by RateEngine v{version.version_number} | {timezone.now().strftime('%d %b %Y %H:%M')}",
+    )
 
 
 # Helper functions
@@ -546,12 +598,56 @@ def _extract_location_info(quote, location_type: str) -> tuple[str, str]:
             code = location.code
         else:
             code = str(location)[:3].upper()
-        name = getattr(location, 'name', str(location))
+        if getattr(location, "city", None) and getattr(location.city, "name", None):
+            name = location.city.name
+        elif getattr(location, "airport", None) and getattr(location.airport, "city", None) and getattr(location.airport.city, "name", None):
+            name = location.airport.city.name
+        elif getattr(location, "port", None) and getattr(location.port, "city", None) and getattr(location.port.city, "name", None):
+            name = location.port.city.name
+        else:
+            name = getattr(location, 'name', str(location))
         return code, name
     
     if location_type == 'origin':
         return 'ORG', 'Origin'
     return 'DST', 'Destination'
+
+
+def _get_location_country_code(quote, location_type: str) -> str:
+    """Return ISO country code for origin/destination location on quote."""
+    location_field = f"{location_type}_location"
+    location = getattr(quote, location_field, None)
+    country = getattr(location, "country", None)
+    code = getattr(country, "code", None)
+    if code:
+        return str(code).upper()
+    return "ORG" if location_type == "origin" else "DST"
+
+
+def _build_terms_and_conditions(quote, valid_until_str: str, branding: Optional[QuoteBrandingContext]) -> list[str]:
+    """Build customer-facing terms suited to mode of transport."""
+    mode = str(getattr(quote, "mode", "") or "").upper()
+    if mode == "AIR":
+        terms = [
+            f"Quotation valid until {valid_until_str}.",
+            "Chargeable weight is the greater of gross or volumetric weight (L x W x H / 6000).",
+            "Airline freight and surcharges (including fuel/security) are subject to change at uplift.",
+            "Customs duties, taxes, inspections, storage, and destination statutory fees are excluded unless stated.",
+            "Transit times are estimates and subject to airline, customs, and security clearances.",
+        ]
+        if getattr(quote, "is_dangerous_goods", False):
+            terms.append("Dangerous goods are accepted only with prior approval and full declaration.")
+    else:
+        terms = [
+            f"Quotation valid until {valid_until_str}.",
+            "Space and equipment availability are subject to carrier confirmation.",
+            "Final charges are based on confirmed shipment details at handover.",
+        ]
+    footer_note = (branding.quote_footer_text if branding else "").strip()
+    if footer_note:
+        terms.insert(0, footer_note)
+
+    return terms
 
 
 def _get_charge_buckets(version) -> list[dict]:
@@ -616,18 +712,40 @@ def _get_cargo_type(quote, version) -> str:
         cargo_type = quote_input.get('cargo_type')
         if cargo_type:
             return cargo_type
+        commodity_code = quote_input.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
     
     cargo_data = getattr(version, 'cargo_data', None) or {}
     if isinstance(cargo_data, dict):
         cargo_type = cargo_data.get('cargo_type')
         if cargo_type:
             return cargo_type
-    
+        commodity_code = cargo_data.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
+
+    version_payload = getattr(version, 'payload_json', None) or {}
+    if isinstance(version_payload, dict):
+        commodity_code = version_payload.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
+
+    request_payload = getattr(quote, 'request_details_json', None) or {}
+    if isinstance(request_payload, dict):
+        commodity_code = request_payload.get('commodity_code')
+        if commodity_code:
+            return commodity_label(commodity_code)
+
+    commodity_code = getattr(quote, 'commodity_code', None)
+    if commodity_code:
+        return commodity_label(commodity_code)
+
     is_dg = getattr(quote, 'is_dangerous_goods', False)
     if is_dg:
-        return 'Dangerous Goods'
+        return commodity_label(COMMODITY_CODE_DG)
     
-    return 'General Cargo'
+    return commodity_label(DEFAULT_COMMODITY_CODE)
 
 
 def _get_chargeable_weight(quote, version) -> str:
@@ -637,56 +755,79 @@ def _get_chargeable_weight(quote, version) -> str:
     - Gross weight (sum of all packages)
     - Volumetric weight (L * W * H / 6000 for each package, summed)
     """
+    def _to_float(value, default=0.0):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _to_int(value, default=1):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _calculate_from_piece_list(piece_list) -> Optional[float]:
+        if not isinstance(piece_list, list) or not piece_list:
+            return None
+
+        total_gross = 0.0
+        total_volumetric = 0.0
+        for item in piece_list:
+            if not isinstance(item, dict):
+                continue
+            pieces = max(_to_int(item.get('pieces', 1), 1), 1)
+            gross_weight = _to_float(item.get('gross_weight_kg', 0))
+            total_gross += gross_weight * pieces
+
+            length = _to_float(item.get('length_cm', 0))
+            width = _to_float(item.get('width_cm', 0))
+            height = _to_float(item.get('height_cm', 0))
+            if length > 0 and width > 0 and height > 0:
+                total_volumetric += (length * width * height / 6000.0) * pieces
+
+        chargeable = max(total_gross, total_volumetric)
+        return chargeable if chargeable > 0 else None
+
+    def _calculate_from_payload(payload: dict) -> Optional[float]:
+        if not isinstance(payload, dict):
+            return None
+
+        # Legacy/flat form payload
+        chargeable = _calculate_from_piece_list(payload.get('dimensions'))
+        if chargeable is not None:
+            return chargeable
+
+        # Current nested payload structure (shipment.pieces)
+        shipment = payload.get('shipment')
+        if isinstance(shipment, dict):
+            chargeable = _calculate_from_piece_list(shipment.get('pieces'))
+            if chargeable is not None:
+                return chargeable
+            total_weight = _to_float(shipment.get('total_weight_kg', 0))
+            if total_weight > 0:
+                return total_weight
+
+        total_weight = _to_float(payload.get('total_weight_kg', 0))
+        if total_weight > 0:
+            return total_weight
+
+        return None
+
     try:
-        # Try request_details_json first
+        # Quote request payload (most authoritative for PDF display)
         request_details = getattr(quote, 'request_details_json', None) or {}
-        if isinstance(request_details, dict):
-            dimensions = request_details.get('dimensions', [])
-            if dimensions and isinstance(dimensions, list):
-                total_gross = 0.0
-                total_volumetric = 0.0
-                
-                for dim in dimensions:
-                    if not isinstance(dim, dict):
-                        continue
-                    
-                    # Get gross weight
-                    gross = dim.get('gross_weight_kg')
-                    if gross:
-                        try:
-                            total_gross += float(gross)
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    # Calculate volumetric weight (L * W * H / 6000)
-                    try:
-                        length = float(dim.get('length_cm', 0))
-                        width = float(dim.get('width_cm', 0))
-                        height = float(dim.get('height_cm', 0))
-                        pieces = int(dim.get('pieces', 1))
-                        vol_weight = (length * width * height / 6000) * pieces
-                        total_volumetric += vol_weight
-                    except (ValueError, TypeError):
-                        pass
-                
-                # Chargeable weight is the maximum of gross and volumetric
-                chargeable = max(total_gross, total_volumetric)
-                if chargeable > 0:
-                    return f"{chargeable:.1f}"
-        
-        # Try payload_json on version
+        chargeable = _calculate_from_payload(request_details)
+        if chargeable is not None:
+            return f"{chargeable:.1f}"
+
+        # Version payload fallback
         payload = getattr(version, 'payload_json', None) or {}
-        if isinstance(payload, dict):
-            dimensions = payload.get('dimensions', [])
-            if dimensions and isinstance(dimensions, list):
-                total_gross = sum(
-                    float(d.get('gross_weight_kg', 0)) 
-                    for d in dimensions if isinstance(d, dict)
-                )
-                if total_gross > 0:
-                    return f"{total_gross:.1f}"
-        
-        # Fallback: check quote_input and cargo_data
+        chargeable = _calculate_from_payload(payload)
+        if chargeable is not None:
+            return f"{chargeable:.1f}"
+
+        # Additional legacy fallbacks
         quote_input = getattr(quote, 'quote_input', None) or {}
         if isinstance(quote_input, dict):
             cw = quote_input.get('chargeable_weight')
@@ -705,28 +846,13 @@ def _get_chargeable_weight(quote, version) -> str:
     return '0.0'
 
 
-def _get_logo_path() -> Optional[str]:
-    """Get logo file path."""
-    try:
-        # Try the cropped logo first (no padding, proper aspect ratio)
-        logo_path = finders.find('images/efm_logo_cropped.png')
-        if logo_path and Path(logo_path).exists():
-            return logo_path
-        
-        # Fallback to cropped logo in static folder
-        fallback = Path(settings.BASE_DIR) / 'static' / 'images' / 'efm_logo_cropped.png'
-        if fallback.exists():
-            return str(fallback)
-        
-        # Second fallback - original new logo
-        new_logo = finders.find('images/efm_logo_new.png')
-        if new_logo and Path(new_logo).exists():
-            return new_logo
-        
-        # Old logo fallback
-        old_logo = finders.find('images/eac_logo.png')
-        if old_logo and Path(old_logo).exists():
-            return old_logo
-    except Exception as e:
-        logger.warning(f"Could not load logo: {e}")
-    return None
+def _build_branding_contact_line(branding: QuoteBrandingContext) -> str:
+    segments = []
+    if branding.support_phone:
+        segments.append(f"Phone: {branding.support_phone}")
+    if branding.support_email:
+        segments.append(f"Email: {branding.support_email}")
+    if branding.website_url:
+        segments.append(branding.website_url)
+    return " | ".join(segments)
+

@@ -40,10 +40,10 @@ VALID_CURRENCIES = {
 
 class SpotChargeLine(BaseModel):
     """
-    Single charge line parsed from agent/carrier quote.
+    Final validated charge line emitted by the multi-agent intake pipeline.
     
-    This is the core schema for AI rate intake. Each line represents
-    one charge extracted from unstructured text/PDF.
+    This combines normalized mapping data (v4 bucket/code, normalized confidence)
+    with the validated charge calculation fields used by downstream pricing logic.
     
     Examples:
         - "Pickup: AUD 85.00 min" → SpotChargeLine(bucket="ORIGIN", description="Pickup", amount=85.00, currency="AUD", unit_basis="PER_SHIPMENT", minimum=85.00)
@@ -65,6 +65,28 @@ class SpotChargeLine(BaseModel):
         min_length=1, 
         max_length=200,
         description="Charge description as extracted from source"
+    )
+
+    # Raw extraction label preserved for traceability
+    original_raw_label: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=200,
+        description="Original raw label from extraction stage (defaults to description)"
+    )
+
+    # Normalized v4 product mapping
+    v4_product_code: str = Field(
+        default="UNMAPPED",
+        min_length=1,
+        max_length=64,
+        description="Mapped v4 product code or 'UNMAPPED'"
+    )
+
+    # Explicit normalized bucket from mapping stage (mirrors bucket)
+    v4_bucket: Optional[SpotChargeBucket] = Field(
+        None,
+        description="Normalized v4 bucket from mapping stage; mirrors bucket if omitted"
     )
     
     # Amount in foreign currency (for flat charges or minimums)
@@ -187,6 +209,12 @@ class SpotChargeLine(BaseModel):
         le=1,
         description="AI confidence in this extraction. Metadata only - does not affect validation."
     )
+
+    # Confidence produced by normalization/mapping stage
+    normalization_confidence: Optional[Literal["HIGH", "LOW"]] = Field(
+        None,
+        description="Confidence from normalized mapping stage"
+    )
     
     # Currency validation warning (populated by validator, not by AI)
     _currency_warning: Optional[str] = None
@@ -220,6 +248,14 @@ class SpotChargeLine(BaseModel):
             "MIN_OR_PER_KG": "KG",
             "PERCENTAGE": "LINE",
         }
+
+        # Normalize multi-agent mapping fields onto the final output.
+        if not self.original_raw_label:
+            object.__setattr__(self, "original_raw_label", self.description)
+        if self.v4_bucket is None:
+            object.__setattr__(self, "v4_bucket", self.bucket)
+        elif self.v4_bucket != self.bucket:
+            object.__setattr__(self, "bucket", self.v4_bucket)
         
         # PER_SHIPMENT requires amount
         if self.unit_basis == "PER_SHIPMENT":
@@ -318,6 +354,9 @@ class SpotChargeLine(BaseModel):
             "example": {
                 "bucket": "ORIGIN",
                 "description": "Pickup & Collection",
+                "original_raw_label": "Pick-up",
+                "v4_product_code": "PICKUP",
+                "v4_bucket": "ORIGIN",
                 "amount": "85.00",
                 "currency": "AUD",
                 "unit_basis": "PER_SHIPMENT",
@@ -328,141 +367,140 @@ class SpotChargeLine(BaseModel):
 
 
 # =============================================================================
-# AI RATE INTAKE RESPONSE SCHEMA
+# MULTI-AGENT PIPELINE STAGE SCHEMAS
 # =============================================================================
 
-class AIRateIntakeResponse(BaseModel):
-    """
-    Validated response from AI rate extraction.
-    
-    This schema wraps the complete AI extraction result, including
-    all parsed lines, warnings, and extraction metadata.
-    """
-    
-    # Overall success flag
-    success: bool = Field(
+class RawExtractedCharge(BaseModel):
+    """Raw charge candidate emitted by the extraction agent."""
+
+    raw_label: str = Field(
         ...,
-        description="True if extraction completed without critical errors"
+        min_length=1,
+        max_length=200,
+        description="Raw label text as extracted from the quote"
     )
-    
-    # Extracted charge lines (may be empty on failure)
-    lines: List[SpotChargeLine] = Field(
-        default_factory=list,
-        description="List of extracted charge lines"
+    raw_amount_string: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Unparsed amount text exactly as extracted (e.g., 'AUD 85.00 min')"
     )
-    
-    # Document-level currency fallback
-    quote_currency: Optional[str] = Field(
+    currency_hint: Optional[str] = Field(
         None,
+        max_length=10,
+        description="Optional currency hint from extraction stage (e.g., 'AUD', '$')"
+    )
+    is_conditional: bool = Field(
+        default=False,
+        description="True if raw text indicates the charge is conditional/optional"
+    )
+
+    @field_validator("currency_hint")
+    @classmethod
+    def normalize_currency_hint(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        return v.upper() if len(v) == 3 else v
+
+
+class NormalizedCharge(BaseModel):
+    """Normalized and mapped charge candidate emitted by the mapping agent."""
+
+    original_raw_label: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Original raw label that was normalized"
+    )
+    v4_product_code: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description="Mapped v4 product code, or 'UNMAPPED'"
+    )
+    v4_bucket: SpotChargeBucket = Field(
+        ...,
+        description="Mapped v4 charge bucket"
+    )
+    unit_basis: UnitBasis = Field(
+        ...,
+        description="Normalized charging basis"
+    )
+    amount: Decimal = Field(
+        ...,
+        ge=0,
+        description="Primary normalized amount (flat amount, per-kg rate, or duplicated percentage/per-kg-rate for composite rules)"
+    )
+    rate_per_unit: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Per-unit rate for PER_KG and MIN_OR_PER_KG"
+    )
+    minimum_amount: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        description="Minimum amount for MIN_OR_PER_KG"
+    )
+    percentage: Optional[Decimal] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Percentage value for PERCENTAGE charges"
+    )
+    percent_applies_to: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Basis/component the percentage applies to"
+    )
+    currency: str = Field(
+        ...,
         min_length=3,
         max_length=3,
-        description="Default currency for the entire quote (if not specified per line)"
+        description="Normalized ISO 4217 currency code"
     )
-    
-    # Non-fatal warnings (e.g., ambiguous currency, low confidence)
-    warnings: List[str] = Field(
-        default_factory=list,
-        description="Warnings about extraction quality or ambiguity"
-    )
-    
-    # Error message if success=False
-    error: Optional[str] = Field(
-        None,
-        description="Error message if extraction failed"
-    )
-    
-    # Input metadata
-    raw_text_length: int = Field(
+    confidence: Literal["HIGH", "LOW"] = Field(
         ...,
-        ge=0,
-        description="Character count of input text"
-    )
-    
-    # Overall extraction confidence (optional metadata - does NOT drive logic in MVP)
-    extraction_confidence: Optional[float] = Field(
-        None,
-        ge=0,
-        le=1,
-        description="Overall confidence score. Metadata only - does not affect validation."
-    )
-    
-    # Source type
-    source_type: Literal["TEXT", "PDF", "EMAIL"] = Field(
-        default="TEXT",
-        description="Type of source document"
-    )
-    
-    # AI model used
-    model_used: Optional[str] = Field(
-        None,
-        description="AI model identifier (e.g., 'gemini-2.0-flash')"
+        description="Normalization confidence"
     )
 
-    # Pricing Analysis from AI
-    analysis_text: Optional[str] = Field(
-        None,
-        max_length=2000,
-        description="Pricing and rate analysis provided by the AI"
-    )
+    @field_validator("currency")
+    @classmethod
+    def validate_normalized_currency(cls, v: str) -> str:
+        return v.upper()
 
-    @model_validator(mode='after')
-    def validate_response(self):
-        """Ensure response is internally consistent."""
-        
-        # If success but no lines, add informational warning
-        if self.success and len(self.lines) == 0 and "No charge lines extracted" not in str(self.warnings):
-            self.warnings.append("No charge lines extracted from input")
-        
-        # If failed, should have error message
-        if not self.success and not self.error:
-            self.error = "Extraction failed without specific error"
-        
-        # Validate currency requirements
-        # If line lacks currency, quote_currency MUST be present
-        for i, line in enumerate(self.lines):
-            # Skip percentage as it might not strictly need currency (it's ratio)
-            if line.unit_basis == "PERCENTAGE":
-                continue
-            
-            if line.currency is None:
-                if self.quote_currency is None:
-                    raise ValueError(f"Line {i+1} ({line.description}): Currency is missing and no global quote_currency provided")
-            
-            # Determine effective currency
-            eff_eur = line.currency or self.quote_currency
-            if eff_eur and eff_eur not in VALID_CURRENCIES:
-                 if f"Unknown currency '{eff_eur}'" not in str(self.warnings):
-                    self.warnings.append(f"Line {i+1}: Unknown currency '{eff_eur}'")
+    @model_validator(mode="after")
+    def validate_by_unit_basis(self):
+        """Enforce specialized fields for percentage and min-or-per-kg rules."""
+        if self.unit_basis == "PER_KG" and self.rate_per_unit is None:
+            object.__setattr__(self, "rate_per_unit", self.amount)
 
-        # Collect currency warnings from lines
-        for line in self.lines:
-            line_warnings = line.get_warnings()
-            for w in line_warnings:
-                if w not in self.warnings:
-                    self.warnings.append(w)
-        
+        if self.unit_basis == "PERCENTAGE":
+            if self.percentage is None:
+                object.__setattr__(self, "percentage", self.amount)
+
+        if self.unit_basis == "MIN_OR_PER_KG":
+            if self.rate_per_unit is None:
+                object.__setattr__(self, "rate_per_unit", self.amount)
+
         return self
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": True,
-                "lines": [
-                    {
-                        "bucket": "ORIGIN",
-                        "description": "Pickup",
-                        "amount": "85.00",
-                        "currency": "AUD",
-                        "unit_basis": "PER_SHIPMENT"
-                    }
-                ],
-                "warnings": [],
-                "raw_text_length": 450,
-                "extraction_confidence": 0.85,
-                "source_type": "TEXT",
-                "model_used": "gemini-2.0-flash"
-            }
-        }
+
+class ExtractionAuditResult(BaseModel):
+    """Audit outcome from the QA/safety agent."""
+
+    is_safe_to_proceed: bool = Field(
+        ...,
+        description="True if extraction/normalization is safe to proceed to final validation"
+    )
+    missed_charges: List[str] = Field(
+        default_factory=list,
+        description="Charge labels or notes the audit agent believes were missed"
+    )
+    hallucinations_detected: List[str] = Field(
+        default_factory=list,
+        description="Items detected as likely hallucinated charges or unsupported values"
+    )
 
 
 # =============================================================================

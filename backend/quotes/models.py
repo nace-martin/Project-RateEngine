@@ -9,9 +9,10 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Import models needed for V3 ForeignKeys
-from parties.models import Company, Contact
+from parties.models import Company, Contact, Organization
 # --- UPDATED IMPORT ---
 from core.models import Policy, FxSnapshot, Location
+from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
 # --- END UPDATE ---
 from services.models import MODE_CHOICES, ServiceComponent, SERVICE_SCOPE_CHOICES
 
@@ -57,6 +58,14 @@ class Quote(models.Model):
         on_delete=models.PROTECT,
         related_name='quotes_as_customer',
         help_text="The primary customer requesting the quote."
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="quotes",
+        help_text="Tenant/account branding context for this quote.",
     )
     contact = models.ForeignKey(
         Contact,
@@ -123,6 +132,13 @@ class Quote(models.Model):
         null=True, blank=True
     )
 
+    commodity_code = models.CharField(
+        max_length=10,
+        choices=COMMODITY_CHOICES,
+        default=DEFAULT_COMMODITY_CODE,
+        db_index=True,
+        help_text="Commodity classification used for conditional pricing decisions.",
+    )
     is_dangerous_goods = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     request_details_json = models.JSONField(
@@ -193,7 +209,7 @@ class Quote(models.Model):
         """
         Transition quote from DRAFT to FINALIZED.
         Assigns a permanent sequential quote_number in format: QT-YYYY-NNNN
-        Sets valid_until to 30 days from now.
+        Sets valid_until to configured quote validity days (default 7 days) from now.
         
         Uses database-level locking to prevent race conditions.
         
@@ -247,9 +263,16 @@ class Quote(models.Model):
             self.status = self.Status.FINALIZED
             self.finalized_at = timezone.now()
             
-            # Set expiry to 30 days from finalization
-            if not self.valid_until:
-                self.valid_until = (timezone.now() + timedelta(days=30)).date()
+            # Always reset expiry from finalization timestamp so clones/stale values
+            # cannot carry old validity windows into newly finalized quotes.
+            validity_days = getattr(settings, 'QUOTE_VALIDITY_DAYS', 7)
+            try:
+                validity_days = int(validity_days)
+            except (TypeError, ValueError):
+                validity_days = 7
+            if validity_days < 1:
+                validity_days = 7
+            self.valid_until = (timezone.now() + timedelta(days=validity_days)).date()
                 
             if user:
                 self.finalized_by = user

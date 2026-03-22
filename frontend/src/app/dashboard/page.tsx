@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign, AlertCircle, Clock, TrendingUp, BarChart3 } from "lucide-react";
+import { PlusCircle, ArrowRight, FileText, CheckCircle2, DollarSign, AlertCircle, Clock, TrendingUp, BarChart3 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import ProtectedRoute from "@/components/protected-route";
@@ -12,7 +12,7 @@ import { getQuotesV3, listSpotEnvelopes, getDashboardMetrics, type DashboardMetr
 import { API_BASE_URL } from "@/lib/config";
 import type { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
-import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCustomerName, calculateSpotTotal, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
+import { UnifiedQuote, formatCurrency, formatRoute, getWeight, getCustomerName, calculateSpotTotal, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 import { Button } from "@/components/ui/button";
 import {
     Card,
@@ -29,7 +29,6 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { QuoteStatusBadge } from "@/components/QuoteStatusBadge";
 import { KPICard } from "@/components/KPICard";
 import { Tier1StatsRow } from "@/components/dashboard/Tier1StatsRow";
@@ -278,6 +277,11 @@ export default function DashboardPage() {
 
         // 2. Add Spot Drafts
         spotDrafts.forEach(d => {
+            const params = new URLSearchParams({
+                customer_name: d.customer_name || "",
+                service_scope: (d.shipment.service_scope || "D2D").toUpperCase(),
+                payment_term: (d.shipment.payment_term || "prepaid").toUpperCase(),
+            });
             unified.push({
                 id: d.id,
                 type: "SPOT_DRAFT",
@@ -290,7 +294,7 @@ export default function DashboardPage() {
                 status: "Draft",
                 rawStatus: "DRAFT",
                 total: calculateSpotTotal(d),
-                actionLink: `/quotes/spot/${d.id}`,
+                actionLink: `/quotes/spot/${d.id}?${params.toString()}`,
                 mode: "AIR", // SPOT is implicitly AIR for now
                 createdBy: "User" // SPOT drafts don't have explicit creator stored yet
             });
@@ -299,135 +303,6 @@ export default function DashboardPage() {
         return unified.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
     }, [allQuotes, spotDrafts]);
 
-
-    const renderRecentQuotes = () => {
-        if (loading) {
-            return (
-                <div className="space-y-4 p-6">
-                    <div className="space-y-2">
-                        <Skeleton className="h-4 w-[250px]" />
-                        <Skeleton className="h-4 w-[200px]" />
-                    </div>
-                    <div className="space-y-2 pt-4">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                            <div key={i} className="flex items-center space-x-4">
-                                <Skeleton className="h-12 w-12 rounded-full" />
-                                <div className="space-y-2">
-                                    <Skeleton className="h-4 w-[250px]" />
-                                    <Skeleton className="h-4 w-[200px]" />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-        }
-
-        if (error) {
-            return (
-                <Alert variant="destructive">
-                    <AlertTitle>Something went wrong</AlertTitle>
-                    <AlertDescription>{error}</AlertDescription>
-                </Alert>
-            );
-        }
-
-        if (recentQuotes.length === 0) {
-            return (
-                <EmptyState
-                    title="No quotes available"
-                    description="You haven't created any quotes yet. Get started by creating your first quote."
-                    icon={FileText}
-                    actionLabel="Create New Quote"
-                    onAction={() => window.location.href = "/quotes/new"}
-                    className="py-12 border-none"
-                />
-            );
-        }
-
-        return (
-            <div className="overflow-hidden">
-                <Table>
-                    <TableHeader>
-                        <TableRow className="bg-muted/30 hover:bg-muted/30">
-                            <TableHead className="font-semibold text-primary">Quote #</TableHead>
-                            <TableHead className="font-semibold">Date</TableHead>
-                            <TableHead className="font-semibold">Customer</TableHead>
-                            <TableHead className="font-semibold">Route</TableHead>
-                            <TableHead className="font-semibold text-right">Weight</TableHead>
-                            <TableHead className="font-semibold">Status</TableHead>
-                            <TableHead className="font-semibold">User</TableHead>
-                            <TableHead className="text-right font-semibold">Total (inc. GST)</TableHead>
-                            <TableHead className="text-right">Action</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {recentQuotes.map((quote) => (
-                            <TableRow
-                                key={quote.id}
-                                className="cursor-pointer hover:bg-primary/5 transition-colors"
-                                onClick={() => window.location.href = quote.actionLink}
-                            >
-                                <TableCell>
-                                    <span className="text-primary font-semibold hover:underline">
-                                        {quote.number}
-                                    </span>
-                                </TableCell>
-                                <TableCell className="text-muted-foreground text-sm">
-                                    <div className="flex flex-col">
-                                        <span>{formatDate(quote.date)}</span>
-                                        {quote.updatedAt && !Number.isNaN(new Date(quote.updatedAt).getTime()) &&
-                                            new Date(quote.updatedAt).getTime() !== new Date(quote.date).getTime() && (
-                                                <span className="text-xs text-slate-500 font-medium">
-                                                    Last activity: {formatDate(quote.updatedAt)}
-                                                </span>
-                                            )}
-                                    </div>
-                                </TableCell>
-                                <TableCell className="max-w-[200px] truncate" title={quote.customer}>
-                                    {quote.customer}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground">
-                                    {quote.route}
-                                </TableCell>
-                                <TableCell className="text-right text-muted-foreground">
-                                    {quote.weight}
-                                </TableCell>
-                                <TableCell>
-                                    {quote.type === "SPOT_DRAFT" ? (
-                                        <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                                            Draft (SPOT)
-                                        </span>
-                                    ) : (
-                                        <QuoteStatusBadge status={quote.rawStatus} />
-                                    )}
-                                </TableCell>
-                                <TableCell className="text-muted-foreground text-sm">
-                                    {quote.createdBy}
-                                </TableCell>
-                                <TableCell className="text-right font-semibold tabular-nums">
-                                    {quote.total}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        asChild
-                                        className="h-8 border-slate-200 hover:bg-slate-50 text-slate-700"
-                                        onClick={(e) => e.stopPropagation()}
-                                    >
-                                        <Link href={quote.actionLink}>
-                                            {["DRAFT", "draft"].includes(quote.rawStatus) ? "Resume" : "View"}
-                                        </Link>
-                                    </Button>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-            </div>
-        );
-    };
 
     const displayName = user?.username;
 
@@ -457,31 +332,6 @@ export default function DashboardPage() {
             const amount = parseFloat(quote.latest_version.totals.total_sell_pgk_incl_gst || quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
             return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
-
-
-
-        // Helper to format mode
-        const formatMode = (mode: string): string => {
-            const modeMap: Record<string, string> = {
-                'AIR': 'Air Freight', 'air': 'Air Freight',
-                'SEA': 'Sea Freight', 'sea': 'Sea Freight',
-                'INLAND': 'Inland Transport', 'inland': 'Inland Transport',
-                'ROAD': 'Inland Transport', 'road': 'Inland Transport',
-            };
-            return modeMap[mode] || mode;
-        };
-
-
-
-        // Helper to format status text
-        const formatStatus = (status: string): string => {
-            const s = status?.toLowerCase();
-            if (s === 'draft') return 'Draft';
-            if (s === 'finalized') return 'Finalized';
-            if (s === 'sent') return 'Sent';
-            if (s === 'approved') return 'Approved';
-            return status;
-        };
 
         return (
             <ProtectedRoute>
@@ -751,17 +601,17 @@ export default function DashboardPage() {
 
                     {/* Row 1: Core Metrics */}
                     <div className="grid gap-6 md:grid-cols-3">
-                        {/* 1. Weekly Activity Chart */}
+                        {/* 1. Quote Activity Chart */}
                         <KPICard
-                            title="Weekly Activity"
+                            title="Quote Activity"
                             value={metricsLoading ? <Skeleton className="h-9 w-16" /> : (dashboardMetrics?.weekly_activity.reduce((sum, d) => sum + d.count, 0) ?? metrics.newQuotesLast7DaysCount)}
-                            trend={{ value: "New", positive: true }}
                             status="info"
                             icon={FileText}
                             className="overflow-hidden"
                             action={<TrendingUp className="h-4 w-4 text-success" />}
+                            description={dashboardMetrics?.activity_label ?? "Last 7 days"}
                         >
-                            <div className="h-24 flex items-end gap-2 justify-between mt-4">
+                            <div className="mt-4 flex h-28 items-end gap-2 justify-between">
                                 {weeklyActivityData.map((d, i) => {
                                     const count = 'count' in d ? d.count : 0;
                                     const heightPercent = (count / weeklyActivityMax) * 100;
@@ -780,27 +630,35 @@ export default function DashboardPage() {
                                         return rawDay;
                                     })();
                                     return (
-                                        <div key={i} className="flex-1 flex flex-col items-center gap-1 group/bar">
-                                            <div
-                                                className="w-full bg-blue-100 rounded-t-sm group-hover/bar:bg-blue-500 transition-colors relative"
-                                                style={{ height: `${heightPercent || 5}%` }}
-                                            >
-                                                <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                                    {count}
+                                        <div key={i} className="group/bar flex h-full flex-1 flex-col items-center gap-2">
+                                            <div className="flex h-full w-full items-end rounded-md bg-slate-50 px-1">
+                                                <div
+                                                    className="relative w-full rounded-t-md bg-blue-200 transition-colors group-hover/bar:bg-blue-500"
+                                                    style={{ height: `${Math.max(heightPercent, count > 0 ? 10 : 6)}%` }}
+                                                >
+                                                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] whitespace-nowrap text-white opacity-0 transition-opacity group-hover/bar:opacity-100 z-10">
+                                                        {count}
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <span className="text-[10px] font-medium text-slate-400 uppercase">{dayLabel}</span>
+                                            <span className="text-[10px] font-medium uppercase text-slate-400">{dayLabel}</span>
                                         </div>
                                     );
                                 })}
                             </div>
                         </KPICard>
 
-                        {/* 2. Finalized Success */}
+                        {/* 2. Finalized Quotes */}
                         <KPICard
-                            title="Finalized Success"
+                            title="Finalized Quotes"
                             value={metricsLoading ? <Skeleton className="h-9 w-16" /> : (dashboardMetrics?.finalized_count ?? metrics.finalizedCount)}
-                            description="Ready for booking"
+                            description={
+                                metricsLoading
+                                    ? undefined
+                                    : (dashboardMetrics?.finalized_count ?? metrics.finalizedCount) > 0
+                                        ? "Finalized or accepted in the selected period"
+                                        : "No finalized or accepted quotes in the selected period"
+                            }
                             status="success"
                             icon={CheckCircle2}
                             trend={{
@@ -847,7 +705,7 @@ export default function DashboardPage() {
                         <KPICard
                             title="Avg Quote Value"
                             value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.avg_quote_value ?? metrics.avgQuoteValue), dashboardMetrics ? 'PGK' : metrics.currency)}
-                            description="Based on finalized quotes"
+                            description="Based on finalized or accepted quotes in the selected period"
                             status="info"
                             icon={DollarSign}
                         />

@@ -1,8 +1,8 @@
 # backend/pricing_v4/management/commands/seed_export_sell_fcy.py
 """
-Seeds Export SELL Rates in FCY (USD/AUD) for Export Collect scenarios.
+Seeds Export SELL Rates in FCY (USD/AUD) for Export Prepaid scenarios.
 
-Based on the "EXPORT SELL - PREPAID D2A" rate card (which is actually used for Collect quotes).
+Based on the "EXPORT SELL - PREPAID D2A" rate card.
 
 Currency Rules:
 - USD: All non-AU destinations (SIN, HKG, MNL, etc.)
@@ -12,11 +12,12 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
 from datetime import date
-from pricing_v4.models import ProductCode, ExportSellRate
+from pricing_v4.models import ProductCode
+from pricing_v4.management.commands._sell_seed_utils import seed_export_sell_rate
 
 
 class Command(BaseCommand):
-    help = 'Seeds Export SELL Rates in USD/AUD for Export Collect quotes'
+    help = 'Seeds Export SELL Rates in USD/AUD for Export Prepaid quotes'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -29,7 +30,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.year = options['year']
         self.stdout.write("=" * 60)
-        self.stdout.write(f"Seeding Export Collect FCY Sell Rates (USD/AUD) for {self.year}")
+        self.stdout.write(f"Seeding Export Prepaid FCY Sell Rates (USD/AUD) for {self.year}")
         self.stdout.write("=" * 60)
         
         # Air Freight Rates from spreadsheet
@@ -158,15 +159,25 @@ class Command(BaseCommand):
         # Use FCY valid_from date to distinguish from PGK rates
         fcy_valid_from = date(self.year, 1, 2)  # One day after PGK rates
         
-        obj, created = ExportSellRate.objects.update_or_create(
-            product_code_id=product_id,
+        product_code = ProductCode.objects.get(id=product_id)
+        percent_of_product = ProductCode.objects.get(id=1050) if product_id == 1060 else None
+        result = seed_export_sell_rate(
+            product_code=product_code,
             origin_airport='POM',
             destination_airport=dest,
             currency=currency,
             valid_from=fcy_valid_from,
-            defaults=defaults
+            valid_until=defaults["valid_until"],
+            rate_per_shipment=defaults.get("rate_per_shipment"),
+            rate_per_kg=defaults.get("rate_per_kg"),
+            min_charge=defaults.get("min_charge"),
+            max_charge=defaults.get("max_charge"),
+            weight_breaks=defaults.get("weight_breaks"),
+            percent_rate=defaults.get("percent_rate"),
+            is_additive=defaults.get("is_additive", False),
+            payment_term='PREPAID',
+            percent_of_product_code=percent_of_product,
         )
-        
-        action = "Created" if created else "Updated"
-        pc_code = ProductCode.objects.get(id=product_id).code
-        self.stdout.write(f"  - {action} {pc_code} ({currency})")
+
+        action = "Created" if result.created else "Updated"
+        self.stdout.write(f"  - {action} {result.table_name} {product_code.code} ({currency})")

@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import {
     Card,
     CardContent,
-    CardDescription,
     CardHeader,
-    CardTitle,
 } from "@/components/ui/card";
 import {
     Table,
@@ -20,40 +19,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import {
     Select,
     SelectContent,
     SelectItem,
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import ProtectedRoute from '@/components/protected-route';
+import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useToast } from '@/context/toast-context';
 import {
     getCustomerDiscounts,
-    deleteCustomerDiscount,
     CustomerDiscount,
 } from '@/lib/api';
-import DiscountFormModal from '@/components/pricing/DiscountFormModal';
 import {
     Percent,
     Search,
-    Plus,
-    Edit2,
-    Trash2,
     RefreshCw,
     Filter,
     Tag,
     Users,
     Clock,
     TrendingDown,
+    ArrowRight,
 } from 'lucide-react';
 
 export default function DiscountsPage() {
@@ -63,15 +51,15 @@ export default function DiscountsPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [filterType, setFilterType] = useState<string>('all');
     const [filterStatus, setFilterStatus] = useState<string>('all');
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [editingDiscount, setEditingDiscount] = useState<CustomerDiscount | null>(null);
-    const [deleteTarget, setDeleteTarget] = useState<CustomerDiscount | null>(null);
 
-    const { isAdmin, isManager } = usePermissions();
-    const canManage = isAdmin || isManager;
-    const { toast } = useToast();
+    const { token, loading: authLoading } = useAuth();
+    const { isAdmin } = usePermissions();
+    const canLinkToCustomer = isAdmin;
 
-    const fetchDiscounts = async () => {
+    const fetchDiscounts = useCallback(async () => {
+        if (!token) {
+            return;
+        }
         setLoading(true);
         try {
             const data = await getCustomerDiscounts(
@@ -85,11 +73,14 @@ export default function DiscountsPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [searchQuery, token]);
 
     useEffect(() => {
+        if (authLoading || !token) {
+            return;
+        }
         fetchDiscounts();
-    }, [searchQuery]);
+    }, [authLoading, fetchDiscounts, token]);
 
     // Summary statistics
     const stats = useMemo(() => {
@@ -130,38 +121,6 @@ export default function DiscountsPage() {
         });
     }, [discounts, filterType, filterStatus]);
 
-    const handleAddNew = () => {
-        setEditingDiscount(null);
-        setIsModalOpen(true);
-    };
-
-    const handleEdit = (discount: CustomerDiscount) => {
-        setEditingDiscount(discount);
-        setIsModalOpen(true);
-    };
-
-    const handleDeleteConfirm = async () => {
-        if (!deleteTarget) return;
-        try {
-            await deleteCustomerDiscount(deleteTarget.id);
-            toast({ title: 'Discount deleted', description: 'The discount has been removed.' });
-            setDeleteTarget(null);
-            fetchDiscounts();
-        } catch (err) {
-            toast({
-                title: 'Delete failed',
-                description: err instanceof Error ? err.message : 'Unknown error',
-                variant: 'destructive'
-            });
-        }
-    };
-
-    const handleModalSuccess = () => {
-        setIsModalOpen(false);
-        setEditingDiscount(null);
-        fetchDiscounts();
-    };
-
     const formatDiscountValue = (d: CustomerDiscount) => {
         switch (d.discount_type) {
             case 'PERCENTAGE':
@@ -200,25 +159,29 @@ export default function DiscountsPage() {
     };
 
     return (
+        <ProtectedRoute>
         <div className="container mx-auto py-8 max-w-7xl space-y-6">
             {/* Header Section */}
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2 text-slate-900">
                         <Percent className="h-6 w-6 text-primary" />
-                        Customer Discounts
+                        Discount Register
                     </h1>
                     <p className="text-muted-foreground mt-1">
-                        Manage customer-specific pricing discounts and negotiated rates.
+                        Read-only register of negotiated pricing. Manage discount lines from the customer account page.
                     </p>
                 </div>
-                {canManage && (
-                    <Button onClick={handleAddNew} className="gap-2">
-                        <Plus className="h-4 w-4" />
-                        Add Discount
-                    </Button>
-                )}
             </div>
+
+            <Card className="border-slate-200 bg-slate-50/80">
+                <CardContent className="pt-6">
+                    <p className="text-sm text-slate-700">
+                        Discount entry has moved to each customer&apos;s <span className="font-medium">Negotiated Pricing</span> section.
+                        Use this page as an audit/register view only.
+                    </p>
+                </CardContent>
+            </Card>
 
             {/* Stats Cards */}
             <div className="grid gap-4 md:grid-cols-4">
@@ -333,34 +296,28 @@ export default function DiscountsPage() {
                                 <TableHead className="text-right font-semibold">Value</TableHead>
                                 <TableHead className="font-semibold">Valid Until</TableHead>
                                 <TableHead className="font-semibold">Status</TableHead>
-                                {canManage && <TableHead className="text-right font-semibold">Actions</TableHead>}
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {loading ? (
-                                <TableRow>
-                                    <TableCell colSpan={canManage ? 7 : 6} className="h-24 text-center text-muted-foreground">
-                                        <div className="flex items-center justify-center gap-2">
-                                            <RefreshCw className="h-4 w-4 animate-spin" />
-                                            Loading discounts...
+                                        {canLinkToCustomer && <TableHead className="text-right font-semibold">Customer Account</TableHead>}
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {loading ? (
+                                        <TableRow>
+                                    <TableCell colSpan={canLinkToCustomer ? 7 : 6} className="h-24 text-center text-muted-foreground">
+                                                <div className="flex items-center justify-center gap-2">
+                                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                                    Loading discounts...
                                         </div>
                                     </TableCell>
                                 </TableRow>
-                            ) : filteredDiscounts.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={canManage ? 7 : 6} className="h-32 text-center">
-                                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                                            <Percent className="h-8 w-8 opacity-50" />
-                                            <p>No discounts found</p>
-                                            {canManage && (
-                                                <Button variant="outline" size="sm" onClick={handleAddNew} className="mt-2">
-                                                    <Plus className="h-4 w-4 mr-2" />
-                                                    Add First Discount
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
+                                    ) : filteredDiscounts.length === 0 ? (
+                                        <TableRow>
+                                    <TableCell colSpan={canLinkToCustomer ? 7 : 6} className="h-32 text-center">
+                                                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                                    <Percent className="h-8 w-8 opacity-50" />
+                                                    <p>No discounts found</p>
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
                             ) : (
                                 filteredDiscounts.map((discount) => (
                                     <TableRow key={discount.id} className="hover:bg-slate-50/50">
@@ -390,26 +347,14 @@ export default function DiscountsPage() {
                                         <TableCell>
                                             {getStatusBadge(discount)}
                                         </TableCell>
-                                        {canManage && (
+                                        {canLinkToCustomer && (
                                             <TableCell className="text-right">
-                                                <div className="flex items-center justify-end gap-1">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8"
-                                                        onClick={() => handleEdit(discount)}
-                                                    >
-                                                        <Edit2 className="h-4 w-4" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                        onClick={() => setDeleteTarget(discount)}
-                                                    >
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                </div>
+                                                <Button variant="outline" size="sm" asChild>
+                                                    <Link href={`/customers/${discount.customer}/edit?returnTo=%2Fpricing%2Fdiscounts`}>
+                                                        Open Customer
+                                                        <ArrowRight className="h-4 w-4 ml-2" />
+                                                    </Link>
+                                                </Button>
                                             </TableCell>
                                         )}
                                     </TableRow>
@@ -426,36 +371,7 @@ export default function DiscountsPage() {
                     )}
                 </CardContent>
             </Card>
-
-            {/* Add/Edit Modal */}
-            <DiscountFormModal
-                open={isModalOpen}
-                onOpenChange={setIsModalOpen}
-                discount={editingDiscount}
-                onSuccess={handleModalSuccess}
-            />
-
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <Trash2 className="h-5 w-5 text-destructive" />
-                            Delete Discount
-                        </DialogTitle>
-                        <DialogDescription>
-                            Are you sure you want to delete this discount for{' '}
-                            <strong>{deleteTarget?.customer_name}</strong> on{' '}
-                            <strong>{deleteTarget?.product_code_code}</strong>?
-                            This action cannot be undone.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-                        <Button variant="destructive" onClick={handleDeleteConfirm}>Delete</Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
+        </ProtectedRoute>
     );
 }

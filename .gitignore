@@ -98,6 +98,7 @@ media/
 backend/staticfiles/
 backend/media/
 backend/static/
+backend/branding/
 
 # Node/JS tooling caches
 .eslintcache
@@ -119,3 +120,9 @@ gha-creds-*.json
 
 # Temporary test output files
 test_output*.txt
+
+# Local generated artifacts
+seed_output/
+frontend/eslint-report.json
+backend/out*.txt
+backend/last_error.traceback

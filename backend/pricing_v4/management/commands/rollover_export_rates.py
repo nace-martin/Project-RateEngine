@@ -101,7 +101,7 @@ class Command(BaseCommand):
         return missing
 
     def _missing_fcy_sell_rates(self, year_end, fcy_start):
-        # Export Collect rates are FCY (AUD/USD) with valid_from on Jan 2
+        # Export Prepaid rates are FCY (AUD/USD) with valid_from on Jan 2
         fcy_dest_currency = {
             "BNE": "AUD",
             "CNS": "AUD",

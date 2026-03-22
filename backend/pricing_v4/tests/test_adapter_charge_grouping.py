@@ -2,9 +2,12 @@ from django.test import TestCase
 from unittest.mock import MagicMock
 from decimal import Decimal
 from uuid import uuid4
+from types import SimpleNamespace
 
 from pricing_v4.adapter import PricingServiceV4Adapter
 from core.dataclasses import CalculatedChargeLine, QuoteInput
+from pricing_v4.engine.domestic_engine import BillableCharge
+from pricing_v4.models import ProductCode
 
 class AdapterChargeGroupingTest(TestCase):
     def setUp(self):
@@ -124,3 +127,103 @@ class AdapterChargeGroupingTest(TestCase):
         # Import Clearance should stay DESTINATION
         self.assertEqual(line.bucket, 'destination_charges')
         self.assertEqual(line.leg, 'DESTINATION')
+
+    def test_export_airline_fuel_surcharge_grouping(self):
+        """
+        Export airline fuel surcharge must always sit under Origin Charges.
+        """
+        adapter = PricingServiceV4Adapter(self.quote_input)
+
+        mock_line = MagicMock()
+        mock_line.product_code = 'EXP-FSC-AIR'
+        mock_line.description = 'Airline Export Fuel Surcharge'
+        mock_line.category = 'FREIGHT'
+        mock_line.leg = 'MAIN'
+        mock_line.cost_amount = Decimal('10.00')
+        mock_line.sell_amount = Decimal('25.00')
+        mock_line.sell_incl_gst = Decimal('25.00')
+        mock_line.gst_amount = Decimal('0')
+        mock_line.gst_category = None
+        mock_line.gst_rate = Decimal('0')
+        mock_line.sell_currency = 'PGK'
+        mock_line.cost_currency = 'PGK'
+        mock_line.is_rate_missing = False
+
+        mock_result = MagicMock()
+        mock_result.lines = [mock_line]
+
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+
+        from services.models import ServiceComponent
+        ServiceComponent.objects.create(
+            code='EXP-FSC-AIR',
+            description='Airline Export Fuel Surcharge',
+            mode='AIR',
+            leg='MAIN',
+            category='FREIGHT'
+        )
+
+        lines = adapter._convert_result_to_lines(mock_result)
+
+        self.assertEqual(len(lines), 1)
+        line = lines[0]
+        self.assertEqual(line.bucket, 'origin_charges')
+        self.assertEqual(line.leg, 'ORIGIN')
+
+    def test_domestic_freight_and_uplift_group_as_airfreight(self):
+        adapter = PricingServiceV4Adapter(self.quote_input)
+        self.quote_input.shipment.shipment_type = 'DOMESTIC'
+        self.quote_input.shipment.service_scope = 'A2A'
+        self.quote_input.shipment.commodity_code = 'HVC'
+        self.quote_input.shipment.is_dangerous_goods = False
+        self.quote_input.shipment.payment_term = 'COLLECT'
+        self.quote_input.quote_date = None
+        self.quote_input.shipment.origin_location = SimpleNamespace(code='POM', country_code='PG')
+        self.quote_input.shipment.destination_location = SimpleNamespace(code='LAE', country_code='PG')
+
+        ProductCode.objects.create(
+            id=3001,
+            code='DOM-FRT-AIR',
+            description='Domestic Air Freight',
+            domain='DOMESTIC',
+            category='FREIGHT',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4100',
+            gl_cost_code='5100',
+            default_unit='KG',
+        )
+        ProductCode.objects.create(
+            id=3101,
+            code='DOM-VALUABLE',
+            description='Domestic Valuable Cargo Uplift',
+            domain='DOMESTIC',
+            category='SURCHARGE',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4410',
+            gl_cost_code='5410',
+            default_unit='PERCENT',
+        )
+
+        from services.models import ServiceComponent
+        ServiceComponent.objects.create(code='DOM-FRT-AIR', description='Domestic Air Freight', mode='AIR', leg='MAIN', category='FREIGHT')
+        ServiceComponent.objects.create(code='DOM-VALUABLE', description='Domestic Valuable Cargo Uplift', mode='AIR', leg='MAIN', category='SURCHARGE')
+
+        mock_result = SimpleNamespace(
+            cogs_breakdown=[BillableCharge('Air Freight (Cost)', Decimal('61.00'), product_code='DOM-FRT-AIR')],
+            sell_breakdown=[
+                BillableCharge('Air Freight', Decimal('61.00'), product_code='DOM-FRT-AIR'),
+                BillableCharge('Domestic Valuable Cargo Uplift', Decimal('244.00'), product_code='DOM-VALUABLE'),
+            ],
+        )
+
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+        lines = adapter._convert_result_to_lines(mock_result)
+
+        line_by_code = {line.service_component_code: line for line in lines}
+        self.assertEqual(line_by_code['DOM-FRT-AIR'].bucket, 'airfreight')
+        self.assertEqual(line_by_code['DOM-VALUABLE'].bucket, 'airfreight')
+
+        totals = adapter._calculate_totals(lines).totals
+        self.assertFalse(totals.has_missing_rates)

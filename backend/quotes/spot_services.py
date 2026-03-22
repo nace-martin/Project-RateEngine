@@ -19,16 +19,19 @@ SpotApprovalPolicy:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from typing import Optional, Tuple, List
 from uuid import uuid4
 
 from django.conf import settings
+from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
+from core.commodity import DEFAULT_COMMODITY_CODE
+from quotes.branding import QuoteBrandingContext
 from quotes.spot_schemas import (
     SpotPricingEnvelope,
     SPEShipmentContext,
@@ -54,6 +57,9 @@ class SpotTriggerReason:
     """Machine-readable SPOT trigger reason codes."""
     # Canonical Code (Deterministic Logic)
     MISSING_SCOPE_RATES = "MISSING_SCOPE_RATES"
+    MISSING_COMMODITY_RATES = "MISSING_COMMODITY_RATES"
+    COMMODITY_REQUIRES_SPOT = "COMMODITY_REQUIRES_SPOT"
+    COMMODITY_REQUIRES_MANUAL = "COMMODITY_REQUIRES_MANUAL"
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
     
     # Legacy codes (retained for backward compatibility in DB)
@@ -82,6 +88,38 @@ class TriggerResult:
     code: str
     text: str
     missing_components: List[str] = field(default_factory=list)
+    missing_product_codes: List[str] = field(default_factory=list)
+    spot_required_product_codes: List[str] = field(default_factory=list)
+    manual_required_product_codes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class CommodityCoverageResult:
+    """Commodity-specific pricing coverage for the selected lane/scope."""
+    missing_product_codes: List[str] = field(default_factory=list)
+    spot_required_product_codes: List[str] = field(default_factory=list)
+    manual_required_product_codes: List[str] = field(default_factory=list)
+
+    @property
+    def is_spot_required(self) -> bool:
+        return bool(
+            self.missing_product_codes
+            or self.spot_required_product_codes
+            or self.manual_required_product_codes
+        )
+
+    @property
+    def unresolved_product_codes(self) -> List[str]:
+        ordered: list[str] = []
+        for code in (
+            self.missing_product_codes
+            + self.spot_required_product_codes
+            + self.manual_required_product_codes
+        ):
+            normalized = str(code or "").upper()
+            if normalized and normalized not in ordered:
+                ordered.append(normalized)
+        return ordered
 
 
 # =============================================================================
@@ -239,7 +277,9 @@ class SpotTriggerEvaluator:
         service_scope: str,
         # A dictionary mapping component codes to their availability in the DB
         # { "FREIGHT": True, "ORIGIN_LOCAL": False, "DESTINATION_LOCAL": True, ... }
-        component_availability: dict[str, bool]
+        component_availability: dict[str, bool],
+        commodity_code: str = DEFAULT_COMMODITY_CODE,
+        commodity_coverage: Optional[CommodityCoverageResult] = None,
     ) -> Tuple[bool, Optional[TriggerResult]]:
         """
         Determine deterministically whether a quote must enter SPOT mode.
@@ -276,8 +316,87 @@ class SpotTriggerEvaluator:
                 missing_components=coverage.missing_required,
             )
 
+        commodity_trigger = cls.build_commodity_trigger(commodity_coverage)
+        if commodity_trigger:
+            return True, commodity_trigger
+
         # 5️⃣ Normal Pricing Path
         return False, None
+
+    @classmethod
+    def build_commodity_trigger(
+        cls,
+        commodity_coverage: Optional[CommodityCoverageResult],
+    ) -> Optional[TriggerResult]:
+        commodity_result = commodity_coverage or CommodityCoverageResult()
+        if not commodity_result.is_spot_required:
+            return None
+
+        missing = commodity_result.missing_product_codes
+        spot_required = commodity_result.spot_required_product_codes
+        manual_required = commodity_result.manual_required_product_codes
+
+        if manual_required:
+            code = SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
+        elif spot_required:
+            code = SpotTriggerReason.COMMODITY_REQUIRES_SPOT
+        else:
+            code = SpotTriggerReason.MISSING_COMMODITY_RATES
+
+        message_parts: list[str] = []
+        if manual_required:
+            message_parts.append(
+                "Commodity requires manual charge entry for: "
+                + cls._format_product_codes(manual_required)
+            )
+        if spot_required:
+            message_parts.append(
+                "Commodity requires SPOT rate sourcing for: "
+                + cls._format_product_codes(spot_required)
+            )
+        if missing:
+            message_parts.append(
+                "Commodity-specific DB coverage is missing for: "
+                + cls._format_product_codes(missing)
+            )
+
+        return TriggerResult(
+            code=code,
+            text=" ".join(message_parts),
+            missing_product_codes=commodity_result.unresolved_product_codes,
+            spot_required_product_codes=spot_required,
+            manual_required_product_codes=manual_required,
+        )
+
+    @staticmethod
+    def _format_product_codes(codes: List[str]) -> str:
+        ordered_codes: list[str] = []
+        for code in codes:
+            normalized = str(code or "").strip().upper()
+            if normalized and normalized not in ordered_codes:
+                ordered_codes.append(normalized)
+
+        if not ordered_codes:
+            return ""
+
+        try:
+            from pricing_v4.models import ProductCode
+
+            description_map = {
+                product.code.upper(): product.description
+                for product in ProductCode.objects.filter(code__in=ordered_codes)
+            }
+        except Exception:
+            description_map = {}
+
+        formatted: list[str] = []
+        for code in ordered_codes:
+            description = description_map.get(code)
+            if description:
+                formatted.append(f"{description} ({code})")
+            else:
+                formatted.append(code)
+        return ", ".join(formatted)
 
 class RateAvailabilityService:
     """
@@ -291,6 +410,7 @@ class RateAvailabilityService:
         destination_airport: str,
         direction: str,
         service_scope: str,
+        payment_term: Optional[str] = None,
     ) -> dict[str, bool]:
         """
         Build component availability map by querying V4 tables.
@@ -303,15 +423,90 @@ class RateAvailabilityService:
             ProductCode,
             DomesticCOGS,
             LocalCOGSRate,
+            LocalSellRate,
         )
         from datetime import date
         
+        origin_airport = (origin_airport or "").strip().upper()
+        destination_airport = (destination_airport or "").strip().upper()
+        direction = (direction or "").strip().upper()
+        payment_term_normalized = (payment_term or "").strip().upper()
+        if payment_term_normalized not in {"PREPAID", "COLLECT"}:
+            payment_term_normalized = None
+
         today = date.today()
         availability = {
             COMPONENT_FREIGHT: False,
             COMPONENT_ORIGIN_LOCAL: False,
             COMPONENT_DESTINATION_LOCAL: False,
         }
+
+        def surcharge_exists(
+            service_type: str,
+            *,
+            origin: Optional[str] = None,
+            destination: Optional[str] = None,
+        ) -> bool:
+            qs = Surcharge.objects.filter(
+                service_type=service_type,
+                rate_side='COGS',
+                is_active=True,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            )
+            if origin is not None:
+                qs = qs.filter(
+                    Q(origin_filter=origin) | Q(origin_filter__isnull=True) | Q(origin_filter='')
+                )
+            if destination is not None:
+                qs = qs.filter(
+                    Q(destination_filter=destination) | Q(destination_filter__isnull=True) | Q(destination_filter='')
+                )
+            return qs.exists()
+
+        def apply_payment_term_gate(
+            *,
+            component: str,
+            direction_value: str,
+            locations: list[str],
+            classifier,
+        ) -> None:
+            """
+            Enforce payment-term specificity for local SELL tariffs when provided.
+
+            Rule:
+            - If no payment term is supplied, do not gate.
+            - If component is already unavailable, no-op.
+            - If local sell rows exist for that component+location but none match
+              requested term (or ANY), mark component unavailable.
+            """
+            if not payment_term_normalized or not availability.get(component):
+                return
+            candidate_locations = [loc for loc in locations if loc]
+            if not candidate_locations:
+                return
+
+            rows = LocalSellRate.objects.filter(
+                direction=direction_value,
+                location__in=candidate_locations,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).values_list("payment_term", "product_code__code", "product_code__category")
+
+            has_component_rows = False
+            has_term_match = False
+            for row_payment_term, code, category in rows:
+                row_component = classifier(code, category)
+                if row_component != component:
+                    continue
+                has_component_rows = True
+                row_payment_term_value = (row_payment_term or "").upper()
+                if row_payment_term_value in {payment_term_normalized, "ANY"}:
+                    has_term_match = True
+                    break
+
+            if has_component_rows and not has_term_match:
+                availability[component] = False
         
         # 1. Freight Coverage (AIRFREIGHT)
         if direction == 'DOMESTIC':
@@ -378,21 +573,12 @@ class RateAvailabilityService:
             ).exists():
                 availability[COMPONENT_ORIGIN_LOCAL] = True
 
-            if Surcharge.objects.filter(
-                service_type='EXPORT_ORIGIN',
-                origin_filter=origin_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            if surcharge_exists('EXPORT_ORIGIN', origin=origin_airport):
                 availability[COMPONENT_ORIGIN_LOCAL] = True
 
-            if Surcharge.objects.filter(
-                service_type='EXPORT_DEST',
-                destination_filter=destination_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            if surcharge_exists('EXPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True
+
         else:
             import_codes = ImportCOGS.objects.filter(
                 origin_airport=origin_airport,
@@ -403,31 +589,45 @@ class RateAvailabilityService:
             for code, category in import_codes:
                 availability[classify_import_component(code, category)] = True
 
-            if LocalCOGSRate.objects.filter(
-                location=destination_airport,
+            # Import local rates can include both ORIGIN and DESTINATION components.
+            # Classify rows by ProductCode, then map by station. Keep a compatibility
+            # fallback so legacy migrated ORIGIN rows stored at destination station
+            # still satisfy ORIGIN_LOCAL coverage checks.
+            origin_code = (origin_airport or "").upper()
+            destination_code = (destination_airport or "").upper()
+            origin_local_fallback_at_destination = False
+            local_location_candidates = [loc for loc in [origin_airport, destination_airport] if loc]
+
+            import_local_rows = LocalCOGSRate.objects.filter(
+                location__in=local_location_candidates,
                 direction='IMPORT',
                 valid_from__lte=today,
                 valid_until__gte=today
-            ).exists():
-                availability[COMPONENT_DESTINATION_LOCAL] = True
+            ).values_list('location', 'product_code__code', 'product_code__category')
 
-            if Surcharge.objects.filter(
-                service_type='IMPORT_ORIGIN',
-                origin_filter=origin_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            for location, code, category in import_local_rows:
+                component = classify_import_component(code, category)
+                location_code = (location or "").upper()
+
+                if component == COMPONENT_ORIGIN_LOCAL:
+                    if location_code == origin_code:
+                        availability[COMPONENT_ORIGIN_LOCAL] = True
+                    elif location_code == destination_code:
+                        origin_local_fallback_at_destination = True
+                elif component == COMPONENT_DESTINATION_LOCAL and location_code == destination_code:
+                    availability[COMPONENT_DESTINATION_LOCAL] = True
+
+            if not availability[COMPONENT_ORIGIN_LOCAL] and origin_local_fallback_at_destination:
                 availability[COMPONENT_ORIGIN_LOCAL] = True
 
-            if Surcharge.objects.filter(
-                service_type='IMPORT_DEST',
-                destination_filter=destination_airport,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
+            if surcharge_exists('IMPORT_ORIGIN', origin=origin_airport):
+                availability[COMPONENT_ORIGIN_LOCAL] = True
+
+            if surcharge_exists('IMPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True
+
             
-        lane_key = f"{origin_airport.upper()}-{destination_airport.upper()}"
+        lane_key = f"{origin_airport}-{destination_airport}"
         config = getattr(settings, 'SPOT_ROUTE_COVERAGE', {})
         export_d2a_lanes = set(config.get('export_d2a_lanes', []))
         import_d2a_lanes = set(config.get('import_d2a_lanes', []))
@@ -443,7 +643,252 @@ class RateAvailabilityService:
             if lane_key in import_d2a_lanes:
                 availability[COMPONENT_FREIGHT] = True
 
+        # Apply payment-term gate after config overrides so term-specific
+        # mismatches cannot be masked by coarse lane/global switches.
+        if direction == 'EXPORT':
+            apply_payment_term_gate(
+                component=COMPONENT_ORIGIN_LOCAL,
+                direction_value="EXPORT",
+                locations=[origin_airport],
+                classifier=classify_export_component,
+            )
+        elif direction == 'IMPORT':
+            apply_payment_term_gate(
+                component=COMPONENT_DESTINATION_LOCAL,
+                direction_value="IMPORT",
+                locations=[destination_airport],
+                classifier=classify_import_component,
+            )
+
         return availability
+
+
+class CommodityRateRuleService:
+    """Evaluate commodity-specific ProductCode coverage for a lane/scope."""
+
+    @classmethod
+    def evaluate_coverage(
+        cls,
+        origin_airport: str,
+        destination_airport: str,
+        direction: str,
+        service_scope: str,
+        commodity_code: str,
+        payment_term: Optional[str] = None,
+    ) -> CommodityCoverageResult:
+        commodity_code = str(commodity_code or DEFAULT_COMMODITY_CODE).strip().upper() or DEFAULT_COMMODITY_CODE
+        if commodity_code == DEFAULT_COMMODITY_CODE:
+            return CommodityCoverageResult()
+
+        from pricing_v4.models import CommodityChargeRule
+
+        origin_airport = (origin_airport or "").strip().upper()
+        destination_airport = (destination_airport or "").strip().upper()
+        direction = (direction or "").strip().upper()
+        scope = (service_scope or "A2A").strip().upper()
+        if scope == "P2P":
+            scope = "A2A"
+
+        payment_term_normalized = (payment_term or "").strip().upper()
+        if payment_term_normalized not in {"PREPAID", "COLLECT"}:
+            payment_term_normalized = None
+
+        today = date.today()
+        rules = (
+            CommodityChargeRule.objects
+            .filter(
+                shipment_type=direction,
+                service_scope=scope,
+                commodity_code=commodity_code,
+                is_active=True,
+                effective_from__lte=today,
+            )
+            .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+            .filter(Q(origin_code__isnull=True) | Q(origin_code='') | Q(origin_code=origin_airport))
+            .filter(Q(destination_code__isnull=True) | Q(destination_code='') | Q(destination_code=destination_airport))
+            .select_related("product_code")
+        )
+
+        if payment_term_normalized:
+            rules = rules.filter(
+                Q(payment_term__isnull=True) | Q(payment_term='') | Q(payment_term=payment_term_normalized)
+            )
+
+        result = CommodityCoverageResult()
+        for rule in rules:
+            code = str(rule.product_code.code or "").upper()
+            if rule.trigger_mode == rule.TRIGGER_MODE_OPTIONAL:
+                continue
+            if rule.trigger_mode == rule.TRIGGER_MODE_REQUIRES_SPOT:
+                result.spot_required_product_codes.append(code)
+                continue
+            if rule.trigger_mode == rule.TRIGGER_MODE_REQUIRES_MANUAL:
+                result.manual_required_product_codes.append(code)
+                continue
+            if not cls._rule_has_coverage(
+                rule=rule,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                payment_term=payment_term_normalized,
+                today=today,
+            ):
+                result.missing_product_codes.append(code)
+
+        return result
+
+    @classmethod
+    def _rule_has_coverage(
+        cls,
+        *,
+        rule,
+        origin_airport: str,
+        destination_airport: str,
+        payment_term: Optional[str],
+        today: date,
+    ) -> bool:
+        from pricing_v4.category_rules import is_local_rate_category
+        from pricing_v4.models import (
+            DomesticCOGS,
+            ExportCOGS,
+            ImportCOGS,
+            LocalCOGSRate,
+            LocalSellRate,
+            Surcharge,
+        )
+
+        product_code = rule.product_code
+
+        if cls._has_matching_surcharge(
+            rule=rule,
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            today=today,
+        ):
+            return True
+
+        if rule.shipment_type == rule.SHIPMENT_TYPE_DOMESTIC:
+            return DomesticCOGS.objects.filter(
+                product_code=product_code,
+                origin_zone=origin_airport,
+                destination_zone=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+
+        if is_local_rate_category(product_code.category):
+            location_candidates = cls._local_location_candidates(
+                shipment_type=rule.shipment_type,
+                leg=rule.leg,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+            )
+            local_sell_qs = LocalSellRate.objects.filter(
+                product_code=product_code,
+                direction=rule.shipment_type,
+                location__in=location_candidates,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            )
+
+            if payment_term and rule.shipment_type in {rule.SHIPMENT_TYPE_EXPORT, rule.SHIPMENT_TYPE_IMPORT}:
+                has_local_sell = local_sell_qs.filter(
+                    product_code=product_code,
+                    payment_term__in=[payment_term, "ANY"],
+                ).exists()
+            else:
+                has_local_sell = local_sell_qs.exists()
+
+            # Import destination-local commodity lines can price from explicit local sell tariffs
+            # even when there is no dedicated commodity LocalCOGSRate row.
+            if (
+                rule.shipment_type == rule.SHIPMENT_TYPE_IMPORT
+                and (rule.leg or "").upper() == "DESTINATION"
+            ):
+                return has_local_sell
+
+            has_local_cogs = LocalCOGSRate.objects.filter(
+                product_code=product_code,
+                direction=rule.shipment_type,
+                location__in=location_candidates,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+            if not has_local_cogs:
+                return False
+            if payment_term and rule.shipment_type in {rule.SHIPMENT_TYPE_EXPORT, rule.SHIPMENT_TYPE_IMPORT}:
+                return has_local_sell
+            return True
+
+        if rule.shipment_type == rule.SHIPMENT_TYPE_EXPORT:
+            return ExportCOGS.objects.filter(
+                product_code=product_code,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+
+        return ImportCOGS.objects.filter(
+            product_code=product_code,
+            origin_airport=origin_airport,
+            destination_airport=destination_airport,
+            valid_from__lte=today,
+            valid_until__gte=today,
+        ).exists()
+
+    @staticmethod
+    def _local_location_candidates(
+        *,
+        shipment_type: str,
+        leg: str,
+        origin_airport: str,
+        destination_airport: str,
+    ) -> list[str]:
+        shipment_type = (shipment_type or "").upper()
+        leg = (leg or "").upper()
+        if shipment_type == "EXPORT":
+            return [origin_airport] if leg != "DESTINATION" else [destination_airport]
+        if shipment_type == "IMPORT":
+            if leg == "ORIGIN":
+                # Keep the legacy compatibility fallback used in standard scope availability.
+                return [origin_airport, destination_airport]
+            return [destination_airport]
+        return [origin_airport, destination_airport]
+
+    @staticmethod
+    def _has_matching_surcharge(
+        *,
+        rule,
+        origin_airport: str,
+        destination_airport: str,
+        today: date,
+    ) -> bool:
+        from pricing_v4.models import Surcharge
+
+        service_types = {
+            ("EXPORT", "ORIGIN"): ["EXPORT_ORIGIN", "ALL"],
+            ("EXPORT", "MAIN"): ["EXPORT_AIR", "ALL"],
+            ("EXPORT", "DESTINATION"): ["EXPORT_DEST", "ALL"],
+            ("IMPORT", "ORIGIN"): ["IMPORT_ORIGIN", "ALL"],
+            ("IMPORT", "MAIN"): ["IMPORT_AIR", "ALL"],
+            ("IMPORT", "DESTINATION"): ["IMPORT_DEST", "ALL"],
+            ("DOMESTIC", "ORIGIN"): ["DOMESTIC_AIR", "ALL"],
+            ("DOMESTIC", "MAIN"): ["DOMESTIC_AIR", "ALL"],
+            ("DOMESTIC", "DESTINATION"): ["DOMESTIC_AIR", "ALL"],
+        }.get(((rule.shipment_type or "").upper(), (rule.leg or "").upper()), ["ALL"])
+
+        return Surcharge.objects.filter(
+            product_code=rule.product_code,
+            rate_side="COGS",
+            service_type__in=service_types,
+            is_active=True,
+            valid_from__lte=today,
+            valid_until__gte=today,
+        ).filter(
+            Q(origin_filter=origin_airport) | Q(origin_filter__isnull=True) | Q(origin_filter='')
+        ).filter(
+            Q(destination_filter=destination_airport) | Q(destination_filter__isnull=True) | Q(destination_filter='')
+        ).exists()
 
 
 class StandardChargeService:
@@ -464,6 +909,7 @@ class StandardChargeService:
         service_scope: str,
         weight_kg: float,
         commodity: str = "GCR",
+        payment_term: str = "PREPAID",
     ) -> list[dict]:
         """
         Get standard charges for a lane where DB coverage exists.
@@ -481,7 +927,7 @@ class StandardChargeService:
         }
         """
         from datetime import date
-        from decimal import Decimal
+        from decimal import Decimal, ROUND_HALF_UP
         from uuid import uuid4
         
         from core.dataclasses import (
@@ -496,6 +942,7 @@ class StandardChargeService:
             destination_airport=destination_code,
             direction=direction,
             service_scope=service_scope,
+            payment_term=payment_term,
         )
         
         # If no standard coverage at all, return empty
@@ -546,7 +993,8 @@ class StandardChargeService:
                 mode="AIR",
                 shipment_type=shipment_type,
                 incoterm="EXW" if direction == "EXPORT" else "DDU",
-                payment_term="PREPAID",
+                payment_term=str(payment_term or "PREPAID").upper(),
+                commodity_code=commodity or "GCR",
                 is_dangerous_goods=(commodity == "DG"),
                 pieces=[Piece(
                     pieces=1,
@@ -586,19 +1034,96 @@ class StandardChargeService:
                         valid_until__gte=date.today(),
                         product_code__code__in=[l.service_component_code for l in standard_lines],
                     )
-                    .select_related("product_code")
-                    .order_by("product_code__code")
+                    .select_related("product_code", "carrier", "agent")
+                    .order_by("product_code__code", "-valid_from", "id")
                 )
                 for row in active_cogs:
                     code = getattr(row.product_code, "code", None)
-                    if code and code not in cogs_by_code:
-                        cogs_by_code[code] = row
+                    if code:
+                        cogs_by_code.setdefault(code, []).append(row)
+
+            def _normalize_text(value):
+                return str(value or "").strip().lower()
+
+            def _counterparty_tokens(row):
+                tokens = set()
+                for cp in (getattr(row, "carrier", None), getattr(row, "agent", None)):
+                    if not cp:
+                        continue
+                    for raw in (str(cp), getattr(cp, "name", None), getattr(cp, "code", None)):
+                        token = _normalize_text(raw)
+                        if token:
+                            tokens.add(token)
+                return tokens
+
+            def _as_decimal(value):
+                if value is None:
+                    return None
+                try:
+                    return Decimal(str(value))
+                except Exception:
+                    return None
+
+            def _to_amount_str(value):
+                dec = _as_decimal(value)
+                if dec is None:
+                    return "0.00"
+                return str(dec.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+            def _choose_matching_cogs_row(line):
+                candidates = cogs_by_code.get(line.service_component_code) or []
+                if not candidates:
+                    return None
+                if len(candidates) == 1:
+                    return candidates[0]
+
+                target_source = _normalize_text(getattr(line, "cost_source", None))
+                target_currency = _normalize_text(getattr(line, "cost_fcy_currency", None))
+                target_cost = _as_decimal(getattr(line, "cost_fcy", None)) or _as_decimal(getattr(line, "cost_pgk", None))
+                target_bucket = _normalize_text(getattr(line, "bucket", None))
+
+                def score(row):
+                    row_score = 0
+                    row_tokens = _counterparty_tokens(row)
+                    row_currency = _normalize_text(getattr(row, "currency", None))
+                    row_rate_per_kg = _as_decimal(getattr(row, "rate_per_kg", None))
+                    row_rate_per_shipment = _as_decimal(getattr(row, "rate_per_shipment", None))
+                    row_min_charge = _as_decimal(getattr(row, "min_charge", None))
+
+                    if target_bucket == "airfreight" and getattr(row, "carrier_id", None):
+                        row_score += 40
+                    if target_bucket in {"origin_charges", "destination_charges"} and getattr(row, "agent_id", None):
+                        row_score += 40
+
+                    if target_source and target_source != "v4 engine":
+                        if target_source in row_tokens:
+                            row_score += 200
+                        elif any(target_source in token or token in target_source for token in row_tokens):
+                            row_score += 120
+
+                    if target_currency and row_currency and target_currency == row_currency:
+                        row_score += 40
+
+                    if target_cost is not None:
+                        if row_rate_per_kg is not None and row_rate_per_kg == target_cost:
+                            row_score += 80
+                        if row_rate_per_shipment is not None and row_rate_per_shipment == target_cost:
+                            row_score += 80
+                        if row_min_charge is not None and row_min_charge == target_cost:
+                            row_score += 80
+
+                    return row_score
+
+                return max(candidates, key=score)
             
             # Convert to SPEChargeLine format
             result = []
             for line in standard_lines:
                 # Skip lines with missing rates
                 if line.is_rate_missing:
+                    continue
+                # DB-backed prefill only: exclude hardcoded default/fallback rates.
+                if str(getattr(line, "cost_source", "")).strip().lower() == "default":
                     continue
                 
                 # Map bucket
@@ -609,30 +1134,36 @@ class StandardChargeService:
                 }
                 bucket = bucket_map.get(line.bucket, "origin_charges")
                 
-                cogs_row = cogs_by_code.get(line.service_component_code)
+                cogs_row = _choose_matching_cogs_row(line)
 
-                # Default from already calculated line (fallback)
+                # SPOT prefill must only carry raw costs. SELL-only lines are skipped.
+                cost_fcy = _as_decimal(getattr(line, "cost_fcy", None))
+                cost_pgk = _as_decimal(getattr(line, "cost_pgk", None))
+                if cost_fcy is not None and cost_fcy > 0:
+                    raw_amount = cost_fcy
+                    currency = str(getattr(line, "cost_fcy_currency", None) or "PGK").upper()
+                elif cost_pgk is not None and cost_pgk > 0:
+                    raw_amount = cost_pgk
+                    currency = "PGK"
+                else:
+                    continue
+
                 unit = "per_shipment"
-                amount = str(float(line.cost_fcy)) if line.cost_fcy else str(float(line.cost_pgk))
-                currency = line.cost_fcy_currency or "PGK"
+                amount = _to_amount_str(raw_amount)
                 min_charge = None
                 calculation_type = None
                 unit_type = None
                 rate = None
                 min_amount = None
 
-                # Prefer raw COGS row metadata when available (preserves min-charge floors)
+                # Prefer raw COGS row metadata only for unit/min-charge shape inference.
+                # Do not use COGS numeric values for amount/rate.
                 if cogs_row is not None:
-                    row_currency = getattr(cogs_row, "currency", None)
-                    if row_currency:
-                        currency = row_currency
                     row_rate_per_kg = getattr(cogs_row, "rate_per_kg", None)
                     row_rate_per_shipment = getattr(cogs_row, "rate_per_shipment", None)
                     row_min_charge = getattr(cogs_row, "min_charge", None)
 
                     if row_rate_per_kg is not None:
-                        amount = str(row_rate_per_kg)
-                        rate = str(row_rate_per_kg)
                         if row_min_charge is not None:
                             unit = "min_or_per_kg"
                             min_charge = str(row_min_charge)
@@ -642,15 +1173,23 @@ class StandardChargeService:
                             unit = "per_kg"
                             calculation_type = "per_unit"
                         unit_type = "kg"
+                        rate = amount
                     elif row_rate_per_shipment is not None:
-                        amount = str(row_rate_per_shipment)
                         unit = "per_shipment"
-                        rate = str(row_rate_per_shipment)
                         calculation_type = "flat"
                         unit_type = "shipment"
+                        rate = amount
                 else:
-                    if "per_kg" in line.cost_source.lower() or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
+                    line_cost_source = str(getattr(line, "cost_source", "")).lower()
+                    if "per_kg" in line_cost_source or line.service_component_code in ["FREIGHT", "AIRFREIGHT"]:
                         unit = "per_kg"
+                        calculation_type = "per_unit"
+                        unit_type = "kg"
+                        rate = amount
+                    else:
+                        calculation_type = "flat"
+                        unit_type = "shipment"
+                        rate = amount
 
                 result.append({
                     "code": line.service_component_code,
@@ -659,7 +1198,7 @@ class StandardChargeService:
                     "currency": currency,
                     "unit": unit,
                     "bucket": bucket,
-                    "is_primary_cost": line.service_component_code in ["FREIGHT", "AIRFREIGHT", "DOMESTIC_FREIGHT"],
+                    "is_primary_cost": line.service_component_code in ["FREIGHT", "AIRFREIGHT", "DOMESTIC_FREIGHT", "EXP-FRT-AIR", "IMP-FRT-AIR"],
                     "conditional": False,
                     "min_charge": min_charge,
                     "calculation_type": calculation_type,
@@ -1015,6 +1554,7 @@ class SpotEmailDraftGenerator:
         trigger_code: Optional[str] = None,
         user_name: Optional[str] = None,
         recipient_name: Optional[str] = None,
+        branding: Optional[QuoteBrandingContext] = None,
     ) -> SpotEmailDraft:
         """
         Generate a SPOT rate request email draft.
@@ -1037,7 +1577,8 @@ class SpotEmailDraftGenerator:
         subject = f"SPOT Rate Request – {origin_code} → {destination_code} – {weight_kg}kg Airfreight"
         
         # Resolve names
-        sender = user_name or "[Your Name]"
+        company_name = (branding.display_name if branding else "") or "RateEngine"
+        sender = user_name or company_name
         recipient = recipient_name or "[Agent / Carrier Name]"
         commodity_display = cls.COMMODITY_NAMES.get(commodity, commodity)
         
@@ -1076,6 +1617,16 @@ class SpotEmailDraftGenerator:
             notes_text = "\n" + "\n".join(notes) + "\n"
         
         # Build body
+        signature_parts = [sender]
+        signature_text = (branding.email_signature_text if branding else "").strip()
+        if signature_text:
+            signature_parts = [signature_text]
+        else:
+            if branding and branding.support_email:
+                signature_parts.append(f"Email: {branding.support_email}")
+            if branding and branding.support_phone:
+                signature_parts.append(f"Phone: {branding.support_phone}")
+
         body = f"""Hi {recipient},
 
 Please provide a SPOT airfreight rate for the shipment below:
@@ -1097,7 +1648,7 @@ Please include:
 If acceptance or capacity is subject to confirmation, please advise.
 
 Thank you,
-{sender}"""
+{"\n".join(signature_parts)}"""
         
         return SpotEmailDraft(subject=subject.strip(), body=body.strip())
 
@@ -1214,11 +1765,20 @@ class ReplyAnalysisService:
         if genai:
             # Call existing AI service with context to help it categorize
             ai_result = parse_rate_quote_text(raw_text, context=shipment_context)
+            unmapped_line_count = sum(
+                1
+                for line in (getattr(ai_result, "lines", []) or [])
+                if getattr(line, "v4_product_code", None) == "UNMAPPED"
+            )
             logger.info(
-                "AI analysis result: success=%s lines=%s warnings=%s",
+                "AI analysis result: success=%s lines=%s warnings=%s raw=%s normalized=%s audit_safe=%s unmapped=%s",
                 getattr(ai_result, "success", None),
                 len(getattr(ai_result, "lines", []) or []),
                 len(getattr(ai_result, "warnings", []) or []),
+                len(getattr(ai_result, "raw_extracted_charges", []) or []),
+                len(getattr(ai_result, "normalized_charges", []) or []),
+                getattr(getattr(ai_result, "extraction_audit", None), "is_safe_to_proceed", None),
+                unmapped_line_count,
             )
             if ai_result.success:
                 # Add global currency assertion if present
@@ -1238,40 +1798,47 @@ class ReplyAnalysisService:
                         category = AssertionCategory.ORIGIN_CHARGES
                     elif line.bucket == "DESTINATION":
                         category = AssertionCategory.DEST_CHARGES
-                    
+
+                    is_unmapped = getattr(line, "v4_product_code", None) == "UNMAPPED"
+                    has_low_norm_conf = getattr(line, "normalization_confidence", None) == "LOW"
+                     
                     # Fallback to quote currency if line currency is missing
                     final_currency = line.currency or ai_result.quote_currency
                     
                     # For MIN_OR_PER_KG, use minimum as the display amount
-                    display_amount = line.minimum if line.minimum is not None else line.amount
+                    display_amount = line.min_amount if line.min_amount is not None else line.amount
                     # For PERCENTAGE, use percentage value as the display amount
-                    if line.unit_basis == "PERCENTAGE" and line.percentage is not None:
-                        display_amount = line.percentage
+                    if line.unit_basis == "PERCENTAGE" and line.percent is not None:
+                        display_amount = line.percent
+                        
+                    basis = getattr(line, 'percent_basis', None) or getattr(line, 'percent_applies_to', None)
+
+                    assertion_status = (
+                        AssertionStatus.CONDITIONAL if line.conditional
+                        else AssertionStatus.CONFIRMED
+                    )
+                    assertion_confidence = line.confidence or 0.9
+                    if is_unmapped:
+                        assertion_confidence = min(assertion_confidence, 0.35)
+                    elif has_low_norm_conf:
+                        assertion_confidence = min(assertion_confidence, 0.5)
 
                     ai_assertions.append(ExtractedAssertion(
                         text=line.description,
                         category=category,
-                        status=AssertionStatus.CONFIRMED if not line.conditional else AssertionStatus.CONDITIONAL,
-                        confidence=line.confidence or 0.9,
+                        status=assertion_status,
+                        confidence=assertion_confidence,
                         rate_amount=display_amount,
                         rate_per_unit=line.rate_per_unit,
                         rate_currency=final_currency,
                         rate_unit=line.unit_basis.lower() if line.unit_basis else "per_kg",
+                        percentage_basis=basis,
                     ))
         
-        # Add Standard Rate suggestions if context is provided
-        standard_assertions = []
-        if shipment_context:
-            standard_assertions = cls._get_standard_rate_assertions(
-                shipment_context, 
-                availability=availability
-            )
-            
-        # Combine all assertions
-        all_assertions = ai_assertions + standard_assertions
+        all_assertions = ai_assertions
         
         # Build summary
-        summary = cls._build_summary(all_assertions, availability=availability)
+        summary = cls._build_summary(all_assertions)
         
         # FALLBACK: If no currency was detected from AI or assertions, try to infer from raw text
         if not summary.has_currency:
@@ -1299,6 +1866,30 @@ class ReplyAnalysisService:
         
         # Add AI warnings to our warnings list
         if genai and ai_result:
+            audit_result = getattr(ai_result, "extraction_audit", None)
+            if audit_result:
+                if audit_result.missed_charges:
+                    warnings.append(
+                        "⚠️ AI critic flagged possible missed charges: "
+                        + ", ".join(audit_result.missed_charges)
+                    )
+                if audit_result.hallucinations_detected:
+                    warnings.append(
+                        "⚠️ AI critic flagged possible hallucinations: "
+                        + ", ".join(audit_result.hallucinations_detected)
+                    )
+
+            unmapped_labels = [
+                line.description
+                for line in (getattr(ai_result, "lines", []) or [])
+                if getattr(line, "v4_product_code", None) == "UNMAPPED"
+            ]
+            if unmapped_labels:
+                warnings.append(
+                    "⚠️ AI returned unmapped charges requiring manual review: "
+                    + ", ".join(unmapped_labels)
+                )
+
             if not ai_result.success:
                 warnings.append(f"⚠️ AI analysis failed: {ai_result.error}. Falling back to standard rates.")
             elif ai_result.warnings:
@@ -1312,89 +1903,10 @@ class ReplyAnalysisService:
             warnings=warnings,
         )
 
-    @classmethod
-    def _get_standard_rate_assertions(
-        cls, 
-        ctx: dict,
-        availability: Optional[dict[str, bool]] = None
-    ) -> List['ExtractedAssertion']:
-        """Lookup existing rates in DB to provide as implicit suggestions."""
-        from quotes.reply_schemas import AssertionStatus, AssertionCategory, ExtractedAssertion
-        from pricing_v4.models import ExportCOGS, ImportCOGS, ProductCode
-        from datetime import date
-        
-        origin = ctx.get('origin_code')
-        dest = ctx.get('destination_code')
-        origin_country = ctx.get('origin_country')
-        dest_country = ctx.get('destination_country')
-        today = date.today()
-        
-        suggestions = []
-        
-        # 1. Query DB for rates (COGS is usually the base for SPOT review)
-        if origin_country == 'PG':
-            rates = ExportCOGS.objects.filter(
-                origin_airport=origin,
-                destination_airport=dest,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).select_related('product_code')
-        else:
-            rates = ImportCOGS.objects.filter(
-                origin_airport=origin,
-                destination_airport=dest,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).select_related('product_code')
-            
-        # 2. Convert to assertions
-        for r in rates:
-            category = AssertionCategory.RATE if r.product_code.category == ProductCode.CATEGORY_FREIGHT else AssertionCategory.ORIGIN_CHARGES
-            # If import, destination charges might be relevant
-            if origin_country != 'PG' and r.product_code.category != ProductCode.CATEGORY_FREIGHT:
-                category = AssertionCategory.DEST_CHARGES
-                
-            rate_amount = r.rate_per_kg or r.rate_per_shipment
-            rate_per_unit = r.rate_per_kg if r.rate_per_kg is not None else None
-            rate_unit = "per_kg" if r.rate_per_kg else "flat"
-            if r.rate_per_kg is not None and r.min_charge is not None:
-                rate_amount = r.min_charge
-                rate_unit = "min_or_per_kg"
 
-            suggestions.append(ExtractedAssertion(
-                text=f"Standard Rate: {r.product_code.description}",
-                category=category,
-                status=AssertionStatus.IMPLICIT,
-                confidence=0.8,
-                rate_amount=rate_amount,
-                rate_per_unit=rate_per_unit,
-                rate_currency=r.currency,
-                rate_unit=rate_unit,
-            ))
-            
-        # 3. Filter if availability metadata is provided
-        if availability:
-            filtered = []
-            for a in suggestions:
-                # Map assertion category to availability keys
-                should_skip = False
-                if a.category == AssertionCategory.RATE and availability.get(COMPONENT_FREIGHT):
-                    should_skip = True
-                elif a.category == AssertionCategory.ORIGIN_CHARGES:
-                    if availability.get(COMPONENT_ORIGIN_LOCAL):
-                        should_skip = True
-                elif a.category == AssertionCategory.DEST_CHARGES:
-                    if availability.get(COMPONENT_DESTINATION_LOCAL):
-                        should_skip = True
-                
-                if not should_skip:
-                    filtered.append(a)
-            return filtered
-            
-        return suggestions
 
     @classmethod
-    def _build_summary(cls, assertions: List['ExtractedAssertion'], availability: Optional[dict[str, bool]] = None) -> 'AnalysisSummary':
+    def _build_summary(cls, assertions: List['ExtractedAssertion']) -> 'AnalysisSummary':
         """Build summary from assertions."""
         from quotes.reply_schemas import (
             AssertionStatus,
@@ -1403,19 +1915,6 @@ class ReplyAnalysisService:
         )
         
         summary = AnalysisSummary()
-        
-        # 1️⃣ Pre-populate from DB availability (if provided)
-        # This ensures we don't show "Missing rate" if DB has rates for this lane
-        if availability:
-            # If DB has airfreight rate, we have a rate
-            if availability.get(COMPONENT_FREIGHT):
-                summary.has_rate = True
-            # Destination charges count as rate for Import A2D/D2D
-            if availability.get(COMPONENT_DESTINATION_LOCAL):
-                summary.has_rate = True
-            # Origin charges count as rate for Export D2A/D2D  
-            if availability.get(COMPONENT_ORIGIN_LOCAL):
-                summary.has_rate = True
         
         # 2️⃣ Enrich from assertions
         for a in assertions:
@@ -1520,7 +2019,6 @@ class ReplyAnalysisService:
             COMPONENT_ORIGIN_LOCAL,
             COMPONENT_FREIGHT,
             COMPONENT_DESTINATION_LOCAL,
-            required_components,
         )
 
         charges: List[dict] = []
@@ -1564,25 +2062,21 @@ class ReplyAnalysisService:
                 return "EXPORT"
             return "IMPORT"
 
-        required_for_scope = None
+        missing_component_codes: set[str] | None = None
         shipment_type = None
         missing_components_set: set[str] = set()
         if shipment_context:
             shipment_type = _shipment_type_from_context(shipment_context)
-            required_for_scope = required_components(
-                shipment_type,
-                _normalize_scope(shipment_context.get("service_scope")),
-            )
             raw_missing = shipment_context.get("missing_components") or []
             if isinstance(raw_missing, (list, tuple, set)):
                 missing_components_set = {str(item).upper() for item in raw_missing if item}
+            missing_component_codes = missing_components_set if missing_components_set else None
 
         for a in analysis.assertions:
-            # Skip missing assertions. For implicit assertions, allow DB-backed standard-rate
-            # suggestions (tagged by the service with "Standard Rate:") to support hybrid prefill.
+            # Skip missing and implicit assertions — only confirmed/conditional AI charges.
             if a.status == AssertionStatus.MISSING:
                 continue
-            if a.status == AssertionStatus.IMPLICIT and not str(a.text or "").startswith("Standard Rate:"):
+            if a.status == AssertionStatus.IMPLICIT:
                 continue
 
             category = a.category
@@ -1619,8 +2113,8 @@ class ReplyAnalysisService:
 
             component_code, bucket = component_map[category]
 
-            # Scope guardrail: keep only components required for this quote context.
-            if required_for_scope is not None and component_code not in required_for_scope:
+            # Only populate components that are missing DB rates.
+            if missing_component_codes is not None and component_code not in missing_component_codes:
                 continue
 
             unit_raw = (a.rate_unit or "").lower().strip()
@@ -1693,6 +2187,8 @@ class ReplyAnalysisService:
             if shipment_type == "IMPORT" and "export declaration" in desc_lower:
                 continue
 
+            final_source_ref = source_reference
+
             charges.append({
                 "code": component_code,
                 "description": a.text,
@@ -1712,7 +2208,7 @@ class ReplyAnalysisService:
                 "percent": str(percent) if percent is not None else None,
                 "percent_basis": percent_basis,
                 "rule_meta": rule_meta,
-                "source_reference": source_reference,
+                "source_reference": final_source_ref,
             })
 
         return charges

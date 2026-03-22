@@ -19,6 +19,17 @@ type PublicQuoteResponse = {
   status: string;
   created_at: string;
   valid_until: string | null;
+  branding: {
+    display_name: string;
+    support_email: string;
+    support_phone: string;
+    website_url: string;
+    address_lines: string[];
+    public_quote_tagline: string;
+    primary_color: string;
+    accent_color: string;
+    logo_url: string | null;
+  };
   customer: {
     name: string;
     contact: string | null;
@@ -26,6 +37,7 @@ type PublicQuoteResponse = {
   shipment: {
     mode: string;
     direction: string;
+    service_scope: string | null;
     incoterm: string | null;
     payment_term: string | null;
   };
@@ -59,6 +71,26 @@ const formatMoney = (currency: string, value: string | number | null) => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+};
+
+const scopeLabel = (scope?: string | null) => {
+  const normalized = (scope || "").toUpperCase();
+  const labels: Record<string, string> = {
+    D2D: "Door-to-Door",
+    D2A: "Door-to-Airport",
+    A2D: "Airport-to-Door",
+    A2A: "Airport-to-Airport",
+    P2P: "Airport-to-Airport",
+  };
+  return labels[normalized] || "N/A";
+};
+
+const withAlpha = (hex: string, alphaHex: string) => {
+  const value = (hex || "").trim();
+  if (!/^#[0-9A-Fa-f]{6}$/.test(value)) {
+    return undefined;
+  }
+  return `${value}${alphaHex}`;
 };
 
 type PublicQuotePageProps = {
@@ -117,6 +149,12 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
   }
 
   const data = (await response.json()) as PublicQuoteResponse;
+  const normalizedScope = (data.shipment.service_scope || "").toUpperCase();
+  const showAirportReferences = ["A2D", "D2A", "A2A", "P2P"].includes(normalizedScope);
+  const brandPrimary = data.branding.primary_color || "#0F2A56";
+  const brandAccent = data.branding.accent_color || "#D71920";
+  const mutedBrandBackground = withAlpha(brandPrimary, "12");
+  const accentBackground = withAlpha(brandAccent, "12");
 
   return (
     <main className="min-h-screen bg-slate-50">
@@ -125,6 +163,29 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Quote</p>
+              <div className="mt-2 flex items-center gap-3">
+                {data.branding.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={data.branding.logo_url}
+                    alt={data.branding.display_name}
+                    className="h-10 w-auto object-contain"
+                  />
+                ) : (
+                  <div
+                    className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold text-white"
+                    style={{ backgroundColor: brandPrimary }}
+                  >
+                    {data.branding.display_name.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: brandPrimary }}>
+                    {data.branding.display_name}
+                  </p>
+                  <p className="text-xs text-slate-500">{data.branding.public_quote_tagline}</p>
+                </div>
+              </div>
               <h1 className="mt-2 text-3xl font-semibold text-slate-900">{data.quote_number}</h1>
               <p className="mt-2 text-sm text-slate-500">
                 Created {new Date(data.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
@@ -133,11 +194,24 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
                 Valid until {data.valid_until ? new Date(data.valid_until).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "N/A"}
               </p>
             </div>
-            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
+            <div
+              className="rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+              style={{
+                borderColor: withAlpha(brandAccent, "33") || "#fecaca",
+                backgroundColor: accentBackground || "#fff1f2",
+                color: brandAccent,
+              }}
+            >
               {data.status}
             </div>
           </div>
-          <div className="mt-6 grid gap-4 rounded-xl border border-slate-100 bg-slate-50 p-4 md:grid-cols-2">
+          <div
+            className="mt-6 grid gap-4 rounded-xl border p-4 md:grid-cols-2"
+            style={{
+              borderColor: withAlpha(brandPrimary, "1f") || "#e2e8f0",
+              backgroundColor: mutedBrandBackground || "#f8fafc",
+            }}
+          >
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Customer</p>
               <p className="mt-1 text-base font-semibold text-slate-800">{data.customer.name}</p>
@@ -153,11 +227,22 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
               <p className="text-sm text-slate-500">
                 Payment: {data.shipment.payment_term || "N/A"}
               </p>
+              <p className="text-sm text-slate-500">
+                Scope of Service: {scopeLabel(data.shipment.service_scope)}
+              </p>
               {data.shipment.incoterm && (
                 <p className="text-sm text-slate-500">Incoterm: {data.shipment.incoterm}</p>
               )}
             </div>
           </div>
+          <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-500">
+            {data.branding.support_email && <span>Email: {data.branding.support_email}</span>}
+            {data.branding.support_phone && <span>Phone: {data.branding.support_phone}</span>}
+            {data.branding.website_url && <span>{data.branding.website_url}</span>}
+          </div>
+          {data.branding.address_lines.length > 0 && (
+            <p className="mt-2 text-sm text-slate-500">{data.branding.address_lines.join(", ")}</p>
+          )}
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -165,12 +250,16 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
           <div className="mt-4 flex flex-col items-center gap-4 text-center md:flex-row md:justify-between">
             <div>
               <p className="text-3xl font-semibold text-slate-900">{data.route.origin_code}</p>
-              <p className="text-sm text-slate-500">{data.route.origin_name}</p>
+              {showAirportReferences && (
+                <p className="text-sm text-slate-500">{data.route.origin_name}</p>
+              )}
             </div>
             <div className="text-sm font-semibold uppercase tracking-[0.3em] text-rose-500">to</div>
             <div>
               <p className="text-3xl font-semibold text-slate-900">{data.route.destination_code}</p>
-              <p className="text-sm text-slate-500">{data.route.destination_name}</p>
+              {showAirportReferences && (
+                <p className="text-sm text-slate-500">{data.route.destination_name}</p>
+              )}
             </div>
           </div>
         </section>
@@ -247,6 +336,10 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
             )}
           </div>
         </section>
+
+        <p className="text-center text-xs text-slate-400">
+          Powered by RateEngine
+        </p>
       </div>
     </main>
   );

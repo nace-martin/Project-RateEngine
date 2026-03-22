@@ -7,9 +7,8 @@ import { CompanySearchResult, Contact } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 
 export default function TestContactsPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [companies, setCompanies] = useState<CompanySearchResult[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [log, setLog] = useState<string[]>([]);
 
@@ -28,7 +27,6 @@ export default function TestContactsPage() {
   };
 
   const handleFetchContacts = async (id: string) => {
-    setSelectedCompanyId(id);
     addLog(`Fetching contacts for company ${id}...`);
     try {
       const res = await getContactsForCompany(id);

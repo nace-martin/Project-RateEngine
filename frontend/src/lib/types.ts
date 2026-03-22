@@ -13,10 +13,26 @@ export interface LoginData {
   password: string;
 }
 
+export interface UserBrandingRef {
+  display_name: string;
+  primary_color?: string | null;
+  accent_color?: string | null;
+  logo_url?: string | null;
+}
+
+export interface UserOrganizationRef {
+  id: string;
+  name: string;
+  slug: string;
+  branding?: UserBrandingRef | null;
+}
+
 export interface User {
   id?: number;
   username: string;
+  email?: string | null;
   role: string;
+  organization?: UserOrganizationRef | null;
 }
 
 export interface QuoteCustomerRef {
@@ -32,6 +48,39 @@ export interface QuoteContactRef {
   last_name?: string | null;
   email?: string | null;
   phone?: string | null;
+}
+
+export interface QuoteBrandingRef {
+  display_name: string;
+  support_email?: string | null;
+  support_phone?: string | null;
+  website_url?: string | null;
+  address_lines?: string[];
+  public_quote_tagline?: string | null;
+  primary_color?: string | null;
+  accent_color?: string | null;
+  logo_url?: string | null;
+}
+
+export interface OrganizationBrandingSettings {
+  organization_name: string;
+  organization_slug: string;
+  display_name: string;
+  legal_name?: string;
+  support_email?: string;
+  support_phone?: string;
+  website_url?: string;
+  address_lines?: string;
+  quote_footer_text?: string;
+  public_quote_tagline?: string;
+  email_signature_text?: string;
+  primary_color?: string;
+  accent_color?: string;
+  logo_primary?: string | null;
+  logo_primary_url?: string | null;
+  logo_small?: string | null;
+  logo_small_url?: string | null;
+  is_active: boolean;
 }
 
 // --- PARTIES (COMPANY/CONTACT) TYPES ---
@@ -81,21 +130,45 @@ export interface StationSummary {
 export interface CustomerAddress {
   address_line_1: string;
   address_line_2?: string;
+  city_id?: string;
   city: string;
   state_province?: string;
   postcode?: string;
   country: string;
+  country_name?: string;
+}
+
+export interface CustomerCommercialProfile {
+  preferred_quote_currency: string;
+  default_margin_percent?: string;
+  min_margin_percent?: string;
+  payment_term_default?: string;
 }
 
 export interface Customer {
   id: string;
   company_name: string;
+  is_active?: boolean;
   audience_type: string;
   address_description?: string | null;
   primary_address?: CustomerAddress | null;
   contact_person_name?: string;
   contact_person_email?: string;
   contact_person_phone?: string;
+  commercial_profile?: CustomerCommercialProfile | null;
+}
+
+export interface CountryOption {
+  code: string;
+  name: string;
+}
+
+export interface CityOption {
+  id: string;
+  name: string;
+  country_code: string;
+  country_name: string;
+  display_name: string;
 }
 
 // --- MISC HELPER TYPES ---
@@ -108,6 +181,7 @@ export interface V3DimensionInput {
   width_cm: string;
   height_cm: string;
   gross_weight_kg: string;
+  package_type: string;
 }
 
 export interface V3ManualOverride {
@@ -219,6 +293,7 @@ export interface V3QuoteComputeResponse {
   quote_number: string;
   customer: string | QuoteCustomerRef;
   contact: string | QuoteContactRef;
+  branding?: QuoteBrandingRef | null;
   mode: string;
   shipment_type: string; // The backend calculates and returns this
   spot_negotiation?: { id: string } | null;
@@ -235,6 +310,7 @@ export interface V3QuoteComputeResponse {
   valid_until: string; // Date string (YYYY-MM-DD)
   created_at: string; // ISO date string
   updated_at?: string; // ISO date string
+  request_details_json?: Record<string, unknown> | null;
   created_by?: string | null; // Assigned Agent (Sales Rep)
   rate_provider?: string | null; // Agent who provided rates
   latest_version: V3QuoteVersion;
@@ -327,9 +403,4 @@ export interface Tier1Stats {
   active_customers: number;
   repeat_customers_pct: number;
   top_customers: { name: string; value: number }[];
-  dormant_customers: {
-    '30d': number;
-    '60d': number;
-    '90d': number;
-  };
 }

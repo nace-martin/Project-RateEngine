@@ -8,12 +8,13 @@ Tests for quote lifecycle transitions and edit-blocking functionality.
 import pytest
 from decimal import Decimal
 from uuid import uuid4
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from quotes.models import Quote, QuoteVersion
+from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.state_machine import (
     QuoteImmutableError,
     QuoteStateMachine,
@@ -27,6 +28,7 @@ from quotes.state_machine import (
 )
 from parties.models import Company, Contact
 from core.models import Country, City, Airport, Location, Currency, FxSnapshot, Policy
+from services.models import ServiceComponent
 
 
 pytestmark = pytest.mark.django_db
@@ -201,6 +203,19 @@ class TestQuoteStateMachine:
         assert draft_quote.status == Quote.Status.FINALIZED
         assert draft_quote.finalized_at is not None
         assert draft_quote.finalized_by == user
+        assert draft_quote.valid_until == timezone.localdate() + timedelta(days=7)
+
+    def test_finalize_resets_stale_valid_until_window(self, draft_quote, user):
+        draft_quote.valid_until = timezone.localdate() + timedelta(days=30)
+        draft_quote.save(update_fields=['valid_until'])
+
+        machine = QuoteStateMachine(draft_quote)
+        success, error = machine.finalize(user=user)
+
+        assert success is True
+        assert error is None
+        draft_quote.refresh_from_db()
+        assert draft_quote.valid_until == timezone.localdate() + timedelta(days=7)
     
     def test_successful_send_transition(self, finalized_quote, user):
         machine = QuoteStateMachine(finalized_quote)
@@ -339,11 +354,10 @@ class TestEditBlockingAPI:
         assert response.status_code == 400
         assert 'Cannot transition' in response.data['detail']
     
-    @pytest.mark.skip(reason="Clone view requires Quote model fields (pickup_suburb) that need migrations to be current")
     def test_clone_finalized_quote(self, api_client, finalized_quote):
-        # Add required fields for clone
-        finalized_quote.request_details_json = {}
-        finalized_quote.save()
+        finalized_quote.request_details_json = {"shipment": {"origin": "BNE", "destination": "POM"}}
+        finalized_quote.valid_until = timezone.localdate() + timedelta(days=7)
+        finalized_quote.save(update_fields=['request_details_json', 'valid_until'])
         
         url = f'/api/v3/quotes/{finalized_quote.id}/clone/'
         response = api_client.post(url, format='json')
@@ -352,6 +366,65 @@ class TestEditBlockingAPI:
         assert response.data['status'] == 'DRAFT'
         assert 'cloned_from' in response.data
         assert response.data['cloned_from']['id'] == str(finalized_quote.id)
+        cloned = Quote.objects.get(id=response.data['id'])
+        assert cloned.customer_id == finalized_quote.customer_id
+        assert cloned.contact_id == finalized_quote.contact_id
+        assert cloned.shipment_type == finalized_quote.shipment_type
+        assert cloned.payment_term == finalized_quote.payment_term
+        assert cloned.request_details_json == finalized_quote.request_details_json
+        assert cloned.valid_until is None
+        assert cloned.versions.count() == 1
+        assert cloned.versions.first().payload_json == finalized_quote.request_details_json
+
+    def test_clone_copies_latest_version_lines_and_totals(self, api_client, finalized_quote, user):
+        service_component, _ = ServiceComponent.objects.get_or_create(
+            code='CLONE-LINE-TST',
+            defaults={
+                'description': 'Clone line test component',
+                'mode': 'AIR',
+                'leg': 'MAIN',
+                'category': 'TRANSPORT',
+                'unit': 'SHIPMENT',
+            }
+        )
+        source_version = QuoteVersion.objects.create(
+            quote=finalized_quote,
+            version_number=1,
+            payload_json={"customer_id": str(finalized_quote.customer_id), "contact_id": str(finalized_quote.contact_id)},
+            status=Quote.Status.FINALIZED,
+            created_by=user,
+        )
+        QuoteLine.objects.create(
+            quote_version=source_version,
+            service_component=service_component,
+            sell_pgk=Decimal('100.00'),
+            sell_pgk_incl_gst=Decimal('100.00'),
+            sell_fcy=Decimal('40.00'),
+            sell_fcy_incl_gst=Decimal('40.00'),
+            sell_fcy_currency='USD',
+            bucket='airfreight',
+        )
+        QuoteTotal.objects.create(
+            quote_version=source_version,
+            total_cost_pgk=Decimal('50.00'),
+            total_sell_pgk=Decimal('100.00'),
+            total_sell_pgk_incl_gst=Decimal('100.00'),
+            total_sell_fcy=Decimal('40.00'),
+            total_sell_fcy_incl_gst=Decimal('40.00'),
+            total_sell_fcy_currency='USD',
+            has_missing_rates=False,
+        )
+
+        url = f'/api/v3/quotes/{finalized_quote.id}/clone/'
+        response = api_client.post(url, format='json')
+        assert response.status_code == 201
+
+        cloned = Quote.objects.get(id=response.data['id'])
+        cloned_version = cloned.versions.first()
+        assert cloned_version is not None
+        assert cloned_version.payload_json == source_version.payload_json
+        assert cloned_version.lines.count() == 1
+        assert cloned_version.totals.total_sell_fcy_currency == 'USD'
     
     def test_clone_draft_quote_fails(self, api_client, draft_quote):
         url = f'/api/v3/quotes/{draft_quote.id}/clone/'
@@ -359,6 +432,16 @@ class TestEditBlockingAPI:
         
         assert response.status_code == 400
         assert 'Cannot clone' in response.data['detail']
+
+    def test_clone_expired_quote(self, api_client, finalized_quote):
+        finalized_quote.status = Quote.Status.EXPIRED
+        finalized_quote.save(update_fields=['status'])
+
+        url = f'/api/v3/quotes/{finalized_quote.id}/clone/'
+        response = api_client.post(url, format='json')
+
+        assert response.status_code == 201
+        assert response.data['status'] == 'DRAFT'
     
     def test_version_create_blocked_for_finalized(self, api_client, finalized_quote):
         """Test that creating versions for finalized quotes is blocked."""

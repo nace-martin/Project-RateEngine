@@ -3,6 +3,39 @@ from django.db import transaction
 from pricing_v4.models import ProductCode
 from services.models import ServiceComponent
 
+
+SPOT_COMPONENT_DEFAULTS = (
+    {
+        'code': 'SPOT_ORIGIN',
+        'description': 'Spot Origin Charge',
+        'mode': 'AIR',
+        'leg': 'ORIGIN',
+        'category': 'ACCESSORIAL',
+    },
+    {
+        'code': 'SPOT_FREIGHT',
+        'description': 'Spot Freight Charge',
+        'mode': 'AIR',
+        'leg': 'MAIN',
+        'category': 'TRANSPORT',
+    },
+    {
+        'code': 'SPOT_DEST',
+        'description': 'Spot Destination Charge',
+        'mode': 'AIR',
+        'leg': 'DESTINATION',
+        'category': 'ACCESSORIAL',
+    },
+    {
+        'code': 'SPOT_CHARGE',
+        'description': 'Spot Additional Charge',
+        'mode': 'AIR',
+        'leg': 'MAIN',
+        'category': 'ACCESSORIAL',
+    },
+)
+
+
 class Command(BaseCommand):
     help = 'Syncs V4 ProductCodes to V3 ServiceComponents'
 
@@ -61,5 +94,36 @@ class Command(BaseCommand):
                 else:
                     updated_count += 1
                     # self.stdout.write(f"Updated: {pc.code}")
-        
-        self.stdout.write(f"Sync complete. Created {created_count}, Updated {updated_count}.")
+
+            spot_created, spot_updated = self._sync_spot_components()
+
+        self.stdout.write(
+            f"Sync complete. Created {created_count}, Updated {updated_count}. "
+            f"SPOT created {spot_created}, SPOT updated {spot_updated}."
+        )
+
+    def _sync_spot_components(self):
+        created_count = 0
+        updated_count = 0
+
+        for defaults in SPOT_COMPONENT_DEFAULTS:
+            component, created = ServiceComponent.objects.update_or_create(
+                code=defaults['code'],
+                defaults={
+                    **defaults,
+                    'is_active': True,
+                    'cost_type': 'COGS',
+                    'cost_source': 'BASE_COST',
+                    'unit': 'SHIPMENT',
+                    'cost_currency_type': 'PGK',
+                    'audience': 'BOTH',
+                },
+            )
+
+            if created:
+                created_count += 1
+                self.stdout.write(f"Created SPOT component: {component.code}")
+            else:
+                updated_count += 1
+
+        return created_count, updated_count

@@ -9,15 +9,16 @@ interface SmartMoneyInputProps {
     index: number;
     currencyName: `charges.${number}.currency`;
     amountName: `charges.${number}.amount`;
+    unit?: string;
     showMinCharge?: boolean;
     minChargeName?: `charges.${number}.min_charge`;
 }
 
 export function SmartMoneyInput({
     control,
-    index,
     currencyName,
     amountName,
+    unit,
     showMinCharge,
     minChargeName
 }: SmartMoneyInputProps) {
@@ -53,13 +54,20 @@ export function SmartMoneyInput({
                         render={({ field }) => (
                             <FormItem>
                                 <FormControl>
-                                    <Input
-                                        type="number"
-                                        step="0.01"
-                                        placeholder="0.00"
-                                        {...field}
-                                        className="h-9"
-                                    />
+                                    <div className="relative">
+                                        <Input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="0.00"
+                                            {...field}
+                                            className={`h-9 ${unit === 'percentage' ? 'pr-8' : ''}`}
+                                        />
+                                        {unit === 'percentage' && (
+                                            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                                                <span className="text-muted-foreground text-sm font-medium">%</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </FormControl>
                             </FormItem>
                         )}
@@ -74,14 +82,19 @@ export function SmartMoneyInput({
                     render={({ field }) => (
                         <FormItem>
                             <FormControl>
-                                <Input
-                                    type="number"
-                                    step="0.01"
-                                    placeholder="Min"
-                                    {...field}
-                                    value={field.value || ""}
-                                    className="h-8 text-xs bg-muted/20"
-                                />
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                                        <span className="text-xs text-muted-foreground font-medium">Min:</span>
+                                    </div>
+                                    <Input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="0.00"
+                                        {...field}
+                                        value={field.value || ""}
+                                        className="h-8 text-xs bg-muted/20 pl-9"
+                                    />
+                                </div>
                             </FormControl>
                         </FormItem>
                     )}

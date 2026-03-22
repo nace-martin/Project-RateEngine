@@ -16,6 +16,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+from pricing_v4.models import ProductCode
 from quotes.spot_schemas import (
     AIExtractedCharge,
     AISpotExtractionResult,
@@ -28,8 +29,10 @@ from quotes.spot_schemas import (
     SPEStatus,
 )
 from quotes.spot_services import (
+    CommodityCoverageResult,
     ScopeValidator,
     SpotTriggerEvaluator,
+    RateAvailabilityService,
     SpotEnvelopeService,
     SpotTriggerReason,
 )
@@ -193,6 +196,213 @@ class TestSpotTriggerEvaluation:
         
         assert is_spot is False
 
+    def test_spot_trigger_missing_commodity_rates(self):
+        """Commodity-specific DB gaps trigger SPOT once base scope coverage is otherwise complete."""
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="PG",
+            destination_country="AU",
+            direction="EXPORT",
+            service_scope="D2A",
+            component_availability={
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+            },
+            commodity_code="DG",
+            commodity_coverage=CommodityCoverageResult(
+                missing_product_codes=["EXP-DG"]
+            ),
+        )
+
+        assert is_spot is True
+        assert result.code == SpotTriggerReason.MISSING_COMMODITY_RATES
+        assert result.missing_product_codes == ["EXP-DG"]
+
+    def test_spot_trigger_commodity_requires_spot_rule(self):
+        ProductCode.objects.create(
+            id=1977,
+            code="EXP-AVI-SPOT",
+            description="Export Live Animal Spot Charge",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="PG",
+            destination_country="AU",
+            direction="EXPORT",
+            service_scope="D2A",
+            component_availability={
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+            },
+            commodity_code="AVI",
+            commodity_coverage=CommodityCoverageResult(
+                spot_required_product_codes=["EXP-AVI-SPOT"],
+            ),
+        )
+
+        assert is_spot is True
+        assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_SPOT
+        assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
+        assert "SPOT rate sourcing" in result.text
+        assert "Export Live Animal Spot Charge (EXP-AVI-SPOT)" in result.text
+
+    def test_spot_trigger_commodity_requires_manual_rule(self):
+        ProductCode.objects.create(
+            id=1976,
+            code="EXP-AVI-MANUAL",
+            description="Export Live Animal Manual Charge",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        ProductCode.objects.create(
+            id=1975,
+            code="EXP-AVI-DB",
+            description="Export Live Animal Database Charge",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        is_spot, result = SpotTriggerEvaluator.evaluate(
+            origin_country="PG",
+            destination_country="AU",
+            direction="EXPORT",
+            service_scope="D2A",
+            component_availability={
+                COMPONENT_ORIGIN_LOCAL: True,
+                COMPONENT_FREIGHT: True,
+            },
+            commodity_code="AVI",
+            commodity_coverage=CommodityCoverageResult(
+                manual_required_product_codes=["EXP-AVI-MANUAL"],
+                spot_required_product_codes=["EXP-AVI-SPOT"],
+                missing_product_codes=["EXP-AVI-DB"],
+            ),
+        )
+
+        assert is_spot is True
+        assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
+        assert result.manual_required_product_codes == ["EXP-AVI-MANUAL"]
+        assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
+        assert result.missing_product_codes == ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
+        assert "manual charge entry" in result.text
+        assert "Export Live Animal Manual Charge (EXP-AVI-MANUAL)" in result.text
+        assert "EXP-AVI-SPOT" in result.text
+        assert "Export Live Animal Database Charge (EXP-AVI-DB)" in result.text
+
+
+class TestRateAvailabilityService:
+    """Rate availability detection against V4 rate tables."""
+
+    def test_import_d2d_origin_local_detected_from_destination_fallback(self):
+        """
+        IMPORT D2D compatibility:
+        if ORIGIN local rows were migrated under destination location,
+        availability must still mark ORIGIN_LOCAL=True.
+        """
+        from datetime import date, timedelta
+        from pricing_v4.models import ProductCode, Agent, ImportCOGS, LocalCOGSRate
+
+        valid_from = date.today() - timedelta(days=1)
+        valid_until = date.today() + timedelta(days=30)
+
+        agent = Agent.objects.create(
+            code="SPOT-AU",
+            name="Spot AU Agent",
+            country_code="AU",
+            agent_type="ORIGIN",
+        )
+
+        pc_freight = ProductCode.objects.create(
+            id=2901,
+            code="IMP-FRT-AIR-SPOTTEST",
+            description="Import Air Freight (SPOT test)",
+            domain="IMPORT",
+            category="FREIGHT",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="KG",
+        )
+        pc_origin = ProductCode.objects.create(
+            id=2902,
+            code="IMP-ORIGIN-HANDLING-SPOTTEST",
+            description="Import Origin Handling (SPOT test)",
+            domain="IMPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4200",
+            gl_cost_code="5200",
+            default_unit="SHIPMENT",
+        )
+        pc_destination = ProductCode.objects.create(
+            id=2903,
+            code="IMP-CARTAGE-DEST-SPOTTEST",
+            description="Import Destination Cartage (SPOT test)",
+            domain="IMPORT",
+            category="CARTAGE",
+            is_gst_applicable=True,
+            gl_revenue_code="4300",
+            gl_cost_code="5300",
+            default_unit="SHIPMENT",
+        )
+
+        ImportCOGS.objects.create(
+            product_code=pc_freight,
+            origin_airport="BNE",
+            destination_airport="POM",
+            agent=agent,
+            currency="AUD",
+            rate_per_kg=Decimal("4.50"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+
+        # Legacy migrated shape: origin local row stored under destination station.
+        LocalCOGSRate.objects.create(
+            product_code=pc_origin,
+            location="POM",
+            direction="IMPORT",
+            agent=agent,
+            currency="AUD",
+            rate_type="FIXED",
+            amount=Decimal("75.00"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+        LocalCOGSRate.objects.create(
+            product_code=pc_destination,
+            location="POM",
+            direction="IMPORT",
+            agent=agent,
+            currency="PGK",
+            rate_type="FIXED",
+            amount=Decimal("120.00"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+
+        availability = RateAvailabilityService.get_availability(
+            origin_airport="BNE",
+            destination_airport="POM",
+            direction="IMPORT",
+            service_scope="D2D",
+        )
+
+        assert availability[COMPONENT_FREIGHT] is True
+        assert availability[COMPONENT_ORIGIN_LOCAL] is True
+        assert availability[COMPONENT_DESTINATION_LOCAL] is True
+
 
 # =============================================================================
 # SPE SCHEMA VALIDATION TESTS (Tweaks #2, #4)
@@ -279,6 +489,46 @@ class TestSPESchemaValidation:
             )
         
         assert "airfreight" in str(exc_info.value).lower()
+
+    def test_spe_allows_non_airfreight_when_scope_does_not_require_freight(self):
+        """A2D SPE can contain destination-only charges without airfreight."""
+        spe = SpotPricingEnvelope(
+            id=str(uuid4()),
+            status=SPEStatus.DRAFT,
+            shipment=SPEShipmentContext(
+                origin_country="AU",
+                destination_country="PG",
+                origin_code="BNE",
+                destination_code="POM",
+                commodity="GCR",
+                total_weight_kg=100.0,
+                pieces=1,
+                service_scope="a2d",
+            ),
+            charges=[
+                SPEChargeLine(
+                    code="DESTINATION_LOCAL",
+                    description="Destination handling",
+                    amount=75.0,
+                    currency="USD",
+                    unit="flat",
+                    bucket="destination_charges",
+                    is_primary_cost=False,
+                    source_reference="Agent quote",
+                    entered_by_user_id="user123",
+                    entered_at=datetime.now()
+                )
+            ],
+            conditions=SPEConditions(),
+            spot_trigger_reason_code="MISSING_SCOPE_RATES",
+            spot_trigger_reason_text="Missing destination local rates",
+            created_by_user_id="user123",
+            created_at=datetime.now(),
+            expires_at=datetime.now() + timedelta(hours=72)
+        )
+
+        assert len(spe.charges) == 1
+        assert spe.charges[0].bucket == "destination_charges"
     
     def test_spe_single_airfreight_rejects_multiple(self):
         """SPE rejects two airfreight/primary charges."""

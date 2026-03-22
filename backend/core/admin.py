@@ -3,7 +3,7 @@
 from django.contrib import admin
 from .models import (
     Currency, Country, City, Airport, FxRate,
-    FxSnapshot, Policy, Surcharge, LocalTariff,
+    FxSnapshot, Policy, Surcharge,
     AircraftType, RouteLaneConstraint
 )
 
@@ -15,7 +15,6 @@ admin.site.register(FxRate)
 admin.site.register(FxSnapshot)
 admin.site.register(Policy)
 admin.site.register(Surcharge)
-admin.site.register(LocalTariff)
 
 
 @admin.register(AircraftType)

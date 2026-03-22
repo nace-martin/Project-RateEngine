@@ -66,6 +66,7 @@ export interface TriggerEvaluateRequest {
     origin_country: string;
     destination_country: string;
     commodity: SPECommodity;
+    payment_term: 'PREPAID' | 'COLLECT';
     origin_airport?: string;
     destination_airport?: string;
     has_valid_buy_rate?: boolean;
@@ -80,6 +81,9 @@ export interface TriggerResult {
     code: string;
     text: string;
     missing_components?: string[];
+    missing_product_codes?: string[];
+    spot_required_product_codes?: string[];
+    manual_required_product_codes?: string[];
 }
 
 /** Trigger evaluation response */
@@ -98,24 +102,29 @@ export interface SPEShipmentContext {
     destination_country: string;
     origin_code: string;
     destination_code: string;
+    customer_name?: string;
     commodity: SPECommodity;
     total_weight_kg: number;
     pieces: number;
     volume_cbm?: number;
     service_scope?: string;
+    payment_term?: 'prepaid' | 'collect';
+    missing_components?: string[];
 }
 
 /** SPE charge line */
 export interface SPEChargeLine {
     id?: string;
+    source_batch_id?: string | null;
+    source_batch_label?: string | null;
     code: string;
     description: string;
     amount: string;
     currency: 'SGD' | 'USD' | 'AUD' | 'PGK' | 'NZD' | 'HKD';
     unit: SPEChargeUnit;
     bucket: SPEChargeBucket;
-    is_primary_cost: boolean;
-    conditional: boolean;
+    is_primary_cost?: boolean;
+    conditional?: boolean;
     source_reference: string;
 
     // Extended fields
@@ -149,6 +158,22 @@ export interface SPEManagerApproval {
     comment?: string;
 }
 
+/** SPE source batch */
+export interface SPESourceBatch {
+    id: string;
+    source_kind: 'AIRLINE' | 'AGENT' | 'MANUAL' | 'OTHER';
+    source_type: 'TEXT' | 'PDF' | 'EMAIL' | 'MANUAL';
+    target_bucket: 'airfreight' | 'origin_charges' | 'destination_charges' | 'mixed';
+    label: string;
+    source_reference: string;
+    file_name: string;
+    file_content_type: string;
+    analysis_summary_json: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+    charge_count: number;
+}
+
 /** Create SPE request */
 export interface CreateSPERequest {
     shipment_context: SPEShipmentContext;
@@ -178,6 +203,7 @@ export interface SpotPricingEnvelope {
     manager_approval: SPEManagerApproval | null;
     missing_mandatory_fields: string[];  // 'rate', 'currency' if missing
     can_proceed: boolean;  // True if no missing mandatory fields
+    sources: SPESourceBatch[];
     charges: SPEChargeLine[];
     customer_name?: string; // from backend/quotes/spot_schemas.py
 }
@@ -261,6 +287,7 @@ export interface ExtractedAssertion {
     rate_currency?: string | null;
     rate_unit?: string | null;
     validity_date?: string | null;
+    percentage_basis?: string;
 }
 
 /** Quick status check of analysis results */
@@ -286,6 +313,8 @@ export interface ReplyAnalysisResult {
     warnings: string[];
     can_proceed: boolean;
     blocked_reason: string | null;
+    source_batch_id?: string;
+    source_batch_label?: string;
 }
 
 /** Input for manually adding an assertion */
@@ -298,6 +327,7 @@ export interface ManualAssertionInput {
     rate_currency?: string;
     rate_unit?: string;
     validity_date?: string;
+    percentage_basis?: string;
 }
 
 // =============================================================================

@@ -3,12 +3,17 @@
 import { useState } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
-import { computeQuoteV3 } from "@/lib/api";
+import { computeQuoteV3 } from "@/lib/api/quotes";
 import { useToast } from "@/context/toast-context";
 import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import { V3QuoteComputeRequest } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
+import WorkspaceContextCard from "@/components/WorkspaceContextCard";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useReturnTo } from "@/hooks/useReturnTo";
+import { getNewQuoteCopy } from "@/lib/page-copy";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -44,6 +49,7 @@ const buildQuoteComputePayload = (
       width_cm: dimension.width_cm,
       height_cm: dimension.height_cm,
       gross_weight_kg: dimension.gross_weight_kg,
+      package_type: dimension.package_type,
     })),
     overrides: data.overrides?.map((override) => ({
       service_component_id: override.service_component_id,
@@ -85,11 +91,15 @@ export default function NewQuotePage() {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [isFormDirty, setIsFormDirty] = useState(false);
 
   // Missing Rates State
   const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
   const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
   const [pendingQuoteId, setPendingQuoteId] = useState<string | null>(null);
+  const confirmLeave = useUnsavedChangesGuard(isFormDirty);
+  const returnTo = useReturnTo();
+  const pageCopy = getNewQuoteCopy(user?.role as "admin" | "manager" | "sales" | "finance" | undefined);
   // We don't need pendingFormData anymore as the quote is already saved
 
   const handleQuoteSubmit = async (data: QuoteFormSchemaV3) => {
@@ -157,6 +167,12 @@ export default function NewQuotePage() {
 
   return (
     <div className="container mx-auto max-w-5xl p-4 pb-32">
+      <PageBackButton
+        fallbackHref="/quotes"
+        returnTo={returnTo}
+        isDirty={isFormDirty}
+        confirmLeave={confirmLeave}
+      />
       <Breadcrumb className="mb-6">
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -173,11 +189,18 @@ export default function NewQuotePage() {
         </BreadcrumbList>
       </Breadcrumb>
 
+      <WorkspaceContextCard
+        title={pageCopy.title}
+        description={pageCopy.description}
+        note={pageCopy.note}
+      />
+
       <QuoteForm
         user={user}
         onSubmit={handleQuoteSubmit}
         isSubmitting={isSubmitting}
         serverError={apiError}
+        onDirtyChange={setIsFormDirty}
       />
 
       {showMissingRatesModal && (

@@ -14,8 +14,9 @@ from datetime import date, timedelta
 from django.test import TestCase
 
 from pricing_v4.models import (
+    CommodityChargeRule,
     ProductCode, Agent,
-    ImportCOGS, ImportSellRate
+    ImportCOGS, LocalCOGSRate, LocalSellRate
 )
 from pricing_v4.engine.import_engine import (
     ImportPricingEngine, PaymentTerm, ServiceScope
@@ -95,7 +96,7 @@ class ImportQuoteCurrencyTest(ImportEngineTestCase):
         self.assertEqual(engine.quote_currency, 'PGK')
     
     def test_prepaid_returns_fcy(self):
-        """PREPAID payment term should quote in FCY (AUD)."""
+        """PREPAID payment term should default to FCY (USD) without explicit override."""
         engine = ImportPricingEngine(
             quote_date=date.today(),
             origin='SYD',
@@ -104,7 +105,7 @@ class ImportQuoteCurrencyTest(ImportEngineTestCase):
             payment_term=PaymentTerm.PREPAID,
             service_scope=ServiceScope.A2D
         )
-        self.assertEqual(engine.quote_currency, 'AUD')
+        self.assertEqual(engine.quote_currency, 'USD')
 
 
 class ImportActiveLegTest(ImportEngineTestCase):
@@ -167,23 +168,26 @@ class ImportFxConversionTest(ImportEngineTestCase):
             valid_until=self.valid_until
         )
         # Destination Clearance COGS (PGK)
-        ImportCOGS.objects.create(
+        LocalCOGSRate.objects.create(
             product_code=self.pc_clearance,
-            origin_airport='SYD',
-            destination_airport='POM',
+            location='POM',
+            direction='IMPORT',
             agent=self.agent_efm,
             currency='PGK',
-            rate_per_shipment=Decimal('350.00'),
+            rate_type='FIXED',
+            amount=Decimal('350.00'),
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
         # Destination Clearance Sell (PGK)
-        ImportSellRate.objects.create(
+        LocalSellRate.objects.create(
             product_code=self.pc_clearance,
-            origin_airport='SYD',
-            destination_airport='POM',
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
             currency='PGK',
-            rate_per_shipment=Decimal('500.00'),
+            rate_type='FIXED',
+            amount=Decimal('500.00'),
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
@@ -265,44 +269,50 @@ class ImportFullQuoteTest(ImportEngineTestCase):
             valid_until=self.valid_until
         )
         # Clearance COGS
-        ImportCOGS.objects.create(
+        LocalCOGSRate.objects.create(
             product_code=self.pc_clearance,
-            origin_airport='SYD',
-            destination_airport='POM',
+            location='POM',
+            direction='IMPORT',
             agent=self.agent_efm,
             currency='PGK',
-            rate_per_shipment=Decimal('350.00'),
+            rate_type='FIXED',
+            amount=Decimal('350.00'),
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
         # Clearance Sell
-        ImportSellRate.objects.create(
+        LocalSellRate.objects.create(
             product_code=self.pc_clearance,
-            origin_airport='SYD',
-            destination_airport='POM',
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
             currency='PGK',
-            rate_per_shipment=Decimal('500.00'),
+            rate_type='FIXED',
+            amount=Decimal('500.00'),
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
         # Cartage COGS
-        ImportCOGS.objects.create(
+        LocalCOGSRate.objects.create(
             product_code=self.pc_cartage,
-            origin_airport='SYD',
-            destination_airport='POM',
+            location='POM',
+            direction='IMPORT',
             agent=self.agent_efm,
             currency='PGK',
-            rate_per_shipment=Decimal('150.00'),
+            rate_type='FIXED',
+            amount=Decimal('150.00'),
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
         # Cartage Sell
-        ImportSellRate.objects.create(
+        LocalSellRate.objects.create(
             product_code=self.pc_cartage,
-            origin_airport='SYD',
-            destination_airport='POM',
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
             currency='PGK',
-            rate_per_shipment=Decimal('200.00'),
+            rate_type='FIXED',
+            amount=Decimal('200.00'),
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
@@ -346,3 +356,186 @@ class ImportFullQuoteTest(ImportEngineTestCase):
         self.assertEqual(result.service_scope, 'A2D')
         self.assertIsNotNone(result.fx_rate_used)
         self.assertIsNotNone(result.caf_rate)
+
+
+class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
+    """
+    Regression guard:
+    Import ORIGIN local charges must be resolvable from LocalCOGSRate.
+    """
+
+    def setUp(self):
+        self.pc_doc_origin = ProductCode.objects.create(
+            id=2010,
+            code='IMP-DOC-ORIGIN',
+            description='Import Documentation Origin',
+            domain='IMPORT',
+            category='DOCUMENTATION',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4200',
+            gl_cost_code='5200',
+            default_unit='SHIPMENT'
+        )
+
+        # Freight lane COGS exists for linehaul
+        ImportCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_airport='BNE',
+            destination_airport='POM',
+            agent=self.agent_efm,
+            currency='AUD',
+            rate_per_kg=Decimal('5.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+        # Import ORIGIN local charge stored in LocalCOGSRate using destination location
+        # (legacy migration compatibility shape).
+        LocalCOGSRate.objects.create(
+            product_code=self.pc_doc_origin,
+            location='POM',
+            direction='IMPORT',
+            agent=self.agent_efm,
+            currency='AUD',
+            rate_type='FIXED',
+            amount=Decimal('100.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+    def test_d2d_collect_does_not_mark_origin_local_as_missing(self):
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='BNE',
+            destination='POM',
+            chargeable_weight_kg=Decimal('50'),
+            payment_term=PaymentTerm.COLLECT,
+            service_scope=ServiceScope.D2D,
+        )
+        result = engine.calculate_quote()
+
+        doc_origin_lines = [l for l in result.origin_lines if l.product_code == 'IMP-DOC-ORIGIN']
+        self.assertEqual(len(doc_origin_lines), 1)
+        line = doc_origin_lines[0]
+        self.assertFalse(getattr(line, 'is_rate_missing', False))
+
+
+class ImportCommodityRuleSelectionTest(ImportEngineTestCase):
+    def setUp(self):
+        self.pc_special_dest = ProductCode.objects.create(
+            id=2099,
+            code='IMP-AVI-DEST-TEST',
+            description='Import Live Animal Destination Handling',
+            domain='IMPORT',
+            category='HANDLING',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4399',
+            gl_cost_code='5399',
+            default_unit='SHIPMENT'
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='IMPORT',
+            service_scope='A2D',
+            commodity_code='AVI',
+            product_code=self.pc_special_dest,
+            leg='DESTINATION',
+            trigger_mode='AUTO',
+            origin_code='SYD',
+            destination_code='POM',
+            payment_term='COLLECT',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        LocalCOGSRate.objects.create(
+            product_code=self.pc_special_dest,
+            location='POM',
+            direction='IMPORT',
+            agent=self.agent_efm,
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('250.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.pc_special_dest,
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('320.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+    def test_import_engine_only_includes_matching_commodity_rule_products(self):
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='SYD',
+            destination='POM',
+            chargeable_weight_kg=Decimal('25'),
+            payment_term=PaymentTerm.COLLECT,
+            service_scope=ServiceScope.A2D
+        )
+
+        general_result = engine.calculate_quote(commodity_code='GCR')
+        commodity_result = engine.calculate_quote(commodity_code='AVI')
+
+        general_codes = {line.product_code for line in general_result.destination_lines}
+        commodity_codes = {line.product_code for line in commodity_result.destination_lines}
+
+        self.assertNotIn('IMP-AVI-DEST-TEST', general_codes)
+        self.assertIn('IMP-AVI-DEST-TEST', commodity_codes)
+
+    def test_import_engine_can_price_special_destination_line_with_sell_only_tariff(self):
+        pc_special_sell_only = ProductCode.objects.create(
+            id=2100,
+            code='IMP-DG-SPECIAL-SELL-ONLY',
+            description='Import Dangerous Goods Handling Sell Only',
+            domain='IMPORT',
+            category='HANDLING',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4398',
+            gl_cost_code='5398',
+            default_unit='SHIPMENT'
+        )
+        CommodityChargeRule.objects.create(
+            shipment_type='IMPORT',
+            service_scope='A2D',
+            commodity_code='DG',
+            product_code=pc_special_sell_only,
+            leg='DESTINATION',
+            trigger_mode='AUTO',
+            effective_from=self.valid_from,
+            effective_to=self.valid_until,
+        )
+        LocalSellRate.objects.create(
+            product_code=pc_special_sell_only,
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('100.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='SYD',
+            destination='POM',
+            chargeable_weight_kg=Decimal('25'),
+            payment_term=PaymentTerm.COLLECT,
+            service_scope=ServiceScope.A2D
+        )
+        result = engine.calculate_quote(commodity_code='DG')
+
+        lines = [line for line in result.destination_lines if line.product_code == 'IMP-DG-SPECIAL-SELL-ONLY']
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].sell_amount, Decimal('100.00'))
+        self.assertEqual(lines[0].cost_amount, Decimal('0'))

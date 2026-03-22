@@ -29,6 +29,7 @@ import json
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from django.conf import settings
+from quotes.completeness import COMPONENT_FREIGHT, required_components
 
 
 # =============================================================================
@@ -197,11 +198,12 @@ class SPEShipmentContext(BaseModel):
     """
     model_config = ConfigDict(frozen=True)
     
-    origin_country: Literal["PG", "AU", "US", "SG", "NZ", "ID", "PH", "JP", "CN", "HK", "OTHER"]
-    destination_country: Literal["PG", "AU", "US", "SG", "NZ", "ID", "PH", "JP", "CN", "HK", "OTHER"]
+    origin_country: str
+    destination_country: str
     
     origin_code: str = Field(min_length=3, max_length=3)
     destination_code: str = Field(min_length=3, max_length=3)
+    customer_name: Optional[str] = Field(default=None, max_length=255)
     
     commodity: Literal["GCR", "SCR", "DG", "AVI", "PER", "HVC", "HUM", "OOG", "VUL", "TTS", "OTHER"]
     
@@ -209,6 +211,18 @@ class SPEShipmentContext(BaseModel):
     volume_cbm: Optional[float] = Field(default=None, description="Total Volume in CBM")
     pieces: int = Field(default=1, description="Number of pieces")
     service_scope: Literal['p2p', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
+    payment_term: Optional[Literal['prepaid', 'collect']] = Field(default=None, description="Payment term")
+    missing_components: Optional[List[str]] = Field(default=None, description="Components explicitly missing rates")
+
+    @field_validator("origin_country", "destination_country")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        normalized = (value or "").strip().upper()
+        if normalized == "OTHER":
+            return normalized
+        if len(normalized) == 2 and normalized.isalpha():
+            return normalized
+        raise ValueError("Country code must be a 2-letter ISO code or 'OTHER'")
     
     @property
     def context_hash(self) -> str:
@@ -222,9 +236,11 @@ class SPEShipmentContext(BaseModel):
             "destination_country": self.destination_country,
             "origin_code": self.origin_code,
             "destination_code": self.destination_code,
+            "customer_name": self.customer_name or "",
             "commodity": self.commodity,
             "total_weight_kg": self.total_weight_kg,
             "pieces": self.pieces,
+            "payment_term": self.payment_term,
         }, sort_keys=True)
         return hashlib.sha256(normalized.encode()).hexdigest()
 
@@ -524,18 +540,41 @@ class SpotPricingEnvelope(BaseModel):
         if not self.charges:
             return self
         
-        # Check if any airfreight charges exist
         has_airfreight = any(c.bucket == "airfreight" for c in self.charges)
-        
+
+        if not has_airfreight:
+            missing = {
+                str(component).upper()
+                for component in (self.shipment.missing_components or [])
+                if component
+            }
+            if self.shipment.missing_components is not None and COMPONENT_FREIGHT not in missing:
+                # We are not quoting airfreight in this SPE, so it's okay to have no airfreight
+                return self
+
+            shipment_type = "IMPORT"
+            if self.shipment.origin_country == "PG" and self.shipment.destination_country == "PG":
+                shipment_type = "DOMESTIC"
+            elif self.shipment.origin_country == "PG":
+                shipment_type = "EXPORT"
+
+            required = required_components(
+                shipment_type=shipment_type,
+                service_scope=self.shipment.service_scope,
+            )
+            if COMPONENT_FREIGHT not in required:
+                # Scope does not require freight (e.g., A2D), so non-freight-only SPE is valid.
+                return self
+
+            raise ValueError(
+                "SPE requires an airfreight charge when charges are present."
+            )
+            
         primary_charges = [
             c for c in self.charges
             if c.is_primary_cost or c.code == "AIRFREIGHT_SPOT"
         ]
         
-        if not has_airfreight:
-            raise ValueError(
-                "SPE requires an airfreight charge when charges are present."
-            )
         if len(primary_charges) != 1:
             raise ValueError(
                 f"SPE with Airfreight charges requires exactly one primary airfreight charge. "

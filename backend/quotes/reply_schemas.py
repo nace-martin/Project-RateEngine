@@ -98,6 +98,7 @@ class ExtractedAssertion(BaseModel):
     rate_per_unit: Optional[Decimal] = Field(None, description="Per-unit rate (e.g., per kg)")
     rate_currency: Optional[str] = Field(None)
     rate_unit: Optional[str] = Field(None, description="per_kg, flat, min_or_per_kg, etc.")
+    percentage_basis: Optional[str] = Field(None, description="What the percentage applies to")
     validity_date: Optional[str] = Field(None, description="ISO date string")
 
 

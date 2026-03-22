@@ -3,7 +3,8 @@ from django.test import TestCase
 from unittest.mock import MagicMock, patch
 from decimal import Decimal
 from quotes.spot_services import ReplyAnalysisService
-from quotes.ai_intake_schemas import AIRateIntakeResponse, SpotChargeLine
+from quotes.ai_intake_schemas import SpotChargeLine
+from quotes.ai_intake_service import AIRateIntakePipelineResult
 from quotes.reply_schemas import AssertionStatus, AssertionCategory
 
 class CurrencyFallbackTest(TestCase):
@@ -18,7 +19,7 @@ class CurrencyFallbackTest(TestCase):
         mock_get_client.return_value = MagicMock()
         
         # Mock AI Response: Global SGD, Line missing currency
-        mock_parse.return_value = AIRateIntakeResponse(
+        mock_parse.return_value = AIRateIntakePipelineResult(
             success=True,
             quote_currency="SGD",
             lines=[

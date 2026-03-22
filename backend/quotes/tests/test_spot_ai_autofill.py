@@ -1,10 +1,10 @@
 import uuid
-import json
 from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -32,7 +32,13 @@ from quotes.reply_schemas import (
     AssertionStatus,
     AnalysisSummary,
 )
-from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
+from quotes.ai_intake_schemas import RawExtractedCharge, NormalizedCharge, ExtractionAuditResult
+from quotes.spot_models import (
+    SpotPricingEnvelopeDB,
+    SPESourceBatchDB,
+    SPEChargeLineDB,
+    SPEAcknowledgementDB,
+)
 from quotes.spot_services import ReplyAnalysisService, SpotTriggerReason
 
 
@@ -67,6 +73,7 @@ def _create_spe(
     dest_country: str,
     service_scope: str,
     status: str = "draft",
+    missing_components=None,
 ):
     ctx = {
         "origin_country": origin_country,
@@ -78,6 +85,8 @@ def _create_spe(
         "pieces": 1,
         "service_scope": service_scope.lower(),
     }
+    if missing_components is not None:
+        ctx["missing_components"] = list(missing_components)
 
     return SpotPricingEnvelopeDB.objects.create(
         status=status,
@@ -198,10 +207,19 @@ def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
         dest_country="PG",
         service_scope="D2D",
         status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
     )
 
     analysis_result = _analysis_result_with_components()
     monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
 
     client = APIClient()
     client.force_authenticate(user=user)
@@ -224,6 +242,233 @@ def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
     assert any(c.is_primary_cost for c in charges if c.bucket == "airfreight")
 
 
+def test_ai_reply_analysis_creates_source_batch_and_links_lines(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "airline freight and local costs",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AIRLINE",
+            "target_bucket": "airfreight",
+            "label": "PX Freight Quote",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    source_batch = SPESourceBatchDB.objects.get(id=payload["source_batch_id"])
+    assert source_batch.envelope_id == spe.id
+    assert source_batch.source_kind == SPESourceBatchDB.SourceKind.AIRLINE
+    assert source_batch.target_bucket == SPESourceBatchDB.TargetBucket.AIRFREIGHT
+    assert source_batch.label == "PX Freight Quote"
+    assert source_batch.charge_lines.count() == 3
+    assert spe.charge_lines.exclude(source_batch=source_batch).count() == 0
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert len(detail_payload["sources"]) == 1
+    assert detail_payload["sources"][0]["label"] == "PX Freight Quote"
+    assert detail_payload["sources"][0]["charge_count"] == 3
+    assert {charge["source_batch_id"] for charge in detail_payload["charges"]} == {str(source_batch.id)}
+
+
+def test_ai_reply_analysis_reuses_matching_batch_and_preserves_other_batches(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    first_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "airline quote v1",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AIRLINE",
+            "target_bucket": "airfreight",
+            "label": "PX Freight Quote",
+        },
+        format="json",
+    )
+    assert first_response.status_code == 200
+    first_batch_id = first_response.json()["source_batch_id"]
+
+    second_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "agent destination quote",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "KUL Agent Charges",
+        },
+        format="json",
+    )
+    assert second_response.status_code == 200
+    second_batch_id = second_response.json()["source_batch_id"]
+    assert second_batch_id != first_batch_id
+
+    third_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "airline quote v2",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AIRLINE",
+            "target_bucket": "airfreight",
+            "label": "PX Freight Quote",
+        },
+        format="json",
+    )
+    assert third_response.status_code == 200
+    assert third_response.json()["source_batch_id"] == first_batch_id
+
+    first_batch = SPESourceBatchDB.objects.get(id=first_batch_id)
+    second_batch = SPESourceBatchDB.objects.get(id=second_batch_id)
+    assert first_batch.charge_lines.count() == 3
+    assert second_batch.charge_lines.count() == 3
+    assert spe.source_batches.count() == 2
+    assert spe.charge_lines.count() == 6
+
+
+def test_ai_reply_analysis_accepts_pdf_upload(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    captured = {}
+
+    def _fake_analyze_with_ai(*, raw_text, shipment_context=None, availability=None):
+        captured["raw_text"] = raw_text
+        return analysis_result
+
+    class _ExtractionResult:
+        success = True
+        text = "PDF extracted rate reply"
+        warnings = ["Used Gemini multimodal PDF extraction fallback."]
+        error = None
+
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", _fake_analyze_with_ai)
+    monkeypatch.setattr("quotes.ai_intake_service.extract_rate_quote_text_from_pdf", lambda _content, context=None: _ExtractionResult())
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "file": SimpleUploadedFile("quote.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+            "spe_id": str(spe.id),
+            "use_ai": "true",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert captured["raw_text"] == "PDF extracted rate reply"
+    assert any("multimodal PDF extraction fallback" in warning for warning in payload["warnings"])
+
+    spe.refresh_from_db()
+    assert spe.charge_lines.count() == 3
+
+
+def test_ai_reply_analysis_pdf_extraction_failure_returns_400(monkeypatch):
+    user, _, _ = _setup_user_and_locations()
+
+    class _ExtractionResult:
+        success = False
+        text = ""
+        warnings = []
+        error = "PDF extraction failed"
+
+    monkeypatch.setattr("quotes.ai_intake_service.extract_rate_quote_text_from_pdf", lambda _content, context=None: _ExtractionResult())
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "file": SimpleUploadedFile("quote.pdf", b"%PDF-1.4 fake", content_type="application/pdf"),
+            "use_ai": "true",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "PDF extraction failed"
+
+
 def test_ai_rule_meta_null_is_accepted_and_persisted(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_spe(
@@ -234,42 +479,63 @@ def test_ai_rule_meta_null_is_accepted_and_persisted(monkeypatch):
         dest_country="PG",
         service_scope="P2P",
         status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
     )
 
-    ai_payload = {
-        "analysis_text": "Confirmed freight charge",
-        "quote_currency": "USD",
-        "lines": [
-            {
-                "bucket": "FREIGHT",
-                "description": "Airfreight",
-                "amount": 5.0,
-                "rate_per_unit": 5.0,
-                "currency": "USD",
-                "unit_basis": "PER_KG",
-                "rule_meta": None,
-                "conditional": False,
-            }
-        ],
-    }
-
     class _FakeModel:
-        def __init__(self, response_text: str):
-            self._response_text = response_text
-
-        def generate_content(self, _prompt, generation_config=None):
-            return type("Resp", (), {"text": self._response_text})()
+        pass
 
     class _FakeGenAI:
-        def __init__(self, response_text: str):
-            self._response_text = response_text
-
         def GenerativeModel(self, _model_name):
-            return _FakeModel(self._response_text)
+            return _FakeModel()
+
+    monkeypatch.setattr(
+        "quotes.ai_intake_service._extract_raw_charges",
+        lambda model, text, shipment_context=None: [
+            RawExtractedCharge(
+                raw_label="Airfreight",
+                raw_amount_string="USD 5.00/kg",
+                currency_hint="USD",
+                is_conditional=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "quotes.ai_intake_service._normalize_charges",
+        lambda model, raw_charges, shipment_context=None, quote_currency_hint=None: [
+            NormalizedCharge(
+                original_raw_label="Airfreight",
+                v4_product_code="FREIGHT",
+                v4_bucket="FREIGHT",
+                unit_basis="PER_KG",
+                amount=Decimal("5.00"),
+                rate_per_unit=Decimal("5.00"),
+                currency="USD",
+                confidence="HIGH",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "quotes.ai_intake_service._audit_extraction",
+        lambda model, original_text, normalized_charges: ExtractionAuditResult(
+            is_safe_to_proceed=True,
+            missed_charges=[],
+            hallucinations_detected=[],
+        ),
+    )
 
     monkeypatch.setattr(
         "quotes.ai_intake_service.get_gemini_client",
-        lambda: _FakeGenAI(json.dumps(ai_payload)),
+        lambda: _FakeGenAI(),
+    )
+
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
     )
 
     client = APIClient()
@@ -407,6 +673,7 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
         dest_country="PG",
         service_scope="D2D",
         status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
     )
 
     coverage_before = evaluate_from_lines([], "IMPORT", "D2D")
@@ -416,6 +683,14 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
 
     analysis_result = _analysis_result_with_components()
     monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
 
     client = APIClient()
     client.force_authenticate(user=user)
@@ -475,6 +750,106 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     assert compute_response.status_code == 200
     data = compute_response.json()
     assert data["is_complete"] is True
+
+
+def test_ai_autofill_only_adds_ai_charges_and_preserves_existing_standard_lines(monkeypatch):
+    """AI autofill should only insert charges extracted by the LLM.
+    Pre-existing standard-rate SPE lines must be left untouched.
+    """
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=destination.code,  # Export lane: POM -> BNE
+        dest_code=origin.code,
+        origin_country="PG",
+        dest_country="AU",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    now = timezone.now()
+    # Pre-populate SPE with standard-rate lines (as if StandardChargeService ran earlier)
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code=COMPONENT_FREIGHT,
+        description="Standard Airfreight",
+        amount=Decimal("5.00"),
+        currency="USD",
+        unit="per_kg",
+        bucket="airfreight",
+        is_primary_cost=True,
+        entered_at=now,
+        source_reference="Standard Rate (ExportCOGS)",
+    )
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code=COMPONENT_ORIGIN_LOCAL,
+        description="Standard Origin Charges",
+        amount=Decimal("50.00"),
+        currency="USD",
+        unit="flat",
+        bucket="origin_charges",
+        is_primary_cost=False,
+        entered_at=now,
+        source_reference="Standard Rate (ExportCOGS)",
+    )
+
+    # Mock AI to return ONLY the charge it actually extracted from the email
+    analysis_result = ReplyAnalysisResult(
+        raw_text="Destination handling 75",
+        assertions=[
+            ExtractedAssertion(
+                text="Destination handling",
+                category=AssertionCategory.DEST_CHARGES,
+                status=AssertionStatus.CONFIRMED,
+                confidence=0.95,
+                rate_amount=Decimal("75.00"),
+                rate_currency="USD",
+                rate_unit="flat",
+            ),
+        ],
+        summary=AnalysisSummary(has_rate=False, has_currency=True),
+        warnings=[],
+    )
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {"text": "Agent replied with destination charges", "spe_id": str(spe.id), "use_ai": True},
+        format="json",
+    )
+    assert response.status_code == 200
+
+    spe.refresh_from_db()
+    charges = list(spe.charge_lines.order_by("bucket", "code", "description"))
+
+    # All three lines should exist: 2 standard + 1 AI
+    assert {c.code for c in charges} == {COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL}
+
+    freight_charge = next(c for c in charges if c.code == COMPONENT_FREIGHT)
+    origin_charge = next(c for c in charges if c.code == COMPONENT_ORIGIN_LOCAL)
+    destination_charge = next(c for c in charges if c.code == COMPONENT_DESTINATION_LOCAL)
+
+    # Standard lines are untouched — same source, same amount
+    assert freight_charge.source_reference == "Standard Rate (ExportCOGS)"
+    assert freight_charge.amount == Decimal("5.00")
+    assert origin_charge.source_reference == "Standard Rate (ExportCOGS)"
+    assert origin_charge.amount == Decimal("50.00")
+
+    # AI line has AGENT_REPLY_AI source
+    assert destination_charge.source_reference == "Agent reply (AI)"
+    assert destination_charge.amount == Decimal("75.00")
 
 
 def test_spot_min_or_per_unit_uses_minimum_amount():

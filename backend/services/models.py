@@ -71,7 +71,6 @@ COST_SOURCE_CHOICES = [
     ('BASE_COST', 'Base PGK Cost (Directly from this ServiceComponent)'),
     ('EXPORT_RATECARD', 'Export Rate Card (e.g., ratecards.RateCard)'),
     ('PARTNER_RATECARD', 'Partner Rate Card (e.g., Import AUD Rates - Requires New Model)'),
-    ('LOCAL_TARIFF', 'Local Tariff (e.g., core.LocalTariff - PNG Sell Rates)'),
     ('SURCHARGE', 'Surcharge Table (e.g., core.Surcharge - PX Fees)'),
     # Add more sources as needed (e.g., SPOT_RATE, MANUAL_INPUT)
 ]

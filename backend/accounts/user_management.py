@@ -5,29 +5,42 @@ User Management API
 Provides CRUD operations for users.
 Only accessible by Manager and Admin roles.
 """
-from rest_framework import viewsets, serializers, status
+from rest_framework import generics, serializers, status, viewsets
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.hashers import make_password
 
 from .models import CustomUser
+from parties.models import Organization
+
+
+def _default_organization():
+    organization = Organization.objects.filter(is_active=True).order_by('name').first()
+    if organization is None:
+        organization = Organization.objects.order_by('name').first()
+    return organization
 
 
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for listing and viewing users."""
     password = serializers.CharField(write_only=True, required=False, min_length=8)
+    organization_name = serializers.CharField(source='organization.name', read_only=True)
     
     class Meta:
         model = CustomUser
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'department', 'is_active', 'date_joined', 'last_login',
+            'role', 'department', 'organization', 'organization_name',
+            'is_active', 'date_joined', 'last_login',
             'password'
         ]
         read_only_fields = ['id', 'date_joined', 'last_login']
     
     def create(self, validated_data):
         password = validated_data.pop('password', None)
+        if 'organization' not in validated_data:
+            request = self.context.get('request')
+            validated_data['organization'] = getattr(getattr(request, 'user', None), 'organization', None) or _default_organization()
         user = CustomUser(**validated_data)
         if password:
             user.password = make_password(password)
@@ -51,6 +64,20 @@ class CanManageUsers(IsAuthenticated):
         if not super().has_permission(request, view):
             return False
         return getattr(request.user, 'can_manage_users', False)
+
+
+class OrganizationOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Organization
+        fields = ['id', 'name', 'slug', 'is_active']
+
+
+class OrganizationListAPIView(generics.ListAPIView):
+    serializer_class = OrganizationOptionSerializer
+    permission_classes = [CanManageUsers]
+
+    def get_queryset(self):
+        return Organization.objects.order_by('-is_active', 'name')
 
 
 class UserViewSet(viewsets.ModelViewSet):

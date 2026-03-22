@@ -12,18 +12,18 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:shadow-md",
+          "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 hover:shadow-md active:bg-primary/95 active:shadow-sm",
         destructive:
-          "bg-destructive text-white shadow-sm hover:bg-destructive/90 focus-visible:ring-destructive/20",
+          "bg-destructive text-white shadow-sm hover:bg-destructive/90 active:bg-destructive/95 focus-visible:ring-destructive/20",
         outline:
-          "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
+          "border border-input bg-background shadow-sm hover:border-primary/40 hover:bg-accent hover:text-accent-foreground active:border-primary/60 active:bg-primary/5",
         secondary:
-          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
+          "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80 active:bg-secondary/90",
         ghost:
-          "hover:bg-accent hover:text-accent-foreground",
+          "hover:bg-accent hover:text-accent-foreground active:bg-accent/80",
         link: "text-primary underline-offset-4 hover:underline",
         success:
-          "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 hover:shadow-md",
+          "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 hover:shadow-md active:bg-emerald-800 active:shadow-sm",
       },
       size: {
         default: "h-8 px-4 py-1.5 has-[>svg]:px-3 text-sm",
@@ -41,22 +41,66 @@ const buttonVariants = cva(
   }
 )
 
+const isPromiseLike = (value: unknown): value is Promise<unknown> =>
+  !!value &&
+  (typeof value === "object" || typeof value === "function") &&
+  "then" in (value as Record<string, unknown>) &&
+  typeof (value as { then?: unknown }).then === "function"
+
 function Button({
   className,
   variant,
   size,
   asChild = false,
+  onClick,
+  disabled,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean
   }) {
+  const [isPendingClick, setIsPendingClick] = React.useState(false)
+  const clickLockRef = React.useRef(false)
   const Comp = asChild ? Slot : "button"
+
+  const handleClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (disabled || clickLockRef.current) {
+      event.preventDefault()
+      return
+    }
+
+    const result = onClick?.(event)
+    if (isPromiseLike(result)) {
+      clickLockRef.current = true
+      setIsPendingClick(true)
+      void result.finally(() => {
+        clickLockRef.current = false
+        setIsPendingClick(false)
+      })
+    }
+  }, [disabled, onClick])
+
+  if (asChild) {
+    return (
+      <Comp
+        data-slot="button"
+        className={cn(buttonVariants({ variant, size, className }))}
+        onClick={onClick}
+        disabled={disabled}
+        {...props}
+      />
+    )
+  }
+
+  const resolvedDisabled = Boolean(disabled || isPendingClick)
 
   return (
     <Comp
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      onClick={handleClick}
+      disabled={resolvedDisabled}
+      aria-busy={isPendingClick || undefined}
       {...props}
     />
   )

@@ -51,7 +51,7 @@ export function CustomerSection({
                 <FormField
                     control={form.control}
                     name="customer_id"
-                    render={({ field }) => (
+                    render={() => (
                         <FormItem className="flex flex-col">
                             <FormLabel>Customer</FormLabel>
                             <CompanySearchCombobox

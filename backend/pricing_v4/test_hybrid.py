@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import uuid4
 from datetime import datetime, timedelta
 from django.utils import timezone
+from types import SimpleNamespace
 
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
 from core.dataclasses import CalculatedChargeLine, QuoteInput
@@ -165,6 +166,8 @@ class HybridPricingTest(TestCase):
         # 1. Setup Adapter for Import Prepaid
         self.quote_input.shipment.shipment_type = 'IMPORT'
         self.quote_input.shipment.payment_term = 'PREPAID'
+        self.quote_input.shipment.origin_location = SimpleNamespace(country_code='AU')
+        self.quote_input.shipment.destination_location = SimpleNamespace(country_code='PG')
         self.quote_input.output_currency = 'AUD'
         
         adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
@@ -293,3 +296,81 @@ class HybridPricingTest(TestCase):
         # assertGreater is safer for "it shouldn't be small"
         self.assertGreater(total, Decimal('100.00'), "Domestic Standard charges should be preserved")
         self.assertEqual(total, Decimal('657.50'))
+
+    def test_spot_mode_ignores_non_required_missing_lines_for_finalize_gate(self):
+        """
+        In SPOT mode, finalize gating should rely on required component coverage only.
+        Non-required missing standard lines must not force has_missing_rates=True.
+        """
+        self.quote_input.shipment.shipment_type = 'EXPORT'
+        self.quote_input.shipment.service_scope = 'D2D'
+
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter.pricing_mode = PricingMode.SPOT
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+
+        def make_line(code, bucket, amount, is_missing=False):
+            return CalculatedChargeLine(
+                service_component_code=code,
+                service_component_desc=f"{code} Desc",
+                cost_pgk=Decimal(amount),
+                sell_pgk=Decimal(amount),
+                sell_pgk_incl_gst=Decimal(amount),
+                sell_fcy=Decimal(amount),
+                sell_fcy_incl_gst=Decimal(amount),
+                sell_fcy_currency='PGK',
+                bucket=bucket,
+                cost_source='SPOT Envelope',
+                leg='L1',
+                service_component_id=uuid4(),
+                is_rate_missing=is_missing,
+            )
+
+        # D2D required coverage is complete: one covered line in each required bucket.
+        # Extra missing line in origin bucket should not block SPOT finalize gate.
+        lines = [
+            make_line('EXP-FRT-AIR', 'airfreight', '500.00', is_missing=False),
+            make_line('EXP-CLEAR', 'origin_charges', '120.00', is_missing=False),
+            make_line('SPOT_DEST', 'destination_charges', '200.00', is_missing=False),
+            make_line('EXP-AWB', 'origin_charges', '0.00', is_missing=True),
+        ]
+
+        totals = adapter._calculate_totals(lines).totals
+        self.assertFalse(totals.has_missing_rates)
+
+    def test_spot_mode_skips_zero_amount_db_lines(self):
+        """
+        Legacy zero-amount SPE rows should be ignored instead of breaking SPOT validation.
+        """
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter._calculate_standard_lines = MagicMock(return_value=[])
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='FRT_SPOT',
+            description='Spot Freight',
+            amount=Decimal('100.00'),
+            currency='PGK',
+            unit='per_shipment',
+            bucket='airfreight',
+            is_primary_cost=True,
+            entered_at=timezone.now(),
+            source_reference='Test'
+        )
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='ORG_FEE',
+            description='Origin Fee Zero',
+            amount=Decimal('0.00'),
+            currency='PGK',
+            unit='flat',
+            bucket='origin_charges',
+            is_primary_cost=False,
+            entered_at=timezone.now(),
+            source_reference='Test'
+        )
+
+        result = adapter.calculate_charges()
+        self.assertGreater(result.totals.total_sell_pgk, Decimal('0.00'))
+        self.assertNotIn('ORG_FEE', [line.service_component_code for line in result.lines])
