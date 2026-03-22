@@ -12,7 +12,7 @@ export default function CompanyBrandingPage() {
     <StandardPageContainer>
       <PageHeader
         title="Company Branding"
-        description="Tenant branding and company identity used across PDFs, public pages, and branded quote outputs."
+        description="Manage your logo, colors, and company details used across customer-facing quote documents."
       />
 
       {!isAdmin ? (

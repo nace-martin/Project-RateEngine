@@ -21,6 +21,7 @@ interface CompanySearchComboboxProps {
   name?: string;
   helperText?: string;
   disabled?: boolean;
+  inputClassName?: string;
 }
 
 export default function CompanySearchCombobox({
@@ -31,6 +32,7 @@ export default function CompanySearchCombobox({
   name,
   helperText,
   disabled = false,
+  inputClassName,
 }: CompanySearchComboboxProps) {
   const { token } = useAuth(); // Retrieve token
   const [query, setQuery] = useState(value?.name ?? '');
@@ -133,13 +135,17 @@ export default function CompanySearchCombobox({
             setIsOpen(true);
           }}
           disabled={disabled}
+          className={inputClassName}
         />
         {value ? (
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="absolute inset-y-0 right-2 flex items-center"
+            className={cn(
+              "absolute inset-y-0 right-2 flex items-center",
+              value ? "text-white/80 hover:bg-white/10 hover:text-white" : ""
+            )}
             onClick={handleClear}
             aria-label="Clear company selection"
           >

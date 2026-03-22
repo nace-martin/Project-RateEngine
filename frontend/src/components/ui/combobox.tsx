@@ -56,11 +56,16 @@ export function Combobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className={cn("h-9 w-full justify-between rounded-md", buttonClassName)}
+          className={cn(
+            "h-9 w-full justify-between rounded-md border-input bg-background text-foreground transition-all duration-200 hover:border-primary/40 hover:bg-accent/60 active:border-primary/60 aria-expanded:border-primary/60 aria-expanded:shadow-sm",
+            buttonClassName
+          )}
           disabled={disabled}
         >
-          <span className="truncate">{selected ? selected.label : "Select..."}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
+          <span className={cn("truncate", selected ? "font-medium text-foreground" : "text-muted-foreground")}>
+            {selected ? selected.label : "Select..."}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 text-slate-500" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className={cn("w-[var(--radix-popover-trigger-width)] p-0", className)}>

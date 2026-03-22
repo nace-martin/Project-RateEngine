@@ -27,6 +27,7 @@ interface LocationSearchComboboxProps {
   onSelect: (value: LocationSearchResult | null) => void;
   placeholder?: string;
   minSearchChars?: number;
+  triggerClassName?: string;
 }
 
 const DEFAULT_MIN_CHARS = 2;
@@ -37,6 +38,7 @@ export default function LocationSearchCombobox({
   onSelect,
   placeholder = "Search locations...",
   minSearchChars = DEFAULT_MIN_CHARS,
+  triggerClassName,
 }: LocationSearchComboboxProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -82,7 +84,7 @@ export default function LocationSearchCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between"
+          className={cn("w-full justify-between", triggerClassName)}
         >
           <span className="truncate">{currentLabel}</span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />

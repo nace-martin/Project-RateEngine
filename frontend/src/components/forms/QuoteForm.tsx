@@ -21,6 +21,11 @@ import LocationSearch from "@/components/LocationSearchCombobox";
 import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
 import { useEffect } from "react";
 
+const getCompletedFieldClass = (isComplete: boolean) =>
+    isComplete
+        ? "border-primary bg-primary text-white ring-1 ring-primary/25 hover:border-primary hover:bg-primary/95 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 [&_svg]:text-white/80"
+        : "";
+
 interface QuoteFormProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
     initialCustomer?: CompanySearchResult;
@@ -116,7 +121,7 @@ export function QuoteForm({
                         <FormField
                             control={form.control}
                             name="customer_id"
-                            render={({ field }) => (
+                            render={({ field, fieldState }) => (
                                 <FormItem className="col-span-1 md:col-span-2">
                                     <FormLabel>Customer</FormLabel>
                                     <FormControl>
@@ -130,6 +135,7 @@ export function QuoteForm({
                                             }}
                                             value={selectedCustomer}
                                             placeholder="Search for a customer..."
+                                            inputClassName={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}
                                         />
                                     </FormControl>
                                     <FormMessage />
@@ -140,7 +146,7 @@ export function QuoteForm({
                         <FormField
                             control={form.control}
                             name="contact_id"
-                            render={({ field }) => (
+                            render={({ field, fieldState }) => (
                                 <FormItem>
                                     <FormLabel>Contact Person</FormLabel>
                                     <Select
@@ -149,7 +155,7 @@ export function QuoteForm({
                                         disabled={!selectedCustomerId || isLoadingContacts}
                                     >
                                         <FormControl>
-                                            <SelectTrigger>
+                                            <SelectTrigger className={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}>
                                                 <SelectValue placeholder={
                                                     isLoadingContacts ? "Loading..." :
                                                         (!selectedCustomerId ? "Select customer first" : "Select contact")
@@ -245,14 +251,14 @@ export function QuoteForm({
                             {/* Connector Line (Visual) */}
                             <div className="hidden md:block absolute top-10 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-border z-0" />
 
-                            <FormField
-                                control={form.control}
-                                name="origin_location_id"
-                                render={({ field }) => (
-                                    <FormItem className="z-10">
-                                        <FormLabel>Origin ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
-                                        <FormControl>
-                                            <LocationSearch
+                        <FormField
+                            control={form.control}
+                            name="origin_location_id"
+                            render={({ field, fieldState }) => (
+                                <FormItem className="z-10">
+                                    <FormLabel>Origin ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
+                                    <FormControl>
+                                        <LocationSearch
                                                 onSelect={(loc) => {
                                                     setOriginLocation(loc);
                                                     setLocationFields("origin", loc, field.onChange);
@@ -260,6 +266,7 @@ export function QuoteForm({
                                                 value={field.value}
                                                 selectedLabel={originLocation ? `${originLocation.display_name} (${originLocation.code})` : undefined}
                                                 placeholder="Search airport..."
+                                                triggerClassName={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}
                                             />
                                         </FormControl>
                                         <FormDescription>
@@ -270,14 +277,14 @@ export function QuoteForm({
                                 )}
                             />
 
-                            <FormField
-                                control={form.control}
-                                name="destination_location_id"
-                                render={({ field }) => (
-                                    <FormItem className="z-10">
-                                        <FormLabel>Destination ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
-                                        <FormControl>
-                                            <LocationSearch
+                        <FormField
+                            control={form.control}
+                            name="destination_location_id"
+                            render={({ field, fieldState }) => (
+                                <FormItem className="z-10">
+                                    <FormLabel>Destination ({V3_LOCATION_TYPES.AIRPORT})</FormLabel>
+                                    <FormControl>
+                                        <LocationSearch
                                                 onSelect={(loc) => {
                                                     setDestinationLocation(loc);
                                                     setLocationFields("destination", loc, field.onChange);
@@ -285,6 +292,7 @@ export function QuoteForm({
                                                 value={field.value}
                                                 selectedLabel={destinationLocation ? `${destinationLocation.display_name} (${destinationLocation.code})` : undefined}
                                                 placeholder="Search airport..."
+                                                triggerClassName={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}
                                             />
                                         </FormControl>
                                         <FormDescription>
@@ -402,8 +410,11 @@ export function QuoteForm({
 
                         <div className="space-y-4">
                             {fields.map((fieldItem, index) => (
-                                <div key={fieldItem.id} className="grid grid-cols-12 gap-3 items-end rounded-lg border p-4">
-                                    <div className="col-span-12 md:col-span-2">
+                                <div
+                                    key={fieldItem.id}
+                                    className="grid grid-cols-12 items-end gap-3 rounded-lg border p-4 md:flex md:items-end"
+                                >
+                                    <div className="col-span-6 md:min-w-[120px] md:flex-[0.9]">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.pieces`}
@@ -417,7 +428,7 @@ export function QuoteForm({
                                                 )}
                                             />
                                     </div>
-                                    <div className="col-span-12 md:col-span-3">
+                                    <div className="col-span-6 md:min-w-[160px] md:flex-[1.15]">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.package_type`}
@@ -442,7 +453,7 @@ export function QuoteForm({
                                             )}
                                         />
                                     </div>
-                                    <div className="col-span-6 md:col-span-1">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.length_cm`}
@@ -456,7 +467,7 @@ export function QuoteForm({
                                                 )}
                                             />
                                     </div>
-                                    <div className="col-span-6 md:col-span-1">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.width_cm`}
@@ -470,7 +481,7 @@ export function QuoteForm({
                                                 )}
                                             />
                                     </div>
-                                    <div className="col-span-6 md:col-span-1">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.height_cm`}
@@ -484,7 +495,7 @@ export function QuoteForm({
                                                 )}
                                             />
                                     </div>
-                                    <div className="col-span-6 md:col-span-1">
+                                    <div className="col-span-6 md:min-w-[110px] md:flex-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.gross_weight_kg`}
@@ -498,12 +509,12 @@ export function QuoteForm({
                                                 )}
                                             />
                                     </div>
-                                    <div className="col-span-12 md:col-span-1">
+                                    <div className="col-span-12 md:flex-none md:self-end">
                                         <Button
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            className="text-destructive md:ml-auto"
+                                            className="text-destructive md:ml-1"
                                             onClick={() => remove(index)}
                                             disabled={fields.length === 1}
                                         >

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/auth-context';
+import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,6 +86,7 @@ const getRoleBadgeVariant = (role: string) => {
 
 export default function UsersPage() {
     const { token, user: currentUser } = useAuth();
+    const { isAdmin, isManager } = usePermissions();
     const { toast } = useToast();
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
@@ -105,6 +107,8 @@ export default function UsersPage() {
         password: '',
     });
     const [formLoading, setFormLoading] = useState(false);
+
+    const canManageUsers = isAdmin || isManager;
 
     const fetchUsers = useCallback(async () => {
         if (!token) return;
@@ -151,9 +155,25 @@ export default function UsersPage() {
     }, [token, toast]);
 
     useEffect(() => {
+        if (!canManageUsers) return;
         fetchUsers();
         fetchOrganizations();
-    }, [fetchUsers, fetchOrganizations]);
+    }, [canManageUsers, fetchUsers, fetchOrganizations]);
+
+    if (!canManageUsers) {
+        return (
+            <div className="container mx-auto max-w-7xl px-4 py-8">
+                <Card className="border-slate-200 shadow-sm">
+                    <CardHeader>
+                        <CardTitle>User Management</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-sm text-muted-foreground">
+                        You do not have access to user management.
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
 
     const handleOpenCreate = () => {
         setEditingUser(null);

@@ -810,7 +810,7 @@ export default function SpotRateEntryPage() {
                             }}
                             disabled={!allMultiSourceSectionsReady}
                         >
-                            Continue To Review
+                            Continue to Review
                         </Button>
                     </div>
                 </div>
@@ -828,7 +828,7 @@ export default function SpotRateEntryPage() {
                         }}
                         className="mb-4"
                     >
-                        ← Back to Agent Reply
+                        ← Back to Intake
                     </Button>
 
                     {sourceReviewSummaries.length > 0 && (
