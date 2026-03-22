@@ -4,11 +4,14 @@ import { useEffect, useState, use } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
 import { getQuoteV3, computeQuoteV3, getContactsForCompany } from "@/lib/api";
-import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES } from "@/lib/schemas/quoteSchema";
+import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES, V3_PACKAGE_TYPES } from "@/lib/schemas/quoteSchema";
 import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 import { Loader2 } from "lucide-react";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useReturnTo } from "@/hooks/useReturnTo";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -45,6 +48,7 @@ const buildQuoteComputePayload = (
             width_cm: dimension.width_cm,
             height_cm: dimension.height_cm,
             gross_weight_kg: dimension.gross_weight_kg,
+            package_type: dimension.package_type,
         })),
         overrides: data.overrides?.map((override) => ({
             service_component_id: override.service_component_id,
@@ -87,6 +91,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
     const [isLoading, setIsLoading] = useState(true);
     const [initialData, setInitialData] = useState<Partial<QuoteFormSchemaV3> | null>(null);
+    const [isFormDirty, setIsFormDirty] = useState(false);
 
     // Hydrated State for Form UI
     const [initialCustomer, setInitialCustomer] = useState<CompanySearchResult | undefined>(undefined);
@@ -100,6 +105,8 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
     // Missing Rates State
     const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
     const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
+    const confirmLeave = useUnsavedChangesGuard(isFormDirty);
+    const returnTo = useReturnTo() || `/quotes/${id}`;
 
     useEffect(() => {
         const loadQuote = async () => {
@@ -125,7 +132,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 );
 
                 // 1. Prepare Initial Form Data
-                let dimensions = [{
+                let dimensions: QuoteFormSchemaV3["dimensions"] = [{
                     pieces: 1,
                     length_cm: "",
                     width_cm: "",
@@ -147,7 +154,9 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                         width_cm: String(d.width_cm),
                         height_cm: String(d.height_cm),
                         gross_weight_kg: String(d.gross_weight_kg),
-                        package_type: "Box",
+                        package_type: Object.values(V3_PACKAGE_TYPES).includes(d.package_type as typeof V3_PACKAGE_TYPES[keyof typeof V3_PACKAGE_TYPES])
+                            ? (d.package_type as typeof V3_PACKAGE_TYPES[keyof typeof V3_PACKAGE_TYPES])
+                            : V3_PACKAGE_TYPES.BOX,
                     }));
                 }
 
@@ -337,6 +346,12 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
 
     return (
         <div className="container mx-auto max-w-5xl p-4 pb-32">
+            <PageBackButton
+                fallbackHref={`/quotes/${id}`}
+                returnTo={returnTo}
+                isDirty={isFormDirty}
+                confirmLeave={confirmLeave}
+            />
             <Breadcrumb className="mb-6">
                 <BreadcrumbList>
                     <BreadcrumbItem>
@@ -368,6 +383,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     isSubmitting={isSubmitting}
                     serverError={apiError}
                     isEditMode={true}
+                    onDirtyChange={setIsFormDirty}
                 />
             )}
 

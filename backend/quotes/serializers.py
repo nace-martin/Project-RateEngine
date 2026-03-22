@@ -26,6 +26,7 @@ class V3DimensionInputSerializer(serializers.Serializer):
     width_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
     height_cm = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
     gross_weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    package_type = serializers.CharField(max_length=50, required=False, default='Box')
 
 class V3ManualOverrideSerializer(serializers.Serializer):
     """Serializer for the 'overrides' list in the compute request."""

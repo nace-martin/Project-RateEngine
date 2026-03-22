@@ -389,7 +389,7 @@ export default function QuotesPage() {
                 description={searchQuery ? "No quotes match your search criteria." : "You haven't created any quotes yet."}
                 icon={FileText}
                 actionLabel={searchQuery ? "Clear Search" : "Create New Quote"}
-                onAction={searchQuery ? () => setSearchQuery("") : () => router.push("/quotes/new")}
+                onAction={searchQuery ? () => setSearchQuery("") : () => router.push("/quotes/new?returnTo=%2Fquotes")}
                 className="py-12 border-none"
               />
             }

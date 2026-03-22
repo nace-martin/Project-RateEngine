@@ -116,7 +116,7 @@ export default function OrganizationBrandingSettings() {
       <CardHeader>
         <CardTitle>Organization Branding</CardTitle>
         <CardDescription>
-          Manage the logo and customer-facing branding used in PDFs, public quote pages, and branded quote previews.
+          Manage the logo and branding used in PDFs, shared quotes, and quote previews.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -221,4 +221,3 @@ export default function OrganizationBrandingSettings() {
     </Card>
   );
 }
-

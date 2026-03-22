@@ -22,6 +22,9 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Plus, Trash2 } from "lucide-react";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useReturnTo } from "@/hooks/useReturnTo";
 
 interface ComponentOption {
   id: string;
@@ -51,6 +54,7 @@ export default function NewQuoteVersionPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitLockRef = useRef(false);
+  const [initialChargesSnapshot, setInitialChargesSnapshot] = useState("[]");
 
   const defaultCurrency = useMemo(() => {
     if (!quote) {
@@ -96,16 +100,16 @@ export default function NewQuoteVersionPage() {
         const payloadOverrides =
           data.latest_version.payload_json?.overrides ?? [];
         if (payloadOverrides.length > 0) {
-          setCharges(
-            payloadOverrides.map((override) => ({
+          const hydratedCharges = payloadOverrides.map((override) => ({
               service_component_id: override.service_component_id,
               cost_fcy: override.cost_fcy,
               currency: override.currency || derivedCurrency,
               unit: override.unit || "SHIPMENT",
               min_charge_fcy: override.min_charge_fcy || "",
               valid_until: override.valid_until,
-            })),
-          );
+            }));
+          setCharges(hydratedCharges);
+          setInitialChargesSnapshot(JSON.stringify(hydratedCharges));
         } else if (options.length > 0) {
           const defaults = data.latest_version.lines
             .filter((line) => line.is_rate_missing)
@@ -116,7 +120,9 @@ export default function NewQuoteVersionPage() {
               unit: line.service_component.unit || "SHIPMENT",
               min_charge_fcy: "",
             }));
-          setCharges(defaults.length > 0 ? defaults : []);
+          const initialDefaults = defaults.length > 0 ? defaults : [];
+          setCharges(initialDefaults);
+          setInitialChargesSnapshot(JSON.stringify(initialDefaults));
         }
       } catch (err) {
         const message =
@@ -227,6 +233,9 @@ export default function NewQuoteVersionPage() {
       submitLockRef.current = false;
     }
   };
+  const isDirty = JSON.stringify(charges) !== initialChargesSnapshot;
+  const confirmLeave = useUnsavedChangesGuard(isDirty);
+  const returnTo = useReturnTo();
 
   if (loadingQuote) {
     return (
@@ -241,6 +250,12 @@ export default function NewQuoteVersionPage() {
 
   return (
     <div className="container mx-auto p-4">
+      <PageBackButton
+        fallbackHref={`/quotes/${quotationId}`}
+        returnTo={returnTo}
+        isDirty={isDirty}
+        confirmLeave={confirmLeave}
+      />
       <Card>
         <CardHeader>
           <CardTitle>Add Manual Rates to Quote {quoteNumber}</CardTitle>

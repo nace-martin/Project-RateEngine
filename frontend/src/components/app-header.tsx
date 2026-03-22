@@ -70,7 +70,7 @@ export default function AppHeader() {
   }
 
   // Admin hub
-  if (canEditFXRates) {
+  if (isAdmin) {
     moreItems.push({ href: '/settings', label: 'Admin Hub', icon: Settings });
   }
 
@@ -254,10 +254,10 @@ export default function AppHeader() {
                 <User className="w-4 h-4 mr-2" />
                 Profile
               </DropdownMenuItem>
-              {(isAdmin || isFinance) && (
+              {isAdmin && (
                 <DropdownMenuItem onClick={() => router.push('/settings')} className="cursor-pointer">
                   <Settings className="w-4 h-4 mr-2" />
-                  Settings
+                  Admin Hub
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />

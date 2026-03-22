@@ -4,6 +4,7 @@ import {
     V3_SERVICE_SCOPES,
     V3_LOCATION_TYPES,
     V3_CARGO_TYPES,
+    V3_PACKAGE_TYPES,
     V3_INCOTERMS,
     V3_PAYMENT_TERMS
 } from "@/lib/schemas/quoteSchema";
@@ -14,11 +15,11 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Loader2, Plus, Trash2, AlertTriangle, Plane, Ship, Package } from "lucide-react";
 import CompanySearch from "@/components/CompanySearchCombobox";
 import LocationSearch from "@/components/LocationSearchCombobox";
 import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
+import { useEffect } from "react";
 
 interface QuoteFormProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
@@ -31,6 +32,7 @@ interface QuoteFormProps {
     isSubmitting?: boolean;
     serverError?: string | null;
     isEditMode?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
 }
 
 export function QuoteForm({
@@ -44,6 +46,7 @@ export function QuoteForm({
     isSubmitting = false,
     serverError,
     isEditMode = false,
+    onDirtyChange,
 }: QuoteFormProps) {
     const {
         form,
@@ -78,6 +81,10 @@ export function QuoteForm({
 
     const isImport = destinationLocation?.country_code === 'PG';
     const submitBusy = isSubmitting || form.formState.isSubmitting;
+
+    useEffect(() => {
+        onDirtyChange?.(form.formState.isDirty);
+    }, [form.formState.isDirty, onDirtyChange]);
 
     // Log validation errors for debugging
     const onFormError = (errors: Record<string, unknown>) => {
@@ -351,27 +358,6 @@ export function QuoteForm({
                             )}
                         />
 
-                        <FormField
-                            control={form.control}
-                            name="is_dangerous_goods"
-                            render={({ field }) => (
-                                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                                    <div className="space-y-0.5">
-                                        <FormLabel className="text-base">Dangerous Goods</FormLabel>
-                                        <FormDescription>
-                                            Requires checking (DGR fee)
-                                        </FormDescription>
-                                    </div>
-                                    <FormControl>
-                                        <Switch
-                                            checked={field.value}
-                                            onCheckedChange={field.onChange}
-                                            disabled // Disabled for MVP V3 as per spec
-                                        />
-                                    </FormControl>
-                                </FormItem>
-                            )}
-                        />
                     </CardContent>
                 </Card>
 
@@ -392,7 +378,7 @@ export function QuoteForm({
                             control={form.control}
                             name="cargo_type"
                             render={({ field }) => (
-                                <FormItem>
+                                <FormItem className="max-w-md">
                                     <FormLabel>Cargo Type</FormLabel>
                                     <Select onValueChange={field.onChange} value={field.value}>
                                         <FormControl>
@@ -406,6 +392,9 @@ export function QuoteForm({
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                    <FormDescription>
+                                        Use cargo type to identify DG, live animals, perishables, valuables, and other special handling.
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
@@ -413,8 +402,8 @@ export function QuoteForm({
 
                         <div className="space-y-4">
                             {fields.map((fieldItem, index) => (
-                                <div key={fieldItem.id} className="grid grid-cols-12 gap-2 items-end border-b pb-4 last:border-0">
-                                    <div className="col-span-2">
+                                <div key={fieldItem.id} className="grid grid-cols-12 gap-3 items-end rounded-lg border p-4">
+                                    <div className="col-span-12 md:col-span-2">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.pieces`}
@@ -425,10 +414,35 @@ export function QuoteForm({
                                                         <Input type="number" {...field} min={1} />
                                                     </FormControl>
                                                 </FormItem>
+                                                )}
+                                            />
+                                    </div>
+                                    <div className="col-span-12 md:col-span-3">
+                                        <FormField
+                                            control={form.control}
+                                            name={`dimensions.${index}.package_type`}
+                                            render={({ field }) => (
+                                                <FormItem>
+                                                    <FormLabel className={index !== 0 ? "sr-only" : ""}>Package Type</FormLabel>
+                                                    <Select onValueChange={field.onChange} value={field.value}>
+                                                        <FormControl>
+                                                            <SelectTrigger className="w-full">
+                                                                <SelectValue placeholder="Select type" />
+                                                            </SelectTrigger>
+                                                        </FormControl>
+                                                        <SelectContent>
+                                                            {Object.values(V3_PACKAGE_TYPES).map((packageType) => (
+                                                                <SelectItem key={packageType} value={packageType}>
+                                                                    {packageType}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </FormItem>
                                             )}
                                         />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:col-span-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.length_cm`}
@@ -439,10 +453,10 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:col-span-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.width_cm`}
@@ -453,10 +467,10 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:col-span-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.height_cm`}
@@ -467,10 +481,10 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-6 md:col-span-1">
                                         <FormField
                                             control={form.control}
                                             name={`dimensions.${index}.gross_weight_kg`}
@@ -481,15 +495,15 @@ export function QuoteForm({
                                                         <Input type="number" {...field} />
                                                     </FormControl>
                                                 </FormItem>
-                                            )}
-                                        />
+                                                )}
+                                            />
                                     </div>
-                                    <div className="col-span-2">
+                                    <div className="col-span-12 md:col-span-1">
                                         <Button
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            className="text-destructive"
+                                            className="text-destructive md:ml-auto"
                                             onClick={() => remove(index)}
                                             disabled={fields.length === 1}
                                         >

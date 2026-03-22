@@ -122,7 +122,7 @@ export default function CustomersPage() {
           description="A list of all customers, agents, and partners in the system."
           actions={
             isAdmin ? (
-              <Link href="/customers/new">
+              <Link href="/customers/new?returnTo=%2Fcustomers">
                 <Button>Add New Customer</Button>
               </Link>
             ) : null
@@ -207,7 +207,7 @@ export default function CustomersPage() {
                         {isAdmin && (
                           <TableCell className="text-right">
                             <Button variant="ghost" size="sm" asChild>
-                              <Link href={`/customers/${customer.id}/edit`}>
+                              <Link href={`/customers/${customer.id}/edit?returnTo=%2Fcustomers`}>
                                 Edit
                               </Link>
                             </Button>

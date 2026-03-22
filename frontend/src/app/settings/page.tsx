@@ -6,9 +6,27 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePermissions } from '@/hooks/usePermissions';
+import { getAdminHubCopy } from '@/lib/page-copy';
 
 export default function SettingsPage() {
   const { canEditRateCards, isFinance, isAdmin } = usePermissions();
+  const pageCopy = getAdminHubCopy();
+
+  if (!isAdmin) {
+    return (
+      <StandardPageContainer>
+        <PageHeader
+          title={pageCopy.title}
+          description="This area is only available to administrators."
+        />
+        <Card className="border-slate-200 shadow-sm">
+          <CardContent className="px-6 py-5 text-sm text-muted-foreground">
+            If you need help with users or system setup, contact your administrator.
+          </CardContent>
+        </Card>
+      </StandardPageContainer>
+    );
+  }
 
   const showPricingEngine = isFinance || isAdmin;
   const showUsers = isAdmin;
@@ -17,8 +35,8 @@ export default function SettingsPage() {
   return (
     <StandardPageContainer>
       <PageHeader
-        title="Admin Hub"
-        description="Use the functional modules below instead of one catch-all settings page."
+        title={pageCopy.title}
+        description={pageCopy.description}
       />
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -30,7 +48,7 @@ export default function SettingsPage() {
                 Pricing Engine
               </CardTitle>
               <CardDescription>
-                Maintain FX rates and future pricing-engine controls such as policy, margin, and CAF settings.
+                Manage FX rates and the core pricing controls your team relies on.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -49,7 +67,7 @@ export default function SettingsPage() {
                 Rate Management
               </CardTitle>
               <CardDescription>
-                Manage logical rate cards, tariffs, sell rates, and buy-side pricing data.
+                Manage rate cards, tariffs, sell rates, and cost data.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -68,7 +86,7 @@ export default function SettingsPage() {
                 Company Branding
               </CardTitle>
               <CardDescription>
-                Manage logo upload, colors, contact details, and customer-facing tenant branding.
+                Manage your logo, colors, contact details, and branded customer documents.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -84,10 +102,10 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-primary" />
-                System Admin
+                User Management
               </CardTitle>
               <CardDescription>
-                Manage user access and administrative controls without mixing them into pricing modules.
+                Manage user access and admin controls.
               </CardDescription>
             </CardHeader>
             <CardContent>

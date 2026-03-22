@@ -49,7 +49,9 @@ export default function QuoteDetailPage() {
     if (currentStatus !== "INCOMPLETE") return null;
     const existingSpotEnvelopeId = quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
     if (!existingSpotEnvelopeId) return null;
-    return `/quotes/spot/${existingSpotEnvelopeId}?${buildSpotWorkflowParams(quote).toString()}`;
+    const params = buildSpotWorkflowParams(quote);
+    params.set("returnTo", `/quotes/${quote.id}`);
+    return `/quotes/spot/${existingSpotEnvelopeId}?${params.toString()}`;
   })();
 
   useEffect(() => {
@@ -251,9 +253,9 @@ export default function QuoteDetailPage() {
                   // The original code: router.push(`/quotes/spot/${speId}`);
                   // We need to keep that logic if possible
                   const speId = quote.spot_negotiation.id;
-                  router.push(`/quotes/spot/${speId}`);
+                  router.push(`/quotes/spot/${speId}?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
                 } else {
-                  router.push(`/quotes/${quote.id}/edit`);
+                  router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
                 }
               }}
               className="gap-2"
@@ -491,9 +493,10 @@ export default function QuoteDetailPage() {
                         service_scope: quote.service_scope || "D2D",
                         payment_term: quote.payment_term || "PREPAID",
                       });
+                      params.set("returnTo", `/quotes/${quote.id}`);
                       router.push(`/quotes/spot/${quote.spot_negotiation.id}?${params.toString()}`);
                     } else {
-                      router.push(`/quotes/${quote.id}/edit`);
+                        router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
                     }
                   }}
                 >

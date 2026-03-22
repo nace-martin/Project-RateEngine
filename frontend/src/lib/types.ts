@@ -181,6 +181,7 @@ export interface V3DimensionInput {
   width_cm: string;
   height_cm: string;
   gross_weight_kg: string;
+  package_type: string;
 }
 
 export interface V3ManualOverride {

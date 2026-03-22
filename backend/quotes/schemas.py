@@ -18,6 +18,7 @@ class DimensionInput(BaseModel):
     width_cm: Decimal = Field(..., gt=0)
     height_cm: Decimal = Field(..., gt=0)
     gross_weight_kg: Decimal = Field(..., gt=0)
+    package_type: str = "Box"
 
 class OverrideInput(BaseModel):
     service_component_id: UUID
@@ -95,6 +96,7 @@ class PieceSchema(BaseModel):
     length_cm: Decimal
     width_cm: Decimal
     height_cm: Decimal
+    package_type: str = "Box"
     
     class Config:
         from_attributes = True

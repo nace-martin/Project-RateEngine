@@ -35,6 +35,7 @@ class Piece(BaseModel):
     width_cm: Decimal
     height_cm: Decimal
     gross_weight_kg: Decimal
+    package_type: str = "Box"
 
 class ShipmentDetails(BaseModel):
     """Holds all physical and routing details of the shipment."""

@@ -350,7 +350,7 @@ export default function DiscountsPage() {
                                         {canLinkToCustomer && (
                                             <TableCell className="text-right">
                                                 <Button variant="outline" size="sm" asChild>
-                                                    <Link href={`/customers/${discount.customer}/edit`}>
+                                                    <Link href={`/customers/${discount.customer}/edit?returnTo=%2Fpricing%2Fdiscounts`}>
                                                         Open Customer
                                                         <ArrowRight className="h-4 w-4 ml-2" />
                                                     </Link>

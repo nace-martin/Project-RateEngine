@@ -20,6 +20,10 @@ import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { StandardPageContainer } from "@/components/layout/standard-page";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useReturnTo } from "@/hooks/useReturnTo";
+import { getEditCustomerCopy } from "@/lib/page-copy";
 
 type ErrorWithResponse = {
   response?: {
@@ -61,6 +65,7 @@ export default function EditCustomerPage() {
   const [isCsvImportModalOpen, setIsCsvImportModalOpen] = useState(false);
   const [editingDiscount, setEditingDiscount] = useState<api.CustomerDiscount | null>(null);
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
+  const [initialCustomerSnapshot, setInitialCustomerSnapshot] = useState<string>("");
   const router = useRouter();
   const params = useParams();
   const { id } = params;
@@ -89,6 +94,12 @@ export default function EditCustomerPage() {
       fetchCustomer();
     }
   }, [id, token]);
+
+  useEffect(() => {
+    if (customer && !initialCustomerSnapshot) {
+      setInitialCustomerSnapshot(JSON.stringify(customer));
+    }
+  }, [customer, initialCustomerSnapshot]);
 
   useEffect(() => {
     if (!token) return;
@@ -404,6 +415,10 @@ export default function EditCustomerPage() {
     }
   };
 
+  const isDirty = customer !== null && initialCustomerSnapshot !== "" && JSON.stringify(customer) !== initialCustomerSnapshot;
+  const confirmLeave = useUnsavedChangesGuard(isDirty);
+  const returnTo = useReturnTo();
+
   if (!customer) return <div>Loading...</div>;
 
   const isOverseas = customer.audience_type !== 'LOCAL_PNG_CUSTOMER';
@@ -412,13 +427,20 @@ export default function EditCustomerPage() {
     label: city.display_name,
   }));
   const commercialProfile = normalizeCommercialProfile(customer.commercial_profile);
+  const pageCopy = getEditCustomerCopy();
 
   return (
     <StandardPageContainer>
+      <PageBackButton
+        fallbackHref="/customers"
+        returnTo={returnTo}
+        isDirty={isDirty}
+        confirmLeave={confirmLeave}
+      />
       <WorkspaceContextCard
-        title="Customer Workspace"
-        description="You are editing this customer under your current company account."
-        note="Quotes and customer-facing documents created from this workspace will use your company branding."
+        title={pageCopy.title}
+        description={pageCopy.description}
+        note={pageCopy.note}
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -684,7 +706,11 @@ export default function EditCustomerPage() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => router.push('/customers')}
+                onClick={() => {
+                  if (confirmLeave()) {
+                    router.push(returnTo || '/customers');
+                  }
+                }}
                 disabled={isSaving || isDeleting || isArchiving}
                 className="min-w-[140px]"
               >

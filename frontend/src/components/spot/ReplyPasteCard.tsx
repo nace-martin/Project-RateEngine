@@ -9,7 +9,7 @@
  * - Submit to analysis
  */
 
-import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { Mail, ArrowRight, FileText, Upload, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ interface ReplyPasteCardProps {
     sourceLabel?: string;
     sourceReference?: string;
     hideMissingMessage?: boolean;
+    onDirtyChange?: (isDirty: boolean) => void;
 }
 
 export function ReplyPasteCard({
@@ -47,6 +48,7 @@ export function ReplyPasteCard({
     sourceLabel = "Primary SPOT Source",
     sourceReference,
     hideMissingMessage = false,
+    onDirtyChange,
 }: ReplyPasteCardProps) {
     const [text, setText] = useState("");
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -57,6 +59,15 @@ export function ReplyPasteCard({
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     const isLoading = externalIsLoading || internalIsLoading;
+
+    useEffect(() => {
+        const isDirty = Boolean(text.trim() || selectedFile);
+        onDirtyChange?.(isDirty);
+
+        return () => {
+            onDirtyChange?.(false);
+        };
+    }, [onDirtyChange, selectedFile, text]);
 
     // Helper to format missing components
     const getMissingMessage = () => {

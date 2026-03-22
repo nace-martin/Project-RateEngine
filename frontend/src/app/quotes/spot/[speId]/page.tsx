@@ -30,6 +30,9 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import PageCancelButton from "@/components/navigation/PageCancelButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 
 // Streamlined 2-step workflow
 type Step = "intake" | "review";
@@ -150,6 +153,7 @@ export default function SpotRateEntryPage() {
     const customerNameParam = searchParams.get("customer_name") || "";
     const outputCurrency = searchParams.get("output_currency") || "PGK";
     const shipmentTypeParam = searchParams.get("shipment_type") as "EXPORT" | "IMPORT" | "DOMESTIC" | null;
+    const returnTo = searchParams.get("returnTo");
 
     const { state, actions } = useSpotMode();
     const missingComponentsParam = searchParams.get("missing_components");
@@ -180,6 +184,7 @@ export default function SpotRateEntryPage() {
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
     const [sectionBatchIds, setSectionBatchIds] = useState<Record<string, string>>({});
+    const [intakeDirtyMap, setIntakeDirtyMap] = useState<Record<string, boolean>>({});
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
     // Guard ref: prevents the auto-detection useEffect from overriding
     // an explicit step transition (e.g. after analysis completes).
@@ -205,6 +210,13 @@ export default function SpotRateEntryPage() {
         () => (isMultiSourceIntake ? buildIntakeSections(editableBuckets, resolvedShipmentType) : []),
         [editableBuckets, isMultiSourceIntake, resolvedShipmentType]
     );
+    const hasIntakeDrafts = useMemo(
+        () => Object.values(intakeDirtyMap).some(Boolean),
+        [intakeDirtyMap]
+    );
+    const hasPendingUnsavedWork =
+        hasIntakeDrafts || Boolean(analysisResult) || (currentStep === "review" && !state.quoteResult);
+    const confirmLeave = useUnsavedChangesGuard(hasPendingUnsavedWork);
 
     const formatMissingComponents = (components?: string[]) => {
         if (!components || components.length === 0) return null;
@@ -542,6 +554,19 @@ export default function SpotRateEntryPage() {
         return "border-slate-200 bg-slate-50 text-slate-700";
     };
 
+    const setIntakeDirty = (key: string, isDirty: boolean) => {
+        setIntakeDirtyMap((prev) => {
+            if (prev[key] === isDirty) {
+                return prev;
+            }
+
+            return {
+                ...prev,
+                [key]: isDirty,
+            };
+        });
+    };
+
 
 
     // Render step progress - clean, minimal design
@@ -610,6 +635,12 @@ export default function SpotRateEntryPage() {
 
             {/* Header - Clean and minimal */}
             <div className="mb-6 space-y-4">
+                <PageBackButton
+                    fallbackHref="/quotes"
+                    returnTo={returnTo}
+                    isDirty={hasPendingUnsavedWork}
+                    confirmLeave={confirmLeave}
+                />
                 <Breadcrumb>
                     <BreadcrumbList>
                         <BreadcrumbItem>
@@ -626,10 +657,25 @@ export default function SpotRateEntryPage() {
                     </BreadcrumbList>
                 </Breadcrumb>
 
-                <div className="ml-1">
-                    <h1 className="text-2xl font-bold text-slate-900">
-                        {isNew ? "New SPOT Quote" : "SPOT Quote"}
-                    </h1>
+                <div className="ml-1 flex items-start justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl font-bold text-slate-900">
+                            {isNew ? "New SPOT Quote" : "SPOT Quote"}
+                        </h1>
+                        {currentStep === "intake" && (
+                            <p className="mt-1 text-sm text-slate-600">
+                                Add the missing rates you need, or cancel to return to your quotes.
+                            </p>
+                        )}
+                    </div>
+                    {currentStep === "intake" && (
+                        <PageCancelButton
+                            href="/quotes"
+                            isDirty={hasPendingUnsavedWork}
+                            confirmMessage="Discard this quote?"
+                            className="shrink-0"
+                        />
+                    )}
                 </div>
             </div>
 
@@ -708,6 +754,7 @@ export default function SpotRateEntryPage() {
                     missingComponents={missingComponents}
                     sourceBatchId={primarySourceBatchId}
                     onAnalysisComplete={(result) => handleAnalysisComplete(result, "mixed")}
+                    onDirtyChange={(isDirty) => setIntakeDirty("mixed", isDirty)}
                 />
             )}
 
@@ -751,6 +798,7 @@ export default function SpotRateEntryPage() {
                             sourceLabel={section.sourceLabel}
                             hideMissingMessage
                             onAnalysisComplete={(result) => handleAnalysisComplete(result, section.id)}
+                            onDirtyChange={(isDirty) => setIntakeDirty(section.id, isDirty)}
                         />
                     ))}
 

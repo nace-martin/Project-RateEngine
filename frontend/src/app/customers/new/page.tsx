@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,10 @@ import { apiClient, listCities, listCountries, updateCustomer } from "@/lib/api"
 import { useAuth } from "@/context/auth-context";
 import { CityOption, CountryOption } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { useReturnTo } from "@/hooks/useReturnTo";
+import { getNewCustomerCopy } from "@/lib/page-copy";
 
 type CustomerFormData = {
   company_name: string;
@@ -44,7 +48,7 @@ type CustomerSubmissionData = Omit<CustomerFormData, 'primary_address'> & {
 
 export default function NewCustomerPage() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [cities, setCities] = useState<CityOption[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -73,6 +77,34 @@ export default function NewCustomerPage() {
       payment_term_default: '',
     },
   });
+  const initialSnapshot = useMemo(() => JSON.stringify({
+    company_name: '',
+    primary_address: {
+      address_line_1: '',
+      address_line_2: '',
+      city_id: '',
+      city: '',
+      state_province: '',
+      postcode: '',
+      country: '',
+      country_name: '',
+    },
+    contact_person_name: '',
+    contact_person_email: '',
+    contact_person_phone: '',
+    audience_type: 'LOCAL_PNG_CUSTOMER',
+    address_description: '',
+    commercial_profile: {
+      preferred_quote_currency: '',
+      default_margin_percent: '',
+      min_margin_percent: '',
+      payment_term_default: '',
+    },
+  }), []);
+  const isDirty = JSON.stringify(formData) !== initialSnapshot;
+  const confirmLeave = useUnsavedChangesGuard(isDirty);
+  const returnTo = useReturnTo();
+  const pageCopy = getNewCustomerCopy(user?.role as "admin" | "manager" | "sales" | "finance" | undefined);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target;
@@ -209,10 +241,16 @@ export default function NewCustomerPage() {
 
   return (
     <div className="space-y-6">
+      <PageBackButton
+        fallbackHref="/customers"
+        returnTo={returnTo}
+        isDirty={isDirty}
+        confirmLeave={confirmLeave}
+      />
       <WorkspaceContextCard
-        title="Customer Workspace"
-        description="You are adding this customer under your current company account."
-        note="Quotes and customer-facing documents created from this workspace will use your company branding."
+        title={pageCopy.title}
+        description={pageCopy.description}
+        note={pageCopy.note}
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -425,7 +463,16 @@ export default function NewCustomerPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => router.push('/customers')} disabled={isSaving}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              if (confirmLeave()) {
+                router.push(returnTo || '/customers');
+              }
+            }}
+            disabled={isSaving}
+          >
             Cancel
           </Button>
           <Button type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Customer'}</Button>
