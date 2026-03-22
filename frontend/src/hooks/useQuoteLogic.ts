@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, useFieldArray, useWatch, Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { getContactsForCompany, validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api";
+import { getContactsForCompany } from "@/lib/api/parties";
+import { validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api/spot";
 import {
     quoteFormSchemaV3,
     type QuoteFormSchemaV3,

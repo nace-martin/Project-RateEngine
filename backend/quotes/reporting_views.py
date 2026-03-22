@@ -1,6 +1,7 @@
 import csv
 import logging
 from datetime import datetime, timedelta
+from collections import OrderedDict
 
 from django.db.models import Sum, Count, Q, Avg, F, OuterRef, Subquery
 from django.db.models.functions import TruncMonth
@@ -68,6 +69,76 @@ class ReportsViewSet(viewsets.ViewSet):
         return QuoteTotal.objects.filter(
             quote_version__quote_id=OuterRef('pk')
         ).order_by('-quote_version__version_number')
+
+    def _get_dashboard_timeframe_range(self, timeframe):
+        today = timezone.now().date()
+        if timeframe == 'weekly':
+            return timeframe, today - timedelta(days=6), today
+        if timeframe == 'ytd':
+            return timeframe, today.replace(month=1, day=1), today
+        return 'monthly', today.replace(day=1), today
+
+    def _build_activity_series(self, timeframe, start_date, end_date):
+        quote_dates = (
+            Quote.objects.exclude(is_archived=True)
+            .filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
+            .values_list('created_at__date', flat=True)
+        )
+
+        if timeframe == 'weekly':
+            buckets = OrderedDict()
+            for offset in range(7):
+                day = start_date + timedelta(days=offset)
+                buckets[day] = {
+                    'day': day.strftime('%a'),
+                    'count': 0,
+                }
+            for quote_date in quote_dates:
+                if quote_date in buckets:
+                    buckets[quote_date]['count'] += 1
+            return list(buckets.values()), 'Last 7 days'
+
+        if timeframe == 'monthly':
+            buckets = OrderedDict()
+            cursor = start_date
+            while cursor <= end_date:
+                week_start = cursor - timedelta(days=cursor.weekday())
+                bucket = buckets.setdefault(
+                    week_start,
+                    {
+                        'day': f"W{len(buckets) + 1}",
+                        'count': 0,
+                    }
+                )
+                bucket['_dates'] = bucket.get('_dates', set())
+                bucket['_dates'].add(cursor)
+                cursor += timedelta(days=1)
+
+            for quote_date in quote_dates:
+                for bucket in buckets.values():
+                    if quote_date in bucket['_dates']:
+                        bucket['count'] += 1
+                        break
+
+            return [
+                {'day': bucket['day'], 'count': bucket['count']}
+                for bucket in buckets.values()
+            ], 'This month'
+
+        buckets = OrderedDict(
+            (
+                month,
+                {
+                    'day': datetime(2000, month, 1).strftime('%b'),
+                    'count': 0,
+                },
+            )
+            for month in range(1, end_date.month + 1)
+        )
+        for quote_date in quote_dates:
+            if quote_date.month in buckets:
+                buckets[quote_date.month]['count'] += 1
+        return list(buckets.values()), 'Year to date'
 
     def _quotes_with_financials(self, start_date=None, end_date=None, user_id=None, mode=None):
         """
@@ -397,101 +468,74 @@ class ReportsViewSet(viewsets.ViewSet):
             - Lost Opportunity (LOST + EXPIRED value)
             - Weekly activity chart data
         """
-        today = timezone.now().date()
         timeframe = request.query_params.get('timeframe', 'monthly')
-        
-        # Parse timeframe to date range
-        if timeframe == 'weekly':
-            start_date = today - timedelta(days=6)  # Last 7 days including today
-            end_date = today
-        elif timeframe == 'ytd':
-            start_date = today.replace(month=1, day=1)
-            end_date = today
-        else:  # default to monthly
-            timeframe = 'monthly'
-            start_date = today.replace(day=1)
-            end_date = today
-        
-        # Get quotes with financial data for the timeframe
+        timeframe, start_date, end_date = self._get_dashboard_timeframe_range(timeframe)
+
         latest_total = self._get_latest_total_subquery()
-        
-        qs = Quote.objects.annotate(
+        financial_quotes = Quote.objects.annotate(
             latest_total_sell_pgk=Subquery(latest_total.values('total_sell_pgk')[:1]),
             latest_total_sell_pgk_incl_gst=Subquery(latest_total.values('total_sell_pgk_incl_gst')[:1]),
             latest_total_cost_pgk=Subquery(latest_total.values('total_cost_pgk')[:1]),
-        ).exclude(is_archived=True).filter(
+        ).exclude(is_archived=True)
+
+        created_period_qs = financial_quotes.filter(
             created_at__date__gte=start_date,
             created_at__date__lte=end_date
         )
-        
-        # Pipeline: DRAFT status quotes
-        pipeline_stats = qs.filter(status=Quote.Status.DRAFT).aggregate(
+
+        status_period_qs = financial_quotes.filter(
+            updated_at__date__gte=start_date,
+            updated_at__date__lte=end_date
+        )
+
+        finalized_period_qs = financial_quotes.filter(
+            Q(status=Quote.Status.FINALIZED, finalized_at__date__gte=start_date, finalized_at__date__lte=end_date)
+            | Q(status=Quote.Status.ACCEPTED, updated_at__date__gte=start_date, updated_at__date__lte=end_date)
+        )
+
+        pipeline_stats = created_period_qs.filter(status=Quote.Status.DRAFT).aggregate(
             count=Count('id'),
             value=Sum('latest_total_sell_pgk_incl_gst')
         )
-        
-        # Finalized: FINALIZED status quotes
-        finalized_stats = qs.filter(status=Quote.Status.FINALIZED).aggregate(
+
+        finalized_stats = finalized_period_qs.aggregate(
             count=Count('id'),
             value=Sum('latest_total_sell_pgk_incl_gst')
         )
-        
-        # Sent quotes (includes SENT, ACCEPTED, LOST for win rate calculation)
+
         sent_statuses = [Quote.Status.SENT, Quote.Status.ACCEPTED, Quote.Status.LOST]
-        sent_stats = qs.filter(status__in=sent_statuses).aggregate(
+        sent_stats = status_period_qs.filter(status__in=sent_statuses).aggregate(
             total_sent=Count('id'),
             accepted=Count('id', filter=Q(status=Quote.Status.ACCEPTED)),
             lost=Count('id', filter=Q(status=Quote.Status.LOST)),
         )
-        
-        # Expired quotes
-        expired_count = qs.filter(status=Quote.Status.EXPIRED).count()
-        
-        # Win Rate: ACCEPTED / (SENT + ACCEPTED + LOST) * 100
+
+        expired_count = status_period_qs.filter(status=Quote.Status.EXPIRED).count()
+
         total_sent = sent_stats['total_sent'] or 0
         accepted = sent_stats['accepted'] or 0
         win_rate = (accepted / total_sent * 100) if total_sent > 0 else 0
-        
-        # Average Quote Value (all quotes in timeframe, excluding drafts)
-        avg_stats = qs.exclude(status=Quote.Status.DRAFT).aggregate(
+
+        avg_stats = finalized_period_qs.aggregate(
             avg_value=Avg('latest_total_sell_pgk_incl_gst')
         )
-        
-        # Lost Opportunity: Sum of LOST + EXPIRED quote values
-        lost_opportunity = qs.filter(
+
+        lost_opportunity = status_period_qs.filter(
             status__in=[Quote.Status.LOST, Quote.Status.EXPIRED]
         ).aggregate(
             value=Sum('latest_total_sell_pgk_incl_gst')
         )
-        
-        # Weekly activity (always last 7 days for chart)
-        weekly_start = today - timedelta(days=6)
-        weekly_activity = []
-        for i in range(7):
-            day = weekly_start + timedelta(days=i)
-            day_count = Quote.objects.filter(
-                created_at__date=day,
-                is_archived=False
-            ).count()
-            weekly_activity.append({
-                'day': str(day),
-                'count': day_count
-            })
+
+        activity_series, activity_label = self._build_activity_series(timeframe, start_date, end_date)
         
         return Response({
             'timeframe': timeframe,
             'start_date': str(start_date),
             'end_date': str(end_date),
-            
-            # Pipeline metrics
             'pipeline_count': pipeline_stats['count'] or 0,
             'pipeline_value': float(pipeline_stats['value'] or 0),
-            
-            # Finalized metrics
             'finalized_count': finalized_stats['count'] or 0,
             'finalized_value': float(finalized_stats['value'] or 0),
-            
-            # Sales efficiency metrics
             'total_quotes_sent': total_sent,
             'quotes_accepted': accepted,
             'quotes_lost': sent_stats['lost'] or 0,
@@ -499,9 +543,8 @@ class ReportsViewSet(viewsets.ViewSet):
             'win_rate_percent': round(win_rate, 1),
             'avg_quote_value': float(avg_stats['avg_value'] or 0),
             'lost_opportunity_value': float(lost_opportunity['value'] or 0),
-            
-            # Chart data
-            'weekly_activity': weekly_activity,
+            'activity_label': activity_label,
+            'weekly_activity': activity_series,
         })
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
@@ -537,67 +580,34 @@ class ReportsViewSet(viewsets.ViewSet):
         if active_customers_count > 0:
             repeat_customers_pct = (repeat_customers_count / active_customers_count) * 100
             
-        # 3. Top 5 Customers by Pipeline Value (MTD)
-        # "Time filter: Monthly only (ignore Weekly / YTD)."
+        # 3. Top 5 Customers by Revenue (MTD)
         today = timezone.now().date()
         mtd_start = today.replace(day=1)
-        
-        # Pipeline = DRAFT, FINALIZED, SENT (Excluding Accepted/Lost/Expired for "Pipeline" usually, 
-        # but user said "open / draft / in-progress")
-        pipeline_statuses = [Quote.Status.DRAFT, Quote.Status.FINALIZED, Quote.Status.SENT]
-        
-        qs_pipeline = Quote.objects.filter(
-            created_at__date__gte=mtd_start,
-            created_at__date__lte=today,
-            status__in=pipeline_statuses
+
+        revenue_statuses = [Quote.Status.FINALIZED, Quote.Status.ACCEPTED]
+
+        qs_top_customers = Quote.objects.filter(
+            status__in=revenue_statuses
         ).exclude(is_archived=True)
-        
+
         if target_user_id:
-            qs_pipeline = qs_pipeline.filter(created_by_id=target_user_id)
-            
+            qs_top_customers = qs_top_customers.filter(created_by_id=target_user_id)
+
         latest_total = self._get_latest_total_subquery()
-        qs_pipeline = qs_pipeline.annotate(
+        qs_top_customers = qs_top_customers.annotate(
             total_val=Subquery(latest_total.values('total_sell_pgk_incl_gst')[:1])
         )
-        
-        top_customers = qs_pipeline.values(
+
+        qs_top_customers = qs_top_customers.filter(
+            Q(status=Quote.Status.FINALIZED, finalized_at__date__gte=mtd_start, finalized_at__date__lte=today)
+            | Q(status=Quote.Status.ACCEPTED, updated_at__date__gte=mtd_start, updated_at__date__lte=today)
+        )
+
+        top_customers = qs_top_customers.values(
             'customer__name'
         ).annotate(
-            pipeline_value=Sum('total_val')
-        ).order_by('-pipeline_value')[:5]
-        
-        # 4. Dormant Customers
-        # Customers with no quotes in last 30/60/90 days
-        # We look at ALL history for the user/company to find last activity
-        qs_all_activity = Quote.objects.exclude(is_archived=True)
-        if target_user_id:
-            qs_all_activity = qs_all_activity.filter(created_by_id=target_user_id)
-            
-        # Find last quote date for each customer
-        from django.db.models import Max
-        customer_last_dates = qs_all_activity.values('customer').annotate(
-            last_quote_date=Max('created_at')
-        )
-        
-        dormant_30 = 0
-        dormant_60 = 0
-        dormant_90 = 0
-        
-        now = timezone.now()
-        
-        for entry in customer_last_dates:
-            last_date = entry['last_quote_date']
-            if not last_date:
-                continue
-            
-            delta_days = (now - last_date).days
-            
-            if 30 <= delta_days < 60:
-                dormant_30 += 1
-            elif 60 <= delta_days < 90:
-                dormant_60 += 1
-            elif delta_days >= 90:
-                dormant_90 += 1
+            revenue_value=Sum('total_val')
+        ).order_by('-revenue_value')[:5]
                 
         return Response({
             'active_customers': active_customers_count,
@@ -605,15 +615,10 @@ class ReportsViewSet(viewsets.ViewSet):
             'top_customers': [
                 {
                     'name': c['customer__name'] or 'Unknown', 
-                    'value': float(c['pipeline_value'] or 0)
+                    'value': float(c['revenue_value'] or 0)
                 } 
                 for c in top_customers
             ],
-            'dormant_customers': {
-                '30d': dormant_30,
-                '60d': dormant_60,
-                '90d': dormant_90
-            }
         })
 
     @action(detail=False, methods=['get'])

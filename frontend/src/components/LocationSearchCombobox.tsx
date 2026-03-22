@@ -17,7 +17,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { searchLocations } from "@/lib/api";
+import { searchLocations } from "@/lib/api/parties";
 import { LocationSearchResult } from "@/lib/types";
 import { useAuth } from "@/context/auth-context";
 

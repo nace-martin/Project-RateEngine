@@ -1495,6 +1495,7 @@ export interface DashboardMetricsData {
   timeframe: DashboardTimeframe;
   start_date: string;
   end_date: string;
+  activity_label: string;
 
   // Pipeline metrics
   pipeline_count: number;

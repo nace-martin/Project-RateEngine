@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "@/context/auth-context";
 import { useRouter } from "next/navigation";
-import { computeQuoteV3 } from "@/lib/api";
+import { computeQuoteV3 } from "@/lib/api/quotes";
 import { useToast } from "@/context/toast-context";
 import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import { V3QuoteComputeRequest } from "@/lib/types";

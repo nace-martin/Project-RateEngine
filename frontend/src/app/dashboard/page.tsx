@@ -601,17 +601,17 @@ export default function DashboardPage() {
 
                     {/* Row 1: Core Metrics */}
                     <div className="grid gap-6 md:grid-cols-3">
-                        {/* 1. Weekly Activity Chart */}
+                        {/* 1. Quote Activity Chart */}
                         <KPICard
-                            title="Weekly Activity"
+                            title="Quote Activity"
                             value={metricsLoading ? <Skeleton className="h-9 w-16" /> : (dashboardMetrics?.weekly_activity.reduce((sum, d) => sum + d.count, 0) ?? metrics.newQuotesLast7DaysCount)}
-                            trend={{ value: "New", positive: true }}
                             status="info"
                             icon={FileText}
                             className="overflow-hidden"
                             action={<TrendingUp className="h-4 w-4 text-success" />}
+                            description={dashboardMetrics?.activity_label ?? "Last 7 days"}
                         >
-                            <div className="h-24 flex items-end gap-2 justify-between mt-4">
+                            <div className="mt-4 flex h-28 items-end gap-2 justify-between">
                                 {weeklyActivityData.map((d, i) => {
                                     const count = 'count' in d ? d.count : 0;
                                     const heightPercent = (count / weeklyActivityMax) * 100;
@@ -630,27 +630,35 @@ export default function DashboardPage() {
                                         return rawDay;
                                     })();
                                     return (
-                                        <div key={i} className="flex-1 flex flex-col items-center gap-1 group/bar">
-                                            <div
-                                                className="w-full bg-blue-100 rounded-t-sm group-hover/bar:bg-blue-500 transition-colors relative"
-                                                style={{ height: `${heightPercent || 5}%` }}
-                                            >
-                                                <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover/bar:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                                    {count}
+                                        <div key={i} className="group/bar flex h-full flex-1 flex-col items-center gap-2">
+                                            <div className="flex h-full w-full items-end rounded-md bg-slate-50 px-1">
+                                                <div
+                                                    className="relative w-full rounded-t-md bg-blue-200 transition-colors group-hover/bar:bg-blue-500"
+                                                    style={{ height: `${Math.max(heightPercent, count > 0 ? 10 : 6)}%` }}
+                                                >
+                                                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] whitespace-nowrap text-white opacity-0 transition-opacity group-hover/bar:opacity-100 z-10">
+                                                        {count}
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <span className="text-[10px] font-medium text-slate-400 uppercase">{dayLabel}</span>
+                                            <span className="text-[10px] font-medium uppercase text-slate-400">{dayLabel}</span>
                                         </div>
                                     );
                                 })}
                             </div>
                         </KPICard>
 
-                        {/* 2. Finalized Success */}
+                        {/* 2. Finalized Quotes */}
                         <KPICard
-                            title="Finalized Success"
+                            title="Finalized Quotes"
                             value={metricsLoading ? <Skeleton className="h-9 w-16" /> : (dashboardMetrics?.finalized_count ?? metrics.finalizedCount)}
-                            description="Ready for booking"
+                            description={
+                                metricsLoading
+                                    ? undefined
+                                    : (dashboardMetrics?.finalized_count ?? metrics.finalizedCount) > 0
+                                        ? "Finalized or accepted in the selected period"
+                                        : "No finalized or accepted quotes in the selected period"
+                            }
                             status="success"
                             icon={CheckCircle2}
                             trend={{
@@ -697,7 +705,7 @@ export default function DashboardPage() {
                         <KPICard
                             title="Avg Quote Value"
                             value={metricsLoading ? <Skeleton className="h-9 w-28" /> : formatCurrency(String(dashboardMetrics?.avg_quote_value ?? metrics.avgQuoteValue), dashboardMetrics ? 'PGK' : metrics.currency)}
-                            description="Based on finalized quotes"
+                            description="Based on finalized or accepted quotes in the selected period"
                             status="info"
                             icon={DollarSign}
                         />

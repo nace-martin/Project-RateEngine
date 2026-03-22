@@ -402,9 +402,4 @@ export interface Tier1Stats {
   active_customers: number;
   repeat_customers_pct: number;
   top_customers: { name: string; value: number }[];
-  dormant_customers: {
-    '30d': number;
-    '60d': number;
-    '90d': number;
-  };
 }
