@@ -39,6 +39,7 @@ gunicorn>=21.0
 # PDF generation
 fpdf2>=2.7.9
 xhtml2pdf>=0.2.11
+qrcode[pil]>=7.4.2
 
 # AI Rate Intake dependencies
 pdfplumber>=0.10.0

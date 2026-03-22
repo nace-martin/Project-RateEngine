@@ -12,6 +12,7 @@ urlpatterns = [
     path('api/', include('quotes.urls')), 
     path('api/', include('ratecards.urls')),
     path('api/', include('parties.urls')),
+    path('api/', include('shipments.urls')),
     path('api/', include('core.urls')),
     path('api/auth/', include('accounts.urls')),
     path('api/v3/', include('services.urls')), # Expose services under v3 for consistency or just api/

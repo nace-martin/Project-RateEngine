@@ -125,6 +125,7 @@ INSTALLED_APPS = [
     'accounts',
     'core',
     'parties',
+    'shipments',
     'quotes',
     'ratecards',
     'services',
