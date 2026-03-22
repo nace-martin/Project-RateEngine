@@ -137,3 +137,17 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertTrue(response.content.startswith(b"%PDF"))
+
+    def test_address_book_list_route_is_not_shadowed_by_shipment_detail(self):
+        response = self.client.get("/api/v3/shipments/address-book/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
+    def test_settings_route_is_not_shadowed_by_shipment_detail(self):
+        response = self.client.get("/api/v3/shipments/settings/")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["connote_station_code"], "POM")
+        self.assertEqual(body["connote_mode_code"], "AF")
