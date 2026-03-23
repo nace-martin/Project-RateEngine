@@ -19,6 +19,8 @@ import {
   createEmptyShipmentForm,
   FIXED_PRODUCT_RULES,
   formatShipmentChoice,
+  isDomesticDoorToDoorRoute,
+  isDomesticShipmentRoute,
   isFixedPriceProduct,
   isFixedProductRouteValid,
   normalizeShipmentForm,
@@ -64,6 +66,10 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
     () => buildFixedProductCharge(normalizedForm.service_product, normalizedForm.currency),
     [normalizedForm.currency, normalizedForm.service_product],
   );
+  const isForcedDoorToDoorRoute = isFixedPriceProduct(normalizedForm.service_product)
+    || isDomesticDoorToDoorRoute(normalizedForm.origin_code, normalizedForm.destination_code);
+  const isDomesticSelectableScopeRoute = !isForcedDoorToDoorRoute
+    && isDomesticShipmentRoute(normalizedForm.origin_country_code, normalizedForm.destination_country_code);
 
   const updateField = <K extends keyof ShipmentFormData>(field: K, value: ShipmentFormData[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -111,12 +117,14 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
     if (field === "origin") {
       updateField("origin_location_id", location?.id || null);
       updateField("origin_code", location?.code || "");
+      updateField("origin_country_code", location?.country_code || "");
       updateField("origin_location_display", location ? `${location.display_name} (${location.code})` : "");
       return;
     }
 
     updateField("destination_location_id", location?.id || null);
     updateField("destination_code", location?.code || "");
+    updateField("destination_country_code", location?.country_code || "");
     updateField("destination_location_display", location ? `${location.display_name} (${location.code})` : "");
   };
 
@@ -369,7 +377,18 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
             </div>
             <div className="grid gap-3 md:grid-cols-[1.3fr_1fr]">
               <Input placeholder="Internal reference" value={form.reference_number} onChange={(event) => updateField("reference_number", event.target.value)} />
-              <Input readOnly value={formatShipmentChoice(normalizedForm.service_scope)} />
+              {isDomesticSelectableScopeRoute ? (
+                <select
+                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+                  value={normalizedForm.service_scope}
+                  onChange={(event) => updateField("service_scope", event.target.value as ShipmentFormData["service_scope"])}
+                >
+                  <option value="A2D">Airport to Door</option>
+                  <option value="D2A">Door to Airport</option>
+                </select>
+              ) : (
+                <Input readOnly value={formatShipmentChoice(normalizedForm.service_scope)} />
+              )}
             </div>
             <Input placeholder="Cargo description" value={form.cargo_description} onChange={(event) => updateField("cargo_description", event.target.value)} />
             {fixedProductRule ? (
@@ -379,6 +398,10 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
                 {fixedProductRule.maxGrossWeightKg ? (
                   <div className="mt-1">Weight rule: total gross weight must stay at or below {fixedProductRule.maxGrossWeightKg} kg.</div>
                 ) : null}
+              </div>
+            ) : isDomesticSelectableScopeRoute ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                Other domestic PNG routes can be set as Airport-to-Door or Door-to-Airport.
               </div>
             ) : null}
           </CardContent>

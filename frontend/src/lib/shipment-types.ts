@@ -189,6 +189,8 @@ export interface ShipmentFormData {
   destination_location_id: string | null;
   origin_code: string;
   destination_code: string;
+  origin_country_code: string;
+  destination_country_code: string;
   origin_location_display: string;
   destination_location_display: string;
   cargo_type: ShipmentCargoType;
@@ -239,6 +241,7 @@ export const FIXED_PRODUCT_RULES: Partial<Record<ShipmentServiceProduct, { label
 };
 
 export const DOMESTIC_D2D_ROUTE_PAIRS: Array<[string, string]> = [["POM", "LAE"], ["LAE", "POM"]];
+export const DOMESTIC_COUNTRY_CODE = "PG";
 
 export const createDefaultChargeLine = (currency = "PGK"): ShipmentChargeInput => ({
   charge_type: "FREIGHT",
@@ -276,6 +279,8 @@ export const createEmptyShipmentForm = (): ShipmentFormData => ({
   destination_location_id: null,
   origin_code: "",
   destination_code: "",
+  origin_country_code: "",
+  destination_country_code: "",
   origin_location_display: "",
   destination_location_display: "",
   cargo_type: "GENERAL_CARGO",
@@ -331,12 +336,22 @@ export const isFixedProductRouteValid = (
 export const isDomesticDoorToDoorRoute = (originCode: string, destinationCode: string): boolean =>
   DOMESTIC_D2D_ROUTE_PAIRS.some(([origin, destination]) => origin === originCode && destination === destinationCode);
 
+export const isDomesticShipmentRoute = (originCountryCode: string, destinationCountryCode: string): boolean =>
+  originCountryCode === DOMESTIC_COUNTRY_CODE && destinationCountryCode === DOMESTIC_COUNTRY_CODE;
+
 export const deriveServiceScope = (
   serviceProduct: ShipmentServiceProduct,
   originCode: string,
   destinationCode: string,
+  originCountryCode: string,
+  destinationCountryCode: string,
+  currentScope: ShipmentServiceScope,
 ): ShipmentServiceScope =>
-  isFixedPriceProduct(serviceProduct) || isDomesticDoorToDoorRoute(originCode, destinationCode) ? "D2D" : "A2A";
+  isFixedPriceProduct(serviceProduct) || isDomesticDoorToDoorRoute(originCode, destinationCode)
+    ? "D2D"
+    : isDomesticShipmentRoute(originCountryCode, destinationCountryCode)
+      ? (currentScope === "A2D" || currentScope === "D2A" ? currentScope : "A2D")
+      : "A2A";
 
 export const buildFixedProductCharge = (
   serviceProduct: ShipmentServiceProduct,
@@ -360,7 +375,14 @@ export const normalizeShipmentForm = (form: ShipmentFormData): ShipmentFormData 
   const fixedCharge = buildFixedProductCharge(form.service_product, form.currency);
   return {
     ...form,
-    service_scope: deriveServiceScope(form.service_product, form.origin_code, form.destination_code),
+    service_scope: deriveServiceScope(
+      form.service_product,
+      form.origin_code,
+      form.destination_code,
+      form.origin_country_code,
+      form.destination_country_code,
+      form.service_scope,
+    ),
     is_dangerous_goods: form.cargo_type === "DANGEROUS_GOODS",
     is_perishable: form.cargo_type === "PERISHABLE",
     charges: fixedCharge ? [fixedCharge] : form.charges.length > 0 ? form.charges : [createDefaultChargeLine(form.currency)],
@@ -471,6 +493,8 @@ export const shipmentToFormData = (shipment: ShipmentRecord): ShipmentFormData =
   destination_location_id: shipment.destination_location_id,
   origin_code: shipment.origin_code,
   destination_code: shipment.destination_code,
+  origin_country_code: shipment.origin_country_code,
+  destination_country_code: shipment.destination_country_code,
   origin_location_display: shipment.origin_location_display || `${shipment.origin_code} ${shipment.origin_name}`.trim(),
   destination_location_display: shipment.destination_location_display || `${shipment.destination_code} ${shipment.destination_name}`.trim(),
   cargo_type: shipment.cargo_type,

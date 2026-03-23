@@ -38,6 +38,14 @@ def _is_domestic_d2d_route(origin, destination) -> bool:
     return route_pair in ALLOWED_FIXED_PRODUCT_ROUTES
 
 
+def _is_domestic_png_route(origin, destination) -> bool:
+    if not origin or not destination:
+        return False
+    origin_country = getattr(getattr(origin, "country", None), "code", "") or ""
+    destination_country = getattr(getattr(destination, "country", None), "code", "") or ""
+    return origin_country.upper() == "PG" and destination_country.upper() == "PG"
+
+
 class ShipmentAddressBookEntrySerializer(serializers.ModelSerializer):
     company_id = serializers.PrimaryKeyRelatedField(
         queryset=Company.objects.filter(Q(is_customer=True) | Q(company_type="CUSTOMER")).order_by("name"),
@@ -518,11 +526,20 @@ class ShipmentSerializer(serializers.ModelSerializer):
 
         validated_data["is_dangerous_goods"] = cargo_type == Shipment.CargoType.DANGEROUS_GOODS
         validated_data["is_perishable"] = cargo_type == Shipment.CargoType.PERISHABLE
-        validated_data["service_scope"] = (
-            Shipment.ServiceScope.DOOR_TO_DOOR
-            if service_product in FIXED_PRODUCT_PRICING or _is_domestic_d2d_route(origin, destination)
-            else validated_data.get("service_scope", getattr(instance, "service_scope", Shipment.ServiceScope.AIRPORT_TO_AIRPORT))
+        requested_scope = validated_data.get(
+            "service_scope",
+            getattr(instance, "service_scope", Shipment.ServiceScope.AIRPORT_TO_AIRPORT),
         )
+        if service_product in FIXED_PRODUCT_PRICING or _is_domestic_d2d_route(origin, destination):
+            validated_data["service_scope"] = Shipment.ServiceScope.DOOR_TO_DOOR
+        elif _is_domestic_png_route(origin, destination):
+            validated_data["service_scope"] = (
+                requested_scope
+                if requested_scope in {Shipment.ServiceScope.AIRPORT_TO_DOOR, Shipment.ServiceScope.DOOR_TO_AIRPORT}
+                else Shipment.ServiceScope.AIRPORT_TO_DOOR
+            )
+        else:
+            validated_data["service_scope"] = Shipment.ServiceScope.AIRPORT_TO_AIRPORT
 
         if service_product in FIXED_PRODUCT_PRICING:
             shipment_currency = validated_data.get("currency", getattr(instance, "currency", "PGK"))

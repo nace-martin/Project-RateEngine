@@ -21,9 +21,11 @@ class ShipmentAPITests(APITestCase):
         self.country_au = Country.objects.create(code="AU", name="Australia")
         self.city_pom = City.objects.create(name="Port Moresby", country=self.country_pg)
         self.city_bne = City.objects.create(name="Brisbane", country=self.country_au)
+        self.city_hgu = City.objects.create(name="Mount Hagen", country=self.country_pg)
         self.origin = Location.objects.create(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
         self.destination = Location.objects.create(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
         self.destination_lae = Location.objects.create(code="LAE", name="Lae", city=self.city_pom, country=self.country_pg)
+        self.destination_hgu = Location.objects.create(code="HGU", name="Mount Hagen", city=self.city_hgu, country=self.country_pg)
         self.customer = Company.objects.create(name="Brisbane Imports", is_customer=True, company_type="CUSTOMER")
         Address.objects.create(
             company=self.customer,
@@ -204,6 +206,34 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(response.status_code, 201)
         body = response.json()
         self.assertEqual(body["service_scope"], "D2D")
+
+    def test_other_domestic_shipments_allow_airport_to_door_scope(self):
+        payload = dict(self.payload)
+        payload["destination_location_id"] = str(self.destination_hgu.id)
+        payload["consignee_city"] = "Mount Hagen"
+        payload["consignee_country_code"] = "PG"
+        payload["service_product"] = "STANDARD"
+        payload["service_scope"] = "A2D"
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["service_scope"], "A2D")
+
+    def test_other_domestic_shipments_allow_door_to_airport_scope(self):
+        payload = dict(self.payload)
+        payload["destination_location_id"] = str(self.destination_hgu.id)
+        payload["consignee_city"] = "Mount Hagen"
+        payload["consignee_country_code"] = "PG"
+        payload["service_product"] = "STANDARD"
+        payload["service_scope"] = "D2A"
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["service_scope"], "D2A")
 
     def test_small_parcels_rejects_shipments_above_five_kg(self):
         payload = dict(self.payload)
