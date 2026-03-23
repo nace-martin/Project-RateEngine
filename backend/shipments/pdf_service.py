@@ -1,5 +1,6 @@
 from decimal import Decimal
 from io import BytesIO
+import logging
 
 from django.conf import settings
 from django.utils import timezone
@@ -8,6 +9,8 @@ from fpdf import FPDF
 
 from .models import Shipment
 from .services import get_or_create_shipment_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _clean_text(value) -> str:
@@ -44,8 +47,12 @@ def _build_shipment_record_url(shipment: Shipment) -> str:
     return f"{settings.FRONTEND_BASE_URL.rstrip('/')}/shipments/{shipment.id}"
 
 
-def _build_qr_image(url: str) -> BytesIO:
-    import qrcode
+def _build_qr_image(url: str) -> BytesIO | None:
+    try:
+        import qrcode
+    except ModuleNotFoundError:
+        logger.warning("qrcode package is not installed; shipment PDF will omit the QR image.")
+        return None
 
     qr = qrcode.QRCode(box_size=4, border=1)
     qr.add_data(url)
@@ -91,7 +98,15 @@ def generate_shipment_pdf(shipment: Shipment) -> bytes:
     pdf.set_x(54)
     pdf.cell(92, 5, _clean_text(shipment.connote_number or "Draft"), new_x="LMARGIN", new_y="NEXT")
 
-    pdf.image(qr_image, x=170, y=13, w=24, h=24, link=record_url)
+    if qr_image is not None:
+        pdf.image(qr_image, x=170, y=13, w=24, h=24, link=record_url)
+    else:
+        pdf.set_xy(160, 15)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(34, 5, "Shipment Record", align="R", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_x(160)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.multi_cell(34, 3.5, _clean_text(record_url), align="R")
     pdf.set_xy(142, 40)
     pdf.set_text_color(71, 85, 105)
     pdf.set_font("Helvetica", "", 8)
