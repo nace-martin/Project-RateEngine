@@ -1626,6 +1626,7 @@ class SpotEmailDraftGenerator:
                 signature_parts.append(f"Email: {branding.support_email}")
             if branding and branding.support_phone:
                 signature_parts.append(f"Phone: {branding.support_phone}")
+        signature_block = "\n".join(signature_parts)
 
         body = f"""Hi {recipient},
 
@@ -1648,7 +1649,7 @@ Please include:
 If acceptance or capacity is subject to confirmation, please advise.
 
 Thank you,
-{"\n".join(signature_parts)}"""
+{signature_block}"""
         
         return SpotEmailDraft(subject=subject.strip(), body=body.strip())
 
