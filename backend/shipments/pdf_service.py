@@ -198,7 +198,7 @@ def generate_shipment_pdf(shipment: Shipment) -> bytes:
     pdf.set_fill_color(15, 42, 86)
     pdf.set_text_color(255, 255, 255)
     pdf.set_xy(10, 136)
-    headers = [("Pieces", 18), ("Type", 28), ("Dims (cm)", 44), ("Gross", 24), ("Volumetric", 30), ("Chargeable", 30), ("Description", 16)]
+    headers = [("Pieces", 18), ("Type", 30), ("Dims (cm)", 48), ("Gross", 24), ("Volumetric", 34), ("Chargeable", 36)]
     for label, width in headers:
         pdf.cell(width, 7, label, border=0, align="C", fill=True)
     pdf.ln(7)
@@ -208,12 +208,11 @@ def generate_shipment_pdf(shipment: Shipment) -> bytes:
     for piece in shipment.pieces.all():
         pdf.set_x(10)
         pdf.cell(18, 7, str(piece.piece_count), border=1, align="C")
-        pdf.cell(28, 7, _clean_text(piece.package_type or "PCS"), border=1)
-        pdf.cell(44, 7, _clean_text(f"{piece.length_cm} x {piece.width_cm} x {piece.height_cm}"), border=1)
+        pdf.cell(30, 7, _clean_text(piece.package_type or "PCS"), border=1)
+        pdf.cell(48, 7, _clean_text(f"{piece.length_cm} x {piece.width_cm} x {piece.height_cm}"), border=1)
         pdf.cell(24, 7, _clean_text(_format_weight(Decimal(piece.piece_count) * piece.gross_weight_kg).replace(" kg", "")), border=1, align="R")
-        pdf.cell(30, 7, _clean_text(_format_weight(piece.volumetric_weight_kg).replace(" kg", "")), border=1, align="R")
-        pdf.cell(30, 7, _clean_text(_format_weight(piece.chargeable_weight_kg).replace(" kg", "")), border=1, align="R")
-        pdf.cell(16, 7, _clean_text((piece.description or "")[:10]), border=1)
+        pdf.cell(34, 7, _clean_text(_format_weight(piece.volumetric_weight_kg).replace(" kg", "")), border=1, align="R")
+        pdf.cell(36, 7, _clean_text(_format_weight(piece.chargeable_weight_kg).replace(" kg", "")), border=1, align="R")
         pdf.ln(7)
 
     pdf.ln(3)

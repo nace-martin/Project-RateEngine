@@ -154,7 +154,6 @@ export default function ShipmentDetailPage() {
                   {shipment.pieces.map((piece) => (
                     <div key={piece.id || `${piece.line_number}`} className="rounded-xl border border-slate-200 p-4 text-sm">
                       <p className="font-semibold text-slate-900">{piece.piece_count} x {piece.package_type}</p>
-                      <p className="text-muted-foreground">{piece.description || "No description"}</p>
                       <p className="mt-2 text-muted-foreground">{piece.length_cm} x {piece.width_cm} x {piece.height_cm} cm</p>
                       <p className="text-muted-foreground">Gross {piece.gross_weight_kg} kg | Chargeable {piece.chargeable_weight_kg} kg</p>
                     </div>

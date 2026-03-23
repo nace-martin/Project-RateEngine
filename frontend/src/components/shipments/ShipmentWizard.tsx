@@ -429,8 +429,7 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
                     <Input placeholder="Height cm" value={piece.height_cm} onChange={(event) => updatePiece(index, "height_cm", event.target.value)} />
                     <Input placeholder="Gross kg" value={piece.gross_weight_kg} onChange={(event) => updatePiece(index, "gross_weight_kg", event.target.value)} />
                   </div>
-                  <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr_auto]">
-                    <Input placeholder="Description" value={piece.description} onChange={(event) => updatePiece(index, "description", event.target.value)} />
+                  <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
                     <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">Volumetric: {metrics.volumetric.toFixed(2)} kg</div>
                     <div className="rounded-lg bg-sky-50 px-3 py-2 text-sm">Chargeable: {metrics.chargeable.toFixed(2)} kg</div>
                     {form.pieces.length > 1 ? <Button type="button" variant="ghost" onClick={() => removePiece(index)}>Remove</Button> : null}
