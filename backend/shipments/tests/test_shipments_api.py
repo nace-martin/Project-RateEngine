@@ -191,6 +191,20 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(body["charges"][0]["amount"], "50.00")
         self.assertEqual(body["total_charges_amount"], "50.00")
 
+    def test_pom_lae_shipments_force_door_to_door_scope(self):
+        payload = dict(self.payload)
+        payload["destination_location_id"] = str(self.destination_lae.id)
+        payload["consignee_city"] = "Lae"
+        payload["consignee_country_code"] = "PG"
+        payload["service_product"] = "STANDARD"
+        payload["service_scope"] = "A2A"
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["service_scope"], "D2D")
+
     def test_small_parcels_rejects_shipments_above_five_kg(self):
         payload = dict(self.payload)
         payload["destination_location_id"] = str(self.destination_lae.id)

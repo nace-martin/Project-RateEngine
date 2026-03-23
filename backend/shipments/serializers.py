@@ -31,6 +31,13 @@ ALLOWED_FIXED_PRODUCT_ROUTES = {
 }
 
 
+def _is_domestic_d2d_route(origin, destination) -> bool:
+    if not origin or not destination:
+        return False
+    route_pair = ((origin.code or "").upper(), (destination.code or "").upper())
+    return route_pair in ALLOWED_FIXED_PRODUCT_ROUTES
+
+
 class ShipmentAddressBookEntrySerializer(serializers.ModelSerializer):
     company_id = serializers.PrimaryKeyRelatedField(
         queryset=Company.objects.filter(Q(is_customer=True) | Q(company_type="CUSTOMER")).order_by("name"),
@@ -506,12 +513,14 @@ class ShipmentSerializer(serializers.ModelSerializer):
     def _apply_business_rules(self, validated_data, charges_data, instance=None):
         cargo_type = validated_data.get("cargo_type", getattr(instance, "cargo_type", Shipment.CargoType.GENERAL_CARGO))
         service_product = validated_data.get("service_product", getattr(instance, "service_product", Shipment.ServiceProduct.STANDARD))
+        origin = validated_data.get("origin_location", getattr(instance, "origin_location", None))
+        destination = validated_data.get("destination_location", getattr(instance, "destination_location", None))
 
         validated_data["is_dangerous_goods"] = cargo_type == Shipment.CargoType.DANGEROUS_GOODS
         validated_data["is_perishable"] = cargo_type == Shipment.CargoType.PERISHABLE
         validated_data["service_scope"] = (
             Shipment.ServiceScope.DOOR_TO_DOOR
-            if service_product in FIXED_PRODUCT_PRICING
+            if service_product in FIXED_PRODUCT_PRICING or _is_domestic_d2d_route(origin, destination)
             else validated_data.get("service_scope", getattr(instance, "service_scope", Shipment.ServiceScope.AIRPORT_TO_AIRPORT))
         )
 

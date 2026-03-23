@@ -238,6 +238,8 @@ export const FIXED_PRODUCT_RULES: Partial<Record<ShipmentServiceProduct, { label
   },
 };
 
+export const DOMESTIC_D2D_ROUTE_PAIRS: Array<[string, string]> = [["POM", "LAE"], ["LAE", "POM"]];
+
 export const createDefaultChargeLine = (currency = "PGK"): ShipmentChargeInput => ({
   charge_type: "FREIGHT",
   description: "Air freight",
@@ -326,8 +328,15 @@ export const isFixedProductRouteValid = (
   return rule.routePairs.some(([origin, destination]) => origin === originCode && destination === destinationCode);
 };
 
-export const deriveServiceScope = (serviceProduct: ShipmentServiceProduct): ShipmentServiceScope =>
-  isFixedPriceProduct(serviceProduct) ? "D2D" : "A2A";
+export const isDomesticDoorToDoorRoute = (originCode: string, destinationCode: string): boolean =>
+  DOMESTIC_D2D_ROUTE_PAIRS.some(([origin, destination]) => origin === originCode && destination === destinationCode);
+
+export const deriveServiceScope = (
+  serviceProduct: ShipmentServiceProduct,
+  originCode: string,
+  destinationCode: string,
+): ShipmentServiceScope =>
+  isFixedPriceProduct(serviceProduct) || isDomesticDoorToDoorRoute(originCode, destinationCode) ? "D2D" : "A2A";
 
 export const buildFixedProductCharge = (
   serviceProduct: ShipmentServiceProduct,
@@ -351,7 +360,7 @@ export const normalizeShipmentForm = (form: ShipmentFormData): ShipmentFormData 
   const fixedCharge = buildFixedProductCharge(form.service_product, form.currency);
   return {
     ...form,
-    service_scope: deriveServiceScope(form.service_product),
+    service_scope: deriveServiceScope(form.service_product, form.origin_code, form.destination_code),
     is_dangerous_goods: form.cargo_type === "DANGEROUS_GOODS",
     is_perishable: form.cargo_type === "PERISHABLE",
     charges: fixedCharge ? [fixedCharge] : form.charges.length > 0 ? form.charges : [createDefaultChargeLine(form.currency)],
