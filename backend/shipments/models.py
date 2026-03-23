@@ -234,8 +234,7 @@ class Shipment(models.Model):
 
     service_level = models.CharField(max_length=16, choices=ServiceLevel.choices, default=ServiceLevel.EXPRESS)
     payment_term = models.CharField(max_length=16, choices=PaymentTerm.choices, default=PaymentTerm.PREPAID)
-    commodity_description = models.CharField(max_length=255, blank=True, default="")
-    goods_description = models.CharField(max_length=255, blank=True, default="")
+    cargo_description = models.CharField(max_length=255, blank=True, default="")
     is_dangerous_goods = models.BooleanField(default=False)
     dangerous_goods_details = models.TextField(blank=True, default="")
     is_perishable = models.BooleanField(default=False)

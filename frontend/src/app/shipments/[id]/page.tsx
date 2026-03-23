@@ -126,7 +126,7 @@ export default function ShipmentDetailPage() {
                   <div>Reference: <span className="font-semibold text-slate-900">{shipment.reference_number || "-"}</span></div>
                   <div>Service: <span className="font-semibold text-slate-900">{shipment.service_level}</span></div>
                   <div>Payment: <span className="font-semibold text-slate-900">{shipment.payment_term.replace("_", " ")}</span></div>
-                  <div>Commodity: <span className="font-semibold text-slate-900">{shipment.commodity_description || "General Cargo"}</span></div>
+                  <div>Cargo: <span className="font-semibold text-slate-900">{shipment.cargo_description || "General Cargo"}</span></div>
                   <div>Handling notes: <span className="font-semibold text-slate-900">{shipment.handling_notes || "-"}</span></div>
                   <div>Declaration notes: <span className="font-semibold text-slate-900">{shipment.declaration_notes || "-"}</span></div>
                 </CardContent>

@@ -167,7 +167,7 @@ def generate_shipment_pdf(shipment: Shipment) -> bytes:
     pdf.set_xy(13, 109)
     pdf.cell(60, 4, _clean_text(f"Payment: {shipment.payment_term.replace('_', ' ').title()}"))
     pdf.set_xy(75, 109)
-    pdf.cell(60, 4, _clean_text(f"Commodity: {shipment.commodity_description or 'General Cargo'}"))
+    pdf.cell(60, 4, _clean_text(f"Cargo: {shipment.cargo_description or 'General Cargo'}"))
     pdf.set_xy(137, 109)
     pdf.cell(60, 4, _clean_text(f"Ref: {shipment.reference_number or '-'}"))
 

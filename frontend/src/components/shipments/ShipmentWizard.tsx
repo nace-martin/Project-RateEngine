@@ -282,10 +282,7 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
               </select>
               <Input placeholder="Internal reference" value={form.reference_number} onChange={(event) => updateField("reference_number", event.target.value)} />
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Input placeholder="Commodity description" value={form.commodity_description} onChange={(event) => updateField("commodity_description", event.target.value)} />
-              <Input placeholder="Goods description" value={form.goods_description} onChange={(event) => updateField("goods_description", event.target.value)} />
-            </div>
+            <Input placeholder="Cargo description" value={form.cargo_description} onChange={(event) => updateField("cargo_description", event.target.value)} />
           </CardContent>
         </Card>
       )}
@@ -381,7 +378,7 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
               <div className="rounded-xl border border-slate-200 p-4">
                 <p className="font-semibold text-slate-900">{form.shipper_company_name}</p>
                 <p className="text-muted-foreground">{form.consignee_company_name}</p>
-                <p className="mt-3 text-muted-foreground">{form.commodity_description || "General Cargo"} · {form.service_level} · {form.payment_term.replace("_", " ")}</p>
+                <p className="mt-3 text-muted-foreground">{form.cargo_description || "General Cargo"} · {form.service_level} · {form.payment_term.replace("_", " ")}</p>
               </div>
             </CardContent>
           </Card>

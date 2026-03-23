@@ -68,8 +68,7 @@ export interface ShipmentRecord {
   destination_country_code: string;
   service_level: ShipmentServiceLevel;
   payment_term: ShipmentPaymentTerm;
-  commodity_description: string;
-  goods_description: string;
+  cargo_description: string;
   is_dangerous_goods: boolean;
   dangerous_goods_details: string;
   is_perishable: boolean;
@@ -188,8 +187,7 @@ export interface ShipmentFormData {
   destination_location_display: string;
   service_level: ShipmentServiceLevel;
   payment_term: ShipmentPaymentTerm;
-  commodity_description: string;
-  goods_description: string;
+  cargo_description: string;
   is_dangerous_goods: boolean;
   dangerous_goods_details: string;
   is_perishable: boolean;
@@ -231,8 +229,7 @@ export const createEmptyShipmentForm = (): ShipmentFormData => ({
   destination_location_display: "",
   service_level: "EXPRESS",
   payment_term: "PREPAID",
-  commodity_description: "",
-  goods_description: "",
+  cargo_description: "",
   is_dangerous_goods: false,
   dangerous_goods_details: "",
   is_perishable: false,
@@ -331,8 +328,7 @@ export const toShipmentPayload = (form: ShipmentFormData) => ({
   destination_location_id: form.destination_location_id,
   service_level: form.service_level,
   payment_term: form.payment_term,
-  commodity_description: form.commodity_description,
-  goods_description: form.goods_description,
+  cargo_description: form.cargo_description,
   is_dangerous_goods: form.is_dangerous_goods,
   dangerous_goods_details: form.dangerous_goods_details,
   is_perishable: form.is_perishable,
@@ -374,8 +370,7 @@ export const shipmentToFormData = (shipment: ShipmentRecord): ShipmentFormData =
   destination_location_display: shipment.destination_location_display || `${shipment.destination_code} ${shipment.destination_name}`.trim(),
   service_level: shipment.service_level,
   payment_term: shipment.payment_term,
-  commodity_description: shipment.commodity_description,
-  goods_description: shipment.goods_description,
+  cargo_description: shipment.cargo_description,
   is_dangerous_goods: shipment.is_dangerous_goods,
   dangerous_goods_details: shipment.dangerous_goods_details,
   is_perishable: shipment.is_perishable,
