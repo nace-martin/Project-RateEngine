@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, ChevronLeft, ChevronRight, Save } from "lucide-react";
 
@@ -49,15 +49,21 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
   const { toast } = useToast();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<ShipmentFormData>(createEmptyShipmentForm());
+  const [activeShipmentId, setActiveShipmentId] = useState<string | undefined>(shipmentId || initialShipment?.id || undefined);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [stepErrors, setStepErrors] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
 
   useEffect(() => {
     if (initialShipment) {
       setForm(shipmentToFormData(initialShipment));
     }
   }, [initialShipment]);
+
+  useEffect(() => {
+    setActiveShipmentId(shipmentId || initialShipment?.id || undefined);
+  }, [initialShipment?.id, shipmentId]);
 
   const normalizedForm = useMemo(() => normalizeShipmentForm(form), [form]);
   const totals = useMemo(() => calculateShipmentTotals(normalizedForm), [normalizedForm]);
@@ -247,6 +253,10 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
   };
 
   const persistShipment = async (finalize: boolean) => {
+    if (submitLockRef.current) {
+      return;
+    }
+
     const validationErrors = validateStep(finalize ? 3 : step);
     setStepErrors(validationErrors);
     if (validationErrors.length) {
@@ -256,10 +266,16 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
       return;
     }
 
+    submitLockRef.current = true;
     setIsSubmitting(true);
     try {
       const payload = toShipmentPayload(normalizedForm);
-      const saved = shipmentId ? await updateShipment(shipmentId, payload) : await createShipment(payload);
+      const targetShipmentId = activeShipmentId || shipmentId || initialShipment?.id;
+      const saved = targetShipmentId ? await updateShipment(targetShipmentId, payload) : await createShipment(payload);
+      if (!targetShipmentId) {
+        setActiveShipmentId(saved.id);
+        window.history.replaceState(window.history.state, "", `/shipments/new?shipmentId=${saved.id}`);
+      }
       if (finalize) {
         const finalized = await finalizeShipment(saved.id, payload);
         await openShipmentPdf(finalized.id);
@@ -276,6 +292,7 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
         variant: "destructive",
       });
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
   };
