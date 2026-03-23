@@ -122,7 +122,11 @@ class ShipmentAddressBookViewSet(OrganizationScopedMixin, viewsets.ModelViewSet)
     permission_classes = [permissions.IsAuthenticated, ShipmentWritePermission]
 
     def get_queryset(self):
-        queryset = ShipmentAddressBookEntry.objects.filter(organization=self.get_organization()).order_by("label", "company_name")
+        queryset = (
+            ShipmentAddressBookEntry.objects.filter(organization=self.get_organization())
+            .select_related("company", "contact")
+            .order_by("label", "company_name")
+        )
         role = self.request.query_params.get("party_role", "").strip().upper()
         if role:
             queryset = queryset.filter(party_role__in=[role, ShipmentAddressBookEntry.PartyRole.BOTH])

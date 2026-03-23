@@ -23,6 +23,20 @@ class ShipmentAddressBookEntry(models.Model):
         on_delete=models.CASCADE,
         related_name="shipment_address_book_entries",
     )
+    company = models.ForeignKey(
+        "parties.Company",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shipment_address_book_entries",
+    )
+    contact = models.ForeignKey(
+        "parties.Contact",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shipment_address_book_entries",
+    )
     label = models.CharField(max_length=120)
     party_role = models.CharField(max_length=12, choices=PartyRole.choices, default=PartyRole.BOTH)
     company_name = models.CharField(max_length=255)

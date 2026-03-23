@@ -118,6 +118,8 @@ export interface ShipmentEvent {
 
 export interface ShipmentAddressBookEntry {
   id: string;
+  company_id?: string | null;
+  contact_id?: string | null;
   label: string;
   party_role: ShipmentPartyRole;
   company_name: string;

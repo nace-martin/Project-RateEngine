@@ -1,8 +1,10 @@
 from decimal import Decimal, InvalidOperation
 
 from rest_framework import serializers
+from django.db.models import Q
 
 from core.models import Location
+from parties.models import Company, Contact
 
 from .models import (
     Shipment,
@@ -23,10 +25,25 @@ from .services import (
 
 
 class ShipmentAddressBookEntrySerializer(serializers.ModelSerializer):
+    company_id = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.filter(Q(is_customer=True) | Q(company_type="CUSTOMER")).order_by("name"),
+        source="company",
+        allow_null=True,
+        required=False,
+    )
+    contact_id = serializers.PrimaryKeyRelatedField(
+        queryset=Contact.objects.filter(is_active=True).select_related("company").order_by("last_name", "first_name"),
+        source="contact",
+        allow_null=True,
+        required=False,
+    )
+
     class Meta:
         model = ShipmentAddressBookEntry
         fields = [
             "id",
+            "company_id",
+            "contact_id",
             "label",
             "party_role",
             "company_name",
@@ -45,6 +62,64 @@ class ShipmentAddressBookEntrySerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        instance = getattr(self, "instance", None)
+        company = attrs.get("company", getattr(instance, "company", None))
+        contact = attrs.get("contact", getattr(instance, "contact", None))
+
+        if contact and company and contact.company_id != company.id:
+            raise serializers.ValidationError({"contact_id": "Selected contact does not belong to the selected company."})
+
+        return attrs
+
+    def create(self, validated_data):
+        hydrated_data = self._hydrate_linked_snapshot(validated_data)
+        return super().create(hydrated_data)
+
+    def update(self, instance, validated_data):
+        hydrated_data = self._hydrate_linked_snapshot(validated_data, instance=instance)
+        return super().update(instance, hydrated_data)
+
+    def _hydrate_linked_snapshot(self, validated_data, instance=None):
+        company = validated_data.get("company", getattr(instance, "company", None))
+        contact = validated_data.get("contact", getattr(instance, "contact", None))
+
+        if contact and not company:
+            company = contact.company
+            validated_data["company"] = company
+
+        snapshot = {}
+
+        if company:
+            address = (
+                company.addresses.select_related("city__country", "country")
+                .order_by("-is_primary", "id")
+                .first()
+            )
+            snapshot["company_name"] = company.name
+            if address:
+                snapshot["address_line_1"] = address.address_line_1
+                snapshot["address_line_2"] = address.address_line_2
+                snapshot["city"] = address.city.name if address.city else ""
+                snapshot["state"] = ""
+                snapshot["postal_code"] = address.postal_code
+                snapshot["country_code"] = (
+                    address.country.code
+                    if address.country
+                    else (address.city.country.code if address.city and address.city.country else "")
+                )
+
+        if contact:
+            snapshot["contact_name"] = f"{contact.first_name} {contact.last_name}".strip()
+            snapshot["email"] = contact.email
+            snapshot["phone"] = contact.phone
+
+        for field, value in snapshot.items():
+            if value is not None:
+                validated_data[field] = value
+
+        return validated_data
 
 
 class ShipmentTemplateSerializer(serializers.ModelSerializer):

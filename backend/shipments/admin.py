@@ -44,9 +44,9 @@ class ShipmentAdmin(admin.ModelAdmin):
 
 @admin.register(ShipmentAddressBookEntry)
 class ShipmentAddressBookEntryAdmin(admin.ModelAdmin):
-    list_display = ("label", "company_name", "party_role", "organization", "is_active")
+    list_display = ("label", "company_name", "company", "contact", "party_role", "organization", "is_active")
     list_filter = ("party_role", "organization", "is_active")
-    search_fields = ("label", "company_name", "contact_name", "city", "country_code")
+    search_fields = ("label", "company_name", "contact_name", "city", "country_code", "company__name", "contact__email")
 
 
 @admin.register(ShipmentTemplate)

@@ -1,6 +1,7 @@
 import type {
   CompanySearchResult,
   Contact,
+  Customer,
   LocationSearchResult,
 } from "../types";
 import { API_BASE_URL, getToken } from "./shared";
@@ -31,6 +32,22 @@ export async function getContactsForCompany(
   });
   if (!response.ok) {
     throw new Error("Failed to fetch contacts");
+  }
+  return response.json();
+}
+
+export async function getCustomerDetail(
+  customerId: string,
+): Promise<Customer> {
+  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch customer details");
   }
   return response.json();
 }

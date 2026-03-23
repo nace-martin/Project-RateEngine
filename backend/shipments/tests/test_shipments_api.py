@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from core.models import City, Country, Location
-from parties.models import Organization
+from parties.models import Address, Company, Contact, Organization
 
 
 class ShipmentAPITests(APITestCase):
@@ -23,6 +23,35 @@ class ShipmentAPITests(APITestCase):
         self.city_bne = City.objects.create(name="Brisbane", country=self.country_au)
         self.origin = Location.objects.create(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
         self.destination = Location.objects.create(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
+        self.customer = Company.objects.create(name="Brisbane Imports", is_customer=True, company_type="CUSTOMER")
+        Address.objects.create(
+            company=self.customer,
+            address_line_1="1 Eagle Street",
+            address_line_2="Level 2",
+            city=self.city_bne,
+            country=self.country_au,
+            postal_code="4000",
+            is_primary=True,
+        )
+        self.contact = Contact.objects.create(
+            company=self.customer,
+            first_name="Cargo",
+            last_name="Desk",
+            email="desk@example.com",
+            phone="+617123456",
+            is_primary=True,
+            is_active=True,
+        )
+        self.other_customer = Company.objects.create(name="Sydney Freight", is_customer=True, company_type="CUSTOMER")
+        self.other_contact = Contact.objects.create(
+            company=self.other_customer,
+            first_name="Other",
+            last_name="Contact",
+            email="other@example.com",
+            phone="+612999999",
+            is_primary=True,
+            is_active=True,
+        )
 
         self.payload = {
             "shipment_date": "2026-03-22",
@@ -151,3 +180,68 @@ class ShipmentAPITests(APITestCase):
         body = response.json()
         self.assertEqual(body["connote_station_code"], "POM")
         self.assertEqual(body["connote_mode_code"], "AF")
+
+    def test_address_book_entry_can_link_company_and_contact_and_store_snapshot(self):
+        response = self.client.post(
+            "/api/v3/shipments/address-book/",
+            data={
+                "label": "Brisbane consignee",
+                "party_role": "CONSIGNEE",
+                "company_id": str(self.customer.id),
+                "contact_id": str(self.contact.id),
+                "company_name": "Temporary Company",
+                "contact_name": "Wrong Name",
+                "email": "wrong@example.com",
+                "phone": "000",
+                "address_line_1": "Temporary Address",
+                "address_line_2": "",
+                "city": "Temporary City",
+                "state": "",
+                "postal_code": "0000",
+                "country_code": "PG",
+                "notes": "",
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["company_id"], str(self.customer.id))
+        self.assertEqual(body["contact_id"], str(self.contact.id))
+        self.assertEqual(body["company_name"], "Brisbane Imports")
+        self.assertEqual(body["contact_name"], "Cargo Desk")
+        self.assertEqual(body["email"], "desk@example.com")
+        self.assertEqual(body["phone"], "+617123456")
+        self.assertEqual(body["address_line_1"], "1 Eagle Street")
+        self.assertEqual(body["address_line_2"], "Level 2")
+        self.assertEqual(body["city"], "Brisbane")
+        self.assertEqual(body["postal_code"], "4000")
+        self.assertEqual(body["country_code"], "AU")
+
+    def test_address_book_entry_rejects_contact_from_different_company(self):
+        response = self.client.post(
+            "/api/v3/shipments/address-book/",
+            data={
+                "label": "Invalid link",
+                "party_role": "CONSIGNEE",
+                "company_id": str(self.customer.id),
+                "contact_id": str(self.other_contact.id),
+                "company_name": "Brisbane Imports",
+                "contact_name": "Other Contact",
+                "email": "other@example.com",
+                "phone": "+612999999",
+                "address_line_1": "1 Eagle Street",
+                "address_line_2": "",
+                "city": "Brisbane",
+                "state": "",
+                "postal_code": "4000",
+                "country_code": "AU",
+                "notes": "",
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("contact_id", response.json())
