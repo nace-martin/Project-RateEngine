@@ -10,7 +10,7 @@ import { PageHeader, StandardPageContainer } from "@/components/layout/standard-
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cancelShipment, duplicateShipment, getShipment, openShipmentPdf, reissueShipment } from "@/lib/api/shipments";
-import { ShipmentRecord } from "@/lib/shipment-types";
+import { formatShipmentChoice, ShipmentRecord } from "@/lib/shipment-types";
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -32,7 +32,7 @@ export default function ShipmentDetailPage() {
         setLoading(false);
       }
     };
-    run();
+    void run();
   }, [params.id]);
 
   const handleDuplicate = async () => {
@@ -64,26 +64,38 @@ export default function ShipmentDetailPage() {
           actions={
             shipment ? (
               <>
-                {shipment.status === "DRAFT" && <Link href={`/shipments/new?shipmentId=${shipment.id}`}><Button variant="outline">Edit Draft</Button></Link>}
-                {shipment.status === "FINALIZED" && <Button variant="outline" onClick={() => openShipmentPdf(shipment.id)}>Open PDF</Button>}
+                {shipment.status === "DRAFT" ? (
+                  <Link href={`/shipments/new?shipmentId=${shipment.id}`}>
+                    <Button variant="outline">Edit Draft</Button>
+                  </Link>
+                ) : null}
+                {shipment.status === "FINALIZED" ? (
+                  <Button variant="outline" onClick={() => openShipmentPdf(shipment.id)}>Open PDF</Button>
+                ) : null}
                 <Button variant="outline" onClick={handleDuplicate}>Duplicate</Button>
                 <Button variant="outline" onClick={handleReissue}>Reissue</Button>
-                {shipment.status !== "CANCELLED" && <Button variant="outline" onClick={handleCancel}>Cancel</Button>}
+                {shipment.status !== "CANCELLED" ? (
+                  <Button variant="outline" onClick={handleCancel}>Cancel</Button>
+                ) : null}
               </>
             ) : null
           }
         />
 
         {loading ? (
-          <Card><CardContent className="p-6 text-sm text-muted-foreground">Loading shipment detail...</CardContent></Card>
+          <Card>
+            <CardContent className="p-6 text-sm text-muted-foreground">Loading shipment detail...</CardContent>
+          </Card>
         ) : error || !shipment ? (
-          <Card><CardContent className="p-6 text-sm text-red-600">{error || "Shipment not found."}</CardContent></Card>
+          <Card>
+            <CardContent className="p-6 text-sm text-red-600">{error || "Shipment not found."}</CardContent>
+          </Card>
         ) : (
           <div className="space-y-6">
             <div className="grid gap-4 md:grid-cols-4">
               {[
                 { label: "Status", value: <ShipmentStatusBadge status={shipment.status} /> },
-                { label: "Route", value: `${shipment.origin_code} → ${shipment.destination_code}` },
+                { label: "Route", value: `${shipment.origin_code} -> ${shipment.destination_code}` },
                 { label: "Chargeable", value: `${shipment.total_chargeable_weight_kg} kg` },
                 { label: "Charges", value: `${shipment.currency} ${shipment.total_charges_amount}` },
               ].map((metric) => (
@@ -99,7 +111,7 @@ export default function ShipmentDetailPage() {
             <div className="grid gap-6 lg:grid-cols-2">
               <Card className="border-slate-200 shadow-sm">
                 <CardHeader><CardTitle className="text-lg">Parties</CardTitle></CardHeader>
-                <CardContent className="grid gap-4 md:grid-cols-2 text-sm">
+                <CardContent className="grid gap-4 text-sm md:grid-cols-2">
                   <div className="rounded-xl border border-slate-200 p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Shipper</p>
                     <p className="mt-2 font-semibold text-slate-900">{shipment.shipper_company_name}</p>
@@ -124,8 +136,10 @@ export default function ShipmentDetailPage() {
                 <CardContent className="space-y-3 text-sm">
                   <div>Shipment date: <span className="font-semibold text-slate-900">{shipment.shipment_date}</span></div>
                   <div>Reference: <span className="font-semibold text-slate-900">{shipment.reference_number || "-"}</span></div>
-                  <div>Service: <span className="font-semibold text-slate-900">{shipment.service_level}</span></div>
-                  <div>Payment: <span className="font-semibold text-slate-900">{shipment.payment_term.replace("_", " ")}</span></div>
+                  <div>Cargo Type: <span className="font-semibold text-slate-900">{formatShipmentChoice(shipment.cargo_type)}</span></div>
+                  <div>Service/Product: <span className="font-semibold text-slate-900">{formatShipmentChoice(shipment.service_product)}</span></div>
+                  <div>Scope: <span className="font-semibold text-slate-900">{formatShipmentChoice(shipment.service_scope)}</span></div>
+                  <div>Payment: <span className="font-semibold text-slate-900">{formatShipmentChoice(shipment.payment_term)}</span></div>
                   <div>Cargo: <span className="font-semibold text-slate-900">{shipment.cargo_description || "General Cargo"}</span></div>
                   <div>Handling notes: <span className="font-semibold text-slate-900">{shipment.handling_notes || "-"}</span></div>
                   <div>Declaration notes: <span className="font-semibold text-slate-900">{shipment.declaration_notes || "-"}</span></div>
@@ -142,14 +156,14 @@ export default function ShipmentDetailPage() {
                       <p className="font-semibold text-slate-900">{piece.piece_count} x {piece.package_type}</p>
                       <p className="text-muted-foreground">{piece.description || "No description"}</p>
                       <p className="mt-2 text-muted-foreground">{piece.length_cm} x {piece.width_cm} x {piece.height_cm} cm</p>
-                      <p className="text-muted-foreground">Gross {piece.gross_weight_kg} kg • Chargeable {piece.chargeable_weight_kg} kg</p>
+                      <p className="text-muted-foreground">Gross {piece.gross_weight_kg} kg | Chargeable {piece.chargeable_weight_kg} kg</p>
                     </div>
                   ))}
                 </div>
                 <div className="space-y-2">
                   {shipment.charges.map((charge) => (
                     <div key={charge.id || `${charge.line_number}`} className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm">
-                      <span>{charge.description} • {charge.payment_by.replace("_", " ")}</span>
+                      <span>{charge.description} | {formatShipmentChoice(charge.payment_by)}</span>
                       <span className="font-semibold text-slate-900">{charge.currency} {charge.amount}</span>
                     </div>
                   ))}
@@ -166,7 +180,7 @@ export default function ShipmentDetailPage() {
                   ) : shipment.documents.map((document) => (
                     <div key={document.id} className="rounded-xl border border-slate-200 px-4 py-3">
                       <p className="font-semibold text-slate-900">{document.file_name}</p>
-                      <p className="text-muted-foreground">{document.document_type} • {new Date(document.created_at).toLocaleString()}</p>
+                      <p className="text-muted-foreground">{document.document_type} | {new Date(document.created_at).toLocaleString()}</p>
                     </div>
                   ))}
                 </CardContent>
@@ -177,9 +191,12 @@ export default function ShipmentDetailPage() {
                 <CardContent className="space-y-2 text-sm">
                   {shipment.events.map((event) => (
                     <div key={event.id} className="rounded-xl border border-slate-200 px-4 py-3">
-                      <p className="font-semibold text-slate-900">{event.event_type.replace("_", " ")}</p>
+                      <p className="font-semibold text-slate-900">{formatShipmentChoice(event.event_type)}</p>
                       <p className="text-muted-foreground">{event.description || "No detail provided."}</p>
-                      <p className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()} {event.created_by_username ? `• ${event.created_by_username}` : ""}</p>
+                      <p className="text-xs text-slate-400">
+                        {new Date(event.created_at).toLocaleString()}
+                        {event.created_by_username ? ` | ${event.created_by_username}` : ""}
+                      </p>
                     </div>
                   ))}
                 </CardContent>

@@ -23,6 +23,7 @@ class ShipmentAPITests(APITestCase):
         self.city_bne = City.objects.create(name="Brisbane", country=self.country_au)
         self.origin = Location.objects.create(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
         self.destination = Location.objects.create(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
+        self.destination_lae = Location.objects.create(code="LAE", name="Lae", city=self.city_pom, country=self.country_pg)
         self.customer = Company.objects.create(name="Brisbane Imports", is_customer=True, company_type="CUSTOMER")
         Address.objects.create(
             company=self.customer,
@@ -78,7 +79,9 @@ class ShipmentAPITests(APITestCase):
             "consignee_country_code": "AU",
             "origin_location_id": str(self.origin.id),
             "destination_location_id": str(self.destination.id),
-            "service_level": "EXPRESS",
+            "cargo_type": "GENERAL_CARGO",
+            "service_product": "EXPRESS",
+            "service_scope": "A2A",
             "payment_term": "PREPAID",
             "cargo_description": "General cargo documents",
             "is_dangerous_goods": False,
@@ -121,6 +124,9 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(body["total_pieces"], 2)
         self.assertEqual(body["total_gross_weight_kg"], "24.00")
         self.assertEqual(body["total_charges_amount"], "1250.00")
+        self.assertEqual(body["cargo_type"], "GENERAL_CARGO")
+        self.assertEqual(body["service_product"], "EXPRESS")
+        self.assertEqual(body["service_scope"], "A2A")
 
     def test_finalize_generates_connote_number(self):
         create_response = self.client.post("/api/v3/shipments/", data=self.payload, format="json")
@@ -135,7 +141,7 @@ class ShipmentAPITests(APITestCase):
 
     def test_dangerous_goods_requires_details(self):
         payload = dict(self.payload)
-        payload["is_dangerous_goods"] = True
+        payload["cargo_type"] = "DANGEROUS_GOODS"
         payload["dangerous_goods_details"] = ""
 
         response = self.client.post("/api/v3/shipments/", data=payload, format="json")
@@ -165,6 +171,57 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertTrue(response.content.startswith(b"%PDF"))
+
+    def test_documents_product_auto_applies_fixed_charge_and_scope(self):
+        payload = dict(self.payload)
+        payload["destination_location_id"] = str(self.destination_lae.id)
+        payload["consignee_city"] = "Lae"
+        payload["consignee_country_code"] = "PG"
+        payload["cargo_type"] = "GENERAL_CARGO"
+        payload["service_product"] = "DOCUMENTS"
+        payload["service_scope"] = "A2A"
+        payload["charges"] = []
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["service_scope"], "D2D")
+        self.assertEqual(body["charges"][0]["description"], "Documents Door-to-Door")
+        self.assertEqual(body["charges"][0]["amount"], "50.00")
+        self.assertEqual(body["total_charges_amount"], "50.00")
+
+    def test_small_parcels_rejects_shipments_above_five_kg(self):
+        payload = dict(self.payload)
+        payload["destination_location_id"] = str(self.destination_lae.id)
+        payload["consignee_city"] = "Lae"
+        payload["consignee_country_code"] = "PG"
+        payload["service_product"] = "SMALL_PARCELS"
+        payload["pieces"] = [
+            {
+                "piece_count": 1,
+                "package_type": "CTN",
+                "description": "Parcel",
+                "length_cm": "20",
+                "width_cm": "20",
+                "height_cm": "20",
+                "gross_weight_kg": "6",
+            }
+        ]
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("pieces", response.json())
+
+    def test_fixed_products_require_pom_lae_route(self):
+        payload = dict(self.payload)
+        payload["service_product"] = "DOCUMENTS"
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("service_product", response.json())
 
     def test_address_book_list_route_is_not_shadowed_by_shipment_detail(self):
         response = self.client.get("/api/v3/shipments/address-book/")

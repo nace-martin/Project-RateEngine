@@ -12,9 +12,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/context/toast-context";
 import { createShipment, finalizeShipment, openShipmentPdf, updateShipment } from "@/lib/api/shipments";
 import {
+  buildFixedProductCharge,
   calculatePieceMetrics,
   calculateShipmentTotals,
+  createDefaultChargeLine,
   createEmptyShipmentForm,
+  FIXED_PRODUCT_RULES,
+  formatShipmentChoice,
+  isFixedPriceProduct,
+  isFixedProductRouteValid,
+  normalizeShipmentForm,
+  SHIPMENT_CARGO_TYPE_OPTIONS,
+  SHIPMENT_SERVICE_PRODUCT_OPTIONS,
   ShipmentAddressBookEntry,
   ShipmentFormData,
   ShipmentRecord,
@@ -43,10 +52,18 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (initialShipment) setForm(shipmentToFormData(initialShipment));
+    if (initialShipment) {
+      setForm(shipmentToFormData(initialShipment));
+    }
   }, [initialShipment]);
 
-  const totals = useMemo(() => calculateShipmentTotals(form), [form]);
+  const normalizedForm = useMemo(() => normalizeShipmentForm(form), [form]);
+  const totals = useMemo(() => calculateShipmentTotals(normalizedForm), [normalizedForm]);
+  const fixedProductRule = FIXED_PRODUCT_RULES[normalizedForm.service_product];
+  const fixedCharge = useMemo(
+    () => buildFixedProductCharge(normalizedForm.service_product, normalizedForm.currency),
+    [normalizedForm.currency, normalizedForm.service_product],
+  );
 
   const updateField = <K extends keyof ShipmentFormData>(field: K, value: ShipmentFormData[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -55,7 +72,10 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
   const applyTemplate = (templateId: string) => {
     setSelectedTemplateId(templateId);
     const template = templates.find((item) => item.id === templateId);
-    if (!template) return;
+    if (!template) {
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       ...template.shipment_defaults,
@@ -68,7 +88,10 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
 
   const applyAddressBookEntry = (entryId: string, role: "shipper" | "consignee") => {
     const entry = addressBookEntries.find((item) => item.id === entryId);
-    if (!entry) return;
+    if (!entry) {
+      return;
+    }
+
     setForm((current) => ({
       ...current,
       [`${role}_company_name`]: entry.company_name,
@@ -87,10 +110,13 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
   const handleLocationSelect = (field: "origin" | "destination", location: LocationSearchResult | null) => {
     if (field === "origin") {
       updateField("origin_location_id", location?.id || null);
+      updateField("origin_code", location?.code || "");
       updateField("origin_location_display", location ? `${location.display_name} (${location.code})` : "");
       return;
     }
+
     updateField("destination_location_id", location?.id || null);
+    updateField("destination_code", location?.code || "");
     updateField("destination_location_display", location ? `${location.display_name} (${location.code})` : "");
   };
 
@@ -108,59 +134,107 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
     }));
   };
 
-  const addPiece = () => setForm((current) => ({
-    ...current,
-    pieces: [...current.pieces, { piece_count: 1, package_type: "CTN", description: "", length_cm: "", width_cm: "", height_cm: "", gross_weight_kg: "" }],
-  }));
+  const addPiece = () => {
+    setForm((current) => ({
+      ...current,
+      pieces: [
+        ...current.pieces,
+        { piece_count: 1, package_type: "CTN", description: "", length_cm: "", width_cm: "", height_cm: "", gross_weight_kg: "" },
+      ],
+    }));
+  };
 
-  const removePiece = (index: number) => setForm((current) => ({
-    ...current,
-    pieces: current.pieces.filter((_, pieceIndex) => pieceIndex !== index),
-  }));
+  const removePiece = (index: number) => {
+    setForm((current) => ({
+      ...current,
+      pieces: current.pieces.filter((_, pieceIndex) => pieceIndex !== index),
+    }));
+  };
 
-  const addCharge = () => setForm((current) => ({
-    ...current,
-    charges: [...current.charges, { charge_type: "OTHER", description: "", amount: "", currency: current.currency, payment_by: "SHIPPER", notes: "" }],
-  }));
+  const addCharge = () => {
+    setForm((current) => ({
+      ...current,
+      charges: [...current.charges, createDefaultChargeLine(current.currency)],
+    }));
+  };
 
-  const removeCharge = (index: number) => setForm((current) => ({
-    ...current,
-    charges: current.charges.filter((_, chargeIndex) => chargeIndex !== index),
-  }));
+  const removeCharge = (index: number) => {
+    setForm((current) => ({
+      ...current,
+      charges: current.charges.filter((_, chargeIndex) => chargeIndex !== index),
+    }));
+  };
 
   const validateStep = (index: number) => {
     const errors: string[] = [];
+
     if (index === 0) {
-      if (!form.shipper_company_name || !form.shipper_address_line_1 || !form.shipper_city || !form.shipper_country_code) errors.push("Complete mandatory shipper details.");
-      if (!form.consignee_company_name || !form.consignee_address_line_1 || !form.consignee_city || !form.consignee_country_code) errors.push("Complete mandatory consignee details.");
+      if (!normalizedForm.shipper_company_name || !normalizedForm.shipper_address_line_1 || !normalizedForm.shipper_city || !normalizedForm.shipper_country_code) {
+        errors.push("Complete mandatory shipper details.");
+      }
+      if (!normalizedForm.consignee_company_name || !normalizedForm.consignee_address_line_1 || !normalizedForm.consignee_city || !normalizedForm.consignee_country_code) {
+        errors.push("Complete mandatory consignee details.");
+      }
     }
+
     if (index === 1) {
-      if (!form.origin_location_id || !form.destination_location_id) errors.push("Origin and destination are required.");
-      if (!form.shipment_date) errors.push("Shipment date is required.");
+      if (!normalizedForm.origin_location_id || !normalizedForm.destination_location_id) {
+        errors.push("Origin and destination are required.");
+      }
+      if (!normalizedForm.shipment_date) {
+        errors.push("Shipment date is required.");
+      }
+      if (!normalizedForm.cargo_description.trim()) {
+        errors.push("Cargo description is required.");
+      }
+      if (
+        isFixedPriceProduct(normalizedForm.service_product)
+        && !isFixedProductRouteValid(normalizedForm.origin_code, normalizedForm.destination_code, normalizedForm.service_product)
+      ) {
+        errors.push("Documents and Small Parcels are available only on POM-LAE routes.");
+      }
     }
+
     if (index === 2) {
-      if (!form.pieces.length) errors.push("Add at least one piece line.");
-      form.pieces.forEach((piece, pieceIndex) => {
+      if (!normalizedForm.pieces.length) {
+        errors.push("Add at least one piece line.");
+      }
+      normalizedForm.pieces.forEach((piece, pieceIndex) => {
         const metrics = calculatePieceMetrics(piece);
         if (piece.piece_count <= 0 || metrics.gross <= 0 || metrics.chargeable <= 0) {
           errors.push(`Piece line ${pieceIndex + 1} must have positive dimensions and weight.`);
         }
       });
+      if (normalizedForm.service_product === "SMALL_PARCELS" && Number(totals.totalGrossWeightKg) > 5) {
+        errors.push("Small Parcels shipments must not exceed 5 kg total gross weight.");
+      }
     }
+
     if (index === 3) {
-      if (form.is_dangerous_goods && !form.dangerous_goods_details.trim()) errors.push("Dangerous goods details are required.");
-      if (form.is_perishable && !form.perishable_details.trim()) errors.push("Perishable details are required.");
-      form.charges.forEach((charge, chargeIndex) => {
-        if (!charge.description.trim() || Number(charge.amount) <= 0) errors.push(`Charge line ${chargeIndex + 1} needs a description and positive amount.`);
-      });
+      if (normalizedForm.cargo_type === "DANGEROUS_GOODS" && !normalizedForm.dangerous_goods_details.trim()) {
+        errors.push("Dangerous goods details are required.");
+      }
+      if (normalizedForm.cargo_type === "PERISHABLE" && !normalizedForm.perishable_details.trim()) {
+        errors.push("Perishable details are required.");
+      }
+      if (!isFixedPriceProduct(normalizedForm.service_product)) {
+        normalizedForm.charges.forEach((charge, chargeIndex) => {
+          if (!charge.description.trim() || Number(charge.amount) <= 0) {
+            errors.push(`Charge line ${chargeIndex + 1} needs a description and positive amount.`);
+          }
+        });
+      }
     }
+
     return errors;
   };
 
   const goNext = () => {
     const errors = validateStep(step);
     setStepErrors(errors);
-    if (errors.length) return;
+    if (errors.length) {
+      return;
+    }
     setStep((current) => Math.min(current + 1, STEPS.length - 1));
   };
 
@@ -168,13 +242,15 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
     const validationErrors = validateStep(finalize ? 3 : step);
     setStepErrors(validationErrors);
     if (validationErrors.length) {
-      if (step < 3) setStep(3);
+      if (step < 3) {
+        setStep(3);
+      }
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const payload = toShipmentPayload(form);
+      const payload = toShipmentPayload(normalizedForm);
       const saved = shipmentId ? await updateShipment(shipmentId, payload) : await createShipment(payload);
       if (finalize) {
         const finalized = await finalizeShipment(saved.id, payload);
@@ -186,7 +262,11 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
         router.push(`/shipments/${saved.id}`);
       }
     } catch (error: unknown) {
-      toast({ title: "Unable to save shipment", description: error instanceof Error ? error.message : "Unknown error", variant: "destructive" });
+      toast({
+        title: "Unable to save shipment",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -219,15 +299,15 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
               ))}
             </select>
           </div>
-          {stepErrors.length > 0 && (
+          {stepErrors.length > 0 ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              {stepErrors.map((error) => <div key={error}>• {error}</div>)}
+              {stepErrors.map((error) => <div key={error}>- {error}</div>)}
             </div>
-          )}
+          ) : null}
         </CardContent>
       </Card>
 
-      {step === 0 && (
+      {step === 0 ? (
         <div className="grid gap-6 lg:grid-cols-2">
           {(["shipper", "consignee"] as const).map((role) => (
             <Card key={role} className="border-slate-200 shadow-sm">
@@ -235,9 +315,11 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
               <CardContent className="space-y-3">
                 <select className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" value="" onChange={(event) => applyAddressBookEntry(event.target.value, role)}>
                   <option value="">Load from address book</option>
-                  {addressBookEntries.filter((entry) => entry.party_role === "BOTH" || entry.party_role === role.toUpperCase()).map((entry) => (
-                    <option key={entry.id} value={entry.id}>{entry.label} · {entry.company_name}</option>
-                  ))}
+                  {addressBookEntries
+                    .filter((entry) => entry.party_role === "BOTH" || entry.party_role === role.toUpperCase())
+                    .map((entry) => (
+                      <option key={entry.id} value={entry.id}>{entry.label} | {entry.company_name}</option>
+                    ))}
                 </select>
                 <div className="grid gap-3 md:grid-cols-2">
                   <Input placeholder="Company name" value={form[`${role}_company_name`]} onChange={(event) => updateField(`${role}_company_name`, event.target.value)} />
@@ -257,11 +339,11 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
             </Card>
           ))}
         </div>
-      )}
+      ) : null}
 
-      {step === 1 && (
+      {step === 1 ? (
         <Card className="border-slate-200 shadow-sm">
-          <CardHeader><CardTitle>Routing and Service</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Routing, Cargo, and Product</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <LocationSearchCombobox value={form.origin_location_id} selectedLabel={form.origin_location_display} onSelect={(location) => handleLocationSelect("origin", location)} placeholder="Search origin airport" />
@@ -269,28 +351,49 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
             </div>
             <div className="grid gap-3 md:grid-cols-4">
               <Input type="date" value={form.shipment_date} onChange={(event) => updateField("shipment_date", event.target.value)} />
-              <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={form.service_level} onChange={(event) => updateField("service_level", event.target.value as ShipmentFormData["service_level"])}>
-                <option value="EXPRESS">Express</option>
-                <option value="PRIORITY">Priority</option>
-                <option value="ECONOMY">Economy</option>
-                <option value="CHARTER">Charter</option>
+              <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={form.cargo_type} onChange={(event) => updateField("cargo_type", event.target.value as ShipmentFormData["cargo_type"])}>
+                {SHIPMENT_CARGO_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={form.service_product} onChange={(event) => updateField("service_product", event.target.value as ShipmentFormData["service_product"])}>
+                {SHIPMENT_SERVICE_PRODUCT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
               <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={form.payment_term} onChange={(event) => updateField("payment_term", event.target.value as ShipmentFormData["payment_term"])}>
                 <option value="PREPAID">Prepaid</option>
                 <option value="COLLECT">Collect</option>
                 <option value="THIRD_PARTY">Third Party</option>
               </select>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[1.3fr_1fr]">
               <Input placeholder="Internal reference" value={form.reference_number} onChange={(event) => updateField("reference_number", event.target.value)} />
+              <Input readOnly value={formatShipmentChoice(normalizedForm.service_scope)} />
             </div>
             <Input placeholder="Cargo description" value={form.cargo_description} onChange={(event) => updateField("cargo_description", event.target.value)} />
+            {fixedProductRule ? (
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                <div className="font-medium">{fixedProductRule.label} auto-applies at PGK {fixedProductRule.amount} excl. GST.</div>
+                <div className="mt-1">This product is restricted to POM-LAE and LAE-POM and forces the shipment scope to Door-to-Door.</div>
+                {fixedProductRule.maxGrossWeightKg ? (
+                  <div className="mt-1">Weight rule: total gross weight must stay at or below {fixedProductRule.maxGrossWeightKg} kg.</div>
+                ) : null}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {step === 2 && (
+      {step === 2 ? (
         <Card className="border-slate-200 shadow-sm">
           <CardHeader><CardTitle>Pieces and Weights</CardTitle></CardHeader>
           <CardContent className="space-y-4">
+            {normalizedForm.service_product === "SMALL_PARCELS" ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Small Parcels is validated against a 5 kg total gross weight limit.
+              </div>
+            ) : null}
             {form.pieces.map((piece, index) => {
               const metrics = calculatePieceMetrics(piece);
               return (
@@ -307,7 +410,7 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
                     <Input placeholder="Description" value={piece.description} onChange={(event) => updatePiece(index, "description", event.target.value)} />
                     <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">Volumetric: {metrics.volumetric.toFixed(2)} kg</div>
                     <div className="rounded-lg bg-sky-50 px-3 py-2 text-sm">Chargeable: {metrics.chargeable.toFixed(2)} kg</div>
-                    {form.pieces.length > 1 && <Button type="button" variant="ghost" onClick={() => removePiece(index)}>Remove</Button>}
+                    {form.pieces.length > 1 ? <Button type="button" variant="ghost" onClick={() => removePiece(index)}>Remove</Button> : null}
                   </div>
                 </div>
               );
@@ -315,52 +418,65 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
             <div className="flex items-center justify-between">
               <Button type="button" variant="outline" onClick={addPiece}>Add Piece Line</Button>
               <div className="rounded-lg bg-slate-50 px-4 py-3 text-sm font-medium">
-                {totals.totalPieces} pcs · {totals.totalChargeableWeightKg} kg chargeable
+                {totals.totalPieces} pcs | {totals.totalGrossWeightKg} kg gross | {totals.totalChargeableWeightKg} kg chargeable
               </div>
             </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {step === 3 && (
+      {step === 3 ? (
         <Card className="border-slate-200 shadow-sm">
           <CardHeader><CardTitle>Charges and Notes</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            {form.charges.map((charge, index) => (
-              <div key={`charge-${index}`} className="grid gap-3 rounded-xl border border-slate-200 p-4 md:grid-cols-[1fr_1.3fr_0.8fr_0.8fr_0.9fr_auto]">
-                <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={charge.charge_type} onChange={(event) => updateCharge(index, "charge_type", event.target.value)}>
-                  <option value="FREIGHT">Freight</option>
-                  <option value="HANDLING">Handling</option>
-                  <option value="SECURITY">Security</option>
-                  <option value="DOCUMENTATION">Documentation</option>
-                  <option value="FUEL">Fuel</option>
-                  <option value="OTHER">Other</option>
-                </select>
-                <Input placeholder="Description" value={charge.description} onChange={(event) => updateCharge(index, "description", event.target.value)} />
-                <Input placeholder="Amount" value={charge.amount} onChange={(event) => updateCharge(index, "amount", event.target.value)} />
-                <Input placeholder="Currency" value={charge.currency} onChange={(event) => updateCharge(index, "currency", event.target.value.toUpperCase())} />
-                <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={charge.payment_by} onChange={(event) => updateCharge(index, "payment_by", event.target.value)}>
-                  <option value="SHIPPER">Shipper</option>
-                  <option value="CONSIGNEE">Consignee</option>
-                  <option value="THIRD_PARTY">Third Party</option>
-                </select>
-                {form.charges.length > 1 && <Button type="button" variant="ghost" onClick={() => removeCharge(index)}>Remove</Button>}
+            {isFixedPriceProduct(normalizedForm.service_product) ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                <div className="font-medium">Fixed domestic pricing is active.</div>
+                {fixedCharge ? (
+                  <div className="mt-2">{fixedCharge.description}: {normalizedForm.currency} {fixedCharge.amount}</div>
+                ) : null}
+                <div className="mt-1">Manual charge editing is disabled for this product.</div>
               </div>
-            ))}
-            <Button type="button" variant="outline" onClick={addCharge}>Add Charge Line</Button>
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm"><input type="checkbox" checked={form.is_dangerous_goods} onChange={(event) => updateField("is_dangerous_goods", event.target.checked)} /> Dangerous goods</label>
-              <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm"><input type="checkbox" checked={form.is_perishable} onChange={(event) => updateField("is_perishable", event.target.checked)} /> Perishable cargo</label>
-            </div>
-            {form.is_dangerous_goods && <Textarea placeholder="Dangerous goods details" value={form.dangerous_goods_details} onChange={(event) => updateField("dangerous_goods_details", event.target.value)} />}
-            {form.is_perishable && <Textarea placeholder="Perishable handling details" value={form.perishable_details} onChange={(event) => updateField("perishable_details", event.target.value)} />}
+            ) : (
+              <>
+                {form.charges.map((charge, index) => (
+                  <div key={`charge-${index}`} className="grid gap-3 rounded-xl border border-slate-200 p-4 md:grid-cols-[1fr_1.3fr_0.8fr_0.8fr_0.9fr_auto]">
+                    <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={charge.charge_type} onChange={(event) => updateCharge(index, "charge_type", event.target.value)}>
+                      <option value="FREIGHT">Freight</option>
+                      <option value="HANDLING">Handling</option>
+                      <option value="SECURITY">Security</option>
+                      <option value="DOCUMENTATION">Documentation</option>
+                      <option value="FUEL">Fuel</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                    <Input placeholder="Description" value={charge.description} onChange={(event) => updateCharge(index, "description", event.target.value)} />
+                    <Input placeholder="Amount" value={charge.amount} onChange={(event) => updateCharge(index, "amount", event.target.value)} />
+                    <Input placeholder="Currency" value={charge.currency} onChange={(event) => updateCharge(index, "currency", event.target.value.toUpperCase())} />
+                    <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm" value={charge.payment_by} onChange={(event) => updateCharge(index, "payment_by", event.target.value)}>
+                      <option value="SHIPPER">Shipper</option>
+                      <option value="CONSIGNEE">Consignee</option>
+                      <option value="THIRD_PARTY">Third Party</option>
+                    </select>
+                    {form.charges.length > 1 ? <Button type="button" variant="ghost" onClick={() => removeCharge(index)}>Remove</Button> : null}
+                  </div>
+                ))}
+                <Button type="button" variant="outline" onClick={addCharge}>Add Charge Line</Button>
+              </>
+            )}
+
+            {normalizedForm.cargo_type === "DANGEROUS_GOODS" ? (
+              <Textarea placeholder="Dangerous goods details" value={form.dangerous_goods_details} onChange={(event) => updateField("dangerous_goods_details", event.target.value)} />
+            ) : null}
+            {normalizedForm.cargo_type === "PERISHABLE" ? (
+              <Textarea placeholder="Perishable handling details" value={form.perishable_details} onChange={(event) => updateField("perishable_details", event.target.value)} />
+            ) : null}
             <Textarea placeholder="Handling notes" value={form.handling_notes} onChange={(event) => updateField("handling_notes", event.target.value)} />
             <Textarea placeholder="Declaration notes" value={form.declaration_notes} onChange={(event) => updateField("declaration_notes", event.target.value)} />
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
-      {step === 4 && (
+      {step === 4 ? (
         <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
           <Card className="border-slate-200 shadow-sm">
             <CardHeader><CardTitle>Review</CardTitle></CardHeader>
@@ -368,17 +484,23 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 p-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Route</p>
-                  <p className="mt-2 font-semibold text-slate-900">{form.origin_location_display || "Origin"} → {form.destination_location_display || "Destination"}</p>
+                  <p className="mt-2 font-semibold text-slate-900">
+                    {normalizedForm.origin_location_display || "Origin"}
+                    {" -> "}
+                    {normalizedForm.destination_location_display || "Destination"}
+                  </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 p-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Totals</p>
-                  <p className="mt-2 font-semibold text-slate-900">{totals.totalPieces} pcs · {totals.totalChargeableWeightKg} kg · {form.currency} {totals.totalChargesAmount}</p>
+                  <p className="mt-2 font-semibold text-slate-900">{totals.totalPieces} pcs | {totals.totalChargeableWeightKg} kg | {normalizedForm.currency} {totals.totalChargesAmount}</p>
                 </div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4">
-                <p className="font-semibold text-slate-900">{form.shipper_company_name}</p>
-                <p className="text-muted-foreground">{form.consignee_company_name}</p>
-                <p className="mt-3 text-muted-foreground">{form.cargo_description || "General Cargo"} · {form.service_level} · {form.payment_term.replace("_", " ")}</p>
+                <p className="font-semibold text-slate-900">{normalizedForm.shipper_company_name}</p>
+                <p className="text-muted-foreground">{normalizedForm.consignee_company_name}</p>
+                <p className="mt-3 text-muted-foreground">
+                  {normalizedForm.cargo_description || "General Cargo"} | {formatShipmentChoice(normalizedForm.cargo_type)} | {formatShipmentChoice(normalizedForm.service_product)} | {formatShipmentChoice(normalizedForm.service_scope)}
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -388,9 +510,11 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
               {[
                 "Mandatory party details completed",
                 "Origin and destination selected",
+                `${formatShipmentChoice(normalizedForm.cargo_type)} cargo type selected`,
+                `${formatShipmentChoice(normalizedForm.service_product)} product configured`,
                 `${totals.totalPieces} pieces prepared for print`,
                 `${totals.totalChargeableWeightKg} kg chargeable weight calculated`,
-                `${form.currency} ${totals.totalChargesAmount} total charges ready`,
+                `${normalizedForm.currency} ${totals.totalChargesAmount} total charges ready`,
               ].map((item) => (
                 <div key={item} className="flex items-center gap-3 rounded-xl bg-white px-4 py-3 shadow-sm">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -400,7 +524,7 @@ export default function ShipmentWizard({ shipmentId, initialShipment, templates,
             </CardContent>
           </Card>
         </div>
-      )}
+      ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="text-sm text-muted-foreground">Step {step + 1} of {STEPS.length}</div>

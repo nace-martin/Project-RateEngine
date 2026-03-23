@@ -8,6 +8,10 @@ from .models import Shipment, ShipmentDocument, ShipmentEvent, ShipmentSettings
 
 
 WEIGHT_DIVISOR = Decimal("6000")
+FIXED_PRODUCT_PRICING = {
+    Shipment.ServiceProduct.DOCUMENTS: Decimal("50.00"),
+    Shipment.ServiceProduct.SMALL_PARCELS: Decimal("80.00"),
+}
 
 
 def calculate_piece_metrics(piece_data):
@@ -163,7 +167,9 @@ def duplicate_shipment(shipment: Shipment, user=None, *, reissue=False) -> Shipm
         consignee_country_code=shipment.consignee_country_code,
         origin_location=shipment.origin_location,
         destination_location=shipment.destination_location,
-        service_level=shipment.service_level,
+        cargo_type=shipment.cargo_type,
+        service_product=shipment.service_product,
+        service_scope=shipment.service_scope,
         payment_term=shipment.payment_term,
         cargo_description=shipment.cargo_description,
         is_dangerous_goods=shipment.is_dangerous_goods,

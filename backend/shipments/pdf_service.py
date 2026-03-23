@@ -36,6 +36,10 @@ def _format_money(value, currency: str) -> str:
     return f"{currency} {float(value or 0):,.2f}"
 
 
+def _format_choice(value) -> str:
+    return str(value or "").replace("_", " ").title()
+
+
 def _build_shipment_record_url(shipment: Shipment) -> str:
     return f"{settings.FRONTEND_BASE_URL.rstrip('/')}/shipments/{shipment.id}"
 
@@ -156,27 +160,29 @@ def generate_shipment_pdf(shipment: Shipment) -> bytes:
     pdf.set_xy(10, 92)
     pdf.cell(190, 6, "Shipment Details")
     pdf.set_fill_color(248, 250, 252)
-    pdf.rect(10, 98, 190, 20, style="DF")
+    pdf.rect(10, 98, 190, 24, style="DF")
     pdf.set_font("Helvetica", "", 8)
     pdf.set_xy(13, 102)
     pdf.cell(60, 4, _clean_text(f"Origin: {shipment.origin_code} {shipment.origin_name}".strip()))
     pdf.set_xy(75, 102)
     pdf.cell(60, 4, _clean_text(f"Destination: {shipment.destination_code} {shipment.destination_name}".strip()))
     pdf.set_xy(137, 102)
-    pdf.cell(60, 4, _clean_text(f"Service: {shipment.service_level.title()}"))
+    pdf.cell(60, 4, _clean_text(f"Product: {_format_choice(shipment.service_product)}"))
     pdf.set_xy(13, 109)
     pdf.cell(60, 4, _clean_text(f"Payment: {shipment.payment_term.replace('_', ' ').title()}"))
     pdf.set_xy(75, 109)
-    pdf.cell(60, 4, _clean_text(f"Cargo: {shipment.cargo_description or 'General Cargo'}"))
+    pdf.cell(60, 4, _clean_text(f"Cargo Type: {_format_choice(shipment.cargo_type)}"))
     pdf.set_xy(137, 109)
-    pdf.cell(60, 4, _clean_text(f"Ref: {shipment.reference_number or '-'}"))
+    pdf.cell(60, 4, _clean_text(f"Scope: {_format_choice(shipment.service_scope)}"))
+    pdf.set_xy(13, 116)
+    pdf.cell(184, 4, _clean_text(f"Description: {shipment.cargo_description or 'General Cargo'} | Ref: {shipment.reference_number or '-'}"))
 
     pdf.set_font("Helvetica", "B", 10)
-    pdf.set_xy(10, 124)
+    pdf.set_xy(10, 128)
     pdf.cell(190, 6, "Cargo Details")
     pdf.set_fill_color(15, 42, 86)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_xy(10, 132)
+    pdf.set_xy(10, 136)
     headers = [("Pieces", 18), ("Type", 28), ("Dims (cm)", 44), ("Gross", 24), ("Volumetric", 30), ("Chargeable", 30), ("Description", 16)]
     for label, width in headers:
         pdf.cell(width, 7, label, border=0, align="C", fill=True)

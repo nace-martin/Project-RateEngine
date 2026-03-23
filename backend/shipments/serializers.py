@@ -19,9 +19,16 @@ from .models import (
 from .services import (
     calculate_piece_metrics,
     create_shipment_event,
+    FIXED_PRODUCT_PRICING,
     recalculate_shipment_totals,
     sync_location_snapshot,
 )
+
+
+ALLOWED_FIXED_PRODUCT_ROUTES = {
+    ("POM", "LAE"),
+    ("LAE", "POM"),
+}
 
 
 class ShipmentAddressBookEntrySerializer(serializers.ModelSerializer):
@@ -293,7 +300,9 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "destination_code",
             "destination_name",
             "destination_country_code",
-            "service_level",
+            "cargo_type",
+            "service_product",
+            "service_scope",
             "payment_term",
             "cargo_description",
             "is_dangerous_goods",
@@ -372,12 +381,15 @@ class ShipmentSerializer(serializers.ModelSerializer):
         if not origin or not destination:
             raise serializers.ValidationError("Origin and destination are mandatory.")
 
-        is_dg = attrs.get("is_dangerous_goods", getattr(instance, "is_dangerous_goods", False))
+        cargo_type = attrs.get("cargo_type", getattr(instance, "cargo_type", Shipment.CargoType.GENERAL_CARGO))
+        service_product = attrs.get("service_product", getattr(instance, "service_product", Shipment.ServiceProduct.STANDARD))
+
+        is_dg = cargo_type == Shipment.CargoType.DANGEROUS_GOODS
         dg_details = attrs.get("dangerous_goods_details", getattr(instance, "dangerous_goods_details", ""))
         if is_dg and not str(dg_details).strip():
             raise serializers.ValidationError({"dangerous_goods_details": "Dangerous goods details are required."})
 
-        is_perishable = attrs.get("is_perishable", getattr(instance, "is_perishable", False))
+        is_perishable = cargo_type == Shipment.CargoType.PERISHABLE
         perishable_details = attrs.get("perishable_details", getattr(instance, "perishable_details", ""))
         if is_perishable and not str(perishable_details).strip():
             raise serializers.ValidationError({"perishable_details": "Perishable handling details are required."})
@@ -396,6 +408,20 @@ class ShipmentSerializer(serializers.ModelSerializer):
                 if amount <= 0:
                     raise serializers.ValidationError({"charges": "Charge amounts must be greater than 0."})
 
+        if service_product in FIXED_PRODUCT_PRICING:
+            route_pair = ((origin.code or "").upper(), (destination.code or "").upper())
+            if route_pair not in ALLOWED_FIXED_PRODUCT_ROUTES:
+                raise serializers.ValidationError({
+                    "service_product": "Documents and Small Parcels are available only for POM ↔ LAE door-to-door shipments."
+                })
+
+        if service_product == Shipment.ServiceProduct.SMALL_PARCELS:
+            total_gross_weight = self._calculate_total_gross_weight(pieces, instance)
+            if total_gross_weight > Decimal("5.00"):
+                raise serializers.ValidationError({
+                    "pieces": "Small Parcels service is limited to shipments with total gross weight up to 5 kg."
+                })
+
         return attrs
 
     def create(self, validated_data):
@@ -404,6 +430,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         user = getattr(request, "user", None)
         organization = getattr(user, "organization", None)
+        validated_data, charges_data = self._apply_business_rules(validated_data, charges_data)
 
         shipment = Shipment.objects.create(
             organization=organization,
@@ -422,6 +449,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
         charges_data = validated_data.pop("charges", None)
         request = self.context.get("request")
         user = getattr(request, "user", None)
+        validated_data, charges_data = self._apply_business_rules(validated_data, charges_data, instance=instance)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -475,6 +503,51 @@ class ShipmentSerializer(serializers.ModelSerializer):
                 )
             ShipmentCharge.objects.bulk_create(charge_instances)
 
+    def _apply_business_rules(self, validated_data, charges_data, instance=None):
+        cargo_type = validated_data.get("cargo_type", getattr(instance, "cargo_type", Shipment.CargoType.GENERAL_CARGO))
+        service_product = validated_data.get("service_product", getattr(instance, "service_product", Shipment.ServiceProduct.STANDARD))
+
+        validated_data["is_dangerous_goods"] = cargo_type == Shipment.CargoType.DANGEROUS_GOODS
+        validated_data["is_perishable"] = cargo_type == Shipment.CargoType.PERISHABLE
+        validated_data["service_scope"] = (
+            Shipment.ServiceScope.DOOR_TO_DOOR
+            if service_product in FIXED_PRODUCT_PRICING
+            else validated_data.get("service_scope", getattr(instance, "service_scope", Shipment.ServiceScope.AIRPORT_TO_AIRPORT))
+        )
+
+        if service_product in FIXED_PRODUCT_PRICING:
+            shipment_currency = validated_data.get("currency", getattr(instance, "currency", "PGK"))
+            label = "Documents Door-to-Door" if service_product == Shipment.ServiceProduct.DOCUMENTS else "Small Parcels Door-to-Door"
+            charges_data = [
+                {
+                    "charge_type": ShipmentCharge.ChargeType.FREIGHT,
+                    "description": label,
+                    "amount": FIXED_PRODUCT_PRICING[service_product],
+                    "currency": shipment_currency,
+                    "payment_by": ShipmentCharge.PaymentBy.SHIPPER,
+                    "notes": "Auto-applied fixed domestic product pricing.",
+                }
+            ]
+
+        return validated_data, charges_data
+
+    def _calculate_total_gross_weight(self, pieces, instance):
+        if pieces is not None:
+            total = Decimal("0.00")
+            for piece in pieces:
+                piece_count = Decimal(str(piece.get("piece_count", 0)))
+                gross_weight = Decimal(str(piece.get("gross_weight_kg", 0)))
+                total += piece_count * gross_weight
+            return total
+
+        if instance is None:
+            return Decimal("0.00")
+
+        return sum(
+            (Decimal(piece.piece_count) * piece.gross_weight_kg for piece in instance.pieces.all()),
+            Decimal("0.00"),
+        )
+
 
 class ShipmentListSerializer(serializers.ModelSerializer):
     origin_location_display = serializers.CharField(source="origin_location.display_name", read_only=True)
@@ -494,7 +567,9 @@ class ShipmentListSerializer(serializers.ModelSerializer):
             "destination_location_display",
             "origin_code",
             "destination_code",
-            "service_level",
+            "cargo_type",
+            "service_product",
+            "service_scope",
             "payment_term",
             "total_pieces",
             "total_gross_weight_kg",

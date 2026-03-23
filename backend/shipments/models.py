@@ -151,11 +151,25 @@ class Shipment(models.Model):
         COLLECT = "COLLECT", "Collect"
         THIRD_PARTY = "THIRD_PARTY", "Third Party"
 
-    class ServiceLevel(models.TextChoices):
+    class CargoType(models.TextChoices):
+        GENERAL_CARGO = "GENERAL_CARGO", "General Cargo"
+        VALUABLE_CARGO = "VALUABLE_CARGO", "Valuable Cargo"
+        PERISHABLE = "PERISHABLE", "Perishable"
+        LIVE_ANIMALS = "LIVE_ANIMALS", "Live Animals"
+        DANGEROUS_GOODS = "DANGEROUS_GOODS", "Dangerous Goods"
+
+    class ServiceProduct(models.TextChoices):
+        STANDARD = "STANDARD", "Standard"
         EXPRESS = "EXPRESS", "Express"
-        PRIORITY = "PRIORITY", "Priority"
-        ECONOMY = "ECONOMY", "Economy"
+        DOCUMENTS = "DOCUMENTS", "Documents"
+        SMALL_PARCELS = "SMALL_PARCELS", "Small Parcels"
         CHARTER = "CHARTER", "Charter"
+
+    class ServiceScope(models.TextChoices):
+        DOOR_TO_DOOR = "D2D", "Door-to-Door"
+        DOOR_TO_AIRPORT = "D2A", "Door-to-Airport"
+        AIRPORT_TO_DOOR = "A2D", "Airport-to-Door"
+        AIRPORT_TO_AIRPORT = "A2A", "Airport-to-Airport"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -232,7 +246,9 @@ class Shipment(models.Model):
     destination_name = models.CharField(max_length=255, blank=True, default="")
     destination_country_code = models.CharField(max_length=2, blank=True, default="")
 
-    service_level = models.CharField(max_length=16, choices=ServiceLevel.choices, default=ServiceLevel.EXPRESS)
+    cargo_type = models.CharField(max_length=24, choices=CargoType.choices, default=CargoType.GENERAL_CARGO)
+    service_product = models.CharField(max_length=20, choices=ServiceProduct.choices, default=ServiceProduct.STANDARD)
+    service_scope = models.CharField(max_length=3, choices=ServiceScope.choices, default=ServiceScope.AIRPORT_TO_AIRPORT)
     payment_term = models.CharField(max_length=16, choices=PaymentTerm.choices, default=PaymentTerm.PREPAID)
     cargo_description = models.CharField(max_length=255, blank=True, default="")
     is_dangerous_goods = models.BooleanField(default=False)
