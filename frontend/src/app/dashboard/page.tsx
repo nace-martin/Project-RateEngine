@@ -10,6 +10,7 @@ import { useAuth } from "@/context/auth-context";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getQuotesV3, listSpotEnvelopes, getDashboardMetrics, type DashboardMetricsData, type DashboardTimeframe } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
+import { buildFxDisplayRows, compareFxDisplayCurrencies, formatFxDisplayValue, getFxDisplayCurrency } from "@/lib/fx-display";
 import type { V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "@/lib/spot-types";
 import { UnifiedQuote, formatCurrency, formatRoute, getWeight, getCustomerName, calculateSpotTotal, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
@@ -387,15 +388,20 @@ export default function DashboardPage() {
                             <div className="mt-4">
                                 {fxStatus ? (
                                     <div className="space-y-1">
-                                        {fxStatus.rates
-                                            .filter(r => !r.currency.startsWith('PGK'))
+                                        {[...fxStatus.rates]
+                                            .sort((left, right) => compareFxDisplayCurrencies(left.currency, right.currency))
+                                            .filter((rate) => getFxDisplayCurrency(rate.currency) !== null)
                                             .slice(0, 3)
                                             .map((rate) => {
-                                                const base = rate.currency.split('/')[0] || rate.currency;
+                                                const ttBuyDisplay = buildFxDisplayRows(rate).find((row) => row.label === 'TT Buy');
+                                                if (!ttBuyDisplay) {
+                                                    return null;
+                                                }
+
                                                 return (
                                                     <div key={rate.currency} className="flex justify-between text-sm">
-                                                        <span>{base}/PGK</span>
-                                                        <span className="font-mono">{parseFloat(rate.tt_sell).toFixed(4)}</span>
+                                                        <span>{ttBuyDisplay.direction}</span>
+                                                        <span className="font-mono">{formatFxDisplayValue(ttBuyDisplay.value)}</span>
                                                     </div>
                                                 );
                                             })}

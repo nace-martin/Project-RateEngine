@@ -21,6 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ArrowLeft, CheckCircle, CheckCircle2, Pencil, ArrowRight } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
+import { formatServiceScope } from "@/lib/display";
 import { getCustomerName, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
 import {
   Breadcrumb,
@@ -278,9 +279,6 @@ export default function QuoteDetailPage() {
 
       {/* Scrollable Content Area with bottom padding for footer */}
       <div className="pb-32 space-y-6">
-        {/* Summary Bar - Condensed/Hidden on Scroll if we wanted, but let's keep it simply or remove if redundant */}
-        {/* QuoteSummaryBar quote={quote}  <-- REMOVED since we have sticky footer now */}
-
         {/* --- INTERNAL USE ONLY: AGENT & WEIGHT VISIBILITY --- */}
         <div className="md:col-span-1">
           <Alert className="bg-slate-50 border-slate-200 shadow-sm relative overflow-hidden">
@@ -746,14 +744,3 @@ function buildFxEntries(
   return [["PGK/PGK", "1.000000"]];
 }
 
-function formatServiceScope(scope?: string | null): string {
-  const normalized = (scope || "").toUpperCase().trim();
-  const labels: Record<string, string> = {
-    D2D: "Door-to-Door",
-    D2A: "Door-to-Airport",
-    A2D: "Airport-to-Door",
-    A2A: "Airport-to-Airport",
-    P2P: "Airport-to-Airport",
-  };
-  return labels[normalized] || "N/A";
-}

@@ -3,6 +3,8 @@ from rest_framework.test import APITestCase
 
 from core.models import City, Country, Location
 from parties.models import Address, Company, Contact, Organization
+from shipments.models import Shipment, ShipmentCharge, ShipmentEvent
+from shipments.services import recalculate_shipment_totals
 
 
 class ShipmentAPITests(APITestCase):
@@ -15,17 +17,29 @@ class ShipmentAPITests(APITestCase):
             role="admin",
             organization=self.organization,
         )
+        self.manager_user = user_model.objects.create_user(
+            username="shipment-manager",
+            password="pass123",
+            role="manager",
+            organization=self.organization,
+        )
+        self.sales_user = user_model.objects.create_user(
+            username="shipment-sales",
+            password="pass123",
+            role="sales",
+            organization=self.organization,
+        )
         self.client.force_authenticate(user=self.user)
 
         self.country_pg = Country.objects.create(code="PG", name="Papua New Guinea")
         self.country_au = Country.objects.create(code="AU", name="Australia")
         self.city_pom = City.objects.create(name="Port Moresby", country=self.country_pg)
         self.city_bne = City.objects.create(name="Brisbane", country=self.country_au)
-        self.city_hgu = City.objects.create(name="Mount Hagen", country=self.country_pg)
-        self.origin = Location.objects.create(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
-        self.destination = Location.objects.create(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
-        self.destination_lae = Location.objects.create(code="LAE", name="Lae", city=self.city_pom, country=self.country_pg)
-        self.destination_hgu = Location.objects.create(code="HGU", name="Mount Hagen", city=self.city_hgu, country=self.country_pg)
+        self.city_lae = City.objects.create(name="Lae", country=self.country_pg)
+        self.origin_pom = Location.objects.create(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
+        self.destination_bne = Location.objects.create(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
+        self.destination_lae = Location.objects.create(code="LAE", name="Lae", city=self.city_lae, country=self.country_pg)
+        self.origin_bne = Location.objects.create(code="BNE2", name="Brisbane Export", city=self.city_bne, country=self.country_au)
         self.customer = Company.objects.create(name="Brisbane Imports", is_customer=True, company_type="CUSTOMER")
         Address.objects.create(
             company=self.customer,
@@ -56,9 +70,13 @@ class ShipmentAPITests(APITestCase):
             is_active=True,
         )
 
-        self.payload = {
+        self.base_payload = {
+            "shipment_type": "EXPORT",
+            "branch": "POM",
             "shipment_date": "2026-03-22",
             "reference_number": "EFM-OPS-1",
+            "booking_reference": "BK-1001",
+            "flight_reference": "PX001",
             "shipper_company_name": "EFM Express",
             "shipper_contact_name": "Ops Team",
             "shipper_email": "ops@efm.example",
@@ -79,21 +97,21 @@ class ShipmentAPITests(APITestCase):
             "consignee_state": "QLD",
             "consignee_postal_code": "4000",
             "consignee_country_code": "AU",
-            "origin_location_id": str(self.origin.id),
-            "destination_location_id": str(self.destination.id),
+            "origin_location_id": str(self.origin_pom.id),
+            "destination_location_id": str(self.destination_bne.id),
             "cargo_type": "GENERAL_CARGO",
             "service_product": "EXPRESS",
             "service_scope": "A2A",
             "payment_term": "PREPAID",
+            "export_reference": "EXP-77",
+            "invoice_reference": "INV-22",
+            "permit_reference": "PRM-9",
             "cargo_description": "General cargo documents",
-            "is_dangerous_goods": False,
             "dangerous_goods_details": "",
-            "is_perishable": False,
             "perishable_details": "",
             "handling_notes": "Keep dry.",
             "declaration_notes": "No batteries.",
-            "declared_value": "500.00",
-            "currency": "PGK",
+            "customs_notes": "Handle export clearance at origin.",
             "pieces": [
                 {
                     "piece_count": 2,
@@ -108,7 +126,7 @@ class ShipmentAPITests(APITestCase):
             "charges": [
                 {
                     "charge_type": "FREIGHT",
-                    "description": "Air freight",
+                    "description": "Legacy freight",
                     "amount": "1250.00",
                     "currency": "PGK",
                     "payment_by": "SHIPPER",
@@ -117,42 +135,175 @@ class ShipmentAPITests(APITestCase):
             ],
         }
 
-    def test_create_shipment_calculates_totals(self):
-        response = self.client.post("/api/v3/shipments/", data=self.payload, format="json")
+    def test_create_export_shipment_ignores_charge_lines(self):
+        response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
 
         self.assertEqual(response.status_code, 201)
         body = response.json()
         self.assertEqual(body["status"], "DRAFT")
+        self.assertEqual(body["shipment_type"], "EXPORT")
+        self.assertEqual(body["branch"], "POM")
         self.assertEqual(body["total_pieces"], 2)
         self.assertEqual(body["total_gross_weight_kg"], "24.00")
-        self.assertEqual(body["total_charges_amount"], "1250.00")
-        self.assertEqual(body["cargo_type"], "GENERAL_CARGO")
-        self.assertEqual(body["service_product"], "EXPRESS")
-        self.assertEqual(body["service_scope"], "A2A")
+        self.assertEqual(body["total_charges_amount"], "0.00")
+        self.assertEqual(body["charges"], [])
 
-    def test_finalize_generates_connote_number(self):
-        create_response = self.client.post("/api/v3/shipments/", data=self.payload, format="json")
+    def test_create_domestic_shipment(self):
+        payload = dict(self.base_payload)
+        payload["shipment_type"] = "DOMESTIC"
+        payload["destination_location_id"] = str(self.destination_lae.id)
+        payload["consignee_city"] = "Lae"
+        payload["consignee_country_code"] = "PG"
+        payload["flight_reference"] = ""
+        payload["export_reference"] = ""
+        payload["invoice_reference"] = ""
+        payload["permit_reference"] = ""
+        payload["customs_notes"] = ""
+
+        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["shipment_type"], "DOMESTIC")
+        self.assertEqual(body["origin_code"], "POM")
+        self.assertEqual(body["destination_code"], "LAE")
+
+    def test_finalize_generates_connote_number_and_pdf(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
         shipment_id = create_response.json()["id"]
 
-        response = self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+        finalize_response = self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+        pdf_response = self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
 
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
-        self.assertEqual(body["status"], "FINALIZED")
-        self.assertTrue(body["connote_number"].startswith("POM-AF-20260322-"))
+        self.assertEqual(finalize_response.status_code, 200)
+        finalize_body = finalize_response.json()
+        self.assertEqual(finalize_body["status"], "FINALIZED")
+        self.assertTrue(finalize_body["connote_number"].startswith("POM-AF-20260322-"))
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response["Content-Type"], "application/pdf")
+        self.assertTrue(pdf_response.content.startswith(b"%PDF"))
 
-    def test_dangerous_goods_requires_details(self):
-        payload = dict(self.payload)
-        payload["cargo_type"] = "DANGEROUS_GOODS"
-        payload["dangerous_goods_details"] = ""
+    def test_finalize_is_idempotent_for_finalized_shipments(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+        second_finalize = self.client.post(
+            f"/api/v3/shipments/{shipment_id}/finalize/",
+            data={"branch": "LAE", "shipper_company_name": "Tampered"},
+            format="json",
+        )
+
+        self.assertEqual(second_finalize.status_code, 200)
+        shipment = Shipment.objects.get(pk=shipment_id)
+        self.assertEqual(shipment.branch, "POM")
+        self.assertEqual(shipment.shipper_company_name, "EFM Express")
+
+    def test_second_pdf_request_is_logged_as_reprint(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+        self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
+        self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
+
+        shipment = Shipment.objects.get(pk=shipment_id)
+        self.assertEqual(shipment.documents.count(), 2)
+        self.assertTrue(shipment.events.filter(event_type=ShipmentEvent.EventType.PDF_GENERATED).exists())
+        self.assertTrue(shipment.events.filter(event_type=ShipmentEvent.EventType.REPRINTED).exists())
+
+    def test_finalized_shipments_are_locked(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+
+        update_response = self.client.patch(
+            f"/api/v3/shipments/{shipment_id}/",
+            data={"branch": "LAE"},
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, 400)
+        self.assertIn("locked", str(update_response.json()).lower())
+
+    def test_export_validation_rejects_domestic_route(self):
+        payload = dict(self.base_payload)
+        payload["shipment_type"] = "EXPORT"
+        payload["destination_location_id"] = str(self.destination_lae.id)
+        payload["consignee_city"] = "Lae"
+        payload["consignee_country_code"] = "PG"
 
         response = self.client.post("/api/v3/shipments/", data=payload, format="json")
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("dangerous_goods_details", response.json())
+        self.assertIn("shipment_type", response.json())
 
-    def test_duplicate_creates_new_draft(self):
-        create_response = self.client.post("/api/v3/shipments/", data=self.payload, format="json")
+    def test_patch_preserves_legacy_import_shipment_type(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment = Shipment.objects.get(pk=create_response.json()["id"])
+        shipment.shipment_type = Shipment.ShipmentType.IMPORT
+        shipment.origin_location = self.origin_bne
+        shipment.destination_location = self.origin_pom
+        shipment.save(update_fields=["shipment_type", "origin_location", "destination_location", "updated_at"])
+
+        response = self.client.patch(
+            f"/api/v3/shipments/{shipment.id}/",
+            data={"branch": "BNE"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.shipment_type, Shipment.ShipmentType.IMPORT)
+        self.assertEqual(response.json()["shipment_type"], Shipment.ShipmentType.IMPORT)
+
+    def test_patch_preserves_legacy_third_party_payment_term(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment = Shipment.objects.get(pk=create_response.json()["id"])
+        shipment.payment_term = Shipment.PaymentTerm.THIRD_PARTY
+        shipment.save(update_fields=["payment_term", "updated_at"])
+
+        response = self.client.patch(
+            f"/api/v3/shipments/{shipment.id}/",
+            data={"branch": "BNE"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.payment_term, Shipment.PaymentTerm.THIRD_PARTY)
+        self.assertEqual(response.json()["payment_term"], Shipment.PaymentTerm.THIRD_PARTY)
+
+    def test_finalize_requires_branch_and_piece_completion(self):
+        payload = dict(self.base_payload)
+        payload["branch"] = ""
+        payload["pieces"] = []
+
+        create_response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+        self.assertEqual(create_response.status_code, 201)
+        shipment_id = create_response.json()["id"]
+
+        finalize_response = self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+
+        self.assertEqual(finalize_response.status_code, 400)
+
+    def test_pdf_rejects_incomplete_draft_finalize(self):
+        payload = dict(self.base_payload)
+        payload["branch"] = ""
+        payload["pieces"] = []
+
+        create_response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+        shipment_id = create_response.json()["id"]
+
+        pdf_response = self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
+
+        self.assertEqual(pdf_response.status_code, 400)
+        shipment = Shipment.objects.get(pk=shipment_id)
+        self.assertEqual(shipment.status, Shipment.Status.DRAFT)
+        self.assertFalse(shipment.connote_number)
+
+    def test_duplicate_creates_new_draft_without_charges(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
         shipment_id = create_response.json()["id"]
 
         response = self.client.post(f"/api/v3/shipments/{shipment_id}/duplicate/", data={}, format="json")
@@ -162,110 +313,86 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(body["status"], "DRAFT")
         self.assertNotEqual(body["id"], shipment_id)
         self.assertEqual(body["source_shipment_id"], shipment_id)
+        self.assertEqual(body["charges"], [])
 
-    def test_pdf_endpoint_returns_pdf_for_finalized_shipment(self):
-        create_response = self.client.post("/api/v3/shipments/", data=self.payload, format="json")
+    def test_duplicate_rejects_finalized_shipments(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
         shipment_id = create_response.json()["id"]
         self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
 
-        response = self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
+        response = self.client.post(f"/api/v3/shipments/{shipment_id}/duplicate/", data={}, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("reissue", str(response.json()).lower())
+
+    def test_draft_update_preserves_existing_legacy_charges(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+        shipment = Shipment.objects.get(pk=shipment_id)
+        ShipmentCharge.objects.create(
+            shipment=shipment,
+            line_number=1,
+            charge_type=ShipmentCharge.ChargeType.FREIGHT,
+            description="Legacy freight",
+            amount="1250.00",
+            currency="PGK",
+            payment_by=ShipmentCharge.PaymentBy.SHIPPER,
+        )
+        recalculate_shipment_totals(shipment)
+
+        response = self.client.patch(
+            f"/api/v3/shipments/{shipment_id}/",
+            data={"branch": "LAE"},
+            format="json",
+        )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response["Content-Type"], "application/pdf")
-        self.assertTrue(response.content.startswith(b"%PDF"))
+        shipment.refresh_from_db()
+        self.assertEqual(shipment.charges.count(), 1)
+        self.assertEqual(str(shipment.total_charges_amount), "1250.00")
+        self.assertEqual(response.json()["charges"][0]["description"], "Legacy freight")
 
-    def test_documents_product_auto_applies_fixed_charge_and_scope(self):
-        payload = dict(self.payload)
-        payload["destination_location_id"] = str(self.destination_lae.id)
-        payload["consignee_city"] = "Lae"
-        payload["consignee_country_code"] = "PG"
-        payload["cargo_type"] = "GENERAL_CARGO"
-        payload["service_product"] = "DOCUMENTS"
-        payload["service_scope"] = "A2A"
-        payload["charges"] = []
+    def test_sales_user_cannot_cancel_or_reissue_finalized_shipment(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
 
-        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+        self.client.force_authenticate(user=self.sales_user)
+        cancel_response = self.client.post(
+            f"/api/v3/shipments/{shipment_id}/cancel/",
+            data={"reason": "Attempted override"},
+            format="json",
+        )
+        reissue_response = self.client.post(f"/api/v3/shipments/{shipment_id}/reissue/", data={}, format="json")
 
-        self.assertEqual(response.status_code, 201)
-        body = response.json()
-        self.assertEqual(body["service_scope"], "D2D")
-        self.assertEqual(body["charges"][0]["description"], "Documents Door-to-Door")
-        self.assertEqual(body["charges"][0]["amount"], "50.00")
-        self.assertEqual(body["total_charges_amount"], "50.00")
+        self.assertEqual(cancel_response.status_code, 403)
+        self.assertEqual(reissue_response.status_code, 403)
 
-    def test_pom_lae_shipments_force_door_to_door_scope(self):
-        payload = dict(self.payload)
-        payload["destination_location_id"] = str(self.destination_lae.id)
-        payload["consignee_city"] = "Lae"
-        payload["consignee_country_code"] = "PG"
-        payload["service_product"] = "STANDARD"
-        payload["service_scope"] = "A2A"
+    def test_manager_can_reissue_finalized_shipment_and_original_is_marked_reissued(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
 
-        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+        self.client.force_authenticate(user=self.manager_user)
+        response = self.client.post(f"/api/v3/shipments/{shipment_id}/reissue/", data={}, format="json")
 
         self.assertEqual(response.status_code, 201)
         body = response.json()
-        self.assertEqual(body["service_scope"], "D2D")
+        self.assertEqual(body["status"], "DRAFT")
+        self.assertEqual(body["reissued_from_id"], shipment_id)
+        original = Shipment.objects.get(pk=shipment_id)
+        self.assertEqual(original.status, Shipment.Status.REISSUED)
 
-    def test_other_domestic_shipments_allow_airport_to_door_scope(self):
-        payload = dict(self.payload)
-        payload["destination_location_id"] = str(self.destination_hgu.id)
-        payload["consignee_city"] = "Mount Hagen"
-        payload["consignee_country_code"] = "PG"
-        payload["service_product"] = "STANDARD"
-        payload["service_scope"] = "A2D"
+    def test_manager_cancel_requires_reason_for_finalized_shipment(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
 
-        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
-
-        self.assertEqual(response.status_code, 201)
-        body = response.json()
-        self.assertEqual(body["service_scope"], "A2D")
-
-    def test_other_domestic_shipments_allow_door_to_airport_scope(self):
-        payload = dict(self.payload)
-        payload["destination_location_id"] = str(self.destination_hgu.id)
-        payload["consignee_city"] = "Mount Hagen"
-        payload["consignee_country_code"] = "PG"
-        payload["service_product"] = "STANDARD"
-        payload["service_scope"] = "D2A"
-
-        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
-
-        self.assertEqual(response.status_code, 201)
-        body = response.json()
-        self.assertEqual(body["service_scope"], "D2A")
-
-    def test_small_parcels_rejects_shipments_above_five_kg(self):
-        payload = dict(self.payload)
-        payload["destination_location_id"] = str(self.destination_lae.id)
-        payload["consignee_city"] = "Lae"
-        payload["consignee_country_code"] = "PG"
-        payload["service_product"] = "SMALL_PARCELS"
-        payload["pieces"] = [
-            {
-                "piece_count": 1,
-                "package_type": "CTN",
-                "description": "Parcel",
-                "length_cm": "20",
-                "width_cm": "20",
-                "height_cm": "20",
-                "gross_weight_kg": "6",
-            }
-        ]
-
-        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
+        self.client.force_authenticate(user=self.manager_user)
+        response = self.client.post(f"/api/v3/shipments/{shipment_id}/cancel/", data={"reason": ""}, format="json")
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("pieces", response.json())
-
-    def test_fixed_products_require_pom_lae_route(self):
-        payload = dict(self.payload)
-        payload["service_product"] = "DOCUMENTS"
-
-        response = self.client.post("/api/v3/shipments/", data=payload, format="json")
-
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("service_product", response.json())
+        self.assertIn("reason", str(response.json()).lower())
 
     def test_address_book_list_route_is_not_shadowed_by_shipment_detail(self):
         response = self.client.get("/api/v3/shipments/address-book/")

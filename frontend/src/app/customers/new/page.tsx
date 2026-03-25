@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,9 +11,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiClient, listCities, listCountries, updateCustomer } from "@/lib/api";
 import { useAuth } from "@/context/auth-context";
+import { useToast } from "@/context/toast-context";
+import { useConfirm } from "@/hooks/useConfirm";
+import { useAsyncAction } from "@/hooks/useAsyncAction";
 import { CityOption, CountryOption } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
+import PageActionBar from "@/components/navigation/PageActionBar";
 import PageBackButton from "@/components/navigation/PageBackButton";
+import PageCancelButton from "@/components/navigation/PageCancelButton";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { getNewCustomerCopy } from "@/lib/page-copy";
@@ -49,9 +55,10 @@ type CustomerSubmissionData = Omit<CustomerFormData, 'primary_address'> & {
 export default function NewCustomerPage() {
   const router = useRouter();
   const { token, user } = useAuth();
+  const { toast } = useToast();
+  const confirm = useConfirm();
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [cities, setCities] = useState<CityOption[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     company_name: '',
@@ -102,9 +109,21 @@ export default function NewCustomerPage() {
     },
   }), []);
   const isDirty = JSON.stringify(formData) !== initialSnapshot;
-  const confirmLeave = useUnsavedChangesGuard(isDirty);
+  useUnsavedChangesGuard(isDirty);
   const returnTo = useReturnTo();
   const pageCopy = getNewCustomerCopy(user?.role as "admin" | "manager" | "sales" | "finance" | undefined);
+  const confirmLeave = async () => {
+    if (!isDirty) {
+      return true;
+    }
+    return confirm({
+      title: "Discard customer draft?",
+      description: "You have unsaved customer details. Leaving now will discard them.",
+      confirmLabel: "Discard draft",
+      cancelLabel: "Stay here",
+      variant: "destructive",
+    });
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { id, value } = e.target;
@@ -190,6 +209,39 @@ export default function NewCustomerPage() {
     }));
   };
 
+  const saveCustomerAction = useAsyncAction(async (submissionData: CustomerSubmissionData) => {
+    if (!token) {
+      throw new Error('Authentication token not available.');
+    }
+
+    const createPayload = {
+      company_name: submissionData.company_name,
+      audience_type: submissionData.audience_type,
+      address_description: submissionData.address_description,
+    };
+    const createRes = await apiClient.post('/api/v3/customers/', createPayload);
+    const customerId = createRes?.data?.id as string | undefined;
+    if (!customerId) {
+      throw new Error('Customer created but no ID returned.');
+    }
+
+    await updateCustomer(token, customerId, submissionData);
+    return customerId;
+  }, {
+    onSuccess: async () => {
+      toast({
+        title: 'Customer saved',
+        description: 'The customer profile was created successfully.',
+        variant: 'success',
+      });
+      router.push('/customers');
+    },
+    onError: async (submitError) => {
+      setError(submitError.message || 'Failed to create customer.');
+    },
+  });
+  const isSaving = saveCustomerAction.isRunning;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) {
@@ -197,7 +249,6 @@ export default function NewCustomerPage() {
       return;
     }
     setError(null);
-    setIsSaving(true);
 
     const submissionData: CustomerSubmissionData = {
       ...formData,
@@ -206,30 +257,9 @@ export default function NewCustomerPage() {
     };
 
     try {
-      // Step 1: create base customer row
-      const createPayload = {
-        company_name: submissionData.company_name,
-        audience_type: submissionData.audience_type,
-        address_description: submissionData.address_description,
-      };
-      const createRes = await apiClient.post('/api/v3/customers/', createPayload);
-      const customerId = createRes?.data?.id as string | undefined;
-      if (!customerId) {
-        throw new Error('Customer created but no ID returned.');
-      }
-
-      // Step 2: persist contact + address through customer-details endpoint
-      await updateCustomer(token, customerId, submissionData);
-      router.push('/customers');
+      await saveCustomerAction.run(submissionData);
     } catch (submitError) {
       console.error('Failed to create customer:', submitError);
-      if (submitError instanceof Error) {
-        setError(submitError.message || 'Failed to create customer.');
-      } else {
-        setError('Failed to create customer.');
-      }
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -238,6 +268,12 @@ export default function NewCustomerPage() {
     value: city.id,
     label: city.display_name,
   }));
+  const canSaveCustomer = Boolean(
+    formData.company_name.trim()
+    && formData.contact_person_name.trim()
+    && formData.contact_person_email.trim()
+    && formData.contact_person_phone.trim(),
+  );
 
   return (
     <div className="space-y-6">
@@ -246,6 +282,7 @@ export default function NewCustomerPage() {
         returnTo={returnTo}
         isDirty={isDirty}
         confirmLeave={confirmLeave}
+        disabled={isSaving}
       />
       <WorkspaceContextCard
         title={pageCopy.title}
@@ -254,6 +291,7 @@ export default function NewCustomerPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div className={isSaving ? "space-y-6 pointer-events-none opacity-70" : "space-y-6"}>
         <Card>
           <CardHeader>
             <CardTitle>Customer Profile</CardTitle>
@@ -459,24 +497,26 @@ export default function NewCustomerPage() {
             </div>
           </CardContent>
         </Card>
-
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (confirmLeave()) {
-                router.push(returnTo || '/customers');
-              }
-            }}
-            disabled={isSaving}
-          >
-            Cancel
-          </Button>
-          <Button type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Customer'}</Button>
         </div>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <PageActionBar>
+          <PageCancelButton
+            href={returnTo || '/customers'}
+            isDirty={isDirty}
+            confirmLeave={confirmLeave}
+            confirmMessage="Discard this new customer draft?"
+            disabled={isSaving}
+          />
+          <Button type="submit" disabled={isSaving || !canSaveCustomer} loading={isSaving} loadingText="Saving customer...">
+            Save Customer
+          </Button>
+        </PageActionBar>
       </form>
     </div>
   );

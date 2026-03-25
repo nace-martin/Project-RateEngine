@@ -46,7 +46,7 @@ function NewShipmentPageContent() {
       <StandardPageContainer>
         <PageHeader
           title={shipmentId ? "Edit Shipment Draft" : "New Shipment"}
-          description="Create an internal air freight shipment record and generate the connote as the output."
+          description="Create a domestic or export air freight shipment record and generate the connote as the output."
         />
         {loading ? (
           <Card><CardContent className="p-6 text-sm text-muted-foreground">Loading shipment workspace...</CardContent></Card>

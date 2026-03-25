@@ -12,20 +12,20 @@ export function getNewQuoteCopy(role: UserRole): BannerCopy {
   if (role === "admin") {
     return {
       title: "New Quote",
-      description: "Create a quote using your company's configured pricing and rules.",
+      description: "Select a customer to begin your quote.",
     };
   }
 
   if (isBusinessRole(role)) {
     return {
       title: "New Quote",
-      description: "Create and send a quote to your customer.",
+      description: "Select a customer to begin your quote.",
     };
   }
 
   return {
     title: "New Quote",
-    description: "Create a quote using your company's configured pricing.",
+    description: "Select a customer to begin your quote.",
   };
 }
 

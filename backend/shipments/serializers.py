@@ -1,7 +1,7 @@
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
-from rest_framework import serializers
 from django.db.models import Q
+from rest_framework import serializers
 
 from core.models import Location
 from parties.models import Company, Contact
@@ -16,26 +16,26 @@ from .models import (
     ShipmentSettings,
     ShipmentTemplate,
 )
-from .services import (
-    calculate_piece_metrics,
-    create_shipment_event,
-    FIXED_PRODUCT_PRICING,
-    recalculate_shipment_totals,
-    sync_location_snapshot,
-)
+from .services import calculate_piece_metrics, create_shipment_event, recalculate_shipment_totals, sync_location_snapshot
 
 
-ALLOWED_FIXED_PRODUCT_ROUTES = {
-    ("POM", "LAE"),
-    ("LAE", "POM"),
+DOMESTIC_COUNTRY_CODE = "PG"
+ALLOWED_NEW_SHIPMENT_TYPES = {
+    Shipment.ShipmentType.DOMESTIC,
+    Shipment.ShipmentType.EXPORT,
 }
-
-
-def _is_domestic_d2d_route(origin, destination) -> bool:
-    if not origin or not destination:
-        return False
-    route_pair = ((origin.code or "").upper(), (destination.code or "").upper())
-    return route_pair in ALLOWED_FIXED_PRODUCT_ROUTES
+ALLOWED_PAYMENT_TERMS = {
+    Shipment.PaymentTerm.PREPAID,
+    Shipment.PaymentTerm.COLLECT,
+}
+METADATA_TEXT_FIELDS = (
+    "booking_reference",
+    "flight_reference",
+    "export_reference",
+    "invoice_reference",
+    "permit_reference",
+    "customs_notes",
+)
 
 
 def _is_domestic_png_route(origin, destination) -> bool:
@@ -43,7 +43,15 @@ def _is_domestic_png_route(origin, destination) -> bool:
         return False
     origin_country = getattr(getattr(origin, "country", None), "code", "") or ""
     destination_country = getattr(getattr(destination, "country", None), "code", "") or ""
-    return origin_country.upper() == "PG" and destination_country.upper() == "PG"
+    return origin_country.upper() == DOMESTIC_COUNTRY_CODE and destination_country.upper() == DOMESTIC_COUNTRY_CODE
+
+
+def _is_export_route(origin, destination) -> bool:
+    if not origin or not destination:
+        return False
+    origin_country = getattr(getattr(origin, "country", None), "code", "") or ""
+    destination_country = getattr(getattr(destination, "country", None), "code", "") or ""
+    return origin_country.upper() == DOMESTIC_COUNTRY_CODE and destination_country.upper() != DOMESTIC_COUNTRY_CODE
 
 
 class ShipmentAddressBookEntrySerializer(serializers.ModelSerializer):
@@ -211,11 +219,6 @@ class ShipmentChargeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id"]
 
-    def validate_amount(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Amount must be greater than 0.")
-        return value
-
 
 class ShipmentDocumentSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
@@ -256,10 +259,16 @@ class ShipmentEventSerializer(serializers.ModelSerializer):
 
 
 class ShipmentSerializer(serializers.ModelSerializer):
-    pieces = ShipmentPieceSerializer(many=True)
-    charges = ShipmentChargeSerializer(many=True)
+    pieces = ShipmentPieceSerializer(many=True, required=False)
+    charges = ShipmentChargeSerializer(many=True, required=False)
     documents = ShipmentDocumentSerializer(many=True, read_only=True)
     events = ShipmentEventSerializer(many=True, read_only=True)
+    booking_reference = serializers.CharField(required=False, allow_blank=True)
+    flight_reference = serializers.CharField(required=False, allow_blank=True)
+    export_reference = serializers.CharField(required=False, allow_blank=True)
+    invoice_reference = serializers.CharField(required=False, allow_blank=True)
+    permit_reference = serializers.CharField(required=False, allow_blank=True)
+    customs_notes = serializers.CharField(required=False, allow_blank=True)
     origin_location_id = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(),
         source="origin_location",
@@ -283,8 +292,12 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "id",
             "status",
             "connote_number",
+            "shipment_type",
+            "branch",
             "shipment_date",
             "reference_number",
+            "booking_reference",
+            "flight_reference",
             "shipper_company_name",
             "shipper_contact_name",
             "shipper_email",
@@ -319,6 +332,9 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "service_product",
             "service_scope",
             "payment_term",
+            "export_reference",
+            "invoice_reference",
+            "permit_reference",
             "cargo_description",
             "is_dangerous_goods",
             "dangerous_goods_details",
@@ -326,6 +342,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "perishable_details",
             "handling_notes",
             "declaration_notes",
+            "customs_notes",
             "declared_value",
             "currency",
             "total_pieces",
@@ -371,11 +388,51 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "branch": {"required": False, "allow_blank": True},
+            "reference_number": {"required": False, "allow_blank": True},
+            "shipper_company_name": {"required": False, "allow_blank": True},
+            "shipper_contact_name": {"required": False, "allow_blank": True},
+            "shipper_email": {"required": False, "allow_blank": True},
+            "shipper_phone": {"required": False, "allow_blank": True},
+            "shipper_address_line_1": {"required": False, "allow_blank": True},
+            "shipper_address_line_2": {"required": False, "allow_blank": True},
+            "shipper_city": {"required": False, "allow_blank": True},
+            "shipper_state": {"required": False, "allow_blank": True},
+            "shipper_postal_code": {"required": False, "allow_blank": True},
+            "shipper_country_code": {"required": False, "allow_blank": True},
+            "consignee_company_name": {"required": False, "allow_blank": True},
+            "consignee_contact_name": {"required": False, "allow_blank": True},
+            "consignee_email": {"required": False, "allow_blank": True},
+            "consignee_phone": {"required": False, "allow_blank": True},
+            "consignee_address_line_1": {"required": False, "allow_blank": True},
+            "consignee_address_line_2": {"required": False, "allow_blank": True},
+            "consignee_city": {"required": False, "allow_blank": True},
+            "consignee_state": {"required": False, "allow_blank": True},
+            "consignee_postal_code": {"required": False, "allow_blank": True},
+            "consignee_country_code": {"required": False, "allow_blank": True},
+            "cargo_description": {"required": False, "allow_blank": True},
+            "dangerous_goods_details": {"required": False, "allow_blank": True},
+            "perishable_details": {"required": False, "allow_blank": True},
+            "handling_notes": {"required": False, "allow_blank": True},
+            "declaration_notes": {"required": False, "allow_blank": True},
+            "currency": {"required": False, "allow_blank": True},
+        }
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        metadata = instance.metadata or {}
+        for field in METADATA_TEXT_FIELDS:
+            data[field] = metadata.get(field, "")
+        return data
 
     def validate(self, attrs):
         instance = getattr(self, "instance", None)
+        if instance and instance.status == Shipment.Status.FINALIZED and not self.context.get("allow_finalized_finalize"):
+            raise serializers.ValidationError("Finalized shipments are locked and cannot be edited.")
+
+        for_finalize = bool(self.context.get("for_finalize"))
         pieces = attrs.get("pieces")
-        charges = attrs.get("charges")
 
         raw_shipper_name = attrs.get("shipper_company_name", getattr(instance, "shipper_company_name", ""))
         raw_consignee_name = attrs.get("consignee_company_name", getattr(instance, "consignee_company_name", ""))
@@ -386,56 +443,60 @@ class ShipmentSerializer(serializers.ModelSerializer):
         raw_shipper_country = attrs.get("shipper_country_code", getattr(instance, "shipper_country_code", ""))
         raw_consignee_country = attrs.get("consignee_country_code", getattr(instance, "consignee_country_code", ""))
 
-        if not raw_shipper_name or not raw_shipper_address or not raw_shipper_city or not raw_shipper_country:
-            raise serializers.ValidationError("Shipper details are mandatory.")
-        if not raw_consignee_name or not raw_consignee_address or not raw_consignee_city or not raw_consignee_country:
-            raise serializers.ValidationError("Consignee details are mandatory.")
-
         origin = attrs.get("origin_location", getattr(instance, "origin_location", None))
         destination = attrs.get("destination_location", getattr(instance, "destination_location", None))
-        if not origin or not destination:
-            raise serializers.ValidationError("Origin and destination are mandatory.")
-
+        shipment_type = attrs.get(
+            "shipment_type",
+            getattr(instance, "shipment_type", Shipment.ShipmentType.DOMESTIC),
+        )
+        branch = str(attrs.get("branch", getattr(instance, "branch", "")) or "").strip()
+        payment_term = attrs.get(
+            "payment_term",
+            getattr(instance, "payment_term", Shipment.PaymentTerm.PREPAID),
+        )
         cargo_type = attrs.get("cargo_type", getattr(instance, "cargo_type", Shipment.CargoType.GENERAL_CARGO))
-        service_product = attrs.get("service_product", getattr(instance, "service_product", Shipment.ServiceProduct.STANDARD))
-
-        is_dg = cargo_type == Shipment.CargoType.DANGEROUS_GOODS
         dg_details = attrs.get("dangerous_goods_details", getattr(instance, "dangerous_goods_details", ""))
-        if is_dg and not str(dg_details).strip():
-            raise serializers.ValidationError({"dangerous_goods_details": "Dangerous goods details are required."})
-
-        is_perishable = cargo_type == Shipment.CargoType.PERISHABLE
         perishable_details = attrs.get("perishable_details", getattr(instance, "perishable_details", ""))
-        if is_perishable and not str(perishable_details).strip():
-            raise serializers.ValidationError({"perishable_details": "Perishable handling details are required."})
 
-        if instance is None and (not pieces or len(pieces) == 0):
-            raise serializers.ValidationError({"pieces": "At least one piece line is required."})
-        if pieces is not None and len(pieces) == 0:
-            raise serializers.ValidationError({"pieces": "At least one piece line is required."})
+        allowed_shipment_types = set(ALLOWED_NEW_SHIPMENT_TYPES)
+        allowed_payment_terms = set(ALLOWED_PAYMENT_TERMS)
+        if instance is not None:
+            allowed_shipment_types.add(getattr(instance, "shipment_type", Shipment.ShipmentType.DOMESTIC))
+            allowed_payment_terms.add(getattr(instance, "payment_term", Shipment.PaymentTerm.PREPAID))
 
-        if charges is not None:
-            for charge in charges:
-                try:
-                    amount = Decimal(str(charge.get("amount", "0")))
-                except (InvalidOperation, TypeError, ValueError):
-                    amount = Decimal("0")
-                if amount <= 0:
-                    raise serializers.ValidationError({"charges": "Charge amounts must be greater than 0."})
+        if shipment_type not in allowed_shipment_types:
+            raise serializers.ValidationError({"shipment_type": "Shipment type must be Domestic or Export."})
 
-        if service_product in FIXED_PRODUCT_PRICING:
-            route_pair = ((origin.code or "").upper(), (destination.code or "").upper())
-            if route_pair not in ALLOWED_FIXED_PRODUCT_ROUTES:
+        if payment_term not in allowed_payment_terms:
+            raise serializers.ValidationError({"payment_term": "Payment type must be Prepaid or Collect."})
+
+        if origin and destination:
+            if shipment_type == Shipment.ShipmentType.DOMESTIC and not _is_domestic_png_route(origin, destination):
+                raise serializers.ValidationError({"shipment_type": "Domestic shipments must stay within Papua New Guinea."})
+            if shipment_type == Shipment.ShipmentType.EXPORT and not _is_export_route(origin, destination):
                 raise serializers.ValidationError({
-                    "service_product": "Documents and Small Parcels are available only for POM ↔ LAE door-to-door shipments."
+                    "shipment_type": "Export shipments must depart Papua New Guinea for an overseas destination."
                 })
 
-        if service_product == Shipment.ServiceProduct.SMALL_PARCELS:
-            total_gross_weight = self._calculate_total_gross_weight(pieces, instance)
-            if total_gross_weight > Decimal("5.00"):
-                raise serializers.ValidationError({
-                    "pieces": "Small Parcels service is limited to shipments with total gross weight up to 5 kg."
-                })
+        if for_finalize:
+            if pieces is not None and len(pieces) == 0:
+                raise serializers.ValidationError({"pieces": "At least one cargo piece is required."})
+            if not branch:
+                raise serializers.ValidationError({"branch": "Branch is required."})
+            if not raw_shipper_name or not raw_shipper_address or not raw_shipper_city or not raw_shipper_country:
+                raise serializers.ValidationError("Shipper details are mandatory.")
+            if not raw_consignee_name or not raw_consignee_address or not raw_consignee_city or not raw_consignee_country:
+                raise serializers.ValidationError("Consignee details are mandatory.")
+            if not origin or not destination:
+                raise serializers.ValidationError("Origin and destination are mandatory.")
+            if pieces is None and instance is not None and not instance.pieces.exists():
+                raise serializers.ValidationError({"pieces": "At least one cargo piece is required."})
+            if instance is None and (not pieces or len(pieces) == 0):
+                raise serializers.ValidationError({"pieces": "At least one cargo piece is required."})
+            if cargo_type == Shipment.CargoType.DANGEROUS_GOODS and not str(dg_details).strip():
+                raise serializers.ValidationError({"dangerous_goods_details": "Dangerous goods details are required."})
+            if cargo_type == Shipment.CargoType.PERISHABLE and not str(perishable_details).strip():
+                raise serializers.ValidationError({"perishable_details": "Perishable handling details are required."})
 
         return attrs
 
@@ -445,6 +506,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         user = getattr(request, "user", None)
         organization = getattr(user, "organization", None)
+        validated_data = self._extract_metadata_fields(validated_data)
         validated_data, charges_data = self._apply_business_rules(validated_data, charges_data)
 
         shipment = Shipment.objects.create(
@@ -464,6 +526,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
         charges_data = validated_data.pop("charges", None)
         request = self.context.get("request")
         user = getattr(request, "user", None)
+        validated_data = self._extract_metadata_fields(validated_data, instance=instance)
         validated_data, charges_data = self._apply_business_rules(validated_data, charges_data, instance=instance)
 
         for attr, value in validated_data.items():
@@ -502,77 +565,28 @@ class ShipmentSerializer(serializers.ModelSerializer):
 
         if charges_data is not None:
             shipment.charges.all().delete()
-            charge_instances = []
-            for index, charge_data in enumerate(charges_data, start=1):
-                charge_instances.append(
-                    ShipmentCharge(
-                        shipment=shipment,
-                        line_number=index,
-                        charge_type=charge_data.get("charge_type", ShipmentCharge.ChargeType.OTHER),
-                        description=charge_data["description"],
-                        amount=charge_data["amount"],
-                        currency=charge_data.get("currency", shipment.currency or "PGK"),
-                        payment_by=charge_data.get("payment_by", ShipmentCharge.PaymentBy.SHIPPER),
-                        notes=charge_data.get("notes", ""),
-                    )
-                )
-            ShipmentCharge.objects.bulk_create(charge_instances)
 
     def _apply_business_rules(self, validated_data, charges_data, instance=None):
         cargo_type = validated_data.get("cargo_type", getattr(instance, "cargo_type", Shipment.CargoType.GENERAL_CARGO))
-        service_product = validated_data.get("service_product", getattr(instance, "service_product", Shipment.ServiceProduct.STANDARD))
-        origin = validated_data.get("origin_location", getattr(instance, "origin_location", None))
-        destination = validated_data.get("destination_location", getattr(instance, "destination_location", None))
-
         validated_data["is_dangerous_goods"] = cargo_type == Shipment.CargoType.DANGEROUS_GOODS
         validated_data["is_perishable"] = cargo_type == Shipment.CargoType.PERISHABLE
-        requested_scope = validated_data.get(
-            "service_scope",
-            getattr(instance, "service_scope", Shipment.ServiceScope.AIRPORT_TO_AIRPORT),
-        )
-        if service_product in FIXED_PRODUCT_PRICING or _is_domestic_d2d_route(origin, destination):
-            validated_data["service_scope"] = Shipment.ServiceScope.DOOR_TO_DOOR
-        elif _is_domestic_png_route(origin, destination):
-            validated_data["service_scope"] = (
-                requested_scope
-                if requested_scope in {Shipment.ServiceScope.AIRPORT_TO_DOOR, Shipment.ServiceScope.DOOR_TO_AIRPORT}
-                else Shipment.ServiceScope.AIRPORT_TO_DOOR
-            )
-        else:
-            validated_data["service_scope"] = Shipment.ServiceScope.AIRPORT_TO_AIRPORT
-
-        if service_product in FIXED_PRODUCT_PRICING:
-            shipment_currency = validated_data.get("currency", getattr(instance, "currency", "PGK"))
-            label = "Documents Door-to-Door" if service_product == Shipment.ServiceProduct.DOCUMENTS else "Small Parcels Door-to-Door"
-            charges_data = [
-                {
-                    "charge_type": ShipmentCharge.ChargeType.FREIGHT,
-                    "description": label,
-                    "amount": FIXED_PRODUCT_PRICING[service_product],
-                    "currency": shipment_currency,
-                    "payment_by": ShipmentCharge.PaymentBy.SHIPPER,
-                    "notes": "Auto-applied fixed domestic product pricing.",
-                }
-            ]
-
-        return validated_data, charges_data
-
-    def _calculate_total_gross_weight(self, pieces, instance):
-        if pieces is not None:
-            total = Decimal("0.00")
-            for piece in pieces:
-                piece_count = Decimal(str(piece.get("piece_count", 0)))
-                gross_weight = Decimal(str(piece.get("gross_weight_kg", 0)))
-                total += piece_count * gross_weight
-            return total
+        validated_data["branch"] = str(validated_data.get("branch", getattr(instance, "branch", "")) or "").strip()
 
         if instance is None:
-            return Decimal("0.00")
+            # Charges are intentionally ignored when creating operational shipments.
+            return validated_data, []
 
-        return sum(
-            (Decimal(piece.piece_count) * piece.gross_weight_kg for piece in instance.pieces.all()),
-            Decimal("0.00"),
-        )
+        # Preserve historical charge lines on existing shipments because the
+        # operational workflow no longer edits or clears them.
+        return validated_data, None
+
+    def _extract_metadata_fields(self, validated_data, instance=None):
+        metadata = dict(getattr(instance, "metadata", {}) or {})
+        for field in METADATA_TEXT_FIELDS:
+            if field in validated_data:
+                metadata[field] = str(validated_data.pop(field, "") or "").strip()
+        validated_data["metadata"] = metadata
+        return validated_data
 
 
 class ShipmentListSerializer(serializers.ModelSerializer):
@@ -585,6 +599,8 @@ class ShipmentListSerializer(serializers.ModelSerializer):
             "id",
             "status",
             "connote_number",
+            "shipment_type",
+            "branch",
             "shipment_date",
             "reference_number",
             "shipper_company_name",

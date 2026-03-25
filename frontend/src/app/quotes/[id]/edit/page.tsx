@@ -2,16 +2,19 @@
 
 import { useEffect, useState, use } from "react";
 import { useAuth } from "@/context/auth-context";
+import { useToast } from "@/context/toast-context";
 import { useRouter } from "next/navigation";
 import { getQuoteV3, computeQuoteV3, getContactsForCompany } from "@/lib/api";
 import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES, V3_PACKAGE_TYPES } from "@/lib/schemas/quoteSchema";
-import { V3QuoteComputeRequest, CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
+import { CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 import { Loader2 } from "lucide-react";
 import PageBackButton from "@/components/navigation/PageBackButton";
+import { useConfirm } from "@/hooks/useConfirm";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
+import { buildQuoteComputePayload, getQuoteMissingRateFlags } from "@/lib/quote-workflow";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -21,73 +24,12 @@ import {
     BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
-// Reusing the payload builder - ideally this should be a shared utility
-const buildQuoteComputePayload = (
-    data: QuoteFormSchemaV3,
-    spotRates?: {
-        carrierSpotRatePgk: string;
-        agentDestChargesFcy: string;
-        agentCurrency: string;
-        isAllIn?: boolean;
-    },
-    existingQuoteId?: string | null
-): V3QuoteComputeRequest => {
-    const payload: V3QuoteComputeRequest = {
-        quote_id: existingQuoteId || undefined,
-        customer_id: data.customer_id,
-        contact_id: data.contact_id,
-        mode: data.mode,
-        incoterm: data.incoterm,
-        payment_term: data.payment_term,
-        service_scope: data.service_scope,
-        origin_location_id: data.origin_location_id,
-        destination_location_id: data.destination_location_id,
-        dimensions: data.dimensions.map((dimension) => ({
-            pieces: dimension.pieces,
-            length_cm: dimension.length_cm,
-            width_cm: dimension.width_cm,
-            height_cm: dimension.height_cm,
-            gross_weight_kg: dimension.gross_weight_kg,
-            package_type: dimension.package_type,
-        })),
-        overrides: data.overrides?.map((override) => ({
-            service_component_id: override.service_component_id,
-            cost_fcy: override.cost_fcy,
-            currency: override.currency,
-            unit: override.unit,
-            min_charge_fcy: override.min_charge_fcy,
-        })),
-        is_dangerous_goods: data.cargo_type === 'Dangerous Goods',
-        output_currency: data.output_currency || undefined,
-    };
-
-    if (spotRates) {
-        const spots: Record<string, unknown> = {};
-        if (spotRates.carrierSpotRatePgk) {
-            spots['FRT_AIR_EXP'] = {
-                amount: spotRates.carrierSpotRatePgk,
-                currency: 'PGK',
-                is_all_in: spotRates.isAllIn
-            };
-        }
-        if (spotRates.agentDestChargesFcy) {
-            spots['DST_CHARGES'] = {
-                amount: spotRates.agentDestChargesFcy,
-                currency: spotRates.agentCurrency || 'USD'
-            };
-        }
-        if (Object.keys(spots).length > 0) {
-            payload.spot_rates = spots;
-        }
-    }
-
-    return payload;
-};
-
 export default function EditQuotePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
     const { user } = useAuth();
     const router = useRouter();
+    const { toast } = useToast();
+    const confirm = useConfirm();
 
     const [isLoading, setIsLoading] = useState(true);
     const [initialData, setInitialData] = useState<Partial<QuoteFormSchemaV3> | null>(null);
@@ -105,8 +47,26 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
     // Missing Rates State
     const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
     const [showMissingRatesModal, setShowMissingRatesModal] = useState(false);
-    const confirmLeave = useUnsavedChangesGuard(isFormDirty);
+    useUnsavedChangesGuard(isFormDirty);
     const returnTo = useReturnTo() || `/quotes/${id}`;
+    const confirmLeave = async () => {
+        if (!isFormDirty) {
+            return true;
+        }
+        return confirm({
+            title: "Discard quote changes?",
+            description: "You have unsaved quote changes. Leaving now will discard them.",
+            confirmLabel: "Discard changes",
+            cancelLabel: "Stay here",
+            variant: "destructive",
+        });
+    };
+    const handleCancel = async () => {
+        if (!await confirmLeave()) {
+            return;
+        }
+        router.push(returnTo);
+    };
 
     useEffect(() => {
         const loadQuote = async () => {
@@ -286,20 +246,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
             // Check for missing rates
             const hasMissingRates = response.latest_version?.totals?.has_missing_rates ?? false;
             if (hasMissingRates) {
-                const lines = response.latest_version?.lines ?? [];
-                let missingCarrier = false;
-                let missingAgent = false;
-
-                // Check for missing carrier rates (FRT_AIR_EXP)
-                if (lines.some(l => l.service_component?.code === 'FRT_AIR_EXP' && l.is_rate_missing)) {
-                    missingCarrier = true;
-                }
-
-                // Check for missing agent rates
-                const destComponents = ['DST-DELIV-STD', 'DST-CLEAR-CUS', 'DST-HANDL-STD', 'DST-DOC-IMP', 'DST_CHARGES'];
-                if (lines.some(l => destComponents.includes(l.service_component?.code || '') && l.is_rate_missing)) {
-                    missingAgent = true;
-                }
+                const { carrier: missingCarrier, agent: missingAgent } = getQuoteMissingRateFlags(response);
 
                 if (missingCarrier || missingAgent) {
                     setMissingRates({ carrier: missingCarrier, agent: missingAgent });
@@ -309,6 +256,11 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 }
             }
 
+            toast({
+                title: "Quote updated",
+                description: "The quote was recalculated successfully.",
+                variant: "success",
+            });
             router.push(`/quotes/${response.id}`);
         } catch (error: unknown) {
             console.error("API Error:", error);
@@ -351,6 +303,8 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 returnTo={returnTo}
                 isDirty={isFormDirty}
                 confirmLeave={confirmLeave}
+                disabled={isSubmitting}
+                className="mb-4 -ml-2 gap-2 px-2 text-slate-600 hover:text-slate-900"
             />
             <Breadcrumb className="mb-6">
                 <BreadcrumbList>
@@ -384,6 +338,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     serverError={apiError}
                     isEditMode={true}
                     onDirtyChange={setIsFormDirty}
+                    onCancel={handleCancel}
                 />
             )}
 

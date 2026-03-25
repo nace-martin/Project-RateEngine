@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import PageActionBar from "@/components/navigation/PageActionBar";
+import { useAsyncAction } from "@/hooks/useAsyncAction";
 import { getOrganizationBrandingSettings, updateOrganizationBrandingSettings } from "@/lib/api";
 import type { OrganizationBrandingSettings as BrandingSettings } from "@/lib/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -64,9 +66,15 @@ export default function OrganizationBrandingSettings() {
   const [logoPrimaryFile, setLogoPrimaryFile] = useState<File | null>(null);
   const [logoSmallFile, setLogoSmallFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const isDirty = useMemo(() => {
+    if (!settings) {
+      return Boolean(logoPrimaryFile || logoSmallFile);
+    }
+    return JSON.stringify(form) !== JSON.stringify(mapSettingsToForm(settings))
+      || Boolean(logoPrimaryFile || logoSmallFile);
+  }, [form, logoPrimaryFile, logoSmallFile, settings]);
 
   useEffect(() => {
     const load = async () => {
@@ -89,26 +97,41 @@ export default function OrganizationBrandingSettings() {
     setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const handleSave = async () => {
-    try {
-      setSaving(true);
+  const saveBrandingAction = useAsyncAction(async () => {
       setError(null);
       setSuccess(null);
-      const updated = await updateOrganizationBrandingSettings({
+      return updateOrganizationBrandingSettings({
         ...form,
         logo_primary_file: logoPrimaryFile,
         logo_small_file: logoSmallFile,
       });
-      setSettings(updated);
-      setForm(mapSettingsToForm(updated));
-      setLogoPrimaryFile(null);
-      setLogoSmallFile(null);
-      setSuccess("Branding updated.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update branding.");
-    } finally {
-      setSaving(false);
+    }, {
+      onSuccess: async (updated) => {
+        setSettings(updated);
+        setForm(mapSettingsToForm(updated));
+        setLogoPrimaryFile(null);
+        setLogoSmallFile(null);
+        setSuccess("Branding updated.");
+      },
+      onError: async (caughtError) => {
+        setError(caughtError.message || "Failed to update branding.");
+      },
+    });
+  const saving = saveBrandingAction.isRunning;
+  const handleSave = () => {
+    void saveBrandingAction.run().catch(() => undefined);
+  };
+
+  const handleReset = () => {
+    if (!settings) {
+      setForm(emptyForm);
+      return;
     }
+    setForm(mapSettingsToForm(settings));
+    setLogoPrimaryFile(null);
+    setLogoSmallFile(null);
+    setError(null);
+    setSuccess(null);
   };
 
   return (
@@ -143,6 +166,7 @@ export default function OrganizationBrandingSettings() {
               </Alert>
             )}
 
+            <div className={saving ? "space-y-6 pointer-events-none opacity-70" : "space-y-6"}>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="display_name">Display Name</Label>
@@ -209,12 +233,16 @@ export default function OrganizationBrandingSettings() {
               <Label htmlFor="email_signature_text">Email Signature Text</Label>
               <Textarea id="email_signature_text" rows={4} value={form.email_signature_text} onChange={(e) => updateField("email_signature_text", e.target.value)} />
             </div>
-
-            <div className="flex justify-end">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? "Saving..." : "Save Branding"}
-              </Button>
             </div>
+
+            <PageActionBar>
+              <Button type="button" variant="outline" onClick={handleReset} disabled={!isDirty || saving}>
+                Reset
+              </Button>
+              <Button type="button" onClick={handleSave} disabled={!isDirty || saving} loading={saving} loadingText="Saving branding...">
+                Save Branding
+              </Button>
+            </PageActionBar>
           </>
         )}
       </CardContent>

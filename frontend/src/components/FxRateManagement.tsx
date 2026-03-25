@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { API_BASE_URL } from '@/lib/config';
+import { buildFxDisplayRows, compareFxDisplayCurrencies, formatFxDisplayValue, getFxDisplayCurrency } from '@/lib/fx-display';
 
 interface CurrencyRate {
     currency: string;
@@ -35,12 +36,13 @@ interface Props {
 export default function FxRateManagement({ canEditFxRates = false }: Props) {
     const [status, setStatus] = useState<FxStatus | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [showForm, setShowForm] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [newCurrencyCode, setNewCurrencyCode] = useState('');
 
-    // Form state for manual rate entry
     const [rateInputs, setRateInputs] = useState<Record<string, RateInput>>({
         AUD: { tt_buy: '', tt_sell: '' },
         USD: { tt_buy: '', tt_sell: '' },
@@ -66,7 +68,6 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
             const data = await response.json();
             setStatus(data);
 
-            // Pre-populate form with current rates if available
             if (data.rates?.length > 0) {
                 const newInputs: Record<string, RateInput> = {};
                 data.rates.forEach((rate: CurrencyRate) => {
@@ -75,7 +76,6 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                         tt_sell: rate.tt_sell,
                     };
                 });
-                // Ensure AUD and USD exist
                 if (!newInputs.AUD) newInputs.AUD = { tt_buy: '', tt_sell: '' };
                 if (!newInputs.USD) newInputs.USD = { tt_buy: '', tt_sell: '' };
                 setRateInputs(newInputs);
@@ -91,6 +91,35 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
         fetchStatus();
     }, []);
 
+    const handleRefresh = async () => {
+        setRefreshing(true);
+        setError(null);
+        setSuccessMessage(null);
+
+        try {
+            const token = localStorage.getItem('authToken');
+            const response = await fetch(`${API_BASE_URL}/api/v4/fx/refresh/`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': token ? `Token ${token}` : '',
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(result.detail || 'Failed to refresh FX rates');
+            }
+
+            setSuccessMessage(result.message || 'FX rates refreshed successfully.');
+            await fetchStatus();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to refresh FX rates');
+        } finally {
+            setRefreshing(false);
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setSubmitting(true);
@@ -100,7 +129,6 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
         try {
             const token = localStorage.getItem('authToken');
 
-            // Build rates object, filtering out empty entries
             const rates: Record<string, { tt_buy: number; tt_sell: number }> = {};
             Object.entries(rateInputs).forEach(([currency, values]) => {
                 if (values.tt_buy && values.tt_sell) {
@@ -133,8 +161,6 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
             setSuccessMessage(`Successfully updated ${result.updated_rates?.length || 0} currency rates`);
             setShowForm(false);
             setNote('');
-
-            // Refresh status
             await fetchStatus();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to update FX rates');
@@ -151,6 +177,27 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                 [field]: value,
             },
         }));
+    };
+
+    const handleAddCurrency = () => {
+        const currency = newCurrencyCode.trim().toUpperCase();
+        if (!/^[A-Z]{3}$/.test(currency)) {
+            setError('Enter a valid 3-letter currency code such as SGD or CNY');
+            return;
+        }
+
+        setRateInputs((prev) => {
+            if (prev[currency]) {
+                return prev;
+            }
+
+            return {
+                ...prev,
+                [currency]: { tt_buy: '', tt_sell: '' },
+            };
+        });
+        setNewCurrencyCode('');
+        setError(null);
     };
 
     const formatDate = (dateStr: string | null) => {
@@ -191,11 +238,11 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={fetchStatus}
-                        disabled={loading}
+                        onClick={handleRefresh}
+                        disabled={loading || refreshing}
                     >
-                        <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-                        Refresh
+                        <RefreshCw className={`h-4 w-4 mr-2 ${(loading || refreshing) ? 'animate-spin' : ''}`} />
+                        {refreshing ? 'Refreshing...' : 'Refresh'}
                     </Button>
                 </div>
             </CardHeader>
@@ -211,20 +258,19 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                 )}
 
                 {successMessage && (
-                    <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md p-3 mb-4">
-                        <p className="text-sm text-green-700 dark:text-green-400">{successMessage}</p>
+                    <div className="mb-4 rounded-lg border border-emerald-800 bg-emerald-700 px-4 py-3 shadow-sm">
+                        <p className="text-sm font-semibold text-white">{successMessage}</p>
                     </div>
                 )}
 
                 {status?.staleness_warning && (
-                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3 mb-4">
-                        <p className="text-sm text-yellow-700 dark:text-yellow-400">{status.staleness_warning}</p>
+                    <div className="mb-4 rounded-md border border-blue-500 bg-blue-600 p-3 text-white shadow-sm">
+                        <p className="text-sm font-medium text-white">{status.staleness_warning}</p>
                     </div>
                 )}
 
                 {status && (
                     <>
-                        {/* Current Rates Display */}
                         <div className="space-y-4">
                             <div className="text-sm text-muted-foreground">
                                 <span className="font-medium">Last Updated:</span> {formatDate(status.last_updated)}
@@ -233,44 +279,48 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
 
                             {status.rates.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                    {status.rates
-                                        .filter(rate => {
-                                            // Exclude PGK-based pairs (PGK/*, or just "PGK")
-                                            const baseCurrency = rate.currency.split('/')[0] || rate.currency;
-                                            return baseCurrency !== 'PGK';
-                                        })
+                                    {[...status.rates]
+                                        .filter(rate => getFxDisplayCurrency(rate.currency) !== null)
+                                        .sort((a, b) => compareFxDisplayCurrencies(a.currency, b.currency))
                                         .map((rate) => {
-                                            // Extract base currency from pair (e.g., "USD/PGK" -> "USD")
-                                            const baseCurrency = rate.currency.split('/')[0] || rate.currency;
-                                            const ttBuy = parseFloat(rate.tt_buy);
-                                            const ttSell = parseFloat(rate.tt_sell);
+                                            const displayCurrency = getFxDisplayCurrency(rate.currency) || rate.currency;
+                                            const displayRows = buildFxDisplayRows(rate);
 
                                             return (
-                                                <div key={rate.currency} className="bg-muted/50 rounded-lg p-4 space-y-3">
-                                                    <div className="font-semibold text-lg border-b pb-2">{baseCurrency}</div>
-
-                                                    {/* FCY to PGK conversion */}
-                                                    <div className="space-y-1">
-                                                        <div className="text-xs text-muted-foreground uppercase tracking-wide">
-                                                            {baseCurrency} → PGK
-                                                        </div>
-                                                        <div className="flex items-baseline gap-2">
-                                                            <span className="text-sm text-muted-foreground">1 {baseCurrency} =</span>
-                                                            <span className="font-mono font-semibold text-lg">{ttSell.toFixed(4)}</span>
-                                                            <span className="text-sm text-muted-foreground">PGK</span>
+                                                <div key={rate.currency} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-4">
+                                                    <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                                                        <div className="font-semibold text-xl text-slate-950">{displayCurrency}</div>
+                                                        <div className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold tracking-wide text-white">
+                                                            FX
                                                         </div>
                                                     </div>
 
-                                                    {/* PGK to FCY conversion */}
-                                                    <div className="space-y-1">
-                                                        <div className="text-xs text-muted-foreground uppercase tracking-wide">
-                                                            PGK → {baseCurrency}
-                                                        </div>
-                                                        <div className="flex items-baseline gap-2">
-                                                            <span className="text-sm text-muted-foreground">1 PGK =</span>
-                                                            <span className="font-mono font-semibold text-lg">{(1 / ttBuy).toFixed(4)}</span>
-                                                            <span className="text-sm text-muted-foreground">{baseCurrency}</span>
-                                                        </div>
+                                                    <div className="space-y-3">
+                                                        {displayRows.map((row) => (
+                                                            <div
+                                                                key={`${rate.currency}-${row.label}`}
+                                                                className="rounded-lg border border-slate-200 bg-slate-50 p-4 shadow-sm space-y-3"
+                                                            >
+                                                                <div className="flex items-center justify-between gap-3">
+                                                                    <div className="rounded-md bg-blue-700 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white">
+                                                                        {row.label}
+                                                                    </div>
+                                                                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                                                        {row.direction}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-baseline gap-2">
+                                                                    <span className="text-sm font-medium text-slate-600">1 {row.from} =</span>
+                                                                    <span className="font-mono text-2xl font-bold text-slate-950">
+                                                                        {formatFxDisplayValue(row.value)}
+                                                                    </span>
+                                                                    <span className="text-sm font-medium text-slate-700">{row.to}</span>
+                                                                </div>
+                                                                <div className="text-sm text-slate-600">
+                                                                    {row.note}
+                                                                </div>
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 </div>
                                             );
@@ -283,7 +333,6 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                             )}
                         </div>
 
-                        {/* Manual Entry Form (Finance/Admin only) */}
                         {canEditFxRates && (
                             <div className="mt-6 pt-6 border-t">
                                 {!showForm ? (
@@ -294,10 +343,27 @@ export default function FxRateManagement({ canEditFxRates = false }: Props) {
                                     <form onSubmit={handleSubmit} className="space-y-4">
                                         <h4 className="font-medium">Manual Rate Entry</h4>
                                         <p className="text-sm text-muted-foreground">
-                                            Use this form if the automated BSP scraper has failed.
+                                            Use this form if the automated BSP scraper has failed or if you need a currency not currently published in the snapshot.
                                         </p>
 
-                                        {['AUD', 'USD'].map((currency) => (
+                                        <div className="flex flex-col gap-3 rounded-md border border-dashed border-border p-3 md:flex-row md:items-end">
+                                            <div className="flex-1">
+                                                <Label htmlFor="new-currency">Add currency</Label>
+                                                <Input
+                                                    id="new-currency"
+                                                    type="text"
+                                                    maxLength={3}
+                                                    placeholder="e.g., SGD"
+                                                    value={newCurrencyCode}
+                                                    onChange={(e) => setNewCurrencyCode(e.target.value.toUpperCase())}
+                                                />
+                                            </div>
+                                            <Button type="button" variant="outline" onClick={handleAddCurrency}>
+                                                Add Currency
+                                            </Button>
+                                        </div>
+
+                                        {Object.keys(rateInputs).sort().map((currency) => (
                                             <div key={currency} className="grid grid-cols-3 gap-4 items-end">
                                                 <div className="font-medium">{currency}/PGK</div>
                                                 <div>

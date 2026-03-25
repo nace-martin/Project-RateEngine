@@ -8,7 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { createShipmentTemplate, deleteShipmentTemplate, listShipmentTemplates, updateShipmentTemplate } from "@/lib/api/shipments";
-import { SHIPMENT_CARGO_TYPE_OPTIONS, SHIPMENT_SERVICE_PRODUCT_OPTIONS, ShipmentFormData, ShipmentTemplate } from "@/lib/shipment-types";
+import {
+  SHIPMENT_CARGO_TYPE_OPTIONS,
+  SHIPMENT_PAYMENT_TYPE_OPTIONS,
+  SHIPMENT_SERVICE_PRODUCT_OPTIONS,
+  SHIPMENT_TYPE_OPTIONS,
+  ShipmentFormData,
+  ShipmentTemplate,
+} from "@/lib/shipment-types";
 
 type ShipmentTemplateForm = Omit<ShipmentTemplate, "id" | "created_at" | "updated_at">;
 
@@ -50,7 +57,7 @@ export default function ShipmentTemplatesPage() {
       <StandardPageContainer>
         <PageHeader
           title="Shipment Templates"
-          description="Store repeat shipment profiles so teams can start from prefilled routing, parties, and charge defaults."
+          description="Store repeat shipment profiles so teams can start from prefilled operational shipment data."
         />
 
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.9fr]">
@@ -123,6 +130,21 @@ export default function ShipmentTemplatesPage() {
               <div className="grid gap-3 md:grid-cols-2">
                 <select
                   className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+                  value={(form.shipment_defaults as Partial<ShipmentFormData>).shipment_type || "DOMESTIC"}
+                  onChange={(event) => setForm((current) => ({
+                    ...current,
+                    shipment_defaults: {
+                      ...current.shipment_defaults,
+                      shipment_type: event.target.value as ShipmentFormData["shipment_type"],
+                    },
+                  }))}
+                >
+                  {SHIPMENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
                   value={(form.shipment_defaults as Partial<ShipmentFormData>).cargo_type || "GENERAL_CARGO"}
                   onChange={(event) => setForm((current) => ({
                     ...current,
@@ -154,8 +176,19 @@ export default function ShipmentTemplatesPage() {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Input
-                  placeholder="Default payment term"
-                  value={(form.shipment_defaults as Partial<ShipmentFormData>).payment_term || ""}
+                  placeholder="Default branch"
+                  value={(form.shipment_defaults as Partial<ShipmentFormData>).branch || ""}
+                  onChange={(event) => setForm((current) => ({
+                    ...current,
+                    shipment_defaults: {
+                      ...current.shipment_defaults,
+                      branch: event.target.value.toUpperCase(),
+                    },
+                  }))}
+                />
+                <select
+                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+                  value={(form.shipment_defaults as Partial<ShipmentFormData>).payment_term || "PREPAID"}
                   onChange={(event) => setForm((current) => ({
                     ...current,
                     shipment_defaults: {
@@ -163,7 +196,11 @@ export default function ShipmentTemplatesPage() {
                       payment_term: event.target.value as ShipmentFormData["payment_term"],
                     },
                   }))}
-                />
+                >
+                  {SHIPMENT_PAYMENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
                 <Input
                   placeholder="Default cargo description"
                   value={(form.shipment_defaults as Partial<ShipmentFormData>).cargo_description || ""}

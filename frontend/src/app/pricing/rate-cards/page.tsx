@@ -14,17 +14,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-
-function formatScope(scope: string | null): string {
-  const labels: Record<string, string> = {
-    A2A: 'Airport-to-Airport',
-    A2D: 'Airport-to-Door',
-    D2A: 'Door-to-Airport',
-    D2D: 'Door-to-Door',
-  };
-  if (!scope) return 'Mixed';
-  return labels[scope] || scope;
-}
+import { formatServiceScope } from '@/lib/display';
 
 export default function RateCardsPage() {
   const [rateCards, setRateCards] = useState<LogicalRateCard[]>([]);
@@ -100,7 +90,7 @@ export default function RateCardsPage() {
                     <TableCell>
                       <Badge variant="outline">{card.domain}</Badge>
                     </TableCell>
-                    <TableCell>{formatScope(card.service_scope)}</TableCell>
+                    <TableCell>{formatServiceScope(card.service_scope, 'Mixed')}</TableCell>
                     <TableCell>{card.pricing_model}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">

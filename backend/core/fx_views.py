@@ -8,8 +8,10 @@ Provides endpoints for:
 """
 
 from decimal import Decimal
-from datetime import timedelta
+from io import StringIO
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -23,6 +25,21 @@ from .models import FxSnapshot, FxRate, Currency
 
 # Default staleness threshold in hours
 FX_STALE_HOURS = 24
+FX_REFRESH_CURRENCIES = (
+    "USD",
+    "AUD",
+    "NZD",
+    "EUR",
+    "GBP",
+    "SGD",
+    "JPY",
+    "CNY",
+    "HKD",
+    "PHP",
+    "IDR",
+    "FJD",
+)
+FX_REFRESH_PAIRS = ",".join(f"PGK:{currency}" for currency in FX_REFRESH_CURRENCIES)
 
 
 class ManualFxUpdateView(APIView):
@@ -164,3 +181,57 @@ class FxStatusView(APIView):
         
         serializer = FxStatusSerializer(response_data)
         return Response(serializer.data)
+
+
+class FxRefreshView(APIView):
+    """
+    POST /api/v4/fx/refresh/
+
+    Triggers the automated BSP FX refresh and returns the latest snapshot metadata.
+    """
+    permission_classes = [IsAuthenticated, CanEditFXRates]
+
+    def post(self, request):
+        stdout = StringIO()
+        stderr = StringIO()
+
+        try:
+            call_command(
+                'fetch_fx',
+                pairs=FX_REFRESH_PAIRS,
+                provider='bsp_html',
+                stdout=stdout,
+                stderr=stderr,
+            )
+        except CommandError as exc:
+            return Response(
+                {
+                    'detail': str(exc),
+                    'stdout': stdout.getvalue(),
+                    'stderr': stderr.getvalue(),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            detail = stderr.getvalue().strip() or str(exc) or 'Failed to refresh FX rates'
+            return Response(
+                {
+                    'detail': detail,
+                    'stdout': stdout.getvalue(),
+                    'stderr': stderr.getvalue(),
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        latest_snapshot = FxSnapshot.objects.order_by('-as_of_timestamp').first()
+
+        return Response(
+            {
+                'status': 'success',
+                'message': 'FX rates refreshed successfully.',
+                'last_updated': latest_snapshot.as_of_timestamp if latest_snapshot else None,
+                'source': latest_snapshot.source if latest_snapshot else None,
+                'stdout': stdout.getvalue(),
+            },
+            status=status.HTTP_200_OK,
+        )

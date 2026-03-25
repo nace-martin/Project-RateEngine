@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -241,3 +242,19 @@ class QuotePublicDetailAPITest(APITestCase):
         self.assertEqual(payload["branding"]["support_phone"], "+675 325 8500")
         self.assertEqual(payload["branding"]["primary_color"], "#0F2A56")
         self.assertEqual(payload["branding"]["accent_color"], "#D71920")
+        self.assertTrue(payload["branding"]["logo_url"])
+        self.assertTrue(payload["branding"]["logo_url"].endswith("/static/images/efm_logo_cropped.png"))
+
+    @override_settings(STATIC_URL="https://cdn.example.com/static/")
+    def test_public_quote_branding_keeps_absolute_static_url(self):
+        quote = self._create_quote(service_scope="D2D")
+        token = build_public_quote_token(str(quote.id))
+
+        response = self.client.get(self.url, {"token": token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertEqual(
+            payload["branding"]["logo_url"],
+            "https://cdn.example.com/static/images/efm_logo_cropped.png",
+        )

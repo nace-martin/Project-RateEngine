@@ -664,18 +664,17 @@ export default function SpotRateEntryPage() {
                         </h1>
                         {currentStep === "intake" && (
                             <p className="mt-1 text-sm text-slate-600">
-                                Add the missing rates you need, or cancel to return to your quotes.
+                                Add the missing rates needed to complete this quote.
                             </p>
                         )}
                     </div>
-                    {currentStep === "intake" && (
-                        <PageCancelButton
-                            href="/quotes"
-                            isDirty={hasPendingUnsavedWork}
-                            confirmMessage="Discard this quote?"
-                            className="shrink-0"
-                        />
-                    )}
+                    <PageCancelButton
+                        href="/quotes"
+                        isDirty={hasPendingUnsavedWork}
+                        confirmMessage="Discard quote changes?"
+                        label="Cancel Quote"
+                        className="shrink-0"
+                    />
                 </div>
             </div>
 

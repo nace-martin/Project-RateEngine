@@ -140,6 +140,11 @@ class ShipmentSettings(models.Model):
 
 
 class Shipment(models.Model):
+    class ShipmentType(models.TextChoices):
+        DOMESTIC = "DOMESTIC", "Domestic"
+        EXPORT = "EXPORT", "Export"
+        IMPORT = "IMPORT", "Import (Legacy)"
+
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         FINALIZED = "FINALIZED", "Finalized"
@@ -200,6 +205,13 @@ class Shipment(models.Model):
     )
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT, db_index=True)
     connote_number = models.CharField(max_length=32, unique=True, null=True, blank=True, db_index=True)
+    shipment_type = models.CharField(
+        max_length=16,
+        choices=ShipmentType.choices,
+        default=ShipmentType.DOMESTIC,
+        db_index=True,
+    )
+    branch = models.CharField(max_length=64, blank=True, default="")
     shipment_date = models.DateField()
     reference_number = models.CharField(max_length=120, blank=True, default="")
 
@@ -379,6 +391,7 @@ class ShipmentEvent(models.Model):
         UPDATED = "UPDATED", "Updated"
         FINALIZED = "FINALIZED", "Finalized"
         PDF_GENERATED = "PDF_GENERATED", "PDF Generated"
+        REPRINTED = "REPRINTED", "Reprinted"
         DUPLICATED = "DUPLICATED", "Duplicated"
         CANCELLED = "CANCELLED", "Cancelled"
         REISSUED = "REISSUED", "Reissued"

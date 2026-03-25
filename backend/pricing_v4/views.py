@@ -422,7 +422,6 @@ class LocalCOGSRateViewSet(viewsets.ModelViewSet):
 
 from .rate_card_config import LOGICAL_RATE_CARDS
 from .models import ImportCOGS
-from .serializers import ExportSellRateSerializer, ImportSellRateSerializer, DomesticSellRateSerializer
 
 
 class LogicalRateCardsView(APIView):
@@ -433,96 +432,6 @@ class LogicalRateCardsView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated, CanViewLogicalRateCards]
     
-    def _legacy_get_unused(self, request):
-        result = []
-        
-        for card_config in LOGICAL_RATE_CARDS:
-            card_data = {
-                'id': card_config['id'],
-                'name': card_config['name'],
-                'description': card_config['description'],
-                'service_scope': card_config.get('service_scope'),
-                'domain': card_config['domain'],
-                'pricing_model': card_config['pricing_model'],
-                'source_tables': card_config['source_tables'],
-                'notes': card_config.get('notes', []),
-                'lines': [],
-                'line_count': 0,
-                'currencies': set(),
-                'coverage': set(),
-            }
-            
-            for source in card_config.get('sources', []):
-                lines = self._legacy_get_rate_lines_unused(card_config)
-            
-            # Serialize and add metadata
-            for line in lines:
-                card_data['lines'].append(self._legacy_serialize_line_unused(line, card_config))
-                card_data['currencies'].add(line.currency)
-                origin = getattr(line, 'origin_airport', None) or getattr(line, 'origin_zone', None)
-                dest = getattr(line, 'destination_airport', None) or getattr(line, 'destination_zone', None)
-                if origin and dest:
-                    card_data['corridors'].add(f"{origin}→{dest}")
-            
-            card_data['line_count'] = len(card_data['lines'])
-            card_data['currencies'] = list(card_data['currencies'])
-            card_data['corridors'] = sorted(list(card_data['corridors']))
-            
-            result.append(card_data)
-        
-        return Response(result)
-    
-    def _legacy_get_rate_lines_unused(self, config):
-        """Query the appropriate rate table with filters."""
-        table_name = config['rate_table']
-        currency_filter = config.get('currency_filter', [])
-        origin_filter = config.get('origin_filter')
-        destination_filter = config.get('destination_filter')
-        
-        if table_name == 'ExportSellRate':
-            qs = ExportSellRate.objects.select_related('product_code')
-            if currency_filter:
-                qs = qs.filter(currency__in=currency_filter)
-            if origin_filter:
-                qs = qs.filter(origin_airport__in=origin_filter)
-            if destination_filter:
-                qs = qs.filter(destination_airport__in=destination_filter)
-            return qs.order_by('origin_airport', 'destination_airport', 'product_code__code')
-            
-        elif table_name == 'ImportSellRate':
-            qs = ImportSellRate.objects.select_related('product_code')
-            if currency_filter:
-                qs = qs.filter(currency__in=currency_filter)
-            if origin_filter:
-                qs = qs.filter(origin_airport__in=origin_filter)
-            if destination_filter:
-                qs = qs.filter(destination_airport__in=destination_filter)
-            return qs.order_by('origin_airport', 'destination_airport', 'product_code__code')
-            
-        elif table_name == 'DomesticSellRate':
-            qs = DomesticSellRate.objects.select_related('product_code')
-            if currency_filter:
-                qs = qs.filter(currency__in=currency_filter)
-            if origin_filter:
-                qs = qs.filter(origin_zone__in=origin_filter)
-            if destination_filter:
-                qs = qs.filter(destination_zone__in=destination_filter)
-            return qs.order_by('origin_zone', 'destination_zone', 'product_code__code')
-        
-        return []
-    
-    def _legacy_serialize_line_unused(self, line, config):
-        """Serialize a rate line to dict."""
-        table_name = config['rate_table']
-        
-        if table_name == 'ExportSellRate':
-            return ExportSellRateSerializer(line).data
-        elif table_name == 'ImportSellRate':
-            return ImportSellRateSerializer(line).data
-        elif table_name == 'DomesticSellRate':
-            return DomesticSellRateSerializer(line).data
-        return {}
-
     def get(self, request):
         result = []
 

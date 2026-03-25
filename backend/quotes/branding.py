@@ -5,6 +5,12 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.staticfiles import finders
 
+FALLBACK_LOGO_ASSETS = (
+    "images/efm_logo_cropped.png",
+    "images/efm_logo_new.png",
+    "images/eac_logo.png",
+)
+
 
 @dataclass(frozen=True)
 class QuoteBrandingContext:
@@ -44,26 +50,33 @@ def _hex_to_rgb(value: str, default: tuple[int, int, int]) -> tuple[int, int, in
         return default
 
 
-def _fallback_logo_path() -> Optional[str]:
+def _build_static_asset_url(relative_path: str, request=None) -> str:
+    static_url = str(getattr(settings, "STATIC_URL", "/static/") or "/static/")
+    if static_url.startswith(("http://", "https://")):
+        if not static_url.endswith("/"):
+            static_url = f"{static_url}/"
+    elif not static_url.startswith("/"):
+        static_url = f"/{static_url}"
+    if not static_url.endswith("/"):
+        static_url = f"{static_url}/"
+
+    asset_url = f"{static_url}{relative_path.lstrip('/')}"
+    return request.build_absolute_uri(asset_url) if request is not None else asset_url
+
+
+def _fallback_logo(request=None) -> tuple[Optional[str], Optional[str]]:
     try:
-        logo_path = finders.find("images/efm_logo_cropped.png")
-        if logo_path and Path(logo_path).exists():
-            return logo_path
+        for asset in FALLBACK_LOGO_ASSETS:
+            logo_path = finders.find(asset)
+            if logo_path and Path(logo_path).exists():
+                return str(logo_path), _build_static_asset_url(asset, request=request)
 
-        fallback = Path(settings.BASE_DIR) / "static" / "images" / "efm_logo_cropped.png"
-        if fallback.exists():
-            return str(fallback)
-
-        new_logo = finders.find("images/efm_logo_new.png")
-        if new_logo and Path(new_logo).exists():
-            return new_logo
-
-        old_logo = finders.find("images/eac_logo.png")
-        if old_logo and Path(old_logo).exists():
-            return old_logo
+            fallback = Path(settings.BASE_DIR) / "static" / asset
+            if fallback.exists():
+                return str(fallback), _build_static_asset_url(asset, request=request)
     except Exception:
-        return None
-    return None
+        return None, None
+    return None, None
 
 
 def _resolve_uploaded_logo(logo_field, request=None) -> tuple[Optional[str], Optional[str]]:
@@ -101,7 +114,9 @@ def get_quote_branding(quote, request=None) -> QuoteBrandingContext:
         getattr(branding, "logo_primary", None),
         request=request,
     )
-    logo_path = uploaded_logo_path or _fallback_logo_path()
+    fallback_logo_path, fallback_logo_url = _fallback_logo(request=request)
+    logo_path = uploaded_logo_path or fallback_logo_path
+    logo_url = uploaded_logo_url or fallback_logo_url
 
     return QuoteBrandingContext(
         display_name=display_name,
@@ -115,5 +130,5 @@ def get_quote_branding(quote, request=None) -> QuoteBrandingContext:
         primary_color=primary_color,
         accent_color=accent_color,
         logo_path=logo_path,
-        logo_url=uploaded_logo_url,
+        logo_url=logo_url,
     )

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { API_BASE_URL } from "@/lib/config";
+import { formatIncoterm, formatPaymentTerm, formatServiceScope } from "@/lib/display";
 
 type PublicQuoteLine = {
   description: string;
@@ -71,18 +72,6 @@ const formatMoney = (currency: string, value: string | number | null) => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
-};
-
-const scopeLabel = (scope?: string | null) => {
-  const normalized = (scope || "").toUpperCase();
-  const labels: Record<string, string> = {
-    D2D: "Door-to-Door",
-    D2A: "Door-to-Airport",
-    A2D: "Airport-to-Door",
-    A2A: "Airport-to-Airport",
-    P2P: "Airport-to-Airport",
-  };
-  return labels[normalized] || "N/A";
 };
 
 const withAlpha = (hex: string, alphaHex: string) => {
@@ -222,16 +211,16 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Shipment</p>
               <p className="mt-1 text-base font-semibold text-slate-800">
-                {data.shipment.mode} / {data.shipment.direction}
+                {[data.shipment.mode, data.shipment.direction].filter(Boolean).join(" • ")}
               </p>
               <p className="text-sm text-slate-500">
-                Payment: {data.shipment.payment_term || "N/A"}
+                Payment: {formatPaymentTerm(data.shipment.payment_term)}
               </p>
               <p className="text-sm text-slate-500">
-                Scope of Service: {scopeLabel(data.shipment.service_scope)}
+                Service Scope: {formatServiceScope(data.shipment.service_scope)}
               </p>
               {data.shipment.incoterm && (
-                <p className="text-sm text-slate-500">Incoterm: {data.shipment.incoterm}</p>
+                <p className="text-sm text-slate-500">Incoterm: {formatIncoterm(data.shipment.incoterm)}</p>
               )}
             </div>
           </div>

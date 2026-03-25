@@ -167,8 +167,9 @@ export function RateCardUploader() {
               variant="outline"
               className="border-blue-200 text-blue-800 hover:bg-blue-50"
               onClick={handleChooseFile}
+              disabled={status === 'uploading'}
             >
-              [ Select File ]
+              Choose File
             </Button>
 
             <Button
@@ -176,8 +177,10 @@ export function RateCardUploader() {
               className="bg-blue-700 text-white hover:bg-blue-800"
               onClick={handleUpload}
               disabled={!selectedFile || status === 'uploading'}
+              loading={status === 'uploading'}
+              loadingText="Uploading rates..."
             >
-              {status === 'uploading' ? '[ Uploading Rates ]' : '[ Upload Rates ]'}
+              Upload Rates
             </Button>
           </div>
 

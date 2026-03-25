@@ -2,6 +2,8 @@ from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -49,6 +51,10 @@ class OrganizationScopedMixin:
 class ShipmentViewSet(OrganizationScopedMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, ShipmentWritePermission]
 
+    def _require_roles(self, request, allowed_roles, message):
+        if getattr(request.user, "role", None) not in allowed_roles:
+            raise PermissionDenied(message)
+
     def get_queryset(self):
         organization = self.get_organization()
         queryset = (
@@ -78,37 +84,93 @@ class ShipmentViewSet(OrganizationScopedMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def finalize(self, request, pk=None):
+        self._require_roles(
+            request,
+            {"sales", "manager", "admin"},
+            "Only sales, manager, or admin users can finalize shipments.",
+        )
         shipment = self.get_object()
-        serializer = self.get_serializer(shipment, data=request.data or {}, partial=True)
+        if shipment.status == Shipment.Status.FINALIZED:
+            return Response(ShipmentSerializer(shipment, context={"request": request}).data)
+        serializer = ShipmentSerializer(
+            shipment,
+            data=request.data or {},
+            partial=True,
+            context={**self.get_serializer_context(), "for_finalize": True},
+        )
         serializer.is_valid(raise_exception=True)
         shipment = serializer.save()
-        shipment = finalize_shipment(shipment, user=request.user)
+        try:
+            shipment = finalize_shipment(shipment, user=request.user)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
         return Response(ShipmentSerializer(shipment, context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
     def duplicate(self, request, pk=None):
+        self._require_roles(
+            request,
+            {"sales", "manager", "admin"},
+            "Only sales, manager, or admin users can duplicate draft shipments.",
+        )
         shipment = self.get_object()
-        duplicate = duplicate_shipment(shipment, user=request.user, reissue=False)
+        try:
+            duplicate = duplicate_shipment(shipment, user=request.user, reissue=False)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
         return Response(ShipmentSerializer(duplicate, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
+        self._require_roles(
+            request,
+            {"manager", "admin"},
+            "Only manager or admin users can cancel shipments.",
+        )
         shipment = self.get_object()
         reason = str(request.data.get("reason", "")).strip()
-        shipment = cancel_shipment(shipment, reason=reason, user=request.user)
+        try:
+            shipment = cancel_shipment(shipment, reason=reason, user=request.user)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
         return Response(ShipmentSerializer(shipment, context={"request": request}).data)
 
     @action(detail=True, methods=["post"])
     def reissue(self, request, pk=None):
+        self._require_roles(
+            request,
+            {"manager", "admin"},
+            "Only manager or admin users can reissue finalized shipments.",
+        )
         shipment = self.get_object()
-        reissued = duplicate_shipment(shipment, user=request.user, reissue=True)
+        try:
+            reissued = duplicate_shipment(shipment, user=request.user, reissue=True)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
         return Response(ShipmentSerializer(reissued, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):
+        self._require_roles(
+            request,
+            {"sales", "manager", "admin"},
+            "Only sales, manager, or admin users can print or reprint shipment connotes.",
+        )
         shipment = self.get_object()
-        if shipment.status != Shipment.Status.FINALIZED:
-            shipment = finalize_shipment(shipment, user=request.user)
+        if shipment.status == Shipment.Status.DRAFT:
+            serializer = ShipmentSerializer(
+                shipment,
+                data={},
+                partial=True,
+                context={**self.get_serializer_context(), "for_finalize": True},
+            )
+            serializer.is_valid(raise_exception=True)
+            try:
+                shipment = finalize_shipment(shipment, user=request.user)
+            except ValueError as exc:
+                raise ValidationError(str(exc))
+        elif shipment.status != Shipment.Status.FINALIZED:
+            raise ValidationError("Only draft or finalized shipments can generate or reprint connotes.")
         pdf_bytes = generate_shipment_pdf(shipment)
         file_name = f"{shipment.connote_number or shipment.id}.pdf"
         persist_generated_pdf(shipment, pdf_bytes, file_name, user=request.user)

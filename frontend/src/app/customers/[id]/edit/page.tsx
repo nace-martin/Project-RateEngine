@@ -3,6 +3,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { useRouter, useParams } from "next/navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,8 @@ import { Combobox } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/auth-context";
+import { useToast } from "@/context/toast-context";
+import { useConfirm } from "@/hooks/useConfirm";
 import { usePermissions } from "@/hooks/usePermissions";
 import * as api from "@/lib/api";
 import BulkDiscountFormModal from "@/components/pricing/BulkDiscountFormModal";
@@ -20,7 +23,9 @@ import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { StandardPageContainer } from "@/components/layout/standard-page";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
+import PageActionBar from "@/components/navigation/PageActionBar";
 import PageBackButton from "@/components/navigation/PageBackButton";
+import PageCancelButton from "@/components/navigation/PageCancelButton";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { getEditCustomerCopy } from "@/lib/page-copy";
@@ -70,6 +75,8 @@ export default function EditCustomerPage() {
   const params = useParams();
   const { id } = params;
   const { token } = useAuth();
+  const { toast } = useToast();
+  const confirm = useConfirm();
   const { isAdmin } = usePermissions();
   const canEditCustomerMaster = isAdmin;
   const canManageCommercialTerms = isAdmin;
@@ -277,6 +284,7 @@ export default function EditCustomerPage() {
     setIsSaving(true);
     try {
       await api.updateCustomer(token, id as string, customer);
+      toast({ title: "Customer updated", description: "Customer changes were saved successfully.", variant: "success" });
       router.push("/customers");
     } catch (err: unknown) {
       console.error(err);
@@ -328,9 +336,13 @@ export default function EditCustomerPage() {
   };
 
   const handleDeleteDiscount = async (discount: api.CustomerDiscount) => {
-    const confirmed = window.confirm(
-      `Delete negotiated pricing for ${discount.product_code_code || discount.product_code_display || "this line item"}?`,
-    );
+    const confirmed = await confirm({
+      title: "Delete negotiated pricing?",
+      description: `Delete negotiated pricing for ${discount.product_code_code || discount.product_code_display || "this line item"}?`,
+      confirmLabel: "Delete line",
+      cancelLabel: "Keep line",
+      variant: "destructive",
+    });
     if (!confirmed) return;
 
     setIsDeletingDiscount(discount.id);
@@ -364,15 +376,20 @@ export default function EditCustomerPage() {
       return;
     }
 
-    const shouldDelete = window.confirm(
-      "Delete this customer? This action cannot be undone.",
-    );
+    const shouldDelete = await confirm({
+      title: "Delete customer?",
+      description: "This action cannot be undone.",
+      confirmLabel: "Delete customer",
+      cancelLabel: "Keep customer",
+      variant: "destructive",
+    });
     if (!shouldDelete) return;
 
     setError(null);
     setIsDeleting(true);
     try {
       await api.deleteCustomer(token, id as string);
+      toast({ title: "Customer deleted", description: "The customer record was deleted.", variant: "success" });
       router.push("/customers");
     } catch (err: unknown) {
       console.error(err);
@@ -395,7 +412,13 @@ export default function EditCustomerPage() {
     const prompt = archive
       ? "Archive this customer? Historical quotes remain unchanged."
       : "Restore this archived customer?";
-    const confirmed = window.confirm(prompt);
+    const confirmed = await confirm({
+      title: archive ? "Archive customer?" : "Restore customer?",
+      description: prompt,
+      confirmLabel: archive ? "Archive customer" : "Restore customer",
+      cancelLabel: "Cancel",
+      variant: archive ? "destructive" : "default",
+    });
     if (!confirmed) return;
 
     setError(null);
@@ -403,6 +426,11 @@ export default function EditCustomerPage() {
     try {
       const updated = await api.setCustomerArchived(token, id as string, archive);
       setCustomer(updated);
+      toast({
+        title: archive ? "Customer archived" : "Customer restored",
+        description: archive ? "The customer was archived successfully." : "The customer was restored successfully.",
+        variant: "success",
+      });
     } catch (err: unknown) {
       console.error(err);
       if (err instanceof Error) {
@@ -416,8 +444,20 @@ export default function EditCustomerPage() {
   };
 
   const isDirty = customer !== null && initialCustomerSnapshot !== "" && JSON.stringify(customer) !== initialCustomerSnapshot;
-  const confirmLeave = useUnsavedChangesGuard(isDirty);
+  useUnsavedChangesGuard(isDirty);
   const returnTo = useReturnTo();
+  const confirmLeave = async () => {
+    if (!isDirty) {
+      return true;
+    }
+    return confirm({
+      title: "Discard customer changes?",
+      description: "You have unsaved customer changes. Leaving now will discard them.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Stay here",
+      variant: "destructive",
+    });
+  };
 
   if (!customer) return <div>Loading...</div>;
 
@@ -428,6 +468,7 @@ export default function EditCustomerPage() {
   }));
   const commercialProfile = normalizeCommercialProfile(customer.commercial_profile);
   const pageCopy = getEditCustomerCopy();
+  const canSaveCustomer = Boolean(customer.company_name.trim());
 
   return (
     <StandardPageContainer>
@@ -436,6 +477,7 @@ export default function EditCustomerPage() {
         returnTo={returnTo}
         isDirty={isDirty}
         confirmLeave={confirmLeave}
+        disabled={isSaving || isDeleting || isArchiving}
       />
       <WorkspaceContextCard
         title={pageCopy.title}
@@ -444,6 +486,7 @@ export default function EditCustomerPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div className={isSaving || isDeleting || isArchiving ? "space-y-6 pointer-events-none opacity-70" : "space-y-6"}>
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle>Customer Profile</CardTitle>
@@ -668,64 +711,63 @@ export default function EditCustomerPage() {
           </CardContent>
         </Card>
 
-        {error && <p className="text-red-500 p-2 bg-red-50 border border-red-200 rounded-md">{error}</p>}
+        </div>
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         {!canEditCustomerMaster && (
           <p className="text-amber-700 p-2 bg-amber-50 border border-amber-200 rounded-md">
             Customer profile and commercial terms are admin-only. You can still review the pricing overrides below.
           </p>
         )}
-        <Card className="border-slate-200 shadow-sm">
-          <CardContent className="flex flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap gap-2">
-              {isAdmin && (
-                <>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => handleArchiveToggle(customer.is_active !== false)}
-                    disabled={isSaving || isDeleting || isArchiving}
-                    className="min-w-[148px]"
-                  >
-                    {isArchiving
-                      ? (customer.is_active !== false ? "Archiving..." : "Restoring...")
-                      : (customer.is_active !== false ? "Archive Customer" : "Restore Customer")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={handleDelete}
-                    disabled={isSaving || isDeleting || isArchiving}
-                    className="min-w-[148px]"
-                  >
-                    {isDeleting ? "Deleting..." : "Delete Customer"}
-                  </Button>
-                </>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2 lg:justify-end">
+
+        <PageActionBar>
+          {isAdmin && (
+            <>
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => {
-                  if (confirmLeave()) {
-                    router.push(returnTo || '/customers');
-                  }
-                }}
+                onClick={() => handleArchiveToggle(customer.is_active !== false)}
                 disabled={isSaving || isDeleting || isArchiving}
-                className="min-w-[140px]"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={!canEditCustomerMaster || isSaving || isDeleting || isArchiving}
+                loading={isArchiving}
+                loadingText={customer.is_active !== false ? "Archiving..." : "Restoring..."}
                 className="min-w-[148px]"
               >
-                {isSaving ? "Saving..." : "Save Changes"}
+                {customer.is_active !== false ? "Archive Customer" : "Restore Customer"}
               </Button>
-            </div>
-          </CardContent>
-        </Card>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={isSaving || isDeleting || isArchiving}
+                loading={isDeleting}
+                loadingText="Deleting..."
+                className="min-w-[148px]"
+              >
+                Delete Customer
+              </Button>
+            </>
+          )}
+          <PageCancelButton
+            href={returnTo || "/customers"}
+            isDirty={isDirty}
+            confirmLeave={confirmLeave}
+            confirmMessage="Discard the current customer changes?"
+            disabled={isSaving || isDeleting || isArchiving}
+            className="min-w-[140px]"
+          />
+          <Button
+            type="submit"
+            disabled={!canEditCustomerMaster || !canSaveCustomer || isSaving || isDeleting || isArchiving}
+            loading={isSaving}
+            loadingText="Saving changes..."
+            className="min-w-[148px]"
+          >
+            Save Changes
+          </Button>
+        </PageActionBar>
       </form>
 
       <Card className="border-slate-200 bg-slate-50/60 shadow-sm">

@@ -33,7 +33,7 @@ export default function ShipmentsPage() {
         setLoading(false);
       }
     };
-    run();
+    void run();
   }, []);
 
   const filtered = useMemo(() => {
@@ -43,6 +43,7 @@ export default function ShipmentsPage() {
       [
         shipment.connote_number,
         shipment.reference_number,
+        shipment.branch,
         shipment.shipper_company_name,
         shipment.consignee_company_name,
         shipment.origin_code,
@@ -97,7 +98,7 @@ export default function ShipmentsPage() {
           <CardContent className="space-y-4">
             <div className="relative max-w-md">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input className="pl-9" placeholder="Search connote, reference, party, or route" value={query} onChange={(event) => setQuery(event.target.value)} />
+              <Input className="pl-9" placeholder="Search connote, reference, branch, party, or route" value={query} onChange={(event) => setQuery(event.target.value)} />
             </div>
 
             {loading ? (
@@ -110,6 +111,8 @@ export default function ShipmentsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Connote</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Branch</TableHead>
                       <TableHead>Route</TableHead>
                       <TableHead>Shipper</TableHead>
                       <TableHead>Consignee</TableHead>
@@ -121,14 +124,20 @@ export default function ShipmentsPage() {
                   <TableBody>
                     {filtered.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                           No shipments found.
                         </TableCell>
                       </TableRow>
                     ) : filtered.map((shipment) => (
                       <TableRow key={shipment.id}>
                         <TableCell className="font-medium">{shipment.connote_number || "Draft pending finalization"}</TableCell>
-                        <TableCell>{shipment.origin_code || shipment.origin_location_display} → {shipment.destination_code || shipment.destination_location_display}</TableCell>
+                        <TableCell>{formatShipmentType(shipment.shipment_type)}</TableCell>
+                        <TableCell>{shipment.branch || "-"}</TableCell>
+                        <TableCell>
+                          {shipment.origin_code || shipment.origin_location_display}
+                          {" -> "}
+                          {shipment.destination_code || shipment.destination_location_display}
+                        </TableCell>
                         <TableCell>{shipment.shipper_company_name}</TableCell>
                         <TableCell>{shipment.consignee_company_name}</TableCell>
                         <TableCell>{shipment.total_chargeable_weight_kg} kg</TableCell>
@@ -154,4 +163,9 @@ export default function ShipmentsPage() {
       </StandardPageContainer>
     </ProtectedRoute>
   );
+}
+
+function formatShipmentType(value: ShipmentRecord["shipment_type"]) {
+  if (value === "IMPORT") return "Import (Legacy)";
+  return value === "DOMESTIC" ? "Domestic" : "Export";
 }

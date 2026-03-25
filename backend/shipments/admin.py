@@ -3,7 +3,6 @@ from django.contrib import admin
 from .models import (
     Shipment,
     ShipmentAddressBookEntry,
-    ShipmentCharge,
     ShipmentDocument,
     ShipmentEvent,
     ShipmentPiece,
@@ -17,29 +16,27 @@ class ShipmentPieceInline(admin.TabularInline):
     extra = 0
 
 
-class ShipmentChargeInline(admin.TabularInline):
-    model = ShipmentCharge
-    extra = 0
-
-
 @admin.register(Shipment)
 class ShipmentAdmin(admin.ModelAdmin):
     list_display = (
         "connote_number",
         "status",
+        "shipment_type",
+        "branch",
         "shipment_date",
         "origin_code",
         "destination_code",
         "total_chargeable_weight_kg",
     )
-    list_filter = ("status", "shipment_date", "organization")
+    list_filter = ("status", "shipment_type", "shipment_date", "organization")
     search_fields = (
         "connote_number",
+        "branch",
         "reference_number",
         "shipper_company_name",
         "consignee_company_name",
     )
-    inlines = [ShipmentPieceInline, ShipmentChargeInline]
+    inlines = [ShipmentPieceInline]
 
 
 @admin.register(ShipmentAddressBookEntry)

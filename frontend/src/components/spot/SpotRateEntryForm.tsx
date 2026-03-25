@@ -9,6 +9,7 @@ import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
+import PageActionBar from "@/components/navigation/PageActionBar";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Form } from "@/components/ui/form";
@@ -377,6 +378,7 @@ export function SpotRateEntryForm({
         fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
 
     const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
+    const canSubmit = form.formState.isValid && !isSubmitBusy;
 
     return (
         <Form {...form}>
@@ -403,28 +405,30 @@ export function SpotRateEntryForm({
                     );
                 })}
 
-                <div className="flex gap-3">
+                <PageActionBar className="border-0 bg-transparent p-0 shadow-none">
                     {onSaveDraft && (
                         <Button
                             type="button"
                             variant="outline"
-                            disabled={isSubmitBusy}
+                            disabled={isSubmitBusy || !form.formState.isValid}
                             size="lg"
-                            className="flex-1"
                             onClick={handleSaveDraft}
+                            loading={isSavingDraft}
+                            loadingText="Saving draft..."
                         >
-                            {isSavingDraft ? "Saving..." : "Save Draft"}
+                            Save Draft
                         </Button>
                     )}
                     <Button
                         type="submit"
-                        disabled={isSubmitBusy}
+                        disabled={!canSubmit}
                         size="lg"
-                        className={`${onSaveDraft ? 'flex-1' : 'w-full'} bg-primary hover:bg-primary/90 text-primary-foreground font-semibold`}
+                        loading={Boolean(isLoading || form.formState.isSubmitting)}
+                        loadingText="Saving changes..."
                     >
-                        {isSubmitBusy ? "Processing..." : (submitLabel || "Save & Proceed")}
+                        {submitLabel || "Save & Proceed"}
                     </Button>
-                </div>
+                </PageActionBar>
             </form>
         </Form>
     );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type PageCancelButtonProps = {
@@ -9,6 +10,8 @@ type PageCancelButtonProps = {
   confirmMessage?: string;
   label?: string;
   className?: string;
+  disabled?: boolean;
+  confirmLeave?: () => boolean | Promise<boolean>;
 };
 
 export default function PageCancelButton({
@@ -17,11 +20,19 @@ export default function PageCancelButton({
   confirmMessage = "Discard this quote?",
   label = "Cancel",
   className,
+  disabled = false,
+  confirmLeave,
 }: PageCancelButtonProps) {
   const router = useRouter();
 
-  const handleClick = () => {
-    if (isDirty && !window.confirm(confirmMessage)) {
+  const handleClick = async () => {
+    if (disabled) {
+      return;
+    }
+    const canLeave = confirmLeave
+      ? await confirmLeave()
+      : (!isDirty || window.confirm(confirmMessage));
+    if (!canLeave) {
       return;
     }
 
@@ -39,7 +50,9 @@ export default function PageCancelButton({
       variant="outline"
       className={className}
       onClick={handleClick}
+      disabled={disabled}
     >
+      <X className="h-4 w-4" />
       {label}
     </Button>
   );

@@ -8,7 +8,7 @@ from .views import (
     CountryListAPIView,
     CityListAPIView,
 )
-from .fx_views import ManualFxUpdateView, FxStatusView
+from .fx_views import ManualFxUpdateView, FxRefreshView, FxStatusView
 
 app_name = 'core'
 
@@ -22,6 +22,7 @@ urlpatterns = [
     
     # --- V4 FX ENDPOINTS ---
     path('v4/fx/manual-update/', ManualFxUpdateView.as_view(), name='fx-manual-update'),
+    path('v4/fx/refresh/', FxRefreshView.as_view(), name='fx-refresh'),
     path('v4/fx/status/', FxStatusView.as_view(), name='fx-status'),
 ]
 

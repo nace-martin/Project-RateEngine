@@ -357,6 +357,7 @@ export function useQuoteLogic({
         cargoMetrics,
         internalError,
         contacts,
+        setContacts,
         isLoadingContacts,
         selectedCustomer,
         setSelectedCustomer,

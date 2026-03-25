@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { getLogicalRateCards, type LogicalRateCard, type LogicalRateCardLine } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { formatPaymentTerm, formatServiceScope } from '@/lib/display';
 import {
   Table,
   TableBody,
@@ -14,17 +15,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-function formatScope(scope: string | null): string {
-  const labels: Record<string, string> = {
-    A2A: 'Airport-to-Airport',
-    A2D: 'Airport-to-Door',
-    D2A: 'Door-to-Airport',
-    D2D: 'Door-to-Door',
-  };
-  if (!scope) return 'Mixed';
-  return labels[scope] || scope;
-}
 
 function formatRate(line: LogicalRateCardLine): string {
   if (line.amount) {
@@ -44,7 +34,7 @@ function formatRate(line: LogicalRateCardLine): string {
 
 function formatCoverage(line: LogicalRateCardLine): string {
   if (line.location_code) {
-    const extras = [line.direction, line.payment_term].filter(Boolean).join(' / ');
+    const extras = [line.direction, formatPaymentTerm(line.payment_term, "")].filter(Boolean).join(' • ');
     return extras ? `${line.location_code} (${extras})` : line.location_code;
   }
   if (line.origin_code && line.destination_code) {
@@ -118,7 +108,7 @@ export default function LogicalRateCardDetailPage() {
             <Link href="/pricing/rate-cards" className="hover:underline">
               V4 Pricing Cards
             </Link>
-            {' / '}
+            {' • '}
             {card.name}
           </div>
           <h1 className="text-3xl font-bold">{card.name}</h1>
@@ -136,7 +126,7 @@ export default function LogicalRateCardDetailPage() {
         </div>
         <div className="rounded-lg border p-4">
           <div className="text-xs uppercase text-muted-foreground">Scope</div>
-          <div className="mt-1 font-medium">{formatScope(card.service_scope)}</div>
+          <div className="mt-1 font-medium">{formatServiceScope(card.service_scope, 'Mixed')}</div>
         </div>
         <div className="rounded-lg border p-4">
           <div className="text-xs uppercase text-muted-foreground">Pricing Model</div>
@@ -184,7 +174,7 @@ export default function LogicalRateCardDetailPage() {
           <div className="border-b px-4 py-3">
             <div className="font-medium">{lines[0]?.source_label}</div>
             <div className="text-xs text-muted-foreground">
-              {lines[0]?.source_table} / {lines[0]?.pricing_role}
+              {[lines[0]?.source_table, lines[0]?.pricing_role].filter(Boolean).join(" • ")}
             </div>
           </div>
           <Table>

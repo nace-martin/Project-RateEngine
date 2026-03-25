@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { AlertTriangle, Mail, Copy, Check, X, Plane } from 'lucide-react';
 import Link from 'next/link';
+import { formatServiceScope } from '@/lib/display';
 
 interface MissingRatesModalProps {
     isOpen: boolean;
@@ -82,16 +83,10 @@ export function MissingRatesModal({
     }, [missingRates, shipmentDetails]);
 
     // Determine service description
-    const serviceDescription = useMemo(() => {
-        const scope = shipmentDetails.serviceScope;
-        const descriptions: Record<string, string> = {
-            'D2D': 'Door to Door',
-            'D2A': 'Door to Airport',
-            'A2D': 'Airport to Door',
-            'A2A': 'Airport to Airport',
-        };
-        return descriptions[scope] || scope;
-    }, [shipmentDetails.serviceScope]);
+    const serviceDescription = useMemo(
+        () => formatServiceScope(shipmentDetails.serviceScope, shipmentDetails.serviceScope),
+        [shipmentDetails.serviceScope]
+    );
 
     useEffect(() => {
         if (!shipmentDetails) return;

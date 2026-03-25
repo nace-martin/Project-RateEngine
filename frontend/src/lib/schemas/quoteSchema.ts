@@ -8,12 +8,7 @@ import { z } from 'zod'
 // These should match the choices in the backend models
 export const V3_MODES = {
   AIR: 'AIR',
-  // SEA: 'SEA', // Add when sea is ready
-  // ROAD: 'ROAD',
 } as const
-
-// This is no longer needed, as the backend auto-detects it.
-// export const V3_SHIPMENT_TYPES = { ... };
 
 export const V3_INCOTERMS = {
   EXW: 'EXW',
@@ -311,7 +306,6 @@ export const quoteFormSchemaV3 = z
     mode: z.nativeEnum(V3_MODES, {
       error: 'Mode of transport is required.',
     }),
-    // --- REMOVED 'shipment_type' ---
     incoterm: z.nativeEnum(V3_INCOTERMS, {
       error: 'Incoterm is required.',
     }),

@@ -9,6 +9,9 @@ import type {
   V3QuoteComputeResponse,
 } from "@/lib/types";
 import { useAuth } from "@/context/auth-context";
+import { useToast } from "@/context/toast-context";
+import { useConfirm } from "@/hooks/useConfirm";
+import PageActionBar from "@/components/navigation/PageActionBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +26,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import PageBackButton from "@/components/navigation/PageBackButton";
+import PageCancelButton from "@/components/navigation/PageCancelButton";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 
@@ -40,6 +44,8 @@ export default function NewQuoteVersionPage() {
   const params = useParams();
   const router = useRouter();
   const { token } = useAuth();
+  const { toast } = useToast();
+  const confirm = useConfirm();
   const quotationId =
     typeof params.id === "string"
       ? params.id
@@ -223,6 +229,11 @@ export default function NewQuoteVersionPage() {
     setError(null);
     try {
       await createQuoteVersion(token, quotationId, payload);
+      toast({
+        title: "Manual rates saved",
+        description: "The quote version was updated successfully.",
+        variant: "success",
+      });
       router.push(`/quotes/${quotationId}`);
     } catch (err) {
       const message =
@@ -234,8 +245,26 @@ export default function NewQuoteVersionPage() {
     }
   };
   const isDirty = JSON.stringify(charges) !== initialChargesSnapshot;
-  const confirmLeave = useUnsavedChangesGuard(isDirty);
+  useUnsavedChangesGuard(isDirty);
   const returnTo = useReturnTo();
+  const confirmLeave = async () => {
+    if (!isDirty) {
+      return true;
+    }
+    return confirm({
+      title: "Discard manual rate changes?",
+      description: "You have unsaved manual rate changes. Leaving now will discard them.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Stay here",
+      variant: "destructive",
+    });
+  };
+  const canSubmit = charges.length > 0 && charges.every((charge) => (
+    Boolean(charge.service_component_id)
+    && Boolean(charge.cost_fcy)
+    && Boolean(charge.currency)
+    && Boolean(charge.unit)
+  ));
 
   if (loadingQuote) {
     return (
@@ -255,6 +284,7 @@ export default function NewQuoteVersionPage() {
         returnTo={returnTo}
         isDirty={isDirty}
         confirmLeave={confirmLeave}
+        disabled={isSubmitting}
       />
       <Card>
         <CardHeader>
@@ -279,7 +309,7 @@ export default function NewQuoteVersionPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="space-y-6">
+            <div className={`space-y-6 ${isSubmitting ? "pointer-events-none opacity-70" : ""}`}>
               {charges.map((charge, index) => (
                 <div
                   key={`${charge.service_component_id}-${index}`}
@@ -401,26 +431,32 @@ export default function NewQuoteVersionPage() {
               ))}
             </div>
 
-            <div className="flex items-center gap-4">
+            <PageActionBar>
+              <PageCancelButton
+                href={returnTo || `/quotes/${quotationId}`}
+                isDirty={isDirty}
+                confirmMessage="Discard these manual rate changes?"
+                confirmLeave={confirmLeave}
+                disabled={isSubmitting}
+              />
               <Button
                 type="button"
                 variant="secondary"
                 onClick={handleAddCharge}
-                disabled={!componentOptions.length}
+                disabled={!componentOptions.length || isSubmitting}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 Add Manual Rate
               </Button>
               <Button
                 type="submit"
-                disabled={isSubmitting || !charges.length}
+                disabled={isSubmitting || !canSubmit}
+                loading={isSubmitting}
+                loadingText="Saving version..."
               >
-                {isSubmitting && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
                 Save Version
               </Button>
-            </div>
+            </PageActionBar>
           </form>
         </CardContent>
       </Card>

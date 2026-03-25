@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { formatIncoterm, formatPaymentTerm } from "@/lib/display";
 
 // Define the new props interface
 interface QuoteResultDisplayProps {
@@ -68,8 +69,8 @@ export default function QuoteResultDisplay({ quote }: QuoteResultDisplayProps) {
       <CardContent className="p-6">
         <div className="mb-8 grid grid-cols-2 gap-6 md:grid-cols-4">
           <InfoBox label="Status" value={quote.status} />
-          <InfoBox label="Incoterm" value={quote.incoterm} />
-          <InfoBox label="Payment Term" value={quote.payment_term} />
+          <InfoBox label="Incoterm" value={formatIncoterm(quote.incoterm)} />
+          <InfoBox label="Payment Term" value={formatPaymentTerm(quote.payment_term)} />
           {quote.valid_until && !['DRAFT', 'INCOMPLETE'].includes(quote.status) && (
             <InfoBox
               label="Valid Until"

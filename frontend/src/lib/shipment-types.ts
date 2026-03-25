@@ -1,4 +1,7 @@
+import { formatPaymentTerm, formatServiceScope } from "@/lib/display";
+
 export type ShipmentStatus = "DRAFT" | "FINALIZED" | "CANCELLED" | "REISSUED";
+export type ShipmentType = "DOMESTIC" | "EXPORT" | "IMPORT";
 export type ShipmentCargoType = "GENERAL_CARGO" | "VALUABLE_CARGO" | "PERISHABLE" | "LIVE_ANIMALS" | "DANGEROUS_GOODS";
 export type ShipmentServiceProduct = "STANDARD" | "EXPRESS" | "DOCUMENTS" | "SMALL_PARCELS" | "CHARTER";
 export type ShipmentServiceScope = "D2D" | "D2A" | "A2D" | "A2A";
@@ -36,8 +39,12 @@ export interface ShipmentRecord {
   id: string;
   status: ShipmentStatus;
   connote_number: string | null;
+  shipment_type: ShipmentType;
+  branch: string;
   shipment_date: string;
   reference_number: string;
+  booking_reference: string;
+  flight_reference: string;
   shipper_company_name: string;
   shipper_contact_name: string;
   shipper_email: string;
@@ -71,7 +78,10 @@ export interface ShipmentRecord {
   cargo_type: ShipmentCargoType;
   service_product: ShipmentServiceProduct;
   service_scope: ShipmentServiceScope;
-  payment_term: ShipmentPaymentTerm;
+  payment_term: ShipmentPaymentTerm | "THIRD_PARTY";
+  export_reference: string;
+  invoice_reference: string;
+  permit_reference: string;
   cargo_description: string;
   is_dangerous_goods: boolean;
   dangerous_goods_details: string;
@@ -79,6 +89,7 @@ export interface ShipmentRecord {
   perishable_details: string;
   handling_notes: string;
   declaration_notes: string;
+  customs_notes: string;
   declared_value: string | null;
   currency: string;
   total_pieces: number;
@@ -163,8 +174,12 @@ export interface ShipmentSettings {
 }
 
 export interface ShipmentFormData {
+  shipment_type: ShipmentType;
+  branch: string;
   shipment_date: string;
   reference_number: string;
+  booking_reference: string;
+  flight_reference: string;
   shipper_company_name: string;
   shipper_contact_name: string;
   shipper_email: string;
@@ -197,18 +212,22 @@ export interface ShipmentFormData {
   service_product: ShipmentServiceProduct;
   service_scope: ShipmentServiceScope;
   payment_term: ShipmentPaymentTerm;
+  export_reference: string;
+  invoice_reference: string;
+  permit_reference: string;
   cargo_description: string;
-  is_dangerous_goods: boolean;
   dangerous_goods_details: string;
-  is_perishable: boolean;
   perishable_details: string;
   handling_notes: string;
   declaration_notes: string;
-  declared_value: string;
-  currency: string;
+  customs_notes: string;
   pieces: ShipmentPieceInput[];
-  charges: ShipmentChargeInput[];
 }
+
+export const SHIPMENT_TYPE_OPTIONS: Array<{ value: Extract<ShipmentType, "DOMESTIC" | "EXPORT">; label: string }> = [
+  { value: "DOMESTIC", label: "Domestic" },
+  { value: "EXPORT", label: "Export" },
+];
 
 export const SHIPMENT_CARGO_TYPE_OPTIONS: Array<{ value: ShipmentCargoType; label: string }> = [
   { value: "GENERAL_CARGO", label: "General Cargo" },
@@ -226,35 +245,20 @@ export const SHIPMENT_SERVICE_PRODUCT_OPTIONS: Array<{ value: ShipmentServicePro
   { value: "CHARTER", label: "Charter" },
 ];
 
-export const FIXED_PRODUCT_RULES: Partial<Record<ShipmentServiceProduct, { label: string; amount: string; routePairs: Array<[string, string]>; maxGrossWeightKg?: number }>> = {
-  DOCUMENTS: {
-    label: "Documents Door-to-Door",
-    amount: "50.00",
-    routePairs: [["POM", "LAE"], ["LAE", "POM"]],
-  },
-  SMALL_PARCELS: {
-    label: "Small Parcels Door-to-Door",
-    amount: "80.00",
-    routePairs: [["POM", "LAE"], ["LAE", "POM"]],
-    maxGrossWeightKg: 5,
-  },
-};
+export const SHIPMENT_PAYMENT_TYPE_OPTIONS: Array<{ value: Exclude<ShipmentPaymentTerm, "THIRD_PARTY">; label: string }> = [
+  { value: "PREPAID", label: "Prepaid" },
+  { value: "COLLECT", label: "Collect" },
+];
 
-export const DOMESTIC_D2D_ROUTE_PAIRS: Array<[string, string]> = [["POM", "LAE"], ["LAE", "POM"]];
 export const DOMESTIC_COUNTRY_CODE = "PG";
 
-export const createDefaultChargeLine = (currency = "PGK"): ShipmentChargeInput => ({
-  charge_type: "FREIGHT",
-  description: "Air freight",
-  amount: "",
-  currency,
-  payment_by: "SHIPPER",
-  notes: "",
-});
-
 export const createEmptyShipmentForm = (): ShipmentFormData => ({
+  shipment_type: "DOMESTIC",
+  branch: "",
   shipment_date: new Date().toISOString().slice(0, 10),
   reference_number: "",
+  booking_reference: "",
+  flight_reference: "",
   shipper_company_name: "",
   shipper_contact_name: "",
   shipper_email: "",
@@ -287,19 +291,19 @@ export const createEmptyShipmentForm = (): ShipmentFormData => ({
   service_product: "STANDARD",
   service_scope: "A2A",
   payment_term: "PREPAID",
+  export_reference: "",
+  invoice_reference: "",
+  permit_reference: "",
   cargo_description: "",
-  is_dangerous_goods: false,
   dangerous_goods_details: "",
-  is_perishable: false,
   perishable_details: "",
   handling_notes: "",
   declaration_notes: "",
-  declared_value: "",
-  currency: "PGK",
+  customs_notes: "",
   pieces: [
     {
       piece_count: 1,
-      package_type: "CTN",
+      package_type: "",
       description: "",
       length_cm: "",
       width_cm: "",
@@ -307,7 +311,6 @@ export const createEmptyShipmentForm = (): ShipmentFormData => ({
       gross_weight_kg: "",
     },
   ],
-  charges: [createDefaultChargeLine("PGK")],
 });
 
 const toNumber = (value: string | number | undefined | null): number => {
@@ -315,79 +318,28 @@ const toNumber = (value: string | number | undefined | null): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-export const formatShipmentChoice = (value: string | null | undefined): string =>
-  (value || "").replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
-
-export const isFixedPriceProduct = (serviceProduct: ShipmentServiceProduct): boolean =>
-  serviceProduct === "DOCUMENTS" || serviceProduct === "SMALL_PARCELS";
-
-export const isFixedProductRouteValid = (
-  originCode: string,
-  destinationCode: string,
-  serviceProduct: ShipmentServiceProduct,
-): boolean => {
-  const rule = FIXED_PRODUCT_RULES[serviceProduct];
-  if (!rule) {
-    return true;
+export const formatShipmentChoice = (value: string | null | undefined): string => {
+  const normalized = (value || "").toUpperCase().trim();
+  if (!normalized) {
+    return "";
   }
-  return rule.routePairs.some(([origin, destination]) => origin === originCode && destination === destinationCode);
-};
 
-export const isDomesticDoorToDoorRoute = (originCode: string, destinationCode: string): boolean =>
-  DOMESTIC_D2D_ROUTE_PAIRS.some(([origin, destination]) => origin === originCode && destination === destinationCode);
+  if (["D2D", "D2A", "A2D", "A2A", "P2P"].includes(normalized)) {
+    return formatServiceScope(normalized);
+  }
+
+  if (["PREPAID", "COLLECT", "THIRD_PARTY"].includes(normalized)) {
+    return formatPaymentTerm(normalized);
+  }
+
+  return normalized.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+};
 
 export const isDomesticShipmentRoute = (originCountryCode: string, destinationCountryCode: string): boolean =>
   originCountryCode === DOMESTIC_COUNTRY_CODE && destinationCountryCode === DOMESTIC_COUNTRY_CODE;
 
-export const deriveServiceScope = (
-  serviceProduct: ShipmentServiceProduct,
-  originCode: string,
-  destinationCode: string,
-  originCountryCode: string,
-  destinationCountryCode: string,
-  currentScope: ShipmentServiceScope,
-): ShipmentServiceScope =>
-  isFixedPriceProduct(serviceProduct) || isDomesticDoorToDoorRoute(originCode, destinationCode)
-    ? "D2D"
-    : isDomesticShipmentRoute(originCountryCode, destinationCountryCode)
-      ? (currentScope === "A2D" || currentScope === "D2A" ? currentScope : "A2D")
-      : "A2A";
-
-export const buildFixedProductCharge = (
-  serviceProduct: ShipmentServiceProduct,
-  currency = "PGK",
-): ShipmentChargeInput | null => {
-  const rule = FIXED_PRODUCT_RULES[serviceProduct];
-  if (!rule) {
-    return null;
-  }
-  return {
-    charge_type: "FREIGHT",
-    description: rule.label,
-    amount: rule.amount,
-    currency,
-    payment_by: "SHIPPER",
-    notes: "Auto-applied fixed domestic product pricing.",
-  };
-};
-
-export const normalizeShipmentForm = (form: ShipmentFormData): ShipmentFormData => {
-  const fixedCharge = buildFixedProductCharge(form.service_product, form.currency);
-  return {
-    ...form,
-    service_scope: deriveServiceScope(
-      form.service_product,
-      form.origin_code,
-      form.destination_code,
-      form.origin_country_code,
-      form.destination_country_code,
-      form.service_scope,
-    ),
-    is_dangerous_goods: form.cargo_type === "DANGEROUS_GOODS",
-    is_perishable: form.cargo_type === "PERISHABLE",
-    charges: fixedCharge ? [fixedCharge] : form.charges.length > 0 ? form.charges : [createDefaultChargeLine(form.currency)],
-  };
-};
+export const isExportShipmentRoute = (originCountryCode: string, destinationCountryCode: string): boolean =>
+  originCountryCode === DOMESTIC_COUNTRY_CODE && Boolean(destinationCountryCode) && destinationCountryCode !== DOMESTIC_COUNTRY_CODE;
 
 export const calculatePieceMetrics = (piece: ShipmentPieceInput) => {
   const pieceCount = Math.max(0, toNumber(piece.piece_count));
@@ -414,19 +366,38 @@ export const calculateShipmentTotals = (form: ShipmentFormData) => {
     { totalPieces: 0, gross: 0, volumetric: 0, chargeable: 0 },
   );
 
-  const totalChargesAmount = form.charges.reduce((sum, charge) => sum + toNumber(charge.amount), 0);
   return {
     totalPieces: totals.totalPieces,
     totalGrossWeightKg: totals.gross.toFixed(2),
     totalVolumetricWeightKg: totals.volumetric.toFixed(2),
     totalChargeableWeightKg: totals.chargeable.toFixed(2),
-    totalChargesAmount: totalChargesAmount.toFixed(2),
   };
 };
 
+export const normalizeShipmentForm = (form: ShipmentFormData): ShipmentFormData => ({
+  ...form,
+  branch: form.branch.trim(),
+  reference_number: form.reference_number.trim(),
+  booking_reference: form.booking_reference.trim(),
+  flight_reference: form.flight_reference.trim(),
+  export_reference: form.export_reference.trim(),
+  invoice_reference: form.invoice_reference.trim(),
+  permit_reference: form.permit_reference.trim(),
+  cargo_description: form.cargo_description.trim(),
+  dangerous_goods_details: form.dangerous_goods_details.trim(),
+  perishable_details: form.perishable_details.trim(),
+  handling_notes: form.handling_notes.trim(),
+  declaration_notes: form.declaration_notes.trim(),
+  customs_notes: form.customs_notes.trim(),
+});
+
 export const toShipmentPayload = (form: ShipmentFormData) => ({
+  shipment_type: form.shipment_type,
+  branch: form.branch,
   shipment_date: form.shipment_date,
   reference_number: form.reference_number,
+  booking_reference: form.booking_reference,
+  flight_reference: form.flight_reference,
   shipper_company_name: form.shipper_company_name,
   shipper_contact_name: form.shipper_contact_name,
   shipper_email: form.shipper_email,
@@ -453,22 +424,26 @@ export const toShipmentPayload = (form: ShipmentFormData) => ({
   service_product: form.service_product,
   service_scope: form.service_scope,
   payment_term: form.payment_term,
+  export_reference: form.export_reference,
+  invoice_reference: form.invoice_reference,
+  permit_reference: form.permit_reference,
   cargo_description: form.cargo_description,
-  is_dangerous_goods: form.is_dangerous_goods,
   dangerous_goods_details: form.dangerous_goods_details,
-  is_perishable: form.is_perishable,
   perishable_details: form.perishable_details,
   handling_notes: form.handling_notes,
   declaration_notes: form.declaration_notes,
-  declared_value: form.declared_value || null,
-  currency: form.currency,
+  customs_notes: form.customs_notes,
   pieces: form.pieces,
-  charges: form.charges,
+  charges: [],
 });
 
 export const shipmentToFormData = (shipment: ShipmentRecord): ShipmentFormData => ({
+  shipment_type: shipment.shipment_type,
+  branch: shipment.branch || "",
   shipment_date: shipment.shipment_date,
   reference_number: shipment.reference_number,
+  booking_reference: shipment.booking_reference || "",
+  flight_reference: shipment.flight_reference || "",
   shipper_company_name: shipment.shipper_company_name,
   shipper_contact_name: shipment.shipper_contact_name,
   shipper_email: shipment.shipper_email,
@@ -501,15 +476,15 @@ export const shipmentToFormData = (shipment: ShipmentRecord): ShipmentFormData =
   service_product: shipment.service_product,
   service_scope: shipment.service_scope,
   payment_term: shipment.payment_term,
+  export_reference: shipment.export_reference || "",
+  invoice_reference: shipment.invoice_reference || "",
+  permit_reference: shipment.permit_reference || "",
   cargo_description: shipment.cargo_description,
-  is_dangerous_goods: shipment.is_dangerous_goods,
   dangerous_goods_details: shipment.dangerous_goods_details,
-  is_perishable: shipment.is_perishable,
   perishable_details: shipment.perishable_details,
   handling_notes: shipment.handling_notes,
   declaration_notes: shipment.declaration_notes,
-  declared_value: shipment.declared_value || "",
-  currency: shipment.currency,
+  customs_notes: shipment.customs_notes || "",
   pieces: shipment.pieces.map((piece) => ({
     ...piece,
     length_cm: String(piece.length_cm ?? ""),
@@ -518,9 +493,5 @@ export const shipmentToFormData = (shipment: ShipmentRecord): ShipmentFormData =
     gross_weight_kg: String(piece.gross_weight_kg ?? ""),
     volumetric_weight_kg: piece.volumetric_weight_kg ? String(piece.volumetric_weight_kg) : undefined,
     chargeable_weight_kg: piece.chargeable_weight_kg ? String(piece.chargeable_weight_kg) : undefined,
-  })),
-  charges: shipment.charges.map((charge) => ({
-    ...charge,
-    amount: String(charge.amount ?? ""),
   })),
 });

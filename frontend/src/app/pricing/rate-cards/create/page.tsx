@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createRateCardV3, searchCompanies, searchLocations } from '@/lib/api';
 import { CompanySearchResult, LocationSearchResult } from '@/lib/types';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,14 +29,20 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover"
+import { useToast } from '@/context/toast-context';
+import { useConfirm } from '@/hooks/useConfirm';
+import { useAsyncAction } from '@/hooks/useAsyncAction';
 import { cn } from "@/lib/utils"
+import PageActionBar from '@/components/navigation/PageActionBar';
 import PageBackButton from '@/components/navigation/PageBackButton';
+import PageCancelButton from '@/components/navigation/PageCancelButton';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useReturnTo } from '@/hooks/useReturnTo';
 export default function CreateRateCardPage() {
     const router = useRouter();
+    const { toast } = useToast();
+    const confirm = useConfirm();
     const [suppliers, setSuppliers] = useState<CompanySearchResult[]>([]);
-    const [saving, setSaving] = useState(false);
 
     // Form State
     const [name, setName] = useState('');
@@ -58,8 +65,21 @@ export default function CreateRateCardPage() {
         () => Boolean(name || supplierId || originLocationId || destinationLocationId || mode !== 'AIR' || currency !== 'AUD' || scope !== 'BUY' || priority !== '100' || validFrom),
         [name, supplierId, originLocationId, destinationLocationId, mode, currency, scope, priority, validFrom]
     );
-    const confirmLeave = useUnsavedChangesGuard(isDirty);
+    const canCreateRateCard = Boolean(name.trim() && supplierId && originLocationId && destinationLocationId);
+    useUnsavedChangesGuard(isDirty);
     const returnTo = useReturnTo();
+    const confirmLeave = async () => {
+        if (!isDirty) {
+            return true;
+        }
+        return confirm({
+            title: 'Discard rate card draft?',
+            description: 'You have unsaved rate card details. Leaving now will discard them.',
+            confirmLabel: 'Discard draft',
+            cancelLabel: 'Stay here',
+            variant: 'destructive',
+        });
+    };
 
     useEffect(() => {
         async function loadData() {
@@ -77,9 +97,7 @@ export default function CreateRateCardPage() {
         loadData();
     }, []);
 
-    const handleSave = async () => {
-        try {
-            setSaving(true);
+    const createRateCardAction = useAsyncAction(async () => {
             const payload = {
                 name,
                 supplier: supplierId,
@@ -92,20 +110,27 @@ export default function CreateRateCardPage() {
                 valid_from: validFrom || new Date().toISOString().split('T')[0],
             };
 
-            const newCard = await createRateCardV3(payload);
-            router.push(`/pricing/rate-cards/${newCard.id}`);
-        } catch (err) {
-            console.error(err);
-            alert('Failed to create rate card');
-        } finally {
-            setSaving(false);
-        }
+            return createRateCardV3(payload);
+        }, {
+            onSuccess: async (newCard) => {
+                toast({
+                    title: 'Rate card created',
+                    description: 'The new rate card is ready for editing.',
+                    variant: 'success',
+                });
+                router.push(`/pricing/rate-cards/${newCard.id}`);
+            },
+        });
+    const saving = createRateCardAction.isRunning;
+    const error = createRateCardAction.error;
+    const handleSave = () => {
+        void createRateCardAction.run().catch(() => undefined);
     };
 
     return (
         <div className="container mx-auto py-8 space-y-6">
             <div>
-                <PageBackButton fallbackHref="/pricing/rate-cards" returnTo={returnTo} isDirty={isDirty} confirmLeave={confirmLeave} />
+                <PageBackButton fallbackHref="/pricing/rate-cards" returnTo={returnTo} isDirty={isDirty} confirmLeave={confirmLeave} disabled={saving} />
                 <h1 className="text-3xl font-bold tracking-tight">Create Rate Card</h1>
             </div>
 
@@ -113,7 +138,7 @@ export default function CreateRateCardPage() {
                 <CardHeader>
                     <CardTitle>Rate Card Details</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className={`space-y-4 ${saving ? "pointer-events-none opacity-70" : ""}`}>
                     <div className="space-y-2">
                         <Label>Name</Label>
                         <Input value={name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="e.g. EFM AU - BNE to POM" />
@@ -315,14 +340,27 @@ export default function CreateRateCardPage() {
                         <Input type="date" value={validFrom} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setValidFrom(e.target.value)} />
                     </div>
 
-                    <div className="pt-4 flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => router.back()}>Cancel</Button>
-                        <Button onClick={handleSave} disabled={saving}>
-                            {saving ? 'Creating...' : 'Create Rate Card'}
-                        </Button>
-                    </div>
                 </CardContent>
             </Card>
+
+            {error ? (
+                <Alert variant="destructive" className="max-w-2xl">
+                    <AlertDescription>{error}</AlertDescription>
+                </Alert>
+            ) : null}
+
+            <PageActionBar className="max-w-2xl">
+                <PageCancelButton
+                    href={returnTo || "/pricing/rate-cards"}
+                    isDirty={isDirty}
+                    confirmLeave={confirmLeave}
+                    confirmMessage="Discard this new rate card?"
+                    disabled={saving}
+                />
+                <Button onClick={handleSave} disabled={saving || !canCreateRateCard} loading={saving} loadingText="Creating rate card...">
+                    Create Rate Card
+                </Button>
+            </PageActionBar>
         </div>
     );
 }

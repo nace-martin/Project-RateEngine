@@ -3,11 +3,18 @@
 import { useEffect, useState } from "react";
 
 import CompanySearchCombobox from "@/components/CompanySearchCombobox";
+import PageActionBar from "@/components/navigation/PageActionBar";
+import PageBackButton from "@/components/navigation/PageBackButton";
+import PageCancelButton from "@/components/navigation/PageCancelButton";
 import ProtectedRoute from "@/components/protected-route";
 import { PageHeader, StandardPageContainer } from "@/components/layout/standard-page";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/context/toast-context";
+import { useConfirm } from "@/hooks/useConfirm";
+import { useReturnTo } from "@/hooks/useReturnTo";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import {
   createShipmentAddressBookEntry,
   deleteShipmentAddressBookEntry,
@@ -84,6 +91,8 @@ const getPrimaryContactLabel = (contact: Contact) => {
 };
 
 export default function ShipmentAddressBookPage() {
+  const { toast } = useToast();
+  const confirm = useConfirm();
   const [entries, setEntries] = useState<ShipmentAddressBookEntry[]>([]);
   const [form, setForm] = useState<AddressBookForm>({ ...emptyForm });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -98,6 +107,22 @@ export default function ShipmentAddressBookPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContactId, setSelectedContactId] = useState("");
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  const returnTo = useReturnTo();
+  const isDirty = editingId !== null || JSON.stringify(form) !== JSON.stringify(emptyForm);
+  const canSaveEntry = Object.keys(validateForm(trimForm(form))).length === 0;
+  useUnsavedChangesGuard(isDirty, "You have unsaved address book changes. Leave this page?");
+  const confirmLeave = async () => {
+    if (!isDirty) {
+      return true;
+    }
+    return confirm({
+      title: "Discard address book changes?",
+      description: "You have unsaved address book changes. Leaving now will discard them.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Stay here",
+      variant: "destructive",
+    });
+  };
 
   const load = async () => {
     setIsLoading(true);
@@ -216,6 +241,11 @@ export default function ShipmentAddressBookPage() {
       } else {
         await createShipmentAddressBookEntry(payload);
       }
+      toast({
+        title: editingId ? "Entry updated" : "Entry created",
+        description: "Shipment address book details were saved successfully.",
+        variant: "success",
+      });
       resetForm();
       await load();
     } catch (error) {
@@ -254,10 +284,25 @@ export default function ShipmentAddressBookPage() {
   };
 
   const removeEntry = async (entryId: string) => {
+    const confirmed = await confirm({
+      title: "Delete saved address?",
+      description: "This saved shipment address book entry will be removed.",
+      confirmLabel: "Delete entry",
+      cancelLabel: "Keep entry",
+      variant: "destructive",
+    });
+    if (!confirmed) {
+      return;
+    }
     setDeletingId(entryId);
     setSubmitError(null);
     try {
       await deleteShipmentAddressBookEntry(entryId);
+      toast({
+        title: "Entry deleted",
+        description: "The address book entry was removed.",
+        variant: "success",
+      });
       await load();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "Failed to delete the address book entry.");
@@ -285,6 +330,13 @@ export default function ShipmentAddressBookPage() {
   return (
     <ProtectedRoute>
       <StandardPageContainer>
+        <PageBackButton
+          fallbackHref="/shipments"
+          returnTo={returnTo}
+          isDirty={isDirty}
+          confirmLeave={confirmLeave}
+          disabled={isSaving}
+        />
         <PageHeader
           title="Shipment Address Book"
           description="Save repeat shipper and consignee details to speed up the wizard."
@@ -356,7 +408,7 @@ export default function ShipmentAddressBookPage() {
             <CardHeader>
               <CardTitle className="text-lg">{editingId ? "Edit Entry" : "New Entry"}</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className={`space-y-3 ${isSaving ? "pointer-events-none opacity-70" : ""}`}>
               {submitError ? (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
                   {submitError}
@@ -492,16 +544,23 @@ export default function ShipmentAddressBookPage() {
                 {formErrors.country_code ? <p className="text-xs text-rose-600">{formErrors.country_code}</p> : null}
               </div>
 
-              <div className="flex gap-3">
-                <Button disabled={isSaving} onClick={() => void save()}>
-                  {isSaving ? "Saving..." : editingId ? "Update Entry" : "Save Entry"}
-                </Button>
+              <PageActionBar>
+                <PageCancelButton
+                  href={returnTo || "/shipments"}
+                  isDirty={isDirty}
+                  confirmLeave={confirmLeave}
+                  confirmMessage="Discard the current address book changes?"
+                  disabled={isSaving}
+                />
                 {editingId ? (
-                  <Button variant="outline" onClick={resetForm}>
-                    Cancel
+                  <Button type="button" variant="outline" onClick={resetForm} disabled={isSaving}>
+                    Reset Form
                   </Button>
                 ) : null}
-              </div>
+                <Button disabled={isSaving || !canSaveEntry} onClick={() => void save()} loading={isSaving} loadingText={editingId ? "Updating entry..." : "Saving entry..."}>
+                  {editingId ? "Update Entry" : "Save Entry"}
+                </Button>
+              </PageActionBar>
             </CardContent>
           </Card>
         </div>
