@@ -13,6 +13,7 @@ Use this with:
 - [production-cutover-checklist.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-cutover-checklist.md)
 - [go-live-status-tracker.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/go-live-status-tracker.md)
 - [beta-readiness-efm.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/beta-readiness-efm.md)
+- [production-launch-execution-sheet.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-launch-execution-sheet.md)
 
 ## Architecture
 
@@ -28,7 +29,8 @@ The repo now includes:
 
 - [render.yaml](/C:/Users/commercial.manager/dev/Project-RateEngine/render.yaml)
 - public health endpoint: `/api/health/`
-- environment flags for serving uploaded branding media and Django static files in the beta API service
+- environment flags for serving Django static files in the beta API service
+- explicit public/authenticated endpoints for branding logos and shipment document downloads
 
 ## Vercel Setup
 
@@ -41,7 +43,7 @@ Recommended settings:
 - Install Command: default
 - Build Command: default
 - Output Directory: default
-- Node version: `18`
+- Node version: `20`
 
 Required environment variables:
 
@@ -130,7 +132,6 @@ Required:
 - `GEMINI_API_KEY`
 - `USE_X_FORWARDED_PROTO=true`
 - `SERVE_STATIC_FILES=true`
-- `SERVE_MEDIA_FILES=true`
 
 Recommended values:
 
@@ -182,7 +183,8 @@ Notes:
 ## Important Beta Notes
 
 - uploaded branding files are now expected to live on the Render persistent disk at `backend/branding`
-- the API service is configured to serve media and Django static files directly for beta simplicity
+- Django static files are served directly by the beta API service for simplicity
+- branding logos and shipment documents are exposed through explicit application endpoints instead of a generic `/media` mount
 - this is acceptable for a small beta, but a more production-hardened setup should later move static/media behind a dedicated asset strategy
 
 ## Go / No-Go For Beta

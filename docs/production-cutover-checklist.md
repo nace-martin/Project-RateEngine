@@ -9,6 +9,7 @@ Use it with:
 - [go-live-status-tracker.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/go-live-status-tracker.md)
 - [launch-corridor-matrix.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/launch-corridor-matrix.md)
 - [vercel-render-beta-deploy.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/vercel-render-beta-deploy.md)
+- [production-launch-execution-sheet.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-launch-execution-sheet.md)
 
 ## Hard Stop Rules
 
@@ -82,7 +83,6 @@ Required env vars:
 - `GEMINI_API_KEY`
 - `USE_X_FORWARDED_PROTO=true` if TLS terminates upstream
 - `SERVE_STATIC_FILES=true`
-- `SERVE_MEDIA_FILES=true`
 
 Pass criteria:
 - production settings load without error

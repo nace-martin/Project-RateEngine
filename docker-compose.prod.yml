@@ -35,6 +35,9 @@ services:
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:3000}
+      - SERVE_STATIC_FILES=True
+      - SERVE_MEDIA_FILES=False
+      - ENABLE_BROWSABLE_API=False
     depends_on:
       postgres:
         condition: service_healthy
