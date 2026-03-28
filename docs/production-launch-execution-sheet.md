@@ -67,9 +67,9 @@ DATABASE_URL=<from Render Postgres connection string>
 DJANGO_SECRET_KEY=<generate a new 50+ char secret>
 DJANGO_DEBUG=false
 ALLOWED_HOSTS=rateengine-beta-api.onrender.com
-CORS_ALLOWED_ORIGINS=https://rateengine-beta.vercel.app
-CSRF_TRUSTED_ORIGINS=https://rateengine-beta.vercel.app,https://rateengine-beta-api.onrender.com
-FRONTEND_BASE_URL=https://rateengine-beta.vercel.app
+CORS_ALLOWED_ORIGINS=https://project-rate-engine.vercel.app
+CSRF_TRUSTED_ORIGINS=https://project-rate-engine.vercel.app,https://rateengine-beta-api.onrender.com
+FRONTEND_BASE_URL=https://project-rate-engine.vercel.app
 GEMINI_API_KEY=<new production Gemini key>
 USE_X_FORWARDED_PROTO=true
 SERVE_STATIC_FILES=true
@@ -83,8 +83,8 @@ Example with custom domains:
 
 ```dotenv
 ALLOWED_HOSTS=rateengine-beta-api.onrender.com,api.rateengine.app
-CORS_ALLOWED_ORIGINS=https://rateengine-beta.vercel.app,https://beta.rateengine.app
-CSRF_TRUSTED_ORIGINS=https://rateengine-beta.vercel.app,https://beta.rateengine.app,https://rateengine-beta-api.onrender.com,https://api.rateengine.app
+CORS_ALLOWED_ORIGINS=https://project-rate-engine.vercel.app,https://beta.rateengine.app
+CSRF_TRUSTED_ORIGINS=https://project-rate-engine.vercel.app,https://beta.rateengine.app,https://rateengine-beta-api.onrender.com,https://api.rateengine.app
 FRONTEND_BASE_URL=https://beta.rateengine.app
 ```
 
@@ -95,6 +95,8 @@ NEXT_PUBLIC_API_BASE_URL=https://rateengine-beta-api.onrender.com
 ```
 
 If you switch the backend to a custom API domain, update this value to that final URL.
+The current Vercel production domain is:
+- `https://project-rate-engine.vercel.app`
 
 ### Render Cron Job
 
