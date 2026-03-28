@@ -1,10 +1,16 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path, re_path
-from django.views.static import serve
+from django.shortcuts import redirect
+from django.urls import include, path
+
+
+def root_redirect(_request):
+    return redirect(getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000"))
+
 
 urlpatterns = [
+    path('', root_redirect),
     path('admin/', admin.site.urls),
     
     # Include your app's URLs
