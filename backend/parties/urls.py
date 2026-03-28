@@ -15,6 +15,11 @@ urlpatterns = [
     # --- V3 ENDPOINTS ---
     path('v3/', include(router_v3.urls)),
     path('v3/branding/organization/', views.OrganizationBrandingSettingsView.as_view(), name='organization-branding-settings-v3'),
+    path(
+        'v3/public/branding/<slug:organization_slug>/<str:variant>/',
+        views.PublicOrganizationBrandingLogoView.as_view(),
+        name='organization-branding-logo-public',
+    ),
     path('v3/parties/search/', views.CompanyV3SearchView.as_view(), name='company-search-v3'),
     path('v3/parties/companies/search/', views.CompanyV3SearchView.as_view(), name='company-search-v3-alias'),
     path('v3/parties/companies/<uuid:company_id>/contacts/', views.CompanyContactListV3View.as_view(), name='company-contacts-v3'),

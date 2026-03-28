@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from quotes.branding import get_quote_branding
@@ -12,6 +13,10 @@ from quotes.models import Quote, QuoteLine, QuoteTotal
 from quotes.public_links import get_public_quote_id_from_token
 
 VALID_SERVICE_SCOPES = {"D2D", "D2A", "A2D", "A2A", "P2P"}
+
+
+class PublicQuoteRateThrottle(ScopedRateThrottle):
+    scope = "public_quote"
 
 
 def _format_decimal(value: Decimal | None) -> str:
@@ -224,6 +229,7 @@ def _calculate_public_totals(totals: QuoteTotal | None, currency: str) -> dict:
 class QuotePublicDetailAPIView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [PublicQuoteRateThrottle]
 
     def get(self, request):
         token = request.query_params.get('token')

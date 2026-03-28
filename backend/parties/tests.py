@@ -2,12 +2,15 @@ import os
 import tempfile
 from io import StringIO
 import csv
+from io import BytesIO
 
 from django.core.management import call_command
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.test import TestCase
 from rest_framework.test import APIClient, APITestCase
 from rest_framework import status
+from PIL import Image
 
 from accounts.models import CustomUser
 from core.models import Country, City
@@ -360,3 +363,36 @@ class OrganizationBrandingSettingsAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["organization_slug"], "second-tenant")
         self.assertEqual(response.data["display_name"], "Second Tenant")
+
+    def test_branding_settings_reject_invalid_logo_upload(self):
+        self.client.force_authenticate(user=self.admin)
+        invalid_logo = SimpleUploadedFile(
+            "logo.txt",
+            b"not-an-image",
+            content_type="text/plain",
+        )
+
+        response = self.client.patch(
+            self.url,
+            {"logo_primary": invalid_logo},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("logo_primary", response.data)
+
+    def test_branding_settings_return_public_logo_endpoint_url(self):
+        self.client.force_authenticate(user=self.admin)
+        buffer = BytesIO()
+        Image.new("RGB", (2, 2), color="#0F2A56").save(buffer, format="PNG")
+        buffer.seek(0)
+        valid_logo = SimpleUploadedFile("logo.png", buffer.read(), content_type="image/png")
+
+        response = self.client.patch(
+            self.url,
+            {"logo_primary": valid_logo},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("/api/v3/public/branding/efm-express-air-cargo/primary/", response.data["logo_primary_url"])

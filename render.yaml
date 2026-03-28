@@ -42,7 +42,9 @@ services:
       - key: SERVE_STATIC_FILES
         value: "true"
       - key: SERVE_MEDIA_FILES
-        value: "true"
+        value: "false"
+      - key: ENABLE_BROWSABLE_API
+        value: "false"
 
   - type: cron
     name: rateengine-beta-fetch-fx

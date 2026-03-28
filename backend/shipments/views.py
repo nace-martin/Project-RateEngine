@@ -1,5 +1,8 @@
+import os
+
 from django.db.models import Q
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -7,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Shipment, ShipmentAddressBookEntry, ShipmentTemplate
+from .models import Shipment, ShipmentAddressBookEntry, ShipmentDocument, ShipmentTemplate
 from .pdf_service import generate_shipment_pdf
 from .serializers import (
     ShipmentAddressBookEntrySerializer,
@@ -236,3 +239,22 @@ class ShipmentSettingsAPIView(OrganizationScopedMixin, APIView):
         serializer.is_valid(raise_exception=True)
         updated = serializer.save(updated_by=request.user)
         return Response(ShipmentSettingsSerializer(updated).data)
+
+
+class ShipmentDocumentDownloadAPIView(OrganizationScopedMixin, APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, shipment_id, document_id):
+        shipment = get_object_or_404(
+            Shipment.objects.filter(organization=self.get_organization()),
+            pk=shipment_id,
+        )
+        document = get_object_or_404(ShipmentDocument.objects.filter(shipment=shipment), pk=document_id)
+        file_path = getattr(document.file, "path", None)
+        if not file_path or not os.path.exists(file_path):
+            raise ValidationError("Document file is unavailable.")
+
+        response = FileResponse(open(file_path, "rb"), content_type=document.content_type or "application/octet-stream")
+        disposition = "inline" if document.document_type == ShipmentDocument.DocumentType.CONNOTE_PDF else "attachment"
+        response["Content-Disposition"] = f'{disposition}; filename="{document.file_name or os.path.basename(file_path)}"'
+        return response

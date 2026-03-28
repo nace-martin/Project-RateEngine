@@ -2,6 +2,7 @@ import logging
 import re
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models.deletion import ProtectedError
 from django.db.models import Q
@@ -16,6 +17,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from parties.models import Address, Company, Contact, CustomerCommercialProfile
 from core.models import Airport, City, Country, Currency
+from core.security import validate_csv_upload, validate_pdf_upload
 from ratecards.models import PartnerRateCard
 from quotes.models import Quote
 
@@ -343,6 +345,10 @@ class RatecardUploadAPIView(APIView):
             return Response({'detail': 'File is required.'}, status=status.HTTP_400_BAD_REQUEST)
         if not supplier_id:
             return Response({'detail': 'supplier_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_csv_upload(upload_file)
+        except DjangoValidationError as exc:
+            return Response({'detail': '; '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
         supplier = get_object_or_404(Company, pk=supplier_id)
         name = upload_file.name or 'Ratecard'
@@ -429,6 +435,10 @@ class AIRateIntakeAPIView(APIView):
         # Check for PDF upload
         pdf_file = request.FILES.get('file')
         if pdf_file:
+            try:
+                validate_pdf_upload(pdf_file)
+            except DjangoValidationError as exc:
+                return Response({'detail': '; '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
             # Read PDF content
             pdf_content = pdf_file.read()
             result = parse_pdf_rate_quote(pdf_content, context=context)
@@ -550,13 +560,13 @@ class QuotePDFAPIView(APIView):
         except QuotePDFGenerationError as e:
             logger.error(f"PDF generation failed for quote {quote_id}: {e}")
             return Response(
-                {'detail': str(e)},
+                {'detail': 'Quote PDF generation failed.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         except Exception as e:
             # Catch any unexpected errors and log them
             logger.exception(f"Unexpected error generating PDF for quote {quote_id}")
             return Response(
-                {'detail': f'PDF generation failed: {str(e)}'},
+                {'detail': 'Quote PDF generation failed.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db.models import Q
+from django.urls import reverse
 from rest_framework import serializers
 
 from core.models import Location
@@ -237,10 +238,14 @@ class ShipmentDocumentSerializer(serializers.ModelSerializer):
 
     def get_download_url(self, obj):
         request = self.context.get("request")
-        if not obj.file:
+        if not request:
             return None
-        url = obj.file.url
-        return request.build_absolute_uri(url) if request else url
+        return request.build_absolute_uri(
+            reverse(
+                "shipments:shipment-document-download",
+                kwargs={"shipment_id": obj.shipment_id, "document_id": obj.id},
+            )
+        )
 
 
 class ShipmentEventSerializer(serializers.ModelSerializer):

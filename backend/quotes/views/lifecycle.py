@@ -744,7 +744,7 @@ class QuoteVersionCreateAPIView(APIView):
             charges = service.calculate_charges()
         except Exception as e:
             logger.error(f"Pricing engine failed: {e}", exc_info=True)
-            return Response({"detail": f"Pricing Error: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"detail": "Pricing engine failed while creating a new quote version."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # 5. Save Result as New Version
         new_version = _create_quote_version_from_service(

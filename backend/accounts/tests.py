@@ -119,6 +119,26 @@ class LoginTests(TestCase):
         self.assertEqual(data['organization']['slug'], 'efm-express-air-cargo')
         self.assertEqual(data['organization']['branding']['display_name'], 'EFM Express Air Cargo')
 
+    def test_login_branding_uses_primary_logo_when_small_logo_is_missing(self):
+        branding = self.organization.branding
+        branding.logo_small = None
+        branding.logo_primary = 'branding/efm-express-air-cargo/primary-logo.png'
+        branding.save(update_fields=['logo_small', 'logo_primary'])
+
+        response = self.client.post(
+            self.login_url,
+            {'username': 'testuser', 'password': 'testpass123'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertTrue(
+            data['user']['organization']['branding']['logo_url'].endswith(
+                '/api/v3/public/branding/efm-express-air-cargo/primary/'
+            )
+        )
+
 
 class RegistrationTests(TestCase):
     """Tests for the registration endpoint."""

@@ -5,6 +5,8 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.staticfiles import finders
 
+from parties.branding_urls import build_public_branding_logo_url
+
 FALLBACK_LOGO_ASSETS = (
     "images/efm_logo_cropped.png",
     "images/efm_logo_new.png",
@@ -83,12 +85,10 @@ def _resolve_uploaded_logo(logo_field, request=None) -> tuple[Optional[str], Opt
     if not logo_field:
         return None, None
     file_path = getattr(logo_field, "path", None)
-    file_url = getattr(logo_field, "url", None)
-    if file_url and request is not None:
-        file_url = request.build_absolute_uri(file_url)
     if file_path and Path(file_path).exists():
-        return file_path, file_url
-    return None, file_url
+        branding = getattr(logo_field, "instance", None)
+        return file_path, build_public_branding_logo_url(branding, "primary", request=request)
+    return None, None
 
 
 def get_quote_branding(quote, request=None) -> QuoteBrandingContext:

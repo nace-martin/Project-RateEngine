@@ -2,6 +2,9 @@
 
 from rest_framework import serializers
 
+from core.security import validate_image_upload
+from parties.branding_urls import build_public_branding_logo_url
+
 from .models import Company, Contact, OrganizationBranding
 
 class CustomerV3Serializer(serializers.ModelSerializer):
@@ -151,15 +154,21 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
         }
 
     def get_logo_primary_url(self, obj):
-        request = self.context.get("request")
         if not obj.logo_primary:
             return None
-        url = obj.logo_primary.url
-        return request.build_absolute_uri(url) if request else url
+        return build_public_branding_logo_url(obj, "primary", request=self.context.get("request"))
 
     def get_logo_small_url(self, obj):
-        request = self.context.get("request")
         if not obj.logo_small:
             return None
-        url = obj.logo_small.url
-        return request.build_absolute_uri(url) if request else url
+        return build_public_branding_logo_url(obj, "small", request=self.context.get("request"))
+
+    def validate_logo_primary(self, value):
+        if value:
+            validate_image_upload(value)
+        return value
+
+    def validate_logo_small(self, value):
+        if value:
+            validate_image_upload(value)
+        return value

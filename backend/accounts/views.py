@@ -1,7 +1,9 @@
 import json
+import logging
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import make_password
+from django.contrib.auth.password_validation import validate_password
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.authtoken.models import Token
@@ -9,7 +11,13 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 
+from core.security import get_request_ip
+from parties.branding_urls import build_public_branding_logo_url
+
 from .models import CustomUser
+
+
+logger = logging.getLogger(__name__)
 
 def _error(detail: str, status_code: int):
     """Consistent error payload shape across API: {'detail': ...}."""
@@ -21,15 +29,18 @@ class LoginRateThrottle(ScopedRateThrottle):
     scope = 'login'
 
 
+class RegisterRateThrottle(ScopedRateThrottle):
+    """Throttle for self-registration attempts."""
+    scope = 'register'
+
+
 def _serialize_branding(branding, request=None):
     if not branding:
         return None
 
-    logo_url = branding.logo_small.url if branding.logo_small else None
-    if not logo_url and branding.logo_primary:
-        logo_url = branding.logo_primary.url
-    if logo_url and request is not None:
-        logo_url = request.build_absolute_uri(logo_url)
+    logo_url = build_public_branding_logo_url(branding, "small", request=request)
+    if not logo_url:
+        logo_url = build_public_branding_logo_url(branding, "primary", request=request)
 
     return {
         'display_name': branding.display_name,
@@ -88,17 +99,21 @@ def login_view(request):
         username = data.get('username')
         password = data.get('password')
     except json.JSONDecodeError:
+        logger.warning("Rejected login with invalid JSON from ip=%s", get_request_ip(request))
         return _error('Invalid JSON', 400)
     
     if not username or not password:
+        logger.warning("Rejected login with missing credentials username=%s ip=%s", username or "<blank>", get_request_ip(request))
         return _error('Username and password required', 400)
     
     user = authenticate(username=username, password=password)
     if not user:
+        logger.warning("Failed login for username=%s ip=%s", username, get_request_ip(request))
         return _error('Invalid credentials', 401)
     
     # Get or create token for the user
     token, created = Token.objects.get_or_create(user=user)
+    logger.info("Successful login for username=%s ip=%s", user.username, get_request_ip(request))
     
     return JsonResponse({
         'token': token.key,
@@ -112,6 +127,7 @@ login_view.throttle_scope = 'login'
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([RegisterRateThrottle])
 def register_view(request):
     """
     User registration endpoint.
@@ -125,6 +141,7 @@ def register_view(request):
     # Check if self-registration is explicitly enabled
     import os
     if not os.environ.get('ALLOW_SELF_REGISTRATION', '').lower() == 'true':
+        logger.warning("Rejected self-registration while disabled ip=%s", get_request_ip(request))
         return _error(
             'Self-registration is disabled. Please contact an administrator to create an account.',
             403
@@ -140,14 +157,24 @@ def register_view(request):
         # SECURITY: Role is always 'sales' - users cannot set their own role
         # Admin must update role after creation if needed
     except json.JSONDecodeError:
+        logger.warning("Rejected registration with invalid JSON ip=%s", get_request_ip(request))
         return _error('Invalid JSON', 400)
     
     if not username or not password:
+        logger.warning("Rejected registration with missing username/password ip=%s", get_request_ip(request))
         return _error('Username and password required', 400)
     
     # Check if user already exists
     if CustomUser.objects.filter(username=username).exists():
+        logger.warning("Rejected registration for existing username=%s ip=%s", username, get_request_ip(request))
         return _error('Username already exists', 400)
+
+    try:
+        validate_password(password)
+    except Exception as exc:
+        logger.warning("Rejected registration for username=%s due to password validation ip=%s", username, get_request_ip(request))
+        detail = getattr(exc, "messages", None) or ["Password does not meet security requirements."]
+        return JsonResponse({'detail': detail}, status=400)
     
     # Create user with hashed password - always 'sales' role
     user = CustomUser.objects.create(
@@ -159,6 +186,7 @@ def register_view(request):
     
     # Create token for the user
     token = Token.objects.create(user=user)
+    logger.info("Self-registration created username=%s ip=%s", user.username, get_request_ip(request))
     
     return JsonResponse({
         'token': token.key,
@@ -173,3 +201,6 @@ def register_view(request):
 @permission_classes([IsAuthenticated])
 def me_view(request):
     return JsonResponse(_serialize_user(request.user, request=request))
+
+
+register_view.throttle_scope = 'register'

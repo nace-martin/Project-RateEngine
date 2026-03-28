@@ -24,28 +24,16 @@ urlpatterns = [
     path('api/v3/', include('services.urls')), # Expose services under v3 for consistency or just api/
     path('api/v4/', include('pricing_v4.urls')),
 
-    
-    # Include DRF's login URLs for the Browsable API
-    path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
 ]
+
+if settings.ENABLE_BROWSABLE_API:
+    urlpatterns += [
+        path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
+    ]
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 else:
-    if settings.SERVE_MEDIA_FILES:
-        urlpatterns += [
-            re_path(
-                r'^media/(?P<path>.*)$',
-                serve,
-                {'document_root': settings.MEDIA_ROOT},
-            )
-        ]
     if settings.SERVE_STATIC_FILES:
-        urlpatterns += [
-            re_path(
-                r'^static/(?P<path>.*)$',
-                serve,
-                {'document_root': settings.STATIC_ROOT},
-            )
-        ]
+        urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

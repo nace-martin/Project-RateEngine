@@ -93,6 +93,7 @@ CSRF_COOKIE_SAMESITE = os.environ.get('CSRF_COOKIE_SAMESITE', 'Lax')
 SECURE_SSL_REDIRECT = _env_bool('SECURE_SSL_REDIRECT', not DEBUG)
 SECURE_CONTENT_TYPE_NOSNIFF = _env_bool('SECURE_CONTENT_TYPE_NOSNIFF', True)
 SECURE_REFERRER_POLICY = os.environ.get('SECURE_REFERRER_POLICY', 'strict-origin-when-cross-origin')
+SECURE_CROSS_ORIGIN_OPENER_POLICY = os.environ.get('SECURE_CROSS_ORIGIN_OPENER_POLICY', 'same-origin')
 X_FRAME_OPTIONS = os.environ.get('X_FRAME_OPTIONS', 'DENY')
 
 _hsts_default = '31536000' if not DEBUG else '0'
@@ -227,11 +228,17 @@ STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']  # Project-level static files
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # Collected static files for production
 MEDIA_URL = '/media/'
-# Uploaded branding assets are currently stored under BASE_DIR/branding/... via upload_to.
-# Keeping MEDIA_ROOT at BASE_DIR preserves existing uploaded logo paths during beta.
+# Uploaded files still live under BASE_DIR-relative paths via upload_to.
+# We do not expose BASE_DIR through a generic production /media route; branding logos
+# and shipment documents are served through explicit application endpoints instead.
 MEDIA_ROOT = BASE_DIR
 SERVE_STATIC_FILES = _env_bool('SERVE_STATIC_FILES', DEBUG)
 SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', DEBUG)
+
+CSV_UPLOAD_MAX_BYTES = int(os.environ.get('CSV_UPLOAD_MAX_BYTES', 5 * 1024 * 1024))
+PDF_UPLOAD_MAX_BYTES = int(os.environ.get('PDF_UPLOAD_MAX_BYTES', 10 * 1024 * 1024))
+IMAGE_UPLOAD_MAX_BYTES = int(os.environ.get('IMAGE_UPLOAD_MAX_BYTES', 2 * 1024 * 1024))
+ENABLE_BROWSABLE_API = _env_bool('ENABLE_BROWSABLE_API', DEBUG)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
@@ -288,8 +295,19 @@ REST_FRAMEWORK = {
         'anon': '20/minute',      # Anonymous users: 20 requests per minute
         'user': '100/minute',     # Authenticated users: 100 requests per minute
         'login': '5/minute',      # Login attempts: 5 per minute (brute force protection)
+        'register': '3/minute',   # Registration attempts: 3 per minute
+        'public_quote': '30/minute',
     },
 }
+if ENABLE_BROWSABLE_API:
+    REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ]
+else:
+    REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = [
+        'rest_framework.renderers.JSONRenderer',
+    ]
 
 # Public quote share links (customer-facing).
 FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3000')

@@ -5,6 +5,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from accounts.permissions import IsAdmin
+from core.security import validate_csv_upload
 
 from .serializers import (
     CustomerDiscountBulkUpsertSerializer,
@@ -93,7 +94,7 @@ class PricingEngineView(APIView):
             return Response({"error": str(e), "code": "ERR_VALIDATION"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.exception("Pricing Engine Error")
-            return Response({"error": "Internal Pricing Engine Error", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": "Internal Pricing Engine Error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _serialize_result(self, result, request):
         """
@@ -157,6 +158,13 @@ class V4RateCardUploadView(APIView):
         if not upload_file:
             return Response(
                 {"success": False, "message": "CSV file is required (multipart field: file)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            validate_csv_upload(upload_file)
+        except DjangoValidationError as exc:
+            return Response(
+                {"success": False, "message": "; ".join(exc.messages)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

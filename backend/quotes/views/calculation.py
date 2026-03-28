@@ -236,9 +236,6 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         except Exception as e:
             # Unexpected errors (bugs) -> Log and 500, but do NOT mask the stack trace in dev
             logger.exception(f"Unexpected error during quote computation: {e}")
-            import traceback
-            with open('last_error.traceback', 'w') as f:
-                f.write(traceback.format_exc())
             # Re-raise so Django's exception handler can do its job (or return generic 500)
             raise
 

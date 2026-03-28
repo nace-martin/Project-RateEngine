@@ -2,11 +2,14 @@
 V3 API views for the parties app.
 """
 
+import os
+
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch, Q
 from rest_framework import generics, permissions, viewsets
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
@@ -172,3 +175,37 @@ class OrganizationBrandingSettingsView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class PublicOrganizationBrandingLogoView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, organization_slug: str, variant: str):
+        organization = get_object_or_404(Organization, slug=organization_slug, is_active=True)
+        branding = getattr(organization, "branding", None)
+        if branding is None or not branding.is_active:
+            raise Http404("Branding not found.")
+
+        logo_field = branding.logo_primary if variant == "primary" else branding.logo_small if variant == "small" else None
+        if not logo_field:
+            raise Http404("Logo not found.")
+
+        file_path = getattr(logo_field, "path", None)
+        if not file_path or not os.path.exists(file_path):
+            raise Http404("Logo file not found.")
+
+        content_type = "image/png"
+        file_name = os.path.basename(file_path)
+        lower_name = file_name.lower()
+        if lower_name.endswith((".jpg", ".jpeg")):
+            content_type = "image/jpeg"
+        elif lower_name.endswith(".gif"):
+            content_type = "image/gif"
+        elif lower_name.endswith(".webp"):
+            content_type = "image/webp"
+
+        response = FileResponse(open(file_path, "rb"), content_type=content_type)
+        response["Content-Disposition"] = f'inline; filename="{file_name}"'
+        response["Cache-Control"] = "public, max-age=300"
+        return response

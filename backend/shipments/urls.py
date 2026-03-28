@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     ShipmentAddressBookViewSet,
+    ShipmentDocumentDownloadAPIView,
     ShipmentSettingsAPIView,
     ShipmentTemplateViewSet,
     ShipmentViewSet,
@@ -17,5 +18,10 @@ router.register(r"shipments", ShipmentViewSet, basename="shipment")
 
 urlpatterns = [
     path("v3/shipments/settings/", ShipmentSettingsAPIView.as_view(), name="shipment-settings"),
+    path(
+        "v3/shipments/<uuid:shipment_id>/documents/<uuid:document_id>/download/",
+        ShipmentDocumentDownloadAPIView.as_view(),
+        name="shipment-document-download",
+    ),
     path("v3/", include(router.urls)),
 ]

@@ -31,6 +31,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from django.shortcuts import get_object_or_404
 
+from core.security import validate_pdf_upload
 from quotes.spot_services import (
     ScopeValidator,
     SpotTriggerEvaluator,
@@ -757,7 +758,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
         except Exception as e:
             logger.exception("Unexpected error creating SPE")
             return Response(
-                {'error': f"Internal Server Error: {str(e)}"},
+                {'error': "Internal server error while creating the SPOT envelope."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -1318,6 +1319,13 @@ class SpotReplyAnalysisAPIView(APIView):
                 pass
 
         if pdf_file:
+            try:
+                validate_pdf_upload(pdf_file)
+            except Exception as exc:
+                return Response(
+                    {'error': '; '.join(getattr(exc, 'messages', [str(exc)]))},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             from quotes.ai_intake_service import extract_rate_quote_text_from_pdf
 
             extraction_result = extract_rate_quote_text_from_pdf(pdf_file.read(), context=shipment_context)

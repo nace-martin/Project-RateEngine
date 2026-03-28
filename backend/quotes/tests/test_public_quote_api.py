@@ -258,3 +258,16 @@ class QuotePublicDetailAPITest(APITestCase):
             payload["branding"]["logo_url"],
             "https://cdn.example.com/static/images/efm_logo_cropped.png",
         )
+
+    def test_public_quote_branding_falls_back_to_static_logo_when_branding_is_inactive(self):
+        self.branding.logo_primary = "branding/efm-express-air-cargo/primary-logo.png"
+        self.branding.is_active = False
+        self.branding.save(update_fields=["logo_primary", "is_active"])
+        quote = self._create_quote(service_scope="D2D")
+        token = build_public_quote_token(str(quote.id))
+
+        response = self.client.get(self.url, {"token": token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertTrue(payload["branding"]["logo_url"].endswith("/static/images/efm_logo_cropped.png"))

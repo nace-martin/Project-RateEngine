@@ -29,6 +29,13 @@ class ShipmentAPITests(APITestCase):
             role="sales",
             organization=self.organization,
         )
+        self.other_organization = Organization.objects.create(name="Other Org", slug="other-org")
+        self.other_org_user = user_model.objects.create_user(
+            username="other-org-user",
+            password="pass123",
+            role="admin",
+            organization=self.other_organization,
+        )
         self.client.force_authenticate(user=self.user)
 
         self.country_pg = Country.objects.create(code="PG", name="Papua New Guinea")
@@ -211,6 +218,33 @@ class ShipmentAPITests(APITestCase):
         self.assertEqual(shipment.documents.count(), 2)
         self.assertTrue(shipment.events.filter(event_type=ShipmentEvent.EventType.PDF_GENERATED).exists())
         self.assertTrue(shipment.events.filter(event_type=ShipmentEvent.EventType.REPRINTED).exists())
+
+    def test_shipment_document_download_url_uses_authenticated_endpoint(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+        self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
+        detail_response = self.client.get(f"/api/v3/shipments/{shipment_id}/")
+
+        self.assertEqual(detail_response.status_code, 200)
+        document = detail_response.json()["documents"][0]
+        self.assertIn(f"/api/v3/shipments/{shipment_id}/documents/", document["download_url"])
+        self.assertTrue(document["download_url"].endswith("/download/"))
+
+    def test_shipment_document_download_rejects_cross_organization_access(self):
+        create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
+        shipment_id = create_response.json()["id"]
+
+        self.client.post(f"/api/v3/shipments/{shipment_id}/finalize/", data={}, format="json")
+        self.client.get(f"/api/v3/shipments/{shipment_id}/pdf/")
+        shipment = Shipment.objects.get(pk=shipment_id)
+        document = shipment.documents.first()
+
+        self.client.force_authenticate(user=self.other_org_user)
+        response = self.client.get(f"/api/v3/shipments/{shipment_id}/documents/{document.id}/download/")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_finalized_shipments_are_locked(self):
         create_response = self.client.post("/api/v3/shipments/", data=self.base_payload, format="json")
