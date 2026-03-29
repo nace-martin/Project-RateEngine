@@ -69,7 +69,7 @@ const ROLE_OPTIONS = [
 ];
 
 const DEPARTMENT_OPTIONS = [
-    { value: '', label: 'None' },
+    { value: 'none', label: 'None' },
     { value: 'AIR', label: 'Air Freight' },
     { value: 'SEA', label: 'Sea Freight' },
     { value: 'LAND', label: 'Land Freight' },
@@ -102,8 +102,8 @@ export default function UsersPage() {
         first_name: '',
         last_name: '',
         role: 'sales',
-        department: '',
-        organization: '',
+        department: 'none',
+        organization: 'none',
         password: '',
     });
     const [formLoading, setFormLoading] = useState(false);
@@ -183,8 +183,8 @@ export default function UsersPage() {
             first_name: '',
             last_name: '',
             role: 'sales',
-            department: '',
-            organization: currentUser?.organization?.id || '',
+            department: 'none',
+            organization: currentUser?.organization?.id?.toString() || 'none',
             password: '',
         });
         setIsModalOpen(true);
@@ -198,8 +198,8 @@ export default function UsersPage() {
             first_name: user.first_name || '',
             last_name: user.last_name || '',
             role: user.role,
-            department: user.department || '',
-            organization: user.organization || '',
+            department: user.department || 'none',
+            organization: (user.organization || 'none').toString(),
             password: '', // Don't show password
         });
         setIsModalOpen(true);
@@ -222,11 +222,11 @@ export default function UsersPage() {
             if (editingUser && !payload.password) {
                 delete (payload as Record<string, unknown>).password;
             }
-            // Convert empty department to null
-            if (!payload.department) {
+            // Convert 'none' selection to null
+            if (!payload.department || payload.department === 'none') {
                 (payload as Record<string, unknown>).department = null;
             }
-            if (!payload.organization) {
+            if (!payload.organization || payload.organization === 'none') {
                 (payload as Record<string, unknown>).organization = null;
             }
 
@@ -523,7 +523,7 @@ export default function UsersPage() {
                                     </SelectTrigger>
                                     <SelectContent>
                                         {DEPARTMENT_OPTIONS.map((opt) => (
-                                            <SelectItem key={opt.value || 'none'} value={opt.value}>
+                                            <SelectItem key={opt.value} value={opt.value}>
                                                 {opt.label}
                                             </SelectItem>
                                         ))}
@@ -542,8 +542,9 @@ export default function UsersPage() {
                                     <SelectValue placeholder="Select organization" />
                                 </SelectTrigger>
                                 <SelectContent>
+                                    <SelectItem value="none">None</SelectItem>
                                     {organizations.map((org) => (
-                                        <SelectItem key={org.id} value={org.id}>
+                                        <SelectItem key={org.id} value={org.id.toString()}>
                                             {org.name}{!org.is_active ? ' (Inactive)' : ''}
                                         </SelectItem>
                                     ))}
