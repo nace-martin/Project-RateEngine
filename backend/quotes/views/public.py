@@ -9,6 +9,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from quotes.branding import get_quote_branding
+from quotes.buckets import resolve_quote_line_leg
 from quotes.models import Quote, QuoteLine, QuoteTotal
 from quotes.public_links import get_public_quote_id_from_token
 
@@ -102,34 +103,6 @@ def _resolve_service_scope(quote: Quote, version) -> str | None:
     )
 
 
-def _normalize_bucket(raw_bucket) -> str | None:
-    value = str(raw_bucket or "").strip().lower()
-    if value == "origin_charges":
-        return "ORIGIN"
-    if value == "airfreight":
-        return "MAIN"
-    if value == "destination_charges":
-        return "DESTINATION"
-    return None
-
-
-def _normalize_leg(raw_leg) -> str | None:
-    value = str(raw_leg or "").strip().upper()
-    if value in {"ORIGIN", "DESTINATION"}:
-        return value
-    if value in {"MAIN", "FREIGHT"}:
-        return "MAIN"
-    return None
-
-
-def _resolve_bucket_key(line) -> str:
-    """
-    Resolve public bucket from persisted quote-line mapping.
-    QuoteLine.bucket/leg is authoritative; component metadata is not.
-    """
-    return _normalize_bucket(getattr(line, "bucket", None)) or _normalize_leg(getattr(line, "leg", None)) or "MAIN"
-
-
 def _resolve_line_sell_value(line, quote_currency: str) -> Decimal:
     if quote_currency != "PGK":
         line_currency = str(getattr(line, "sell_fcy_currency", "") or "").upper()
@@ -154,7 +127,7 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
     for line in lines:
         if not _should_include_public_line(line, currency):
             continue
-        leg = _resolve_bucket_key(line)
+        leg = resolve_quote_line_leg(line)
         if line.service_component:
             description = line.cost_source_description or line.service_component.description
         else:

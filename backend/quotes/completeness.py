@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set
 
 from core.dataclasses import CalculatedChargeLine
+from quotes.buckets import normalize_bucket
 
 
 COMPONENT_ORIGIN_LOCAL = "ORIGIN_LOCAL"
@@ -55,14 +56,12 @@ def required_components(shipment_type: Optional[str], service_scope: Optional[st
 
 
 def component_from_bucket(bucket: Optional[str]) -> Optional[str]:
-    if not bucket:
-        return None
-    bucket = bucket.lower()
-    if bucket == "origin_charges":
+    leg = normalize_bucket(bucket)
+    if leg == "ORIGIN":
         return COMPONENT_ORIGIN_LOCAL
-    if bucket == "airfreight":
+    if leg == "MAIN":
         return COMPONENT_FREIGHT
-    if bucket == "destination_charges":
+    if leg == "DESTINATION":
         return COMPONENT_DESTINATION_LOCAL
     return None
 

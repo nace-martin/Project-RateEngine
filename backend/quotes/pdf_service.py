@@ -19,6 +19,7 @@ from fpdf import FPDF
 
 from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE, commodity_label
 from core.storage_utils import materialize_file_field
+from .buckets import resolve_quote_line_leg
 from .branding import QuoteBrandingContext, get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .public_links import build_public_quote_url
@@ -663,32 +664,16 @@ def _get_charge_buckets(version) -> list[dict]:
     }
     
     for line in version.lines.select_related('service_component').all():
-        bucket = (getattr(line, 'bucket', '') or '').strip().lower()
-        leg = (getattr(line, 'leg', '') or '').strip().upper()
+        leg = resolve_quote_line_leg(line)
 
-        # Trust the persisted QuoteLine classification first. ServiceComponent
-        # metadata can be generic or stale after V4 syncs, while QuoteLine stores
-        # the exact classification used when the quote was computed.
-        if bucket == 'origin_charges':
-            bucket_name = 'Origin Charges'
-        elif bucket == 'airfreight':
-            bucket_name = 'International Freight'
-        elif bucket == 'destination_charges':
-            bucket_name = 'Destination Charges'
-        elif leg == 'ORIGIN':
+        if leg == 'ORIGIN':
             bucket_name = 'Origin Charges'
         elif leg == 'MAIN':
             bucket_name = 'International Freight'
         elif leg == 'DESTINATION':
             bucket_name = 'Destination Charges'
         else:
-            service_component_leg = getattr(getattr(line, 'service_component', None), 'leg', None)
-            if service_component_leg == 'ORIGIN':
-                bucket_name = 'Origin Charges'
-            elif service_component_leg == 'DESTINATION':
-                bucket_name = 'Destination Charges'
-            else:
-                bucket_name = 'International Freight'
+            bucket_name = 'International Freight'
         
         buckets[bucket_name] += line.sell_pgk or Decimal('0')
     

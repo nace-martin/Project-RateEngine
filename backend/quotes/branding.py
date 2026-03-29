@@ -9,9 +9,9 @@ from core.storage_utils import file_field_storage_exists
 from parties.branding_urls import build_public_branding_logo_url
 
 FALLBACK_LOGO_ASSETS = (
-    "images/eac_logo.png",
     "images/efm_logo_cropped.png",
     "images/efm_logo_new.png",
+    "images/eac_logo.png",
 )
 
 
