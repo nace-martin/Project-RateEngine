@@ -9,7 +9,22 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "projectrateengine-backend.onrender.com",
+      },
+      {
+        protocol: "http",
+        hostname: "localhost",
+      },
+      {
+        protocol: "http",
+        hostname: "127.0.0.1",
+      },
+    ],
+  },
   poweredByHeader: false,
   async headers() {
     return [
