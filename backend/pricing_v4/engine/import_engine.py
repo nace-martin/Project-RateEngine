@@ -743,19 +743,28 @@ class ImportPricingEngine:
     def _get_cogs(self, pc: ProductCode, leg: Optional[str] = None):
         """
         Get COGS for a product code.
-        Routes to LocalCOGSRate for local categories, ImportCOGS for freight.
+        Destination-local import charges live in LocalCOGSRate.
+        Origin-local and freight import charges remain lane-based in ImportCOGS,
+        with a LocalCOGSRate fallback for legacy migrated datasets.
         """
-        if leg in {'ORIGIN', 'DESTINATION'} and is_local_rate_category(pc.category):
+        if leg == 'DESTINATION' and is_local_rate_category(pc.category):
             return self._get_local_cogs(pc, leg)
-        
-        # Lane-based lookup for FREIGHT
-        return ImportCOGS.objects.filter(
+
+        lane_cogs = ImportCOGS.objects.filter(
             product_code=pc,
             origin_airport=self.origin,
             destination_airport=self.destination,
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
         ).select_related('agent').first()
+
+        if lane_cogs:
+            return lane_cogs
+
+        if leg == 'ORIGIN' and is_local_rate_category(pc.category):
+            return self._get_local_cogs(pc, leg)
+
+        return None
     
     def _get_sell_rate(self, pc: ProductCode, leg: str):
         """

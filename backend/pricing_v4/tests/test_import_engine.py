@@ -421,6 +421,62 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
         self.assertFalse(getattr(line, 'is_rate_missing', False))
 
 
+class ImportD2DOriginLaneCogsTest(ImportEngineTestCase):
+    def setUp(self):
+        self.pc_doc_origin = ProductCode.objects.create(
+            id=2010,
+            code='IMP-DOC-ORIGIN',
+            description='Import Documentation Origin',
+            domain='IMPORT',
+            category='DOCUMENTATION',
+            is_gst_applicable=True,
+            gst_rate=Decimal('0.10'),
+            gl_revenue_code='4200',
+            gl_cost_code='5200',
+            default_unit='SHIPMENT'
+        )
+
+        ImportCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_airport='BNE',
+            destination_airport='POM',
+            agent=self.agent_efm,
+            currency='AUD',
+            rate_per_kg=Decimal('5.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+        ImportCOGS.objects.create(
+            product_code=self.pc_doc_origin,
+            origin_airport='BNE',
+            destination_airport='POM',
+            agent=self.agent_efm,
+            currency='AUD',
+            rate_per_shipment=Decimal('80.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+
+    def test_d2d_collect_uses_lane_based_import_cogs_for_origin_local(self):
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='BNE',
+            destination='POM',
+            chargeable_weight_kg=Decimal('50'),
+            payment_term=PaymentTerm.COLLECT,
+            service_scope=ServiceScope.D2D,
+        )
+
+        result = engine.calculate_quote()
+
+        doc_origin_lines = [l for l in result.origin_lines if l.product_code == 'IMP-DOC-ORIGIN']
+        self.assertEqual(len(doc_origin_lines), 1)
+        line = doc_origin_lines[0]
+        self.assertFalse(getattr(line, 'is_rate_missing', False))
+        self.assertEqual(line.cost_currency, 'AUD')
+        self.assertGreater(line.sell_amount, Decimal('0'))
+
+
 class ImportCommodityRuleSelectionTest(ImportEngineTestCase):
     def setUp(self):
         self.pc_special_dest = ProductCode.objects.create(
