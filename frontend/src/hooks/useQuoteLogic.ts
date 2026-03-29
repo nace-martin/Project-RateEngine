@@ -99,8 +99,8 @@ export function useQuoteLogic({
             customer_id: "",
             contact_id: "",
             mode: "AIR",
-            incoterm: "EXW",
-            payment_term: "PREPAID",
+            incoterm: defaultValues?.incoterm,
+            payment_term: defaultValues?.payment_term,
             service_scope: V3_SERVICE_SCOPES.A2A,
             origin_airport: "",
             destination_airport: "",
@@ -176,6 +176,10 @@ export function useQuoteLogic({
     }, [isImport, serviceScope, paymentTerm]);
 
     useEffect(() => {
+        if (!paymentTerm) {
+            return;
+        }
+
         if (!validIncoterms.includes(currentIncoterm)) {
             const defaultIncoterm = getDefaultIncoterm(isImport, serviceScope, paymentTerm);
             form.setValue('incoterm', defaultIncoterm as keyof typeof V3_INCOTERMS, { shouldValidate: true });

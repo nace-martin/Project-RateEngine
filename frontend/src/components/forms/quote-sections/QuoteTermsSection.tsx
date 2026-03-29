@@ -39,7 +39,7 @@ export default function QuoteTermsSection({
             <Select onValueChange={field.onChange} value={field.value}>
               <FormControl>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Select payment term" />
                 </SelectTrigger>
               </FormControl>
               <SelectContent>
@@ -64,7 +64,7 @@ export default function QuoteTermsSection({
             <Select onValueChange={field.onChange} value={field.value}>
               <FormControl>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Select incoterm" />
                 </SelectTrigger>
               </FormControl>
               <SelectContent>
