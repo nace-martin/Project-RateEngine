@@ -8,10 +8,12 @@ from quotes.branding import get_quote_branding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
 from quotes.pdf_service import (
     _extract_location_info,
+    _get_charge_buckets,
     _get_chargeable_weight,
     _get_location_country_code,
     generate_quote_pdf,
 )
+from services.models import ServiceComponent
 
 
 class QuotePDFExportTest(TestCase):
@@ -198,3 +200,75 @@ class QuotePDFExportTest(TestCase):
 
         self.assertEqual(branding.display_name, "EFM Express Air Cargo")
         self.assertEqual(branding.support_email, "quotes@efmexpress.com")
+
+    def test_quote_branding_uses_static_fallback_when_uploaded_logo_missing(self):
+        self.branding.logo_primary = "branding/efm-express-air-cargo/missing-logo.png"
+        self.branding.save(update_fields=["logo_primary"])
+
+        quote = Quote.objects.create(
+            customer=self.customer,
+            organization=self.organization,
+            origin_location=self.origin,
+            destination_location=self.dest,
+            quote_number="TEST-PDF-BRANDING-MISSING-UPLOAD",
+            status="DRAFT",
+            mode="AIR",
+            shipment_type="EXPORT",
+        )
+
+        branding = get_quote_branding(quote)
+
+        self.assertIsNotNone(branding.logo_path)
+        self.assertIsNone(branding.logo_file)
+        self.assertTrue(str(branding.logo_path).endswith(".png"))
+
+    def test_charge_buckets_prefer_saved_quote_line_bucket_over_service_component_leg(self):
+        quote = Quote.objects.create(
+            customer=self.customer,
+            organization=self.organization,
+            origin_location=self.origin,
+            destination_location=self.dest,
+            quote_number="TEST-PDF-BUCKETS",
+            status="FINALIZED",
+            mode="AIR",
+            shipment_type="IMPORT",
+        )
+        version = QuoteVersion.objects.create(quote=quote, version_number=1)
+        wrong_component = ServiceComponent.objects.create(
+            code="IMP-AGENCY-ORIGIN-TEST",
+            description="Import Origin Agency Test",
+            mode="AIR",
+            leg="DESTINATION",
+            category="ACCESSORIAL",
+        )
+
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=wrong_component,
+            sell_pgk=Decimal("125.00"),
+            leg="ORIGIN",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            sell_pgk=Decimal("250.00"),
+            leg="MAIN",
+            bucket="airfreight",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            sell_pgk=Decimal("75.00"),
+            leg="DESTINATION",
+            bucket="destination_charges",
+        )
+
+        buckets = _get_charge_buckets(version)
+
+        self.assertEqual(
+            buckets,
+            [
+                {"name": "Origin Charges", "subtotal": Decimal("125.00")},
+                {"name": "International Freight", "subtotal": Decimal("250.00")},
+                {"name": "Destination Charges", "subtotal": Decimal("75.00")},
+            ],
+        )

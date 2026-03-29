@@ -5,12 +5,13 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.staticfiles import finders
 
+from core.storage_utils import file_field_storage_exists
 from parties.branding_urls import build_public_branding_logo_url
 
 FALLBACK_LOGO_ASSETS = (
+    "images/eac_logo.png",
     "images/efm_logo_cropped.png",
     "images/efm_logo_new.png",
-    "images/eac_logo.png",
 )
 
 
@@ -28,6 +29,7 @@ class QuoteBrandingContext:
     accent_color: str
     logo_path: Optional[str] = None
     logo_url: Optional[str] = None
+    logo_file: object | None = None
 
     @property
     def primary_color_rgb(self) -> tuple[int, int, int]:
@@ -73,22 +75,31 @@ def _fallback_logo(request=None) -> tuple[Optional[str], Optional[str]]:
             if logo_path and Path(logo_path).exists():
                 return str(logo_path), _build_static_asset_url(asset, request=request)
 
-            fallback = Path(settings.BASE_DIR) / "static" / asset
-            if fallback.exists():
-                return str(fallback), _build_static_asset_url(asset, request=request)
+            candidate_paths = [
+                Path(settings.BASE_DIR) / "static" / asset,
+                Path(__file__).resolve().parents[1] / "static" / asset,
+            ]
+            static_root = getattr(settings, "STATIC_ROOT", None)
+            if static_root:
+                candidate_paths.append(Path(static_root) / asset)
+
+            for fallback in candidate_paths:
+                if fallback.exists():
+                    return str(fallback), _build_static_asset_url(asset, request=request)
     except Exception:
         return None, None
     return None, None
 
 
 def _resolve_uploaded_logo(logo_field, request=None) -> tuple[Optional[str], Optional[str]]:
-    if not logo_field:
+    if not file_field_storage_exists(logo_field):
         return None, None
-    file_path = getattr(logo_field, "path", None)
-    if file_path and Path(file_path).exists():
-        branding = getattr(logo_field, "instance", None)
-        return file_path, build_public_branding_logo_url(branding, "primary", request=request)
-    return None, None
+    branding = getattr(logo_field, "instance", None)
+    return str(getattr(logo_field, "name", "") or "").strip() or None, build_public_branding_logo_url(
+        branding,
+        "primary",
+        request=request,
+    )
 
 
 def get_quote_branding(quote, request=None) -> QuoteBrandingContext:
@@ -110,12 +121,12 @@ def get_quote_branding(quote, request=None) -> QuoteBrandingContext:
     primary_color = getattr(branding, "primary_color", "") or "#0F2A56"
     accent_color = getattr(branding, "accent_color", "") or "#D71920"
 
-    uploaded_logo_path, uploaded_logo_url = _resolve_uploaded_logo(
+    uploaded_logo_name, uploaded_logo_url = _resolve_uploaded_logo(
         getattr(branding, "logo_primary", None),
         request=request,
     )
     fallback_logo_path, fallback_logo_url = _fallback_logo(request=request)
-    logo_path = uploaded_logo_path or fallback_logo_path
+    logo_path = fallback_logo_path if not uploaded_logo_name else None
     logo_url = uploaded_logo_url or fallback_logo_url
 
     return QuoteBrandingContext(
@@ -131,4 +142,5 @@ def get_quote_branding(quote, request=None) -> QuoteBrandingContext:
         accent_color=accent_color,
         logo_path=logo_path,
         logo_url=logo_url,
+        logo_file=getattr(branding, "logo_primary", None) if uploaded_logo_name else None,
     )

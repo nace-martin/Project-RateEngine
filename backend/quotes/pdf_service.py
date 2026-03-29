@@ -8,6 +8,7 @@ Clean table-style layout matching customer requirements.
 
 import logging
 import math
+from contextlib import nullcontext
 from decimal import Decimal, ROUND_UP
 from typing import Optional
 
@@ -17,6 +18,7 @@ from django.utils import timezone
 from fpdf import FPDF
 
 from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE, commodity_label
+from core.storage_utils import materialize_file_field
 from .branding import QuoteBrandingContext, get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .public_links import build_public_quote_url
@@ -196,21 +198,23 @@ def _build_header(pdf: QuotePDF, quote):
     logo_width = 55
     logo_height = 19  # Approximate height based on aspect ratio
     
-    if logo_path:
-        # Only specify width - FPDF will calculate height to maintain aspect ratio
-        pdf.image(logo_path, x=15, y=logo_y, w=logo_width)
-    else:
-        # Fallback text logo
-        pdf.set_font('Helvetica', 'B', 24)
-        pdf.set_text_color(*pdf.dark_blue)
-        display_name = branding.display_name or "RateEngine"
-        short_name = display_name.split()[0][:12].upper()
-        pdf.text(15, logo_y + 10, _clean_text(short_name))
-        pdf.set_font('Helvetica', 'B', 9)
-        pdf.set_text_color(*pdf.red)
-        secondary = " ".join(display_name.split()[1:3]).upper()
-        if secondary:
-            pdf.text(47, logo_y + 10, _clean_text(secondary[:18]))
+    logo_context = nullcontext(logo_path) if logo_path else materialize_file_field(branding.logo_file)
+    with logo_context as resolved_logo_path:
+        if resolved_logo_path:
+            # Only specify width - FPDF will calculate height to maintain aspect ratio
+            pdf.image(resolved_logo_path, x=15, y=logo_y, w=logo_width)
+        else:
+            # Fallback text logo
+            pdf.set_font('Helvetica', 'B', 24)
+            pdf.set_text_color(*pdf.dark_blue)
+            display_name = branding.display_name or "RateEngine"
+            short_name = display_name.split()[0][:12].upper()
+            pdf.text(15, logo_y + 10, _clean_text(short_name))
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.set_text_color(*pdf.red)
+            secondary = " ".join(display_name.split()[1:3]).upper()
+            if secondary:
+                pdf.text(47, logo_y + 10, _clean_text(secondary[:18]))
     
     # Quote number & status (right side, aligned with top of logo)
     pdf.set_font('Helvetica', 'B', 22)
@@ -651,7 +655,7 @@ def _build_terms_and_conditions(quote, valid_until_str: str, branding: Optional[
 
 
 def _get_charge_buckets(version) -> list[dict]:
-    """Get charge summary grouped by leg."""
+    """Get charge summary grouped by the saved quote line bucket/leg."""
     buckets = {
         'Origin Charges': Decimal('0'),
         'International Freight': Decimal('0'),
@@ -659,20 +663,32 @@ def _get_charge_buckets(version) -> list[dict]:
     }
     
     for line in version.lines.select_related('service_component').all():
-        leg = None
-        if line.service_component:
-            leg = getattr(line.service_component, 'leg', None)
-        if not leg:
-            leg = line.leg
-        
-        if leg == 'ORIGIN':
+        bucket = (getattr(line, 'bucket', '') or '').strip().lower()
+        leg = (getattr(line, 'leg', '') or '').strip().upper()
+
+        # Trust the persisted QuoteLine classification first. ServiceComponent
+        # metadata can be generic or stale after V4 syncs, while QuoteLine stores
+        # the exact classification used when the quote was computed.
+        if bucket == 'origin_charges':
+            bucket_name = 'Origin Charges'
+        elif bucket == 'airfreight':
+            bucket_name = 'International Freight'
+        elif bucket == 'destination_charges':
+            bucket_name = 'Destination Charges'
+        elif leg == 'ORIGIN':
             bucket_name = 'Origin Charges'
         elif leg == 'MAIN':
             bucket_name = 'International Freight'
         elif leg == 'DESTINATION':
             bucket_name = 'Destination Charges'
         else:
-            bucket_name = 'International Freight'
+            service_component_leg = getattr(getattr(line, 'service_component', None), 'leg', None)
+            if service_component_leg == 'ORIGIN':
+                bucket_name = 'Origin Charges'
+            elif service_component_leg == 'DESTINATION':
+                bucket_name = 'Destination Charges'
+            else:
+                bucket_name = 'International Freight'
         
         buckets[bucket_name] += line.sell_pgk or Decimal('0')
     
