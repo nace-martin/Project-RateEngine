@@ -14,8 +14,8 @@ iniconfig==2.1.0
 packaging==25.0
 pillow==11.3.0
 pluggy==1.6.0
-psycopg==3.2.9
-psycopg-binary==3.2.9
+psycopg==3.3.3
+psycopg-binary==3.3.3
 pydotplus==2.0.2
 Pygments==2.19.2
 pyparsing==3.2.3
