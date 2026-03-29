@@ -1,10 +1,11 @@
 from decimal import Decimal
+from pathlib import Path
 
 from django.test import TestCase
 
 from core.models import City, Country, Location
 from parties.models import Company, Organization, OrganizationBranding
-from quotes.branding import get_quote_branding
+from quotes.branding import DEFAULT_FALLBACK_LOGO_ASSET, get_quote_branding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
 from quotes.pdf_service import (
     _extract_location_info,
@@ -221,6 +222,10 @@ class QuotePDFExportTest(TestCase):
         self.assertIsNotNone(branding.logo_path)
         self.assertIsNone(branding.logo_file)
         self.assertTrue(str(branding.logo_path).endswith(".png"))
+
+    def test_default_fallback_logo_asset_exists_in_repo(self):
+        asset_path = Path(__file__).resolve().parents[2] / "static" / DEFAULT_FALLBACK_LOGO_ASSET
+        self.assertTrue(asset_path.exists(), f"Missing fallback logo asset: {asset_path}")
 
     def test_charge_buckets_prefer_saved_quote_line_bucket_over_service_component_leg(self):
         quote = Quote.objects.create(

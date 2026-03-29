@@ -98,6 +98,11 @@ media/
 backend/staticfiles/
 backend/media/
 backend/static/
+!backend/static/
+backend/static/*
+!backend/static/images/
+backend/static/images/*
+!backend/static/images/efm_logo_cropped.png
 backend/branding/
 
 # Node/JS tooling caches

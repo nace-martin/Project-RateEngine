@@ -8,11 +8,7 @@ from django.contrib.staticfiles import finders
 from core.storage_utils import file_field_storage_exists
 from parties.branding_urls import build_public_branding_logo_url
 
-FALLBACK_LOGO_ASSETS = (
-    "images/efm_logo_cropped.png",
-    "images/efm_logo_new.png",
-    "images/eac_logo.png",
-)
+DEFAULT_FALLBACK_LOGO_ASSET = "images/efm_logo_cropped.png"
 
 
 @dataclass(frozen=True)
@@ -70,22 +66,22 @@ def _build_static_asset_url(relative_path: str, request=None) -> str:
 
 def _fallback_logo(request=None) -> tuple[Optional[str], Optional[str]]:
     try:
-        for asset in FALLBACK_LOGO_ASSETS:
-            logo_path = finders.find(asset)
-            if logo_path and Path(logo_path).exists():
-                return str(logo_path), _build_static_asset_url(asset, request=request)
+        asset = DEFAULT_FALLBACK_LOGO_ASSET
+        logo_path = finders.find(asset)
+        if logo_path and Path(logo_path).exists():
+            return str(logo_path), _build_static_asset_url(asset, request=request)
 
-            candidate_paths = [
-                Path(settings.BASE_DIR) / "static" / asset,
-                Path(__file__).resolve().parents[1] / "static" / asset,
-            ]
-            static_root = getattr(settings, "STATIC_ROOT", None)
-            if static_root:
-                candidate_paths.append(Path(static_root) / asset)
+        candidate_paths = [
+            Path(settings.BASE_DIR) / "static" / asset,
+            Path(__file__).resolve().parents[1] / "static" / asset,
+        ]
+        static_root = getattr(settings, "STATIC_ROOT", None)
+        if static_root:
+            candidate_paths.append(Path(static_root) / asset)
 
-            for fallback in candidate_paths:
-                if fallback.exists():
-                    return str(fallback), _build_static_asset_url(asset, request=request)
+        for fallback in candidate_paths:
+            if fallback.exists():
+                return str(fallback), _build_static_asset_url(asset, request=request)
     except Exception:
         return None, None
     return None, None
