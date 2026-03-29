@@ -175,13 +175,15 @@ export async function updateOrganizationBrandingSettings(
   data: Partial<OrganizationBrandingSettings> & {
     logo_primary_file?: File | null;
     logo_small_file?: File | null;
+    clear_primary_logo?: boolean;
+    clear_small_logo?: boolean;
   },
 ): Promise<OrganizationBrandingSettings> {
   const url = API_BASE_URL + '/api/v3/branding/organization/';
   const formData = new FormData();
 
   Object.entries(data).forEach(([key, value]) => {
-    if (value === undefined || value === null || key === 'logo_primary_file' || key === 'logo_small_file') {
+    if (value === undefined || value === null || key === 'logo_primary_file' || key === 'logo_small_file' || key === 'clear_primary_logo' || key === 'clear_small_logo') {
       return;
     }
     formData.append(key, typeof value === 'boolean' ? String(value) : String(value));
@@ -193,6 +195,8 @@ export async function updateOrganizationBrandingSettings(
   if (data.logo_small_file) {
     formData.append('logo_small', data.logo_small_file);
   }
+  if (data.clear_primary_logo) formData.append('clear_primary_logo', 'true');
+  if (data.clear_small_logo) formData.append('clear_small_logo', 'true');
 
   const response = await fetch(url, {
     method: 'PATCH',

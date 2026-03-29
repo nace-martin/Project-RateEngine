@@ -113,6 +113,8 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
     organization_slug = serializers.CharField(source="organization.slug", read_only=True)
     logo_primary_url = serializers.SerializerMethodField()
     logo_small_url = serializers.SerializerMethodField()
+    clear_primary_logo = serializers.BooleanField(required=False, write_only=True)
+    clear_small_logo = serializers.BooleanField(required=False, write_only=True)
 
     class Meta:
         model = OrganizationBranding
@@ -135,6 +137,8 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
             "logo_small",
             "logo_small_url",
             "is_active",
+            "clear_primary_logo",
+            "clear_small_logo",
         ]
         extra_kwargs = {
             "logo_primary": {"required": False, "allow_null": True},
@@ -172,3 +176,10 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
         if value:
             validate_image_upload(value)
         return value
+
+    def update(self, instance, validated_data):
+        if validated_data.pop("clear_primary_logo", False):
+            instance.logo_primary = None
+        if validated_data.pop("clear_small_logo", False):
+            instance.logo_small = None
+        return super().update(instance, validated_data)

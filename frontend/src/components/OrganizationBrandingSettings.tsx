@@ -65,16 +65,18 @@ export default function OrganizationBrandingSettings() {
   const [form, setForm] = useState<BrandingFormState>(emptyForm);
   const [logoPrimaryFile, setLogoPrimaryFile] = useState<File | null>(null);
   const [logoSmallFile, setLogoSmallFile] = useState<File | null>(null);
+  const [clearPrimaryLogo, setClearPrimaryLogo] = useState(false);
+  const [clearSmallLogo, setClearSmallLogo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const isDirty = useMemo(() => {
     if (!settings) {
-      return Boolean(logoPrimaryFile || logoSmallFile);
+      return Boolean(logoPrimaryFile || logoSmallFile || clearPrimaryLogo || clearSmallLogo);
     }
     return JSON.stringify(form) !== JSON.stringify(mapSettingsToForm(settings))
-      || Boolean(logoPrimaryFile || logoSmallFile);
-  }, [form, logoPrimaryFile, logoSmallFile, settings]);
+      || Boolean(logoPrimaryFile || logoSmallFile || clearPrimaryLogo || clearSmallLogo);
+  }, [form, logoPrimaryFile, logoSmallFile, clearPrimaryLogo, clearSmallLogo, settings]);
 
   useEffect(() => {
     const load = async () => {
@@ -104,6 +106,8 @@ export default function OrganizationBrandingSettings() {
         ...form,
         logo_primary_file: logoPrimaryFile,
         logo_small_file: logoSmallFile,
+        clear_primary_logo: clearPrimaryLogo,
+        clear_small_logo: clearSmallLogo,
       });
     }, {
       onSuccess: async (updated) => {
@@ -111,6 +115,8 @@ export default function OrganizationBrandingSettings() {
         setForm(mapSettingsToForm(updated));
         setLogoPrimaryFile(null);
         setLogoSmallFile(null);
+        setClearPrimaryLogo(false);
+        setClearSmallLogo(false);
         setSuccess("Branding updated.");
       },
       onError: async (caughtError) => {
@@ -130,6 +136,8 @@ export default function OrganizationBrandingSettings() {
     setForm(mapSettingsToForm(settings));
     setLogoPrimaryFile(null);
     setLogoSmallFile(null);
+    setClearPrimaryLogo(false);
+    setClearSmallLogo(false);
     setError(null);
     setSuccess(null);
   };
@@ -205,18 +213,24 @@ export default function OrganizationBrandingSettings() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="logo_primary">Primary Logo</Label>
-                <Input id="logo_primary" type="file" accept="image/*" onChange={(e) => setLogoPrimaryFile(e.target.files?.[0] || null)} />
-                {settings?.logo_primary_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={settings.logo_primary_url} alt="Primary logo" className="h-12 w-auto rounded border bg-white p-2" />
+                <Input id="logo_primary" type="file" accept="image/*" onChange={(e) => { setLogoPrimaryFile(e.target.files?.[0] || null); setClearPrimaryLogo(false); }} />
+                {settings?.logo_primary_url && !clearPrimaryLogo && !logoPrimaryFile && (
+                  <div className="flex items-center gap-4 mt-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={settings.logo_primary_url} alt="Primary logo" className="h-12 w-auto rounded border bg-white p-2" />
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setClearPrimaryLogo(true)} className="text-destructive">Remove</Button>
+                  </div>
                 )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="logo_small">Small Logo</Label>
-                <Input id="logo_small" type="file" accept="image/*" onChange={(e) => setLogoSmallFile(e.target.files?.[0] || null)} />
-                {settings?.logo_small_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={settings.logo_small_url} alt="Small logo" className="h-12 w-auto rounded border bg-white p-2" />
+                <Input id="logo_small" type="file" accept="image/*" onChange={(e) => { setLogoSmallFile(e.target.files?.[0] || null); setClearSmallLogo(false); }} />
+                {settings?.logo_small_url && !clearSmallLogo && !logoSmallFile && (
+                  <div className="flex items-center gap-4 mt-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={settings.logo_small_url} alt="Small logo" className="h-12 w-auto rounded border bg-white p-2" />
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setClearSmallLogo(true)} className="text-destructive">Remove</Button>
+                  </div>
                 )}
               </div>
             </div>
