@@ -348,7 +348,7 @@ class ImportPricingEngine:
         """
         active_legs = self._get_active_legs()
         payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
-        mandatory_ids = self.get_mandatory_product_codes(
+        requested_product_code_ids = self.get_requested_product_code_ids(
             is_dg=False,
             service_scope=self.service_scope.value,
             commodity_code=commodity_code,
@@ -432,9 +432,10 @@ class ImportPricingEngine:
             
             line = self._calculate_charge_line(pc, leg)
             
-            # If no line but it's mandatory, check for defaults or create a missing rate line
-            if not line and pc.id in mandatory_ids:
-                # [AMENDMENT] Mandatory Customs Brokerage Fee Default (PGK 300.00)
+            # If no line but the engine explicitly requested this ProductCode,
+            # create a missing-rate placeholder so the gap remains visible.
+            if not line and pc.id in requested_product_code_ids:
+                # [AMENDMENT] Requested Customs Brokerage Fee Default (PGK 300.00)
                 if pc.id == 2020:
                     line = ChargeLine(
                         product_code_id=pc.id, product_code=pc.code, description=pc.description,
@@ -470,7 +471,7 @@ class ImportPricingEngine:
                         sell_currency=self.quote_currency,
                         margin_amount=Decimal('0'),
                         margin_percent=Decimal('0'),
-                        notes=f"Mandatory rate missing for {pc.code}",
+                        notes=f"Requested rate missing for {pc.code}",
                     )
                     line.is_rate_missing = True # Dynamically added for adapter detection
 
@@ -493,7 +494,7 @@ class ImportPricingEngine:
         return result
 
     @staticmethod
-    def get_mandatory_product_codes(
+    def get_requested_product_code_ids(
         is_dg: bool = False,
         service_scope: str = 'A2A',
         commodity_code: str = DEFAULT_COMMODITY_CODE,
@@ -503,18 +504,19 @@ class ImportPricingEngine:
         quote_date: Optional[date] = None,
     ) -> List[int]:
         """
-        Returns list of ProductCode IDs that MUST be present for commercial validity.
+        Returns ProductCode IDs the import engine should actively try to price
+        or represent with explicit missing-rate placeholders.
         """
         service_scope = service_scope.upper()
         if service_scope == 'P2P': service_scope = 'A2A'
 
         codes = []
         
-        # Freight is mandatory for all scopes involving linehaul
+        # Freight is requested for all scopes involving linehaul
         if service_scope in ('A2A', 'D2A', 'D2D'):
             codes.append(2001)  # IMP-FRT-AIR
 
-        # Origin Local mandatory for D2A and D2D
+        # Origin local requested for D2A and D2D
         if service_scope in ('D2A', 'D2D'):
             codes.extend([
                 2010,  # IMP-DOC-ORIGIN
@@ -526,7 +528,7 @@ class ImportPricingEngine:
                 2060,  # IMP-FSC-PICKUP
             ])
 
-        # Destination Local mandatory for A2D and D2D
+        # Destination local requested for A2D and D2D
         if service_scope in ('A2D', 'D2D'):
             codes.extend([
                 2020,  # IMP-CLEAR

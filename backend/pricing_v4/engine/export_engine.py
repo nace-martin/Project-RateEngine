@@ -210,8 +210,7 @@ class ExportPricingEngine:
         if service_scope == 'A2A':
             service_scope = 'P2P'
 
-        # All codes requested are now mandatory
-        codes = ExportPricingEngine.get_mandatory_product_codes(
+        codes = ExportPricingEngine.get_requested_product_code_ids(
             is_dg=is_dg,
             service_scope=service_scope,
             commodity_code=commodity_code,
@@ -229,7 +228,7 @@ class ExportPricingEngine:
         return sorted(list(set(codes)))
 
     @staticmethod
-    def get_mandatory_product_codes(
+    def get_requested_product_code_ids(
         is_dg: bool = False,
         service_scope: str = 'P2P',
         commodity_code: str = DEFAULT_COMMODITY_CODE,
@@ -288,7 +287,7 @@ class ExportPricingEngine:
         commodity_code: str = DEFAULT_COMMODITY_CODE,
     ) -> QuoteResult:
         self._prefetch_rates(product_code_ids)
-        mandatory_ids = self.get_mandatory_product_codes(
+        requested_product_code_ids = self.get_requested_product_code_ids(
             is_dg=is_dg,
             service_scope=service_scope,
             commodity_code=commodity_code,
@@ -309,7 +308,7 @@ class ExportPricingEngine:
                 regular_ids.append(pc_id)
         
         for pc_id in regular_ids:
-            line = self._calculate_charge_line(pc_id, mandatory_ids)
+            line = self._calculate_charge_line(pc_id, requested_product_code_ids)
             if line:
                 lines.append(line)
                 self._sell_cache[pc_id] = line.sell_amount
@@ -447,7 +446,7 @@ class ExportPricingEngine:
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'SELL'))
         return None
     
-    def _calculate_charge_line(self, product_code_id: int, mandatory_ids: List[int] = None) -> Optional[ChargeLineResult]:
+    def _calculate_charge_line(self, product_code_id: int, requested_product_code_ids: List[int] = None) -> Optional[ChargeLineResult]:
         pc = self._get_product_code(product_code_id)
         if not pc: return None
         cogs = self._get_cogs(product_code_id)
@@ -475,14 +474,14 @@ class ExportPricingEngine:
             if product_code_id == 1032: # Handling
                 return self._create_default_line(pc, self.DEFAULT_HANDLING_FEE, "Default Handling Fee")
 
-            if mandatory_ids and product_code_id in mandatory_ids:
+            if requested_product_code_ids and product_code_id in requested_product_code_ids:
                 return ChargeLineResult(
                     product_code_id=pc.id, product_code=pc.code, description=pc.description,
                     category=pc.category, cost_amount=Decimal('0'), cost_currency='PGK',
                     cost_source='N/A', agent_name=None, sell_amount=Decimal('0'),
                     sell_currency=self.quote_currency, margin_amount=Decimal('0'),
                     margin_percent=Decimal('0'), gst_amount=Decimal('0'), sell_incl_gst=Decimal('0'),
-                    is_rate_missing=True, notes=f"Mandatory sell rate missing for {pc.code}",
+                    is_rate_missing=True, notes=f"Requested sell rate missing for {pc.code}",
                 )
             return None
         

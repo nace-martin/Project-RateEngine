@@ -74,7 +74,7 @@ class DomesticPricingEngine:
             raise ValueError(f"Delivery not available for {self.destination}. Door service only in {self.DOOR_PORTS}")
 
     @staticmethod
-    def get_mandatory_product_codes(
+    def get_requested_product_code_ids(
         service_scope: str = 'A2A',
         commodity_code: str = DEFAULT_COMMODITY_CODE,
         origin: Optional[str] = None,
