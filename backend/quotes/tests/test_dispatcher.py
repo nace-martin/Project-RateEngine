@@ -31,6 +31,7 @@ from core.dataclasses import (
     LocationRef,
     CalculatedTotals,
 )
+from pricing_v4.adapter import PricingServiceV4Adapter
 
 
 class TestRoutingMap(TestCase):
@@ -165,6 +166,56 @@ class TestPricingDispatcherRouting(TestCase):
         
         with self.assertRaises(RoutingError):
             dispatcher.calculate(quote_input)
+
+
+class TestPricingAdapterNormalization(TestCase):
+    def test_export_adapter_normalizes_station_codes_before_rate_lookup(self):
+        quote_input = QuoteInput(
+            customer_id=uuid4(),
+            contact_id=uuid4(),
+            output_currency="PGK",
+            shipment=ShipmentDetails(
+                mode="AIR",
+                shipment_type="EXPORT",
+                direction="EXPORT",
+                incoterm="FCA",
+                payment_term="PREPAID",
+                is_dangerous_goods=False,
+                pieces=[Piece(pieces=1, length_cm=Decimal("10"), width_cm=Decimal("10"), height_cm=Decimal("10"), gross_weight_kg=Decimal("100"))],
+                service_scope="D2A",
+                origin_location=LocationRef(
+                    id=uuid4(), code=" pom ", name="Port Moresby",
+                    country_code="PG", currency_code="PGK"
+                ),
+                destination_location=LocationRef(
+                    id=uuid4(), code="sin - singapore", name="Singapore",
+                    country_code="SG", currency_code="USD"
+                ),
+            ),
+        )
+
+        adapter = PricingServiceV4Adapter(quote_input)
+
+        with patch("pricing_v4.adapter.ExportPricingEngine") as mock_export_engine, patch.object(
+            PricingServiceV4Adapter,
+            "_convert_result_to_lines",
+            return_value=[],
+        ):
+            mock_engine_instance = MagicMock()
+            mock_engine_instance.calculate_quote.return_value = object()
+            mock_export_engine.return_value = mock_engine_instance
+            mock_export_engine.get_product_codes.return_value = [1001]
+
+            adapter._calculate_standard_lines()
+
+        mock_export_engine.assert_called_once()
+        _, engine_kwargs = mock_export_engine.call_args
+        self.assertEqual(engine_kwargs["origin"], "POM")
+        self.assertEqual(engine_kwargs["destination"], "SIN")
+
+        _, product_code_kwargs = mock_export_engine.get_product_codes.call_args
+        self.assertEqual(product_code_kwargs["origin"], "POM")
+        self.assertEqual(product_code_kwargs["destination"], "SIN")
 
 
 class TestPreFlightCheck(TestCase):

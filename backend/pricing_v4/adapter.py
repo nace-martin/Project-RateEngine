@@ -1,6 +1,7 @@
 import uuid
 import json
 import logging
+import re
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
@@ -36,6 +37,21 @@ class PricingMode:
     """Pricing mode constants."""
     NORMAL = "NORMAL"
     SPOT = "SPOT"
+
+
+def _normalize_station_code(value: Optional[str]) -> str:
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ""
+
+    match = re.match(r"^([A-Z]{3})(?:\b|\s|-|/)", raw)
+    if match:
+        return match.group(1)
+
+    if re.fullmatch(r"[A-Z]{3}", raw):
+        return raw
+
+    return raw
 
 
 class PricingServiceV4Adapter:
@@ -257,8 +273,8 @@ class PricingServiceV4Adapter:
         # Calculate chargeable weight (Max of Actual vs Volumetric)
         chargeable_weight = self._calculate_chargeable_weight()
         
-        origin_code = shipment.origin_location.code
-        dest_code = shipment.destination_location.code
+        origin_code = _normalize_station_code(getattr(shipment.origin_location, "code", None))
+        dest_code = _normalize_station_code(getattr(shipment.destination_location, "code", None))
 
         if shipment.shipment_type == 'EXPORT':
             # Export Engine - now supports payment term and FCY conversion
@@ -764,8 +780,8 @@ class PricingServiceV4Adapter:
         service_scope = getattr(shipment, "service_scope", None)
         is_dg = getattr(shipment, "is_dangerous_goods", False)
         commodity_code = getattr(shipment, "commodity_code", DEFAULT_COMMODITY_CODE)
-        origin_code = getattr(getattr(shipment, "origin_location", None), "code", None)
-        destination_code = getattr(getattr(shipment, "destination_location", None), "code", None)
+        origin_code = _normalize_station_code(getattr(getattr(shipment, "origin_location", None), "code", None))
+        destination_code = _normalize_station_code(getattr(getattr(shipment, "destination_location", None), "code", None))
         quote_date = getattr(self.quote_input, "quote_date", None)
         payment_term = getattr(shipment, "payment_term", None)
         
