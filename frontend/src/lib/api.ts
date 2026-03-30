@@ -55,6 +55,16 @@ const parseErrorResponse = async (response: Response): Promise<string> => {
   return response.statusText || 'Unknown error';
 };
 
+const sleep = (ms: number) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+
+const isRetryableResponseStatus = (status: number) => [502, 503, 504].includes(status);
+
+const isTransientFetchFailure = (error: unknown) => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return error.name === 'TypeError' || message.includes('failed to fetch') || message.includes('networkerror');
+};
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -1223,18 +1233,41 @@ export async function updateSpotEnvelope(
  */
 export async function getSpotEnvelope(id: string): Promise<SpotPricingEnvelope> {
   const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-  });
+  const authToken = resolveAuthToken();
+  const retryDelaysMs = [400, 1200];
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to get SPE: ${detail}`);
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Token ${authToken}`,
+        },
+      });
+
+      if (response.ok) {
+        return response.json();
+      }
+
+      if (attempt < retryDelaysMs.length && isRetryableResponseStatus(response.status)) {
+        await sleep(retryDelaysMs[attempt]);
+        continue;
+      }
+
+      const detail = await parseErrorResponse(response);
+      throw new Error(`Failed to get SPE: ${detail}`);
+    } catch (error) {
+      if (attempt < retryDelaysMs.length && isTransientFetchFailure(error)) {
+        await sleep(retryDelaysMs[attempt]);
+        continue;
+      }
+
+      lastError = error instanceof Error ? error : new Error('Failed to get SPE.');
+      break;
+    }
   }
 
-  return response.json();
+  throw lastError || new Error('Failed to get SPE.');
 }
 
 /**
