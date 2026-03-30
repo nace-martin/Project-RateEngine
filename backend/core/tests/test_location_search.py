@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from core.models import Country, City, Airport, Location
+from core.tests.helpers import create_location
 
 
 class LocationSearchViewTests(APITestCase):
@@ -22,7 +23,7 @@ class LocationSearchViewTests(APITestCase):
             name='Brisbane International',
             city=self.city,
         )
-        self.airport_location = Location.objects.create(
+        self.airport_location = create_location(
             kind=Location.Kind.AIRPORT,
             name='Brisbane International Airport',
             code='BNE',
@@ -30,7 +31,7 @@ class LocationSearchViewTests(APITestCase):
             city=self.city,
             airport=self.airport,
         )
-        self.city_location = Location.objects.create(
+        self.city_location = create_location(
             kind=Location.Kind.CITY,
             name=self.city.name,
             code='BRI',

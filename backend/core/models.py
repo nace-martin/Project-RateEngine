@@ -2,6 +2,7 @@
 
 import uuid
 from decimal import Decimal
+from django.core.validators import RegexValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -99,6 +100,12 @@ class Location(models.Model):
     code = models.CharField(
         max_length=3,
         db_index=True,
+        validators=[
+            RegexValidator(
+                regex=r"^[A-Z]{3}$",
+                message="Location code must be a 3-letter uppercase IATA code.",
+            )
+        ],
         help_text="IATA airport code (e.g., BNE, POM, SYD)"
     )
     country = models.ForeignKey(

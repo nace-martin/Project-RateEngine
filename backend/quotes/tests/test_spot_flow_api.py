@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.models import Location
+from core.tests.helpers import create_location
 from pricing_v4.models import CommodityChargeRule, ProductCode
 from services.models import ServiceComponent
 from quotes.completeness import (
@@ -28,8 +29,8 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         self.client.force_authenticate(user=self.user)
 
-        self.origin = Location.objects.create(name="Port Moresby", code="POM")
-        self.destination = Location.objects.create(name="Sydney", code="SYD")
+        self.origin = create_location(name="Port Moresby", code="POM")
+        self.destination = create_location(name="Sydney", code="SYD")
 
         self.service_component = ServiceComponent.objects.create(
             code="FRT_SPOT",

@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from core.dataclasses import CalculatedChargeLine, CalculatedTotals, QuoteCharges
 from core.models import Currency, Country, Location
+from core.tests.helpers import create_location
 from parties.models import Company
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
 from quotes.models import Quote
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.django_db
 
 
 def _create_location(code: str, country: Country) -> Location:
-    return Location.objects.create(
+    return create_location(
         code=code,
         name=f"{code} Airport",
         country=country,

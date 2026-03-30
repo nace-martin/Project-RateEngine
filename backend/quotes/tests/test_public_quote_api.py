@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.models import Location
+from core.tests.helpers import create_location
 from parties.models import Company, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
 from quotes.public_links import build_public_quote_token
@@ -37,8 +38,8 @@ class QuotePublicDetailAPITest(APITestCase):
                 "accent_color": "#D71920",
             },
         )
-        self.origin = Location.objects.create(code="POM", name="Port Moresby Jacksons Intl")
-        self.destination = Location.objects.create(code="HKG", name="Hong Kong Intl")
+        self.origin = create_location(code="POM", name="Port Moresby Jacksons Intl")
+        self.destination = create_location(code="HKG", name="Hong Kong Intl")
         self.url = reverse("quotes:quote-public-detail")
 
     def _create_quote(

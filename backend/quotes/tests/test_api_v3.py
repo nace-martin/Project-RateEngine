@@ -9,6 +9,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from core.tests.helpers import create_location, indexed_iata_code
 from parties.models import Company, Contact, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.spot_models import SpotPricingEnvelopeDB
@@ -51,11 +52,11 @@ class QuoteRetrieveV3APITest(APITestCase):
             email=f"jane{uuid4().hex[:6]}@example.com",
         )
 
-        origin_location = Location.objects.create(
+        origin_location = create_location(
             name="Los Angeles",
             code="LAX",
         )
-        destination_location = Location.objects.create(
+        destination_location = create_location(
             name="Port Moresby",
             code="POM",
         )
@@ -263,8 +264,8 @@ class QuoteListV3APITest(APITestCase):
 
     def _create_simple_quote(self, index):
         customer = Company.objects.create(name=f"Customer {index}")
-        origin = Location.objects.create(name=f"Origin {index}", code=f"O{index:02d}")
-        dest = Location.objects.create(name=f"Dest {index}", code=f"D{index:02d}")
+        origin = create_location(name=f"Origin {index}", code=indexed_iata_code(index, prefix="O"))
+        dest = create_location(name=f"Dest {index}", code=indexed_iata_code(index, prefix="D"))
         
         quote = Quote.objects.create(
             customer=customer,

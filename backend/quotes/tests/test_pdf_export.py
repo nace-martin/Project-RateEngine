@@ -4,6 +4,7 @@ from pathlib import Path
 from django.test import TestCase
 
 from core.models import City, Country, Location
+from core.tests.helpers import create_location
 from parties.models import Company, Organization, OrganizationBranding
 from quotes.branding import DEFAULT_FALLBACK_LOGO_ASSET, get_quote_branding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion
@@ -21,8 +22,8 @@ class QuotePDFExportTest(TestCase):
     def setUp(self):
         self.country = Country.objects.create(code="PG", name="Papua New Guinea")
         self.city = City.objects.create(name="Port Moresby", country=self.country)
-        self.origin = Location.objects.create(code="POM", name="Port Moresby", city=self.city, country=self.country)
-        self.dest = Location.objects.create(code="LAE", name="Lae", country=self.country)
+        self.origin = create_location(code="POM", name="Port Moresby", city=self.city, country=self.country)
+        self.dest = create_location(code="LAE", name="Lae", country=self.country)
         self.customer = Company.objects.create(name="Test Customer", company_type="CUSTOMER")
         self.organization, _ = Organization.objects.get_or_create(
             slug="efm-express-air-cargo",
@@ -117,7 +118,7 @@ class QuotePDFExportTest(TestCase):
     def test_location_country_code_uses_quote_location_country(self):
         country_hk = Country.objects.create(code="HK", name="Hong Kong")
         city_hk = City.objects.create(name="Hong Kong", country=country_hk)
-        origin_hk = Location.objects.create(
+        origin_hk = create_location(
             code="HKG",
             name="Hong Kong Intl",
             city=city_hk,
@@ -141,7 +142,7 @@ class QuotePDFExportTest(TestCase):
     def test_extract_location_info_prefers_city_name_over_airport_label(self):
         country_au = Country.objects.create(code="AU", name="Australia")
         city_bne = City.objects.create(name="Brisbane", country=country_au)
-        origin_bne = Location.objects.create(
+        origin_bne = create_location(
             code="BNE",
             name="Brisbane International Airport",
             city=city_bne,

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from core.models import City, Country, Location
+from core.tests.helpers import create_location
 from parties.models import Address, Company, Contact, Organization
 from shipments.models import Shipment, ShipmentCharge, ShipmentEvent
 from shipments.services import recalculate_shipment_totals
@@ -43,10 +44,10 @@ class ShipmentAPITests(APITestCase):
         self.city_pom = City.objects.create(name="Port Moresby", country=self.country_pg)
         self.city_bne = City.objects.create(name="Brisbane", country=self.country_au)
         self.city_lae = City.objects.create(name="Lae", country=self.country_pg)
-        self.origin_pom = Location.objects.create(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
-        self.destination_bne = Location.objects.create(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
-        self.destination_lae = Location.objects.create(code="LAE", name="Lae", city=self.city_lae, country=self.country_pg)
-        self.origin_bne = Location.objects.create(code="BNE2", name="Brisbane Export", city=self.city_bne, country=self.country_au)
+        self.origin_pom = create_location(code="POM", name="Port Moresby", city=self.city_pom, country=self.country_pg)
+        self.destination_bne = create_location(code="BNE", name="Brisbane", city=self.city_bne, country=self.country_au)
+        self.destination_lae = create_location(code="LAE", name="Lae", city=self.city_lae, country=self.country_pg)
+        self.origin_bne = create_location(code="BNE", name="Brisbane Export", city=self.city_bne, country=self.country_au)
         self.customer = Company.objects.create(name="Brisbane Imports", is_customer=True, company_type="CUSTOMER")
         Address.objects.create(
             company=self.customer,

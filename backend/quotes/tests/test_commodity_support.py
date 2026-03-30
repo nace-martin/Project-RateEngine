@@ -12,6 +12,7 @@ from rest_framework.test import APIRequestFactory, APITestCase
 from core.commodity import COMMODITY_CODE_AVI, COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE
 from core.dataclasses import CalculatedTotals, QuoteCharges
 from core.models import Country, Currency, FxSnapshot, Location, Policy
+from core.tests.helpers import create_location
 from parties.models import Company, Contact
 from pricing_v4.models import CommodityChargeRule, ProductCode
 from quotes.models import Quote
@@ -90,8 +91,8 @@ class QuoteCommodityPersistenceTests(TestCase):
         pgk = Currency.objects.create(code="PGK", name="Papua New Guinean Kina")
         au = Country.objects.create(code="AU", name="Australia", currency=aud)
         pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
-        cls.origin = Location.objects.create(code="SYD", name="Sydney", country=au, is_active=True)
-        cls.destination = Location.objects.create(code="POM", name="Port Moresby", country=pg, is_active=True)
+        cls.origin = create_location(code="SYD", name="Sydney", country=au, is_active=True)
+        cls.destination = create_location(code="POM", name="Port Moresby", country=pg, is_active=True)
         cls.fx_snapshot = FxSnapshot.objects.create(
             as_of_timestamp=timezone.now(),
             source="TEST",
@@ -221,8 +222,8 @@ class QuoteCommodityAPITests(APITestCase):
         pgk = Currency.objects.create(code="PGK", name="Papua New Guinean Kina")
         au = Country.objects.create(code="AU", name="Australia", currency=aud)
         pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
-        self.origin = Location.objects.create(code="SYD", name="Sydney", country=au, is_active=True)
-        self.destination = Location.objects.create(code="POM", name="Port Moresby", country=pg, is_active=True)
+        self.origin = create_location(code="SYD", name="Sydney", country=au, is_active=True)
+        self.destination = create_location(code="POM", name="Port Moresby", country=pg, is_active=True)
 
     def test_standard_compute_routes_dg_using_commodity_rules(self):
         CommodityChargeRule.objects.create(

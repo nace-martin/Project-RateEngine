@@ -4,6 +4,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
 from core.models import Currency, Location
+from core.tests.helpers import create_location
 from pricing_v4.models import ExportSellRate, LocalSellRate, ProductCode
 from pricing_v4.serializers import ExportSellRateSerializer, LocalSellRateSerializer
 from pricing_v4.services.csv_importer import import_v4_rate_cards_csv
@@ -15,8 +16,8 @@ class RateTableSeparationTests(TestCase):
         Currency.objects.create(code='PGK', name='Papua New Guinean Kina', minor_units=2)
         Currency.objects.create(code='AUD', name='Australian Dollar', minor_units=2)
 
-        Location.objects.create(code='POM', name='Port Moresby')
-        Location.objects.create(code='BNE', name='Brisbane')
+        create_location(code='POM', name='Port Moresby')
+        create_location(code='BNE', name='Brisbane')
 
         cls.export_freight = ProductCode.objects.create(
             id=1001,

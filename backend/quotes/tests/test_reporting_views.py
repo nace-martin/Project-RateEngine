@@ -9,6 +9,8 @@ from django.utils import timezone
 from decimal import Decimal
 from itertools import count
 
+from core.tests.helpers import create_location
+
 @pytest.fixture
 def api_client():
     return APIClient()
@@ -34,10 +36,9 @@ def sales_user(db):
 @pytest.fixture
 def quote_factory(db):
     from parties.models import Company
-    from core.models import Location
 
     company = Company.objects.create(name="Test Co", company_type="CUSTOMER")
-    location = Location.objects.create(code="POM", name="Port Moresby")
+    location = create_location(code="POM", name="Port Moresby")
     quote_numbers = count(1)
 
     def create_quote(user, status, total_pgk, customer=None, created_at=None, updated_at=None, finalized_at=None):
@@ -290,9 +291,8 @@ class TestReportsViewSet:
         api_client.force_authenticate(user=manager_user)
 
         from parties.models import Company
-        from core.models import Location
 
-        location = Location.objects.create(code="LAE", name="Lae")
+        location = create_location(code="LAE", name="Lae")
         customer_a = Company.objects.create(name="Customer A", company_type="CUSTOMER")
         customer_b = Company.objects.create(name="Customer B", company_type="CUSTOMER")
 

@@ -4,6 +4,7 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from core.models import Airport, City, Country, Currency, Location
+from core.tests.helpers import create_location
 from parties.models import Company, Contact
 from quotes.models import Quote
 
@@ -18,7 +19,7 @@ class NormalizeLocationsCommandTests(TestCase):
             name="Nadzab Tomodachi International Airport",
             city=self.city,
         )
-        self.legacy_location = Location.objects.create(
+        self.legacy_location = create_location(
             kind=Location.Kind.AIRPORT,
             code="LAE",
             name="Lae",
