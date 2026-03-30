@@ -11,10 +11,7 @@ SpotTriggerEvaluator:
     Returns explicit reason when SPOT is required.
 
 SpotEnvelopeService:
-    SPE lifecycle: create, validate, acknowledge, approve, expire.
-
-SpotApprovalPolicy:
-    Manager approval thresholds as policy, not if-statements.
+    SPE lifecycle: create, validate, acknowledge, and expire.
 """
 
 import logging
@@ -38,7 +35,6 @@ from quotes.spot_schemas import (
     SPEChargeLine,
     SPEConditions,
     SPEAcknowledgement,
-    SPEManagerApproval,
     SPEStatus,
 )
 from quotes.completeness import (
@@ -1348,7 +1344,6 @@ class SpotEnvelopeService:
     - Status must be READY before pricing
     - SPE must not be expired
     - Acknowledgement must be present
-    - Manager approval required when thresholds exceeded
     """
     
     @classmethod
@@ -1384,43 +1379,7 @@ class SpotEnvelopeService:
                 "Acknowledge the conditions and uncertainty before continuing."
             )
         
-        # Check manager approval if required
-        if cls._requires_manager_approval(spe) and spe.manager_approval is None:
-            return False, (
-                "Manager approval is required for this SPOT quote but has not been provided. "
-                f"Reason: {cls._get_approval_reason(spe)}"
-            )
-        
-        if spe.manager_approval is not None and not spe.manager_approval.approved:
-            return False, (
-                "Manager has rejected this SPOT quote. "
-                f"Reason: {spe.manager_approval.comment or 'No comment provided'}"
-            )
-        
         return True, None
-    
-    @classmethod
-    def _requires_manager_approval(cls, spe: SpotPricingEnvelope) -> bool:
-        """Check if SPE requires manager approval per policy."""
-        return SpotApprovalPolicy.requires_manager_approval(
-            commodity=spe.shipment.commodity,
-            margin_percent=None,  # Not calculated yet at this stage
-            is_multi_leg=spe.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING,
-            trigger_code=spe.spot_trigger_reason_code
-        )
-    
-    @classmethod
-    def _get_approval_reason(cls, spe: SpotPricingEnvelope) -> str:
-        """Get human-readable reason for required approval."""
-        reasons = []
-        
-        if spe.shipment.commodity == "DG":
-            reasons.append("Dangerous Goods shipment")
-        
-        if spe.spot_trigger_reason_code == SpotTriggerReason.MULTI_LEG_ROUTING:
-            reasons.append("Multi-leg routing")
-        
-        return ", ".join(reasons) if reasons else "Policy requires approval"
     
     @classmethod
     def create_envelope(
@@ -1436,8 +1395,7 @@ class SpotEnvelopeService:
         """
         Create a new SPE in DRAFT status.
         
-        The envelope must be acknowledged and approved (if required)
-        before transitioning to READY status.
+        The envelope must be acknowledged before transitioning to READY status.
         """
         now = datetime.now()
         
@@ -1448,7 +1406,6 @@ class SpotEnvelopeService:
             charges=charges,
             conditions=conditions,
             acknowledgement=None,
-            manager_approval=None,
             spot_trigger_reason_code=trigger_code,
             spot_trigger_reason_text=trigger_text,
             created_by_user_id=created_by_user_id,
@@ -1478,28 +1435,6 @@ class SpotEnvelopeService:
         )
     
     @classmethod
-    def approve(
-        cls,
-        spe: SpotPricingEnvelope,
-        manager_user_id: str,
-        approved: bool,
-        comment: Optional[str] = None,
-    ) -> SpotPricingEnvelope:
-        """Add Manager approval to SPE."""
-        return SpotPricingEnvelope(
-            **{
-                **spe.model_dump(),
-                "manager_approval": SPEManagerApproval(
-                    approved=approved,
-                    manager_user_id=manager_user_id,
-                    decision_at=datetime.now(),
-                    comment=comment,
-                ),
-                "status": SPEStatus.READY if approved else SPEStatus.REJECTED,
-            }
-        )
-    
-    @classmethod
     def mark_ready(cls, spe: SpotPricingEnvelope) -> SpotPricingEnvelope:
         """
         Transition SPE to READY status.
@@ -1507,17 +1442,13 @@ class SpotEnvelopeService:
         Only valid if:
         - Currently in DRAFT
         - Acknowledgement present
-        - Manager approval present (if required)
         """
         if spe.status != SPEStatus.DRAFT:
             raise ValueError(f"Cannot mark SPE as ready from status '{spe.status.value}'")
         
         if spe.acknowledgement is None:
             raise ValueError("Cannot mark SPE as ready without acknowledgement")
-        
-        if cls._requires_manager_approval(spe) and spe.manager_approval is None:
-            raise ValueError("Cannot mark SPE as ready - manager approval required")
-        
+
         return SpotPricingEnvelope(
             **{**spe.model_dump(), "status": SPEStatus.READY}
         )
@@ -1546,81 +1477,6 @@ class SpotEnvelopeService:
             updated_data["conditions"] = conditions
             
         return SpotPricingEnvelope(**updated_data)
-
-
-# =============================================================================
-# SPOT APPROVAL POLICY (Tweak #6 - Policy, Not If-Statements)
-# =============================================================================
-
-class SpotApprovalPolicy:
-    """
-    Manager approval thresholds as policy configuration.
-    
-    Can be backed by settings/env for MVP, extensible to DB config later.
-    """
-    
-    # Default policy values (can be overridden via settings)
-    DEFAULT_MARGIN_THRESHOLD_PCT = Decimal("15.0")
-    
-    @classmethod
-    def get_config(cls) -> dict:
-        """
-        Get approval policy configuration.
-        
-        Extensible to settings/env/database lookup.
-        """
-        return getattr(settings, 'SPOT_APPROVAL_POLICY', {
-            # All special cargo requires approval
-            'special_cargo_requires_approval': True,
-            'multi_leg_requires_approval': True,
-            'margin_below_pct': cls.DEFAULT_MARGIN_THRESHOLD_PCT,
-            # Explicit list of commodities requiring approval (all non-GCR)
-            'approval_required_commodities': ['SCR', 'DG', 'AVI', 'PER', 'HVC', 'HUM', 'OOG', 'VUL', 'TTS'],
-        })
-    
-    @classmethod
-    def requires_manager_approval(
-        cls,
-        commodity: str,
-        margin_percent: Optional[Decimal],
-        is_multi_leg: bool = False,
-        trigger_code: Optional[str] = None,
-    ) -> bool:
-        """
-        Determine if manager approval is required per policy.
-        
-        Args:
-            commodity: Commodity type
-            margin_percent: Calculated margin percentage (may be None if not yet calculated)
-            is_multi_leg: Whether multi-leg routing is involved
-            trigger_code: SPOT trigger reason code
-            
-        Returns:
-            True if manager approval required
-        """
-        config = cls.get_config()
-        
-        # Special cargo commodities require approval
-        approval_commodities = config.get(
-            'approval_required_commodities', 
-            ['SCR', 'DG', 'AVI', 'PER', 'HVC', 'HUM', 'OOG', 'VUL', 'TTS']
-        )
-        if commodity in approval_commodities and config.get('special_cargo_requires_approval', True):
-            return True
-        
-        # Multi-leg requires approval
-        if is_multi_leg and config.get('multi_leg_requires_approval', True):
-            return True
-        
-        # Low margin requires approval
-        if margin_percent is not None:
-            threshold = Decimal(str(config.get('margin_below_pct', cls.DEFAULT_MARGIN_THRESHOLD_PCT)))
-            if margin_percent < threshold:
-                return True
-        
-        return False
-
-
 # =============================================================================
 # SPOT EMAIL DRAFT GENERATOR
 # =============================================================================
@@ -1822,6 +1678,7 @@ class ReplyAnalysisService:
             AssertionCategory,
             ExtractedAssertion,
             AnalysisSummary,
+            AnalysisSafetySignals,
             ReplyAnalysisResult,
             MANDATORY_CATEGORIES,
         )
@@ -1852,6 +1709,7 @@ class ReplyAnalysisService:
             assertions=parsed_assertions,
             summary=summary,
             warnings=warnings,
+            safety_signals=AnalysisSafetySignals(),
         )
     
     @classmethod
@@ -1872,6 +1730,7 @@ class ReplyAnalysisService:
             AssertionCategory,
             ExtractedAssertion,
             AnalysisSummary,
+            AnalysisSafetySignals,
             ReplyAnalysisResult,
         )
 
@@ -1879,23 +1738,47 @@ class ReplyAnalysisService:
         ai_unavailable = genai is None
         ai_assertions = []
         ai_result = None
+        safety_signals = AnalysisSafetySignals()
         
         if genai:
             # Call existing AI service with context to help it categorize
             ai_result = parse_rate_quote_text(raw_text, context=shipment_context)
+            audit_result = getattr(ai_result, "extraction_audit", None)
+            lines = getattr(ai_result, "lines", []) or []
             unmapped_line_count = sum(
                 1
-                for line in (getattr(ai_result, "lines", []) or [])
+                for line in lines
                 if getattr(line, "v4_product_code", None) == "UNMAPPED"
+            )
+            low_confidence_line_count = sum(
+                1
+                for line in lines
+                if getattr(line, "normalization_confidence", None) == "LOW"
+            )
+            conditional_charge_count = sum(1 for line in lines if getattr(line, "conditional", False))
+            safety_signals = AnalysisSafetySignals(
+                raw_charge_count=len(getattr(ai_result, "raw_extracted_charges", []) or []),
+                normalized_charge_count=len(getattr(ai_result, "normalized_charges", []) or []),
+                imported_charge_count=len(lines),
+                unmapped_line_count=unmapped_line_count,
+                low_confidence_line_count=low_confidence_line_count,
+                conditional_charge_count=conditional_charge_count,
+                critic_safe_to_proceed=getattr(audit_result, "is_safe_to_proceed", None),
+                critic_missed_charges=list(getattr(audit_result, "missed_charges", []) or []),
+                critic_hallucinations=list(getattr(audit_result, "hallucinations_detected", []) or []),
+                pdf_fallback_used=any(
+                    "pdf extraction fallback" in str(w).lower()
+                    for w in (getattr(ai_result, "warnings", []) or [])
+                ),
             )
             logger.info(
                 "AI analysis result: success=%s lines=%s warnings=%s raw=%s normalized=%s audit_safe=%s unmapped=%s",
                 getattr(ai_result, "success", None),
-                len(getattr(ai_result, "lines", []) or []),
+                len(lines),
                 len(getattr(ai_result, "warnings", []) or []),
                 len(getattr(ai_result, "raw_extracted_charges", []) or []),
                 len(getattr(ai_result, "normalized_charges", []) or []),
-                getattr(getattr(ai_result, "extraction_audit", None), "is_safe_to_proceed", None),
+                getattr(audit_result, "is_safe_to_proceed", None),
                 unmapped_line_count,
             )
             if ai_result.success:
@@ -1909,7 +1792,7 @@ class ReplyAnalysisService:
                         rate_currency=ai_result.quote_currency
                     ))
 
-                for line in ai_result.lines:
+                for line in lines:
                     # Map SpotChargeLine to ExtractedAssertion
                     category = AssertionCategory.RATE
                     if line.bucket == "ORIGIN":
@@ -2019,6 +1902,7 @@ class ReplyAnalysisService:
             assertions=all_assertions,
             summary=summary,
             warnings=warnings,
+            safety_signals=safety_signals,
         )
 
 

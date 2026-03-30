@@ -43,6 +43,14 @@ export type SPECommodity =
     | 'TTS'   // Time/Temp Sensitive
     | 'OTHER';
 
+export const SPOT_SUPPORTED_CURRENCIES = [
+    'USD', 'AUD', 'PGK', 'SGD', 'NZD', 'FJD', 'SBD', 'VUV',
+    'EUR', 'GBP', 'HKD', 'JPY', 'CNY', 'PHP', 'IDR', 'MYR',
+    'THB', 'INR',
+] as const;
+
+export type SpotCurrency = typeof SPOT_SUPPORTED_CURRENCIES[number];
+
 // =============================================================================
 // API REQUEST/RESPONSE TYPES
 // =============================================================================
@@ -120,7 +128,7 @@ export interface SPEChargeLine {
     code: string;
     description: string;
     amount: string;
-    currency: 'SGD' | 'USD' | 'AUD' | 'PGK' | 'NZD' | 'HKD';
+    currency: SpotCurrency;
     unit: SPEChargeUnit;
     bucket: SPEChargeBucket;
     is_primary_cost?: boolean;
@@ -150,14 +158,6 @@ export interface SPEAcknowledgement {
     statement: string;
 }
 
-/** SPE manager approval */
-export interface SPEManagerApproval {
-    approved: boolean;
-    manager_user_id: string;
-    decision_at: string;
-    comment?: string;
-}
-
 /** SPE source batch */
 export interface SPESourceBatch {
     id: string;
@@ -172,6 +172,28 @@ export interface SPESourceBatch {
     created_at: string;
     updated_at: string;
     charge_count: number;
+    warnings: string[];
+    assertion_count: number;
+    ai_used: boolean;
+    review_required: boolean;
+    review_status: 'PENDING' | 'APPROVED' | 'NOT_REQUIRED';
+    reviewed_safe_to_quote: boolean;
+    reviewed_by_user_id: string | null;
+    reviewed_at: string | null;
+    review_note: string | null;
+    detected_currencies: SpotCurrency[];
+    risk_flags: string[];
+    blocking_reasons: string[];
+    risk_level: 'LOW' | 'MEDIUM' | 'HIGH';
+    requires_review_note: boolean;
+}
+
+export interface SPEIntakeSafety {
+    is_safe_to_quote: boolean;
+    blocking_issues: string[];
+    pending_source_batch_ids: string[];
+    pending_source_labels: string[];
+    review_note_required_batch_ids: string[];
 }
 
 /** Create SPE request */
@@ -200,9 +222,9 @@ export interface SpotPricingEnvelope {
     is_expired: boolean;
     context_integrity_valid?: boolean;
     acknowledgement: SPEAcknowledgement | null;
-    manager_approval: SPEManagerApproval | null;
     missing_mandatory_fields: string[];  // 'rate', 'currency' if missing
     can_proceed: boolean;  // True if no missing mandatory fields
+    intake_safety: SPEIntakeSafety;
     sources: SPESourceBatch[];
     charges: SPEChargeLine[];
     customer_name?: string; // from backend/quotes/spot_schemas.py
@@ -311,6 +333,18 @@ export interface ReplyAnalysisResult {
     assertions: ExtractedAssertion[];
     summary: AnalysisSummary;
     warnings: string[];
+    safety_signals?: {
+        raw_charge_count: number;
+        normalized_charge_count: number;
+        imported_charge_count: number;
+        unmapped_line_count: number;
+        low_confidence_line_count: number;
+        conditional_charge_count: number;
+        critic_safe_to_proceed?: boolean | null;
+        critic_missed_charges: string[];
+        critic_hallucinations: string[];
+        pdf_fallback_used: boolean;
+    };
     can_proceed: boolean;
     blocked_reason: string | null;
     source_batch_id?: string;
@@ -381,9 +415,11 @@ export interface SpotModeActions {
     checkScope: (origin: string, destination: string) => Promise<boolean>;
     evaluateTrigger: (request: TriggerEvaluateRequest) => Promise<boolean>;
     createSPE: (request: CreateSPERequest) => Promise<SpotPricingEnvelope | null>;
+    updateSPE: (id: string, data: { charges?: Omit<SPEChargeLine, 'id'>[]; conditions?: Partial<SPEConditions> }) => Promise<SpotPricingEnvelope | null>;
     loadSPE: (id: string) => Promise<SpotPricingEnvelope | null>;
     submitAcknowledgement: () => Promise<boolean>;
-    submitManagerApproval: (approved: boolean, comment?: string) => Promise<boolean>;
-    computeSpotQuote: (request: SPEComputeRequest) => Promise<SPEComputeResponse | null>;
+    reviewSourceBatch: (sourceBatchId: string, request: { reviewed_safe_to_quote: boolean; review_note?: string }) => Promise<SpotPricingEnvelope | null>;
+    computeQuote: (request: SPEComputeRequest) => Promise<SPEComputeResponse | null>;
+    createQuote: (request: { payment_term: string; service_scope: string; output_currency: string; customer_id?: string }) => Promise<{ success: boolean; quote_id: string } | null>;
     reset: () => void;
 }

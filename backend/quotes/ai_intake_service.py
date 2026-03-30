@@ -423,24 +423,96 @@ def _extract_pdf_text_with_gemini(pdf_content: bytes, context: Optional[dict] = 
     return text
 
 
+def _extract_pdf_text_from_page_images_with_gemini(pdf_content: bytes, context: Optional[dict] = None) -> str:
+    """Render PDF pages to images and use Gemini to transcribe layout-heavy or scanned documents."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+
+    try:
+        from google import genai as genai_sdk
+    except ImportError as exc:
+        raise RuntimeError("google-genai is required for image-based PDF extraction") from exc
+
+    try:
+        import fitz  # pymupdf
+    except ImportError as exc:
+        raise RuntimeError("pymupdf is required for image-based PDF extraction") from exc
+
+    doc = fitz.open(stream=pdf_content, filetype="pdf")
+    try:
+        page_parts = []
+        for page_index, page in enumerate(doc, start=1):
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            page_parts.append(
+                genai_sdk.types.Part.from_bytes(data=pix.tobytes("png"), mime_type="image/png")
+            )
+    finally:
+        doc.close()
+
+    if not page_parts:
+        raise RuntimeError("PDF contains no renderable pages")
+
+    prompt = (
+        "You are transcribing a freight quote PDF from page images.\n"
+        "Extract the visible commercial content as plain text in reading order.\n"
+        "Preserve table rows, line items, currencies, units, validity, surcharges, minimums, notes, and section headers.\n"
+        "Do not summarize. Do not infer. Do not omit repeated charge rows.\n"
+        "Return only the extracted quote content.\n"
+    )
+    if context:
+        prompt += f"\nShipment context for disambiguation only:\n{_dump_json(context)}\n"
+
+    client = genai_sdk.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[prompt, *page_parts],
+        config={"temperature": 0.1},
+    )
+    text = _GenAIResponseAdapter(response).text.strip()
+    if not text:
+        raise RuntimeError("Gemini page-image PDF extraction returned empty text")
+    return text
+
+
 def extract_rate_quote_text_from_pdf(
     pdf_content: bytes,
     context: Optional[dict] = None,
 ) -> PDFRateQuoteTextResult:
-    """Extract quote text from a PDF using text extraction first, then Gemini multimodal fallback."""
+    """Extract quote text from a PDF using text extraction first, then OCR/document-understanding fallbacks."""
     from .pdf_extraction import extract_text_from_pdf, MIN_EXPECTED_CHARS
 
     extraction_result = extract_text_from_pdf(pdf_content)
     warnings = list(extraction_result.warnings or [])
     extracted_text = (extraction_result.text or "").strip()
+    text_marked_insufficient = any("This may be a scanned PDF" in str(w) for w in warnings)
 
-    if extraction_result.success and len(extracted_text) >= MIN_EXPECTED_CHARS:
+    if extraction_result.success and len(extracted_text) >= MIN_EXPECTED_CHARS and not text_marked_insufficient:
         return PDFRateQuoteTextResult(
             success=True,
             text=extracted_text,
             warnings=warnings,
             extraction_method=extraction_result.method_used or "PDF_TEXT",
         )
+
+    try:
+        ocr_layout_text = _extract_pdf_text_from_page_images_with_gemini(pdf_content, context=context).strip()
+        if len(ocr_layout_text) < MIN_EXPECTED_CHARS:
+            warnings.append("Gemini OCR/layout PDF extraction returned limited text; review carefully.")
+        else:
+            warnings = [
+                w for w in warnings
+                if "This may be a scanned PDF" not in w
+            ]
+        warnings.append("Used Gemini OCR/layout PDF extraction fallback.")
+        return PDFRateQuoteTextResult(
+            success=True,
+            text=ocr_layout_text,
+            warnings=warnings,
+            extraction_method="GEMINI_OCR_LAYOUT",
+        )
+    except Exception as ocr_layout_error:
+        warnings.append(f"Gemini OCR/layout fallback unavailable: {ocr_layout_error}")
 
     try:
         multimodal_text = _extract_pdf_text_with_gemini(pdf_content, context=context).strip()

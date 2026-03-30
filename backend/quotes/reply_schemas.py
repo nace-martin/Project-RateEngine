@@ -146,6 +146,21 @@ class AnalysisSummary(BaseModel):
         return self.conditional_count > 0 or self.implicit_count > 0
 
 
+class AnalysisSafetySignals(BaseModel):
+    """Structured safety metadata derived from AI intake and critic output."""
+
+    raw_charge_count: int = 0
+    normalized_charge_count: int = 0
+    imported_charge_count: int = 0
+    unmapped_line_count: int = 0
+    low_confidence_line_count: int = 0
+    conditional_charge_count: int = 0
+    critic_safe_to_proceed: Optional[bool] = None
+    critic_missed_charges: List[str] = Field(default_factory=list)
+    critic_hallucinations: List[str] = Field(default_factory=list)
+    pdf_fallback_used: bool = False
+
+
 class ReplyAnalysisResult(BaseModel):
     """Full analysis of an agent reply."""
     
@@ -164,6 +179,10 @@ class ReplyAnalysisResult(BaseModel):
     warnings: List[str] = Field(
         default_factory=list,
         description="User-facing warnings about the analysis"
+    )
+    safety_signals: AnalysisSafetySignals = Field(
+        default_factory=AnalysisSafetySignals,
+        description="Structured AI safety metadata used for review gating"
     )
     
     @property

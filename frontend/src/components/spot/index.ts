@@ -7,13 +7,10 @@ export {
     SpotModeBanner,
     OutOfScopeBanner,
     ExpiredBanner,
-    RejectedBanner,
-    AwaitingManagerBanner
+    RejectedBanner
 } from './SpotModeBanner';
 
 export { SpotAcknowledgementModal } from './SpotAcknowledgementModal';
-
-export { SpotManagerApproval } from './SpotManagerApproval';
 
 export { SpotRateEntryForm } from './SpotRateEntryForm';
 

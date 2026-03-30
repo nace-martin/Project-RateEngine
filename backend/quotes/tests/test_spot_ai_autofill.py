@@ -31,6 +31,7 @@ from quotes.reply_schemas import (
     AssertionCategory,
     AssertionStatus,
     AnalysisSummary,
+    AnalysisSafetySignals,
 )
 from quotes.ai_intake_schemas import RawExtractedCharge, NormalizedCharge, ExtractionAuditResult
 from quotes.spot_models import (
@@ -701,6 +702,14 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     )
     assert response.status_code == 200
 
+    source_batch_id = response.json()["source_batch_id"]
+    review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
+        {"reviewed_safe_to_quote": True},
+        format="json",
+    )
+    assert review_response.status_code == 200
+
     # Mark SPE ready and acknowledge for compute
     SpotPricingEnvelopeDB.objects.filter(id=spe.id).update(status=SpotPricingEnvelopeDB.Status.READY)
     spe.refresh_from_db()
@@ -752,6 +761,99 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     assert data["is_complete"] is True
 
 
+def test_ai_source_review_required_before_acknowledgement_and_quote_creation(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components().model_copy(
+        update={
+            "warnings": ["Possible missed destination charges. Review before quoting."],
+            "safety_signals": AnalysisSafetySignals(
+                imported_charge_count=3,
+                critic_safe_to_proceed=False,
+                critic_missed_charges=["Destination delivery fee"],
+            ),
+        }
+    )
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    analyze_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {"text": "rate reply", "spe_id": str(spe.id), "use_ai": True},
+        format="json",
+    )
+    assert analyze_response.status_code == 200
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    assert detail_payload["intake_safety"]["is_safe_to_quote"] is False
+    assert detail_payload["sources"][0]["review_status"] == "PENDING"
+    assert detail_payload["sources"][0]["warnings"] == ["Possible missed destination charges. Review before quoting."]
+
+    acknowledge_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
+        {},
+        format="json",
+    )
+    assert acknowledge_response.status_code == 400
+    assert "AI intake review is incomplete" in acknowledge_response.json()["error"]
+
+    create_quote_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "D2D", "payment_term": "PREPAID", "output_currency": "PGK"}},
+        format="json",
+    )
+    assert create_quote_response.status_code == 400
+    assert "AI intake review is incomplete" in create_quote_response.json()["error"]
+
+    source_batch_id = detail_payload["sources"][0]["id"]
+    review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
+        {"reviewed_safe_to_quote": True},
+        format="json",
+    )
+    assert review_response.status_code == 400
+    assert "reviewer note" in review_response.json()["error"].lower()
+
+    review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
+        {"reviewed_safe_to_quote": True, "review_note": "Compared against supplier email and added the missing destination fee manually."},
+        format="json",
+    )
+    assert review_response.status_code == 200
+    reviewed_payload = review_response.json()
+    assert reviewed_payload["intake_safety"]["is_safe_to_quote"] is True
+    assert reviewed_payload["sources"][0]["review_status"] == "APPROVED"
+    assert reviewed_payload["sources"][0]["reviewed_safe_to_quote"] is True
+
+    acknowledge_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
+        {},
+        format="json",
+    )
+    assert acknowledge_response.status_code == 200
+    assert acknowledge_response.json()["success"] is True
 def test_ai_autofill_only_adds_ai_charges_and_preserves_existing_standard_lines(monkeypatch):
     """AI autofill should only insert charges extracted by the LLM.
     Pre-existing standard-rate SPE lines must be left untouched.

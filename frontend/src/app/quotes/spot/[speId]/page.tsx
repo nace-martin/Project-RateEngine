@@ -12,6 +12,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { useSpotMode } from "@/hooks/use-spot-mode";
 import {
     ExpiredBanner,
@@ -179,13 +180,15 @@ export default function SpotRateEntryPage() {
             ),
         [missingComponents]
     );
-    const { loadSPE } = actions;
+    const { loadSPE, reviewSourceBatch } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
     const [sectionBatchIds, setSectionBatchIds] = useState<Record<string, string>>({});
     const [intakeDirtyMap, setIntakeDirtyMap] = useState<Record<string, boolean>>({});
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
+    const [reviewingSourceBatchId, setReviewingSourceBatchId] = useState<string | null>(null);
+    const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
     // Guard ref: prevents the auto-detection useEffect from overriding
     // an explicit step transition (e.g. after analysis completes).
     const userAdvancedToReviewRef = useRef(false);
@@ -404,7 +407,10 @@ export default function SpotRateEntryPage() {
         );
         return (state.spe?.sources || []).map((source) => {
             const sourceCharges = charges.filter((charge) => charge.source_batch_id === source.id);
-            const currencies = Array.from(new Set(sourceCharges.map((charge) => charge.currency)));
+            const sourceCurrencies = Array.from(new Set(sourceCharges.map((charge) => charge.currency)));
+            const currencies = source.detected_currencies?.length
+                ? source.detected_currencies
+                : sourceCurrencies;
             const buckets = Array.from(new Set(sourceCharges.map((charge) => charge.bucket)));
             return {
                 id: source.id,
@@ -414,9 +420,23 @@ export default function SpotRateEntryPage() {
                 lineCount: sourceCharges.length,
                 currencies,
                 buckets,
+                warnings: source.warnings || [],
+                reviewRequired: source.review_required,
+                reviewStatus: source.review_status,
+                reviewedSafeToQuote: source.reviewed_safe_to_quote,
+                reviewedAt: source.reviewed_at,
+                reviewNote: source.review_note,
+                riskFlags: source.risk_flags || [],
+                blockingReasons: source.blocking_reasons || [],
+                riskLevel: source.risk_level || "LOW",
+                requiresReviewNote: source.requires_review_note,
             };
         });
     }, [state.spe?.charges, state.spe?.sources]);
+
+    const intakeSafety = state.spe?.intake_safety;
+    const intakeBlockingIssues = intakeSafety?.blocking_issues || EMPTY_COMPONENTS;
+    const quoteCreationBlocked = Boolean(intakeSafety && !intakeSafety.is_safe_to_quote);
 
     const overlapWarnings = useMemo(() => {
         const warnings = new Set<string>();
@@ -450,9 +470,26 @@ export default function SpotRateEntryPage() {
         return Array.from(warnings);
     }, [editableBuckets, sourceReviewSummaries]);
 
+    const handleReviewSource = async (sourceBatchId: string) => {
+        if (reviewingSourceBatchId) return;
+        const note = (reviewNotes[sourceBatchId] || "").trim();
+        setReviewingSourceBatchId(sourceBatchId);
+        try {
+            await reviewSourceBatch(sourceBatchId, {
+                reviewed_safe_to_quote: true,
+                review_note: note || undefined,
+            });
+        } finally {
+            setReviewingSourceBatchId(null);
+        }
+    };
+
     // Handle saving charges, acknowledging, and creating the final quote in one flow
     const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
         if (state.spe) {
+            if (quoteCreationBlocked) {
+                return;
+            }
             // 1. Update charges
             const spe = await actions.updateSPE(state.spe.id, {
                 charges,
@@ -615,7 +652,6 @@ export default function SpotRateEntryPage() {
         return (
             <div className="container mx-auto max-w-4xl p-6">
                 <RejectedBanner
-                    comment={state.spe?.manager_approval?.comment}
                     onRevise={() => router.push("/quotes/new")}
                 />
             </div>
@@ -836,6 +872,17 @@ export default function SpotRateEntryPage() {
                                 <CardTitle className="text-base font-semibold">Imported Source Summary</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4">
+                                {intakeBlockingIssues.length > 0 && (
+                                    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+                                        <div className="text-sm font-medium text-amber-900">Review Required Before Quote Creation</div>
+                                        <ul className="mt-2 space-y-2 text-sm text-amber-900">
+                                            {intakeBlockingIssues.map((issue) => (
+                                                <li key={issue}>• {issue}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+
                                 <div className="grid gap-3 md:grid-cols-2">
                                     {sourceReviewSummaries.map((summary) => (
                                         <div key={summary.id} className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
@@ -846,8 +893,36 @@ export default function SpotRateEntryPage() {
                                                         {summary.sourceKind} source
                                                     </div>
                                                 </div>
-                                                <div className="rounded-full border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700">
-                                                    {summary.targetBucket === "mixed" ? "Mixed" : BUCKET_LABELS[summary.targetBucket]}
+                                                <div className="flex flex-col items-end gap-2">
+                                                    <div className="rounded-full border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700">
+                                                        {summary.targetBucket === "mixed" ? "Mixed" : BUCKET_LABELS[summary.targetBucket]}
+                                                    </div>
+                                                    <div
+                                                        className={`rounded-full px-2 py-1 text-xs font-medium ${
+                                                            summary.reviewRequired
+                                                                ? summary.reviewedSafeToQuote
+                                                                    ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
+                                                                    : "border border-amber-200 bg-amber-50 text-amber-800"
+                                                                : "border border-slate-300 bg-white text-slate-700"
+                                                        }`}
+                                                    >
+                                                        {summary.reviewRequired
+                                                            ? summary.reviewedSafeToQuote
+                                                                ? "Reviewed"
+                                                                : "Pending review"
+                                                            : "No review required"}
+                                                    </div>
+                                                    <div
+                                                        className={`rounded-full px-2 py-1 text-xs font-medium ${
+                                                            summary.riskLevel === "HIGH"
+                                                                ? "border border-red-200 bg-red-50 text-red-800"
+                                                                : summary.riskLevel === "MEDIUM"
+                                                                    ? "border border-amber-200 bg-amber-50 text-amber-800"
+                                                                    : "border border-slate-300 bg-white text-slate-700"
+                                                        }`}
+                                                    >
+                                                        {summary.riskLevel} risk
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-3">
@@ -866,6 +941,79 @@ export default function SpotRateEntryPage() {
                                                     </div>
                                                 </div>
                                             </div>
+                                            {summary.warnings.length > 0 && (
+                                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                                                    <div className="text-xs font-semibold uppercase tracking-wide text-amber-900">AI warnings</div>
+                                                    <ul className="mt-2 space-y-1 text-sm text-amber-900">
+                                                        {summary.warnings.map((warning) => (
+                                                            <li key={`${summary.id}-${warning}`}>• {warning}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                            {summary.blockingReasons.length > 0 && (
+                                                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                                                    <div className="text-xs font-semibold uppercase tracking-wide text-red-900">Risk checks</div>
+                                                    <ul className="mt-2 space-y-1 text-sm text-red-900">
+                                                        {summary.blockingReasons.map((reason) => (
+                                                            <li key={`${summary.id}-${reason}`}>• {reason}</li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                            {summary.reviewRequired && !summary.reviewedSafeToQuote && (
+                                                <div className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-3">
+                                                    <div className="text-sm text-slate-700">
+                                                        Review the extracted lines below, correct them if needed, then mark this source as reviewed.
+                                                    </div>
+                                                    {summary.requiresReviewNote && (
+                                                        <div className="mt-3 space-y-2">
+                                                            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                                                Reviewer note required
+                                                            </div>
+                                                            <Textarea
+                                                                value={reviewNotes[summary.id] ?? summary.reviewNote ?? ""}
+                                                                onChange={(event) =>
+                                                                    setReviewNotes((prev) => ({
+                                                                        ...prev,
+                                                                        [summary.id]: event.target.value,
+                                                                    }))
+                                                                }
+                                                                placeholder="Explain how you verified the missed or unclear charges before approving this source."
+                                                                rows={3}
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    <div className="mt-3 flex justify-end">
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            onClick={() => handleReviewSource(summary.id)}
+                                                            disabled={
+                                                                Boolean(reviewingSourceBatchId && reviewingSourceBatchId !== summary.id) ||
+                                                                state.isLoading ||
+                                                                (summary.requiresReviewNote && !(reviewNotes[summary.id] || "").trim())
+                                                            }
+                                                            loading={reviewingSourceBatchId === summary.id}
+                                                            loadingText="Saving review..."
+                                                        >
+                                                            Mark Reviewed
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {summary.reviewRequired && summary.reviewedSafeToQuote && summary.reviewedAt && (
+                                                <div className="mt-3 space-y-2 text-xs text-slate-500">
+                                                    <div>
+                                                        Reviewed at {new Date(summary.reviewedAt).toLocaleString()}
+                                                    </div>
+                                                    {summary.reviewNote && (
+                                                        <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                                                            {summary.reviewNote}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -898,6 +1046,12 @@ export default function SpotRateEntryPage() {
                         serviceScope={serviceScope}
                         missingComponents={missingComponents}
                         submitLabel="Confirm & Create Quote"
+                        submitDisabled={quoteCreationBlocked}
+                        submitDisabledReason={
+                            quoteCreationBlocked
+                                ? "Quote creation is blocked until every imported AI source has been explicitly reviewed."
+                                : null
+                        }
                         onSaveDraft={handleSaveDraft}
                     />
 
@@ -905,7 +1059,7 @@ export default function SpotRateEntryPage() {
                     <Card className="border-amber-200 bg-amber-50/60">
                         <CardContent className="pt-4">
                             <p className="text-sm text-amber-900">
-                                Conditional SPOT disclaimer: rates are not guaranteed until carrier and space are confirmed.
+                                Final submission records the SPOT acknowledgement and creates the quote only after all imported AI sources have been reviewed. Rates are still conditional until carrier and space are confirmed.
                             </p>
                         </CardContent>
                     </Card>

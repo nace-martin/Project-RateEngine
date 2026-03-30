@@ -27,6 +27,8 @@ interface SpotRateEntryFormProps {
     serviceScope?: string;
     missingComponents?: string[];
     submitLabel?: string;
+    submitDisabled?: boolean;
+    submitDisabledReason?: string | null;
     onSaveDraft?: (charges: Omit<SPEChargeLine, 'id'>[]) => Promise<void>;
 }
 
@@ -87,6 +89,8 @@ export function SpotRateEntryForm({
     serviceScope = "D2D",
     missingComponents = [],
     submitLabel,
+    submitDisabled = false,
+    submitDisabledReason = null,
     onSaveDraft,
 }: SpotRateEntryFormProps) {
     const submitLockRef = useRef(false);
@@ -378,7 +382,7 @@ export function SpotRateEntryForm({
         fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
 
     const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
-    const canSubmit = form.formState.isValid && !isSubmitBusy;
+    const canSubmit = form.formState.isValid && !isSubmitBusy && !submitDisabled;
 
     return (
         <Form {...form}>
@@ -386,6 +390,12 @@ export function SpotRateEntryForm({
                 {getFormErrorMessage(form.formState.errors.charges) && (
                     <Alert variant="destructive">
                         <AlertDescription>{getFormErrorMessage(form.formState.errors.charges)}</AlertDescription>
+                    </Alert>
+                )}
+
+                {submitDisabledReason && (
+                    <Alert>
+                        <AlertDescription>{submitDisabledReason}</AlertDescription>
                     </Alert>
                 )}
 

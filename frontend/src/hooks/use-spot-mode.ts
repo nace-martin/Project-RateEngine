@@ -23,7 +23,7 @@ import {
     updateSpotEnvelope,
     getSpotEnvelope,
     acknowledgeSpotEnvelope,
-    approveSpotEnvelope,
+    reviewSpotSourceBatch as reviewSpotSourceBatchRequest,
     computeSpotQuote,
     createSpotQuote,
 } from '@/lib/api';
@@ -258,38 +258,36 @@ export function useSpotMode() {
         }
     }, [state.spe, updateState, loadSPE]);
 
-    // ==========================================================================
-    // STEP 5: Manager Approval
-    // ==========================================================================
-    const submitManagerApproval = useCallback(async (
-        approved: boolean,
-        comment?: string
-    ): Promise<boolean> => {
+    const reviewSourceBatch = useCallback(async (
+        sourceBatchId: string,
+        request: { reviewed_safe_to_quote: boolean; review_note?: string }
+    ): Promise<SpotPricingEnvelope | null> => {
         if (!state.spe) {
             updateState({ error: 'No SPE loaded' });
-            return false;
+            return null;
         }
 
         updateState({ isLoading: true, error: null });
 
         try {
-            const result = await approveSpotEnvelope(state.spe.id, approved, comment);
-
-            // Reload SPE to get updated state
-            await loadSPE(state.spe.id);
-
-            return result.approved;
-        } catch (err) {
+            const spe = await reviewSpotSourceBatchRequest(state.spe.id, sourceBatchId, request);
             updateState({
-                error: err instanceof Error ? err.message : 'Approval failed',
+                flowState: resolveSpotFlowState(spe),
+                spe,
                 isLoading: false,
             });
-            return false;
+            return spe;
+        } catch (err) {
+            updateState({
+                error: err instanceof Error ? err.message : 'Source review failed',
+                isLoading: false,
+            });
+            return null;
         }
-    }, [state.spe, updateState, loadSPE]);
+    }, [state.spe, updateState]);
 
     // ==========================================================================
-    // STEP 6: Compute SPOT Quote
+    // STEP 5: Compute SPOT Quote
     // ==========================================================================
     const computeQuote = useCallback(async (
         request: SPEComputeRequest
@@ -328,7 +326,7 @@ export function useSpotMode() {
     }, [state.spe, updateState]);
 
     // ==========================================================================
-    // STEP 7: Create Final Quote
+    // STEP 6: Create Final Quote
     // ==========================================================================
     const createQuote = useCallback(async (
         request: {
@@ -377,7 +375,7 @@ export function useSpotMode() {
             return 'SPE has expired - please create a new one';
         }
         if (state.spe?.status === 'rejected') {
-            return state.spe.manager_approval?.comment || 'Manager rejected this quote';
+            return 'This SPOT quote is no longer active';
         }
         if (state.flowState === 'REVIEW' && state.spe && !state.spe.acknowledgement) {
             return 'Acknowledgement required';
@@ -392,7 +390,7 @@ export function useSpotMode() {
         updateSPE,
         loadSPE,
         submitAcknowledgement,
-        submitManagerApproval,
+        reviewSourceBatch,
         computeQuote,
         createQuote,
         reset,
@@ -403,7 +401,7 @@ export function useSpotMode() {
         updateSPE,
         loadSPE,
         submitAcknowledgement,
-        submitManagerApproval,
+        reviewSourceBatch,
         computeQuote,
         createQuote,
         reset

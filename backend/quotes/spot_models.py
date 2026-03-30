@@ -398,9 +398,7 @@ class SPEAcknowledgementDB(models.Model):
 
 class SPEManagerApprovalDB(models.Model):
     """
-    Manager approval for high-risk SPOT quotes.
-    
-    Required per SpotApprovalPolicy for DG, multi-leg, low-margin, etc.
+    Legacy manager approval record retained for existing data.
     """
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -423,7 +421,7 @@ class SPEManagerApprovalDB(models.Model):
     
     comment = models.TextField(
         null=True, blank=True,
-        help_text="Optional comment from manager."
+        help_text="Optional historical comment from manager."
     )
     
     class Meta:

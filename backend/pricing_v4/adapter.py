@@ -872,14 +872,13 @@ class PricingServiceV4Adapter:
             SPEChargeLine,
             SPEConditions,
             SPEAcknowledgement,
-            SPEManagerApproval,
             SPEStatus,
         )
         
         # 1. Load SPE from database
         try:
             spe_db = SpotPricingEnvelopeDB.objects.prefetch_related(
-                'charge_lines', 'acknowledgement', 'manager_approval'
+                'charge_lines', 'acknowledgement'
             ).get(id=self.spot_envelope_id)
         except SpotPricingEnvelopeDB.DoesNotExist:
             raise ValueError(f"SPOT Pricing Envelope not found: {self.spot_envelope_id}")
@@ -899,16 +898,6 @@ class PricingServiceV4Adapter:
                 acknowledged_by_user_id=str(ack_db.acknowledged_by_id) if ack_db.acknowledged_by_id else "",
                 acknowledged_at=ack_db.acknowledged_at,
                 statement=ack_db.statement,
-            )
-        
-        mgr = None
-        if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
-            mgr_db = spe_db.manager_approval
-            mgr = SPEManagerApproval(
-                approved=mgr_db.approved,
-                manager_user_id=str(mgr_db.manager_id) if mgr_db.manager_id else "",
-                decision_at=mgr_db.decision_at,
-                comment=mgr_db.comment,
             )
         
         charges = []
@@ -997,7 +986,6 @@ class PricingServiceV4Adapter:
             charges=validation_charges,
             conditions=conditions,
             acknowledgement=ack,
-            manager_approval=mgr,
             spot_trigger_reason_code=spe_db.spot_trigger_reason_code,
             spot_trigger_reason_text=spe_db.spot_trigger_reason_text,
             created_by_user_id=str(spe_db.created_by_id) if spe_db.created_by_id else "",

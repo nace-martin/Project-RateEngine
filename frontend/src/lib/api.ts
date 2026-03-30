@@ -1261,27 +1261,24 @@ export async function acknowledgeSpotEnvelope(
   return response.json();
 }
 
-/**
- * Submit Manager approval for SPE.
- */
-export async function approveSpotEnvelope(
-  id: string,
-  approved: boolean,
-  comment?: string
-): Promise<{ success: boolean; status: string; approved: boolean }> {
-  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/approve/`;
+export async function reviewSpotSourceBatch(
+  envelopeId: string,
+  sourceBatchId: string,
+  request: { reviewed_safe_to_quote: boolean; review_note?: string }
+): Promise<SpotPricingEnvelope> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/sources/${sourceBatchId}/review/`;
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Token ${resolveAuthToken()}`,
     },
-    body: JSON.stringify({ approved, comment }),
+    body: JSON.stringify(request),
   });
 
   if (!response.ok) {
     const detail = await parseErrorResponse(response);
-    throw new Error(`Approval failed: ${detail}`);
+    throw new Error(`Source review failed: ${detail}`);
   }
 
   return response.json();

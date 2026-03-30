@@ -134,7 +134,7 @@ export function RejectedBanner({ comment, onRevise }: RejectedBannerProps) {
             <AlertTitle>SPOT Quote Rejected</AlertTitle>
             <AlertDescription className="mt-2 space-y-3">
                 <p>
-                    Manager has rejected this SPOT quote.
+                    This SPOT quote has been rejected.
                 </p>
                 {comment && (
                     <p className="text-sm italic">
@@ -149,28 +149,3 @@ export function RejectedBanner({ comment, onRevise }: RejectedBannerProps) {
     );
 }
 
-/**
- * Awaiting Manager Approval banner
- */
-interface AwaitingManagerBannerProps {
-    speId: string;
-}
-
-export function AwaitingManagerBanner({ speId }: AwaitingManagerBannerProps) {
-    return (
-        <Alert className="border-blue-500 bg-blue-50 dark:bg-blue-950/20">
-            <Clock className="h-5 w-5 text-blue-600" />
-            <AlertTitle className="text-blue-800 dark:text-blue-200">
-                Awaiting Manager Approval
-            </AlertTitle>
-            <AlertDescription className="mt-2 text-blue-700 dark:text-blue-300">
-                <p>
-                    This SPOT quote requires manager approval before pricing can proceed.
-                </p>
-                <p className="text-sm mt-1 font-mono">
-                    SPE ID: {speId}
-                </p>
-            </AlertDescription>
-        </Alert>
-    );
-}

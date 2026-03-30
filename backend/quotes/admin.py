@@ -5,7 +5,7 @@ from .models import (
     Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
 )
 from .spot_models import (
-    SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB, SPEManagerApprovalDB
+    SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
 )
 
 class QuoteLineInline(admin.TabularInline):
@@ -86,19 +86,13 @@ class SPEAcknowledgementInline(admin.StackedInline):
     can_delete = False
     readonly_fields = ('acknowledged_by', 'acknowledged_at', 'statement')
 
-class SPEManagerApprovalInline(admin.StackedInline):
-    model = SPEManagerApprovalDB
-    extra = 0
-    can_delete = False
-    readonly_fields = ('approved', 'manager', 'decision_at', 'comment')
-
 class SpotPricingEnvelopeAdmin(admin.ModelAdmin):
     model = SpotPricingEnvelopeDB
     list_display = ('__str__', 'status', 'spot_trigger_reason_code', 'created_by', 'created_at', 'expires_at')
     list_filter = ('status', 'spot_trigger_reason_code', 'created_at')
     search_fields = ('id', 'created_by__username', 'spot_trigger_reason_code')
     
-    inlines = [SPEChargeLineInline, SPEAcknowledgementInline, SPEManagerApprovalInline]
+    inlines = [SPEChargeLineInline, SPEAcknowledgementInline]
     
     readonly_fields = (
         'id', 'status', 'shipment_context_json', 'shipment_context_hash',

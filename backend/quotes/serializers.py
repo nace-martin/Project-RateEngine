@@ -15,6 +15,10 @@ from core.commodity import (
 )
 from core.models import Location
 from parties.serializers import CustomerV3Serializer, ContactV3Serializer
+from quotes.intake_safety import (
+    evaluate_envelope_intake_safety,
+    normalize_source_analysis_summary,
+)
 # --- END IMPORTS ---
 
 # --- V3 Serializers ---
@@ -388,11 +392,24 @@ from quotes.spot_models import (
     SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
-    SPEManagerApprovalDB,
 )
 
 class SPESourceBatchSerializer(serializers.ModelSerializer):
     charge_count = serializers.SerializerMethodField()
+    warnings = serializers.SerializerMethodField()
+    assertion_count = serializers.SerializerMethodField()
+    ai_used = serializers.SerializerMethodField()
+    review_required = serializers.SerializerMethodField()
+    review_status = serializers.SerializerMethodField()
+    reviewed_safe_to_quote = serializers.SerializerMethodField()
+    reviewed_by_user_id = serializers.SerializerMethodField()
+    reviewed_at = serializers.SerializerMethodField()
+    review_note = serializers.SerializerMethodField()
+    detected_currencies = serializers.SerializerMethodField()
+    risk_flags = serializers.SerializerMethodField()
+    blocking_reasons = serializers.SerializerMethodField()
+    risk_level = serializers.SerializerMethodField()
+    requires_review_note = serializers.SerializerMethodField()
 
     class Meta:
         model = SPESourceBatchDB
@@ -400,10 +417,60 @@ class SPESourceBatchSerializer(serializers.ModelSerializer):
             'id', 'source_kind', 'source_type', 'target_bucket', 'label',
             'source_reference', 'file_name', 'file_content_type',
             'analysis_summary_json', 'created_at', 'updated_at', 'charge_count',
+            'warnings', 'assertion_count', 'ai_used',
+            'review_required', 'review_status', 'reviewed_safe_to_quote',
+            'reviewed_by_user_id', 'reviewed_at', 'review_note',
+            'detected_currencies', 'risk_flags', 'blocking_reasons',
+            'risk_level', 'requires_review_note',
         )
 
     def get_charge_count(self, obj):
         return obj.charge_lines.count()
+
+    def _summary(self, obj):
+        return normalize_source_analysis_summary(obj.analysis_summary_json)
+
+    def get_warnings(self, obj):
+        return self._summary(obj)["warnings"]
+
+    def get_assertion_count(self, obj):
+        return self._summary(obj)["assertion_count"]
+
+    def get_ai_used(self, obj):
+        return self._summary(obj)["ai_used"]
+
+    def get_review_required(self, obj):
+        return self._summary(obj)["review_required"]
+
+    def get_review_status(self, obj):
+        return self._summary(obj)["review_status"]
+
+    def get_reviewed_safe_to_quote(self, obj):
+        return self._summary(obj)["reviewed_safe_to_quote"]
+
+    def get_reviewed_by_user_id(self, obj):
+        return self._summary(obj)["reviewed_by_user_id"]
+
+    def get_reviewed_at(self, obj):
+        return self._summary(obj)["reviewed_at"]
+
+    def get_review_note(self, obj):
+        return self._summary(obj)["review_note"]
+
+    def get_detected_currencies(self, obj):
+        return self._summary(obj)["detected_currencies"]
+
+    def get_risk_flags(self, obj):
+        return self._summary(obj)["risk_flags"]
+
+    def get_blocking_reasons(self, obj):
+        return self._summary(obj)["blocking_reasons"]
+
+    def get_risk_level(self, obj):
+        return self._summary(obj)["risk_level"]
+
+    def get_requires_review_note(self, obj):
+        return self._summary(obj)["requires_review_note"]
 
 
 class SPEChargeLineSerializer(serializers.ModelSerializer):
@@ -494,18 +561,6 @@ class SPEAcknowledgementSerializer(serializers.ModelSerializer):
     def get_acknowledged_by_user_id(self, obj):
         return str(obj.acknowledged_by_id) if obj.acknowledged_by_id else None
 
-
-class SPEManagerApprovalSerializer(serializers.ModelSerializer):
-    manager_user_id = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = SPEManagerApprovalDB
-        fields = ('approved', 'manager_user_id', 'decision_at', 'comment')
-        
-    def get_manager_user_id(self, obj):
-        return str(obj.manager_id) if obj.manager_id else None
-
-
 class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     customer_name = serializers.SerializerMethodField()
     shipment = serializers.JSONField(source='shipment_context_json')
@@ -513,12 +568,12 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     charges = SPEChargeLineSerializer(source='charge_lines', many=True, read_only=True)
     sources = SPESourceBatchSerializer(source='source_batches', many=True, read_only=True)
     acknowledgement = SPEAcknowledgementSerializer(read_only=True)
-    manager_approval = SPEManagerApprovalSerializer(read_only=True)
     
     missing_mandatory_fields = serializers.SerializerMethodField()
     can_proceed = serializers.SerializerMethodField()
     has_acknowledgement = serializers.SerializerMethodField()
     context_integrity_valid = serializers.SerializerMethodField()
+    intake_safety = serializers.SerializerMethodField()
     
     class Meta:
         model = SpotPricingEnvelopeDB
@@ -527,8 +582,9 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
             'spot_trigger_reason_code', 'spot_trigger_reason_text',
             'created_at', 'expires_at', 'is_expired',
             'shipment_context_hash', 'context_integrity_valid',
-            'has_acknowledgement', 'acknowledgement', 'manager_approval',
-            'missing_mandatory_fields', 'can_proceed', 'sources', 'charges'
+            'has_acknowledgement', 'acknowledgement',
+            'missing_mandatory_fields', 'can_proceed', 'intake_safety',
+            'sources', 'charges'
         )
         read_only_fields = fields
 
@@ -568,4 +624,7 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
 
     def get_can_proceed(self, obj) -> bool:
         return len(self.get_missing_mandatory_fields(obj)) == 0
+
+    def get_intake_safety(self, obj):
+        return evaluate_envelope_intake_safety(obj.source_batches.all())
 

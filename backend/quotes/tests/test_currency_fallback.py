@@ -6,6 +6,8 @@ from quotes.spot_services import ReplyAnalysisService
 from quotes.ai_intake_schemas import SpotChargeLine
 from quotes.ai_intake_service import AIRateIntakePipelineResult
 from quotes.reply_schemas import AssertionStatus, AssertionCategory
+from quotes.spot_schemas import SPEChargeLine
+from django.utils import timezone
 
 class CurrencyFallbackTest(TestCase):
     @patch('quotes.ai_intake_service.parse_rate_quote_text')
@@ -72,4 +74,19 @@ class CurrencyFallbackTest(TestCase):
         )
 
         self.assertEqual(line.rule_meta, {})
+
+    def test_spe_charge_line_accepts_extended_supported_currency(self):
+        line = SPEChargeLine(
+            code="DESTINATION_LOCAL",
+            description="Destination handling",
+            amount=Decimal("42.00"),
+            currency="EUR",
+            unit="flat",
+            bucket="destination_charges",
+            source_reference="Agent quote",
+            entered_by_user_id="tester",
+            entered_at=timezone.now(),
+        )
+
+        self.assertEqual(line.currency, "EUR")
 

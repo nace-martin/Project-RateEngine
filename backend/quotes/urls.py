@@ -25,10 +25,10 @@ from .spot_views import (
     SpotEnvelopeListCreateAPIView,
     SpotEnvelopeDetailAPIView,
     SpotEnvelopeAcknowledgeAPIView,
-    SpotEnvelopeApproveAPIView,
     SpotEnvelopeComputeAPIView,
     SpotReplyAnalysisAPIView,
     SpotEnvelopeCreateQuoteAPIView,
+    SpotSourceBatchReviewAPIView,
 )
 
 app_name = 'quotes'
@@ -62,8 +62,8 @@ urlpatterns = [
     path('v3/spot/envelopes/', SpotEnvelopeListCreateAPIView.as_view(), name='spot-envelope-list-create'),
     path('v3/spot/envelopes/<uuid:envelope_id>/', SpotEnvelopeDetailAPIView.as_view(), name='spot-envelope-detail'),
     path('v3/spot/envelopes/<uuid:envelope_id>/acknowledge/', SpotEnvelopeAcknowledgeAPIView.as_view(), name='spot-envelope-acknowledge'),
-    path('v3/spot/envelopes/<uuid:envelope_id>/approve/', SpotEnvelopeApproveAPIView.as_view(), name='spot-envelope-approve'),
     path('v3/spot/envelopes/<uuid:envelope_id>/compute/', SpotEnvelopeComputeAPIView.as_view(), name='spot-envelope-compute'),
+    path('v3/spot/envelopes/<uuid:envelope_id>/sources/<uuid:source_batch_id>/review/', SpotSourceBatchReviewAPIView.as_view(), name='spot-source-batch-review'),
     path('v3/spot/analyze-reply/', SpotReplyAnalysisAPIView.as_view(), name='spot-analyze-reply'),
     path('v3/spot/envelopes/<uuid:envelope_id>/create-quote/', SpotEnvelopeCreateQuoteAPIView.as_view(), name='spot-envelope-create-quote'),
 ]

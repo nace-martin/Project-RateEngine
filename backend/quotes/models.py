@@ -23,7 +23,6 @@ from .spot_models import (
     SpotPricingEnvelopeDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
-    SPEManagerApprovalDB,
 )
 
 class Quote(models.Model):

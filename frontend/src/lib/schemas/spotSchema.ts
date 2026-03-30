@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SPOT_SUPPORTED_CURRENCIES } from "@/lib/spot-types";
 
 export const chargeLineSchema = z.object({
     id: z.string().optional(),
@@ -7,7 +8,7 @@ export const chargeLineSchema = z.object({
     amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
         message: "Amount must be greater than 0",
     }),
-    currency: z.enum(["SGD", "USD", "AUD", "PGK", "NZD", "HKD"]),
+    currency: z.enum(SPOT_SUPPORTED_CURRENCIES),
     unit: z.enum([
         "per_kg", "flat", "per_awb", "per_shipment", "min_or_per_kg", "percentage",
         "per_trip", "per_set", "per_man"

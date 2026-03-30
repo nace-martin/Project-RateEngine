@@ -42,7 +42,7 @@ export function ReplyPasteCard({
     missingComponents = [],
     sourceBatchId = null,
     title = "Reply Intake",
-    description = "Paste the rate reply you received from the agent or carrier, or upload a PDF quote. The system will extract and classify the information for review.",
+    description = "Paste the rate reply email text you received from the agent or carrier, or upload a PDF quote. Email file uploads are not supported in this flow yet.",
     sourceKind = "OTHER",
     targetBucket = "mixed",
     sourceLabel = "Primary SPOT Source",
@@ -220,7 +220,7 @@ export function ReplyPasteCard({
                             <div className="space-y-1">
                                 <p className="text-sm font-medium text-slate-900">Upload PDF quote</p>
                                 <p className="text-sm text-slate-600">
-                                    Drag and drop a carrier or agent PDF here, or browse for a file.
+                                    Drag and drop a carrier or agent PDF here, or browse for a file. For emails, paste the message text below.
                                 </p>
                             </div>
                         </div>

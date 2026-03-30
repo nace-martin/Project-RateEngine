@@ -24,7 +24,6 @@ from quotes.spot_schemas import (
     SPEChargeLine,
     SPEConditions,
     SPEAcknowledgement,
-    SPEManagerApproval,
     SpotPricingEnvelope,
     SPEStatus,
 )
@@ -707,8 +706,8 @@ class TestSPELifecycle:
         assert is_valid is False
         assert "acknowledgement" in error.lower()
     
-    def test_missing_manager_approval_blocks_when_required(self):
-        """SPE requiring manager approval blocks without it."""
+    def test_acknowledgement_is_sufficient_for_pricing(self):
+        """Acknowledged SPEs no longer require a separate manager approval gate."""
         spe = SpotPricingEnvelope(
             id=str(uuid4()),
             status=SPEStatus.READY,
@@ -717,7 +716,7 @@ class TestSPELifecycle:
                 destination_country="AU",
                 origin_code="POM",
                 destination_code="BNE",
-                commodity="DG",  # DG requires approval
+                commodity="DG",
                 total_weight_kg=100.0,
                 pieces=1
             ),
@@ -741,7 +740,6 @@ class TestSPELifecycle:
                 acknowledged_at=datetime.now(),
                 statement="I acknowledge this is a conditional SPOT quote and not guaranteed"
             ),
-            manager_approval=None,  # MISSING but required for DG
             spot_trigger_reason_code="DG_COMMODITY",
             spot_trigger_reason_text="Dangerous Goods",
             created_by_user_id="user123",
@@ -751,8 +749,8 @@ class TestSPELifecycle:
         
         is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
         
-        assert is_valid is False
-        assert "manager approval" in error.lower()
+        assert is_valid is True
+        assert error is None
     
     def test_draft_status_blocks_pricing(self):
         """SPE in DRAFT status cannot be used for pricing."""
@@ -865,57 +863,3 @@ class TestAIExtractionSchemas:
         assert result.charges[0].conditional is True
 
 
-# =============================================================================
-# MANAGER APPROVAL POLICY TESTS (Tweak #6)
-# =============================================================================
-
-class TestManagerApprovalPolicy:
-    """Manager approval thresholds as policy, not if-statements."""
-    
-    def test_dg_requires_approval(self):
-        """DG shipments require manager approval per policy."""
-        from quotes.spot_services import SpotApprovalPolicy
-        
-        requires = SpotApprovalPolicy.requires_manager_approval(
-            commodity="DG",
-            margin_percent=Decimal("20.0"),
-            is_multi_leg=False
-        )
-        
-        assert requires is True
-    
-    def test_multi_leg_requires_approval(self):
-        """Multi-leg routing requires manager approval per policy."""
-        from quotes.spot_services import SpotApprovalPolicy
-        
-        requires = SpotApprovalPolicy.requires_manager_approval(
-            commodity="GCR",
-            margin_percent=Decimal("20.0"),
-            is_multi_leg=True
-        )
-        
-        assert requires is True
-    
-    def test_low_margin_requires_approval(self):
-        """Low margin (below threshold) requires manager approval."""
-        from quotes.spot_services import SpotApprovalPolicy
-        
-        requires = SpotApprovalPolicy.requires_manager_approval(
-            commodity="GCR",
-            margin_percent=Decimal("10.0"),  # Below threshold
-            is_multi_leg=False
-        )
-        
-        assert requires is True
-    
-    def test_standard_gcr_no_approval_needed(self):
-        """Standard GCR with good margin does not require approval."""
-        from quotes.spot_services import SpotApprovalPolicy
-        
-        requires = SpotApprovalPolicy.requires_manager_approval(
-            commodity="GCR",
-            margin_percent=Decimal("25.0"),  # Above threshold
-            is_multi_leg=False
-        )
-        
-        assert requires is False

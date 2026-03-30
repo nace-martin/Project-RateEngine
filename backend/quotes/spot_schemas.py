@@ -11,7 +11,6 @@ Spot Pricing Envelope (authoritative):
 - SPEChargeLine
 - SPEConditions
 - SPEAcknowledgement
-- SPEManagerApproval
 - SpotPricingEnvelope
 
 Hard Guardrails (model-level):
@@ -30,6 +29,7 @@ import json
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from django.conf import settings
 from quotes.completeness import COMPONENT_FREIGHT, required_components
+from quotes.ai_intake_schemas import VALID_CURRENCIES
 
 
 # =============================================================================
@@ -96,6 +96,20 @@ class Currency(str, Enum):
     AUD = "AUD"
     PGK = "PGK"
     SGD = "SGD"  # Singapore Dollar for destination agent quotes
+    NZD = "NZD"
+    FJD = "FJD"
+    SBD = "SBD"
+    VUV = "VUV"
+    EUR = "EUR"
+    GBP = "GBP"
+    HKD = "HKD"
+    JPY = "JPY"
+    CNY = "CNY"
+    PHP = "PHP"
+    IDR = "IDR"
+    MYR = "MYR"
+    THB = "THB"
+    INR = "INR"
 
 
 
@@ -123,7 +137,7 @@ class AIExtractedCharge(BaseModel):
         description="Numeric value if present, else null"
     )
     
-    currency: Optional[Literal["USD", "AUD", "PGK"]] = None
+    currency: Optional[str] = None
     
     unit: Literal[
         "per_kg",
@@ -156,6 +170,16 @@ class AIExtractedCharge(BaseModel):
         le=1.0,
         description="LLM confidence in its own suggestion"
     )
+
+    @field_validator("currency")
+    @classmethod
+    def validate_ai_currency(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip().upper()
+        if normalized not in VALID_CURRENCIES:
+            raise ValueError(f"Unsupported currency '{normalized}'")
+        return normalized
 
 
 class AISpotExtractionResult(BaseModel):
@@ -259,7 +283,7 @@ class SPEChargeLine(BaseModel):
     description: str
     
     amount: float = Field(gt=0)
-    currency: Literal["USD", "AUD", "PGK", "SGD"]
+    currency: str
     
     unit: Literal[
         "per_kg",
@@ -365,6 +389,14 @@ class SPEChargeLine(BaseModel):
     entered_by_user_id: str
     entered_at: datetime
 
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        normalized = str(value or "").strip().upper()
+        if normalized not in VALID_CURRENCIES:
+            raise ValueError(f"Unsupported currency '{normalized}'")
+        return normalized
+
     @field_validator("rule_meta", mode="before")
     @classmethod
     def coerce_rule_meta(cls, v):
@@ -444,17 +476,6 @@ class SPEAcknowledgement(BaseModel):
         "I acknowledge this is a conditional SPOT quote and not guaranteed"
     ]
 
-
-class SPEManagerApproval(BaseModel):
-    """
-    Manager approval gate. Required for high-risk SPOT quotes.
-    """
-    approved: bool
-    manager_user_id: str
-    decision_at: datetime
-    comment: Optional[str] = None
-
-
 class SpotPricingEnvelope(BaseModel):
     """
     Main SPE container with hard guardrails.
@@ -474,7 +495,6 @@ class SpotPricingEnvelope(BaseModel):
     conditions: SPEConditions
     
     acknowledgement: Optional[SPEAcknowledgement] = None
-    manager_approval: Optional[SPEManagerApproval] = None
     
     # Audit trail: persist the reason SPOT was triggered (Tweak #5)
     spot_trigger_reason_code: str = Field(

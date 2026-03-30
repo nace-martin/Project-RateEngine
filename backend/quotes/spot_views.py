@@ -8,7 +8,6 @@ Endpoints:
 - POST /api/v3/spot/envelopes/          - Create SPE
 - GET  /api/v3/spot/envelopes/<id>/     - Get SPE
 - POST /api/v3/spot/envelopes/<id>/acknowledge/  - Sales acknowledgement
-- POST /api/v3/spot/envelopes/<id>/approve/      - Manager approval
 - POST /api/v3/spot/envelopes/<id>/compute/      - Compute SPOT quote
 """
 
@@ -35,7 +34,6 @@ from core.security import validate_pdf_upload
 from quotes.spot_services import (
     ScopeValidator,
     SpotTriggerEvaluator,
-    SpotApprovalPolicy,
     SpotEnvelopeService,
     SpotTriggerReason,
     TriggerResult,
@@ -46,7 +44,6 @@ from quotes.spot_schemas import (
     SPEChargeLine,
     SPEConditions,
     SPEAcknowledgement,
-    SPEManagerApproval,
     SpotPricingEnvelope,
     SPEStatus,
 )
@@ -55,7 +52,12 @@ from quotes.spot_models import (
     SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
-    SPEManagerApprovalDB,
+)
+from quotes.intake_safety import (
+    build_source_analysis_summary_payload,
+    evaluate_envelope_intake_safety,
+    mark_source_analysis_review,
+    normalize_source_analysis_summary,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer
 from quotes.selectors import get_quote_for_user
@@ -93,7 +95,6 @@ def _spe_queryset():
         'charge_lines__source_batch',
         'source_batches__charge_lines',
         'acknowledgement',
-        'manager_approval',
     )
 
 
@@ -247,6 +248,23 @@ def _resolve_output_currency_for_shipment(
     )
 
 
+def _get_intake_safety(spe_db: SpotPricingEnvelopeDB) -> dict:
+    return evaluate_envelope_intake_safety(spe_db.source_batches.all())
+
+
+def _intake_safety_error_response(spe_db: SpotPricingEnvelopeDB):
+    intake_safety = _get_intake_safety(spe_db)
+    if intake_safety["is_safe_to_quote"]:
+        return None
+    return Response(
+        {
+            "error": "AI intake review is incomplete. Review each imported source and confirm it is safe before continuing.",
+            "intake_safety": intake_safety,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 def _normalize_missing_components(raw_value) -> Optional[list[str]]:
     if raw_value is None:
         return None
@@ -330,16 +348,6 @@ def _build_spe_from_db(
             statement=ack_db.statement,
         )
 
-    mgr = None
-    if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
-        mgr_db = spe_db.manager_approval
-        mgr = SPEManagerApproval(
-            approved=mgr_db.approved,
-            manager_user_id=str(mgr_db.manager_id) if mgr_db.manager_id else "",
-            decision_at=mgr_db.decision_at,
-            comment=mgr_db.comment,
-        )
-
     charges = []
     for cl in spe_db.charge_lines.all():
         # Guard against legacy/invalid draft rows with zero amount.
@@ -405,7 +413,6 @@ def _build_spe_from_db(
         charges=charges,
         conditions=SPEConditions(**spe_db.conditions_json) if spe_db.conditions_json else SPEConditions(),
         acknowledgement=ack,
-        manager_approval=mgr,
         spot_trigger_reason_code=spe_db.spot_trigger_reason_code,
         spot_trigger_reason_text=spe_db.spot_trigger_reason_text,
         created_by_user_id=str(spe_db.created_by_id) if spe_db.created_by_id else "",
@@ -843,6 +850,7 @@ class SpotEnvelopeDetailAPIView(APIView):
         serializer = SpotPricingEnvelopeSerializer(spe_db)
         return Response(serializer.data)
     
+    @transaction.atomic
     def patch(self, request, envelope_id):
         """Update DRAFT SPE with new charges or conditions."""
         spe_db = _get_spe_or_404(request.user, envelope_id)
@@ -855,81 +863,84 @@ class SpotEnvelopeDetailAPIView(APIView):
             
         data = request.data
         now = timezone.now()
-        
-        # Update conditions
-        if 'conditions' in data:
-            spe_db.conditions_json = data['conditions']
-            
-        # Update charges (replace all)
-        if 'charges' in data:
-            from decimal import Decimal, InvalidOperation
 
-            def _to_decimal(val):
-                if val is None or val == "":
-                    return None
-                try:
-                    return Decimal(str(val))
-                except (InvalidOperation, ValueError):
-                    return None
+        try:
+            if 'conditions' in data:
+                spe_db.conditions_json = data['conditions']
 
-            # Delete existing
-            spe_db.charge_lines.all().delete()
-            
-            # Create new
-            for charge in data['charges']:
-                # Sanitize decimal fields
-                amount_val = _to_decimal(charge.get('amount'))
-                if amount_val is None or amount_val <= 0:
-                    logger.warning(
-                        "Skipping non-positive SPE charge on PATCH: spe=%s code=%s amount=%s",
-                        spe_db.id,
-                        charge.get('code'),
-                        charge.get('amount'),
+            if 'charges' in data:
+                from decimal import Decimal, InvalidOperation
+
+                def _to_decimal(val):
+                    if val is None or val == "":
+                        return None
+                    try:
+                        return Decimal(str(val))
+                    except (InvalidOperation, ValueError):
+                        return None
+
+                spe_db.charge_lines.all().delete()
+
+                for charge in data['charges']:
+                    amount_val = _to_decimal(charge.get('amount'))
+                    if amount_val is None or amount_val <= 0:
+                        logger.warning(
+                            "Skipping non-positive SPE charge on PATCH: spe=%s code=%s amount=%s",
+                            spe_db.id,
+                            charge.get('code'),
+                            charge.get('amount'),
+                        )
+                        continue
+
+                    min_charge_val = _to_decimal(charge.get('min_charge'))
+                    rate_val = _to_decimal(charge.get('rate'))
+                    min_amount_val = _to_decimal(charge.get('min_amount'))
+                    max_amount_val = _to_decimal(charge.get('max_amount'))
+                    percent_val = _to_decimal(charge.get('percent'))
+
+                    unit_val = charge['unit']
+                    if unit_val == 'min_or_per_kg':
+                        unit_val = 'per_kg'
+                    elif unit_val == 'flat':
+                        unit_val = 'flat'
+
+                    SPEChargeLineDB.objects.create(
+                        envelope=spe_db,
+                        code=charge['code'],
+                        description=charge['description'],
+                        amount=amount_val,
+                        currency=charge['currency'],
+                        unit=unit_val,
+                        bucket=charge['bucket'],
+                        is_primary_cost=charge.get('is_primary_cost', False),
+                        conditional=charge.get('conditional', False),
+                        min_charge=min_charge_val,
+                        note=charge.get('note') or "",
+                        exclude_from_totals=charge.get('exclude_from_totals', False),
+                        percentage_basis=charge.get('percentage_basis'),
+                        calculation_type=charge.get('calculation_type'),
+                        unit_type=charge.get('unit_type'),
+                        rate=rate_val,
+                        min_amount=min_amount_val,
+                        max_amount=max_amount_val,
+                        percent=percent_val,
+                        percent_basis=charge.get('percent_basis'),
+                        rule_meta=charge.get('rule_meta') or {},
+                        source_reference=charge['source_reference'],
+                        entered_by=request.user,
+                        entered_at=now,
                     )
-                    continue
-                    
-                min_charge_val = _to_decimal(charge.get('min_charge'))
-                rate_val = _to_decimal(charge.get('rate'))
-                min_amount_val = _to_decimal(charge.get('min_amount'))
-                max_amount_val = _to_decimal(charge.get('max_amount'))
-                percent_val = _to_decimal(charge.get('percent'))
 
-                # Map Special Units
-                unit_val = charge['unit']
-                if unit_val == 'min_or_per_kg':
-                    unit_val = 'per_kg'
-                elif unit_val == 'flat': 
-                    unit_val = 'flat' # Explicitly supported by model
+            spe_db.save()
+            SpotEnvelopeListCreateAPIView()._validate_spe(spe_db)
+        except Exception as exc:
+            transaction.set_rollback(True)
+            return Response(
+                {'error': f"Validation Error: {str(exc)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-                SPEChargeLineDB.objects.create(
-                    envelope=spe_db,
-                    code=charge['code'],
-                    description=charge['description'],
-                    amount=amount_val,
-                    currency=charge['currency'],
-                    unit=unit_val,        # Correct field: unit
-                    bucket=charge['bucket'],
-                    is_primary_cost=charge.get('is_primary_cost', False),
-                    conditional=charge.get('conditional', False),
-                    min_charge=min_charge_val,
-                    note=charge.get('note') or "", # Correct field: note (singular)
-                    exclude_from_totals=charge.get('exclude_from_totals', False),
-                    percentage_basis=charge.get('percentage_basis'),
-                    calculation_type=charge.get('calculation_type'),
-                    unit_type=charge.get('unit_type'),
-                    rate=rate_val,
-                    min_amount=min_amount_val,
-                    max_amount=max_amount_val,
-                    percent=percent_val,
-                    percent_basis=charge.get('percent_basis'),
-                    rule_meta=charge.get('rule_meta') or {},
-                    source_reference=charge['source_reference'],
-                    entered_by=request.user,
-                    entered_at=now,
-                )
-        
-        spe_db.save()
-        
+        spe_db.refresh_from_db()
         serializer = SpotPricingEnvelopeSerializer(spe_db)
         return Response(serializer.data)
 
@@ -970,6 +981,10 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
                 {'error': 'SPE already acknowledged'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        intake_safety_error = _intake_safety_error_response(spe_db)
+        if intake_safety_error is not None:
+            return intake_safety_error
         
         temp_ack = SPEAcknowledgement(
             acknowledged_by_user_id=str(request.user.id),
@@ -1026,64 +1041,6 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
         })
 
 
-class SpotEnvelopeApproveAPIView(APIView):
-    """
-    POST /api/v3/spot/envelopes/<id>/approve/
-    
-    Manager approval for SPE.
-    
-    Request:
-        { "approved": true, "comment": "Looks good" }
-    """
-    permission_classes = [IsAuthenticated]
-    
-    def post(self, request, envelope_id):
-        spe_db = _get_spe_or_404(request.user, envelope_id)
-        
-        # Check user has manager role
-        # Check user has manager role
-        if not _user_is_manager_or_admin(request.user):
-            return Response(
-                {'error': 'Only managers can approve SPEs'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        if hasattr(spe_db, 'manager_approval') and spe_db.manager_approval:
-            return Response(
-                {'error': 'SPE already has manager decision'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        approved = request.data.get('approved', False)
-        comment = request.data.get('comment', '')
-        
-        # Create approval
-        SPEManagerApprovalDB.objects.create(
-            envelope=spe_db,
-            approved=approved,
-            manager=request.user,
-            decision_at=timezone.now(),
-            comment=comment,
-        )
-        
-        # Update SPE status
-        spe_db.status = 'ready' if approved else 'rejected'
-        spe_db.save()
-        
-        logger.info(
-            "SPE %s %s by manager %s",
-            spe_db.id,
-            'approved' if approved else 'rejected',
-            request.user.username
-        )
-        
-        return Response({
-            'success': True,
-            'status': spe_db.status,
-            'approved': approved,
-        })
-
-
 class SpotEnvelopeComputeAPIView(APIView):
     """
     POST /api/v3/spot/envelopes/<id>/compute/
@@ -1117,6 +1074,10 @@ class SpotEnvelopeComputeAPIView(APIView):
                 {'error': f'Invalid SPE: {str(e)}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        intake_safety_error = _intake_safety_error_response(spe_db)
+        if intake_safety_error is not None:
+            return intake_safety_error
         
         # Validate SPE is ready for pricing
         from quotes.spot_services import SpotEnvelopeService
@@ -1426,6 +1387,33 @@ class SpotReplyAnalysisAPIView(APIView):
                     request.data.get('label')
                     or _default_source_label(source_kind, target_bucket)
                 )
+                auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+                    result,
+                    source_reference=source_reference,
+                    shipment_context=shipment_context,
+                )
+                safety_signals = getattr(result, "safety_signals", None)
+                if hasattr(safety_signals, "model_dump"):
+                    safety_signals = safety_signals.model_dump()
+                elif not isinstance(safety_signals, dict):
+                    safety_signals = {}
+                if not safety_signals.get("imported_charge_count"):
+                    safety_signals["imported_charge_count"] = len(auto_charges)
+                if not safety_signals.get("conditional_charge_count"):
+                    safety_signals["conditional_charge_count"] = sum(
+                        1 for charge in auto_charges if charge.get("conditional")
+                    )
+                if "pdf_fallback_used" not in safety_signals:
+                    safety_signals["pdf_fallback_used"] = any(
+                        "pdf extraction fallback" in str(w).lower() for w in (result.warnings or [])
+                    )
+                detected_currencies = sorted(
+                    {
+                        str(charge.get("currency") or "").upper()
+                        for charge in auto_charges
+                        if str(charge.get("currency") or "").strip()
+                    }
+                )
                 batch = _get_or_create_source_batch(
                     spe_db=spe_db,
                     request=request,
@@ -1438,17 +1426,14 @@ class SpotReplyAnalysisAPIView(APIView):
                     raw_text=text,
                     file_name=pdf_file.name if pdf_file else "",
                     file_content_type=getattr(pdf_file, "content_type", "") if pdf_file else "",
-                    analysis_summary_json={
-                        "warnings": list(result.warnings or []),
-                        "assertion_count": len(result.assertions or []),
-                        "can_proceed": getattr(result.summary, "can_proceed", None),
-                    },
-                )
-
-                auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
-                    result,
-                    source_reference=source_reference,
-                    shipment_context=shipment_context,
+                    analysis_summary_json=build_source_analysis_summary_payload(
+                        warnings=result.warnings or [],
+                        assertion_count=len(result.assertions or []),
+                        can_proceed=getattr(result.summary, "can_proceed", False),
+                        ai_used=True,
+                        detected_currencies=detected_currencies,
+                        safety_signals=safety_signals,
+                    ),
                 )
 
                 now = timezone.now()
@@ -1538,6 +1523,14 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             spe = _build_spe_from_db(spe_db)
         except ValueError as e:
             return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        intake_safety_error = _intake_safety_error_response(spe_db)
+        if intake_safety_error is not None:
+            return intake_safety_error
+
+        is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
+        if not is_valid:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
             
         quote_data = request.data.get('quote_request', {})
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
@@ -1781,4 +1774,55 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             'quote_id': str(quote.id),
             'quote_number': quote.quote_number
         })
+
+
+class SpotSourceBatchReviewAPIView(APIView):
+    """
+    POST /api/v3/spot/envelopes/<id>/sources/<source_batch_id>/review/
+
+    Record reviewer confirmation for an imported source batch.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, envelope_id, source_batch_id):
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
+            _spe_queryset(),
+        )
+
+        if spe_db.status != 'draft':
+            return Response(
+                {'error': f"Cannot review source batches in status '{spe_db.status}'"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        batch = get_object_or_404(spe_db.source_batches, id=source_batch_id)
+        reviewed_safe_to_quote = bool(request.data.get("reviewed_safe_to_quote", False))
+        review_note = str(request.data.get("review_note") or "").strip() or None
+        summary = normalize_source_analysis_summary(batch.analysis_summary_json)
+
+        if reviewed_safe_to_quote and summary["requires_review_note"] and not review_note:
+            return Response(
+                {
+                    "error": "High-risk AI findings require a reviewer note before this source can be approved.",
+                    "source_batch_id": str(batch.id),
+                    "blocking_reasons": summary["blocking_reasons"],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        batch.analysis_summary_json = mark_source_analysis_review(
+            batch.analysis_summary_json,
+            reviewed_safe_to_quote=reviewed_safe_to_quote,
+            reviewed_by_user_id=str(request.user.id),
+            reviewed_at=timezone.now().isoformat(),
+            review_note=review_note,
+        )
+        batch.save(update_fields=["analysis_summary_json", "updated_at"])
+
+        spe_db.refresh_from_db()
+        serializer = SpotPricingEnvelopeSerializer(spe_db)
+        return Response(serializer.data)
 
