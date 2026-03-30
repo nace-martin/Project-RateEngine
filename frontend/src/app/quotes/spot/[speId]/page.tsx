@@ -73,61 +73,22 @@ const BUCKET_LABELS: Record<SPEChargeLine["bucket"], string> = {
     destination_charges: "Destination Charges",
 };
 
-type IntakeSourceSection = {
-    id: SPEChargeLine["bucket"];
-    title: string;
-    description: string;
-    sourceKind: "AIRLINE" | "AGENT" | "MANUAL" | "OTHER";
-    sourceLabel: string;
+const formatMissingComponents = (components?: string[]) => {
+    if (!components || components.length === 0) return null;
+    const friendly = components.map((component) => {
+        const normalized = component.toUpperCase();
+        if (normalized === "DESTINATION_LOCAL") return "Destination Charges";
+        if (normalized === "ORIGIN_LOCAL") return "Origin Charges";
+        if (normalized === "FREIGHT") return "Freight Rate";
+        return component.replace(/_/g, " ");
+    });
+    return Array.from(new Set(friendly));
 };
 
-const INTAKE_BUCKET_ORDER: SPEChargeLine["bucket"][] = [
-    "airfreight",
-    "origin_charges",
-    "destination_charges",
-];
-
-const buildIntakeSections = (
-    buckets: SPEChargeLine["bucket"][],
-    shipmentType: "EXPORT" | "IMPORT" | "DOMESTIC"
-): IntakeSourceSection[] => {
-    return INTAKE_BUCKET_ORDER
-        .filter((bucket) => buckets.includes(bucket))
-        .map((bucket) => {
-            if (bucket === "airfreight") {
-                return {
-                    id: bucket,
-                    title: "Airline Freight Quote",
-                    description: "Upload or paste the airline quote for the missing freight component.",
-                    sourceKind: "AIRLINE",
-                    sourceLabel: "Airline Freight Quote",
-                };
-            }
-
-            if (bucket === "origin_charges") {
-                return {
-                    id: bucket,
-                    title: shipmentType === "IMPORT" ? "Origin Agent Quote" : "Origin Charges Source",
-                    description:
-                        shipmentType === "IMPORT"
-                            ? "Add the overseas origin charges that are not covered by standard rates."
-                            : "Add the origin-side charges required for this SPOT quote.",
-                    sourceKind: "AGENT",
-                    sourceLabel: shipmentType === "IMPORT" ? "Origin Agent Quote" : "Origin Charges Source",
-                };
-            }
-
-            return {
-                id: bucket,
-                title: shipmentType === "EXPORT" ? "Destination Agent Quote" : "Destination Charges Source",
-                description:
-                    shipmentType === "EXPORT"
-                        ? "Add the overseas destination charges from the receiving agent."
-                        : "Add the destination-side charges required for this SPOT quote.",
-                sourceKind: "AGENT",
-                sourceLabel: shipmentType === "EXPORT" ? "Destination Agent Quote" : "Destination Charges Source",
-            };
-        });
+const formatListWithAnd = (items: string[]) => {
+    if (items.length <= 1) return items[0] || "";
+    if (items.length === 2) return `${items[0]} and ${items[1]}`;
+    return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 };
 
 export default function SpotRateEntryPage() {
@@ -184,7 +145,6 @@ export default function SpotRateEntryPage() {
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
-    const [sectionBatchIds, setSectionBatchIds] = useState<Record<string, string>>({});
     const [intakeDirtyMap, setIntakeDirtyMap] = useState<Record<string, boolean>>({});
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
     const [reviewingSourceBatchId, setReviewingSourceBatchId] = useState<string | null>(null);
@@ -208,11 +168,6 @@ export default function SpotRateEntryPage() {
         (state.spe?.shipment
             ? inferShipmentType(state.spe.shipment.origin_country, state.spe.shipment.destination_country)
             : inferShipmentType(originCountryParam, destCountryParam));
-    const isMultiSourceIntake = editableBuckets.length > 1;
-    const intakeSections = useMemo(
-        () => (isMultiSourceIntake ? buildIntakeSections(editableBuckets, resolvedShipmentType) : []),
-        [editableBuckets, isMultiSourceIntake, resolvedShipmentType]
-    );
     const hasIntakeDrafts = useMemo(
         () => Object.values(intakeDirtyMap).some(Boolean),
         [intakeDirtyMap]
@@ -220,18 +175,6 @@ export default function SpotRateEntryPage() {
     const hasPendingUnsavedWork =
         hasIntakeDrafts || Boolean(analysisResult) || (currentStep === "review" && !state.quoteResult);
     const confirmLeave = useUnsavedChangesGuard(hasPendingUnsavedWork);
-
-    const formatMissingComponents = (components?: string[]) => {
-        if (!components || components.length === 0) return null;
-        const friendly = components.map((component) => {
-            const normalized = component.toUpperCase();
-            if (normalized === "DESTINATION_LOCAL") return "Destination Charges";
-            if (normalized === "ORIGIN_LOCAL") return "Origin Charges";
-            if (normalized === "FREIGHT") return "Freight Rate";
-            return component.replace(/_/g, " ");
-        });
-        return Array.from(new Set(friendly));
-    };
 
     const displayCustomerName = useMemo(() => {
         const candidate = (
@@ -255,20 +198,16 @@ export default function SpotRateEntryPage() {
         return rawTerm || "N/A";
     }, [state.spe?.shipment.payment_term, paymentTerm]);
 
-    const importedSpotBuckets = useMemo(() => {
-        const buckets = new Set<SPEChargeLine["bucket"]>();
-        for (const charge of state.spe?.charges || EMPTY_CHARGES) {
-            if (!isBuySideCharge(charge) && !isStandardRateCharge(charge)) {
-                buckets.add(charge.bucket);
-            }
-        }
-        return buckets;
-    }, [state.spe?.charges]);
-
-    const allMultiSourceSectionsReady = useMemo(
-        () => intakeSections.every((section) => importedSpotBuckets.has(section.id)),
-        [importedSpotBuckets, intakeSections]
+    const missingRateLabels = useMemo(
+        () => formatMissingComponents(missingComponents) || EMPTY_COMPONENTS,
+        [missingComponents]
     );
+    const intakeDescription = useMemo(() => {
+        const autoSplitTargets = missingRateLabels.length
+            ? formatListWithAnd(missingRateLabels)
+            : "the right quote components";
+        return `Paste email replies, upload PDFs, or enter all external rate details once. AI will automatically split them into ${autoSplitTargets}.`;
+    }, [missingRateLabels]);
 
     // Load existing SPE
     useEffect(() => {
@@ -284,9 +223,7 @@ export default function SpotRateEntryPage() {
         if (userAdvancedToReviewRef.current) return;
 
         if (state.spe) {
-            if (isMultiSourceIntake && !allMultiSourceSectionsReady) {
-                setCurrentStep("intake");
-            } else if (state.spe.charges.length > 0) {
+            if (state.spe.charges.length > 0) {
                 // If we have charges, go to review step
                 setCurrentStep(prev => prev === "review" ? prev : "review");
             } else {
@@ -294,24 +231,13 @@ export default function SpotRateEntryPage() {
                 setCurrentStep("intake");
             }
         }
-    }, [allMultiSourceSectionsReady, isMultiSourceIntake, state.spe, state.flowState]);
+    }, [state.spe, state.flowState]);
 
     useEffect(() => {
         const sources = state.spe?.sources || [];
         if (!sources.length) {
             return;
         }
-        setSectionBatchIds((prev) => {
-            const next = { ...prev };
-            let changed = false;
-            for (const source of sources) {
-                if (source.target_bucket !== "mixed" && !next[source.target_bucket]) {
-                    next[source.target_bucket] = source.id;
-                    changed = true;
-                }
-            }
-            return changed ? next : prev;
-        });
         if (!primarySourceBatchId) {
             const primarySource =
                 sources.find((source) => source.target_bucket === "mixed") || sources[0];
@@ -547,48 +473,17 @@ export default function SpotRateEntryPage() {
         targetBucket: SPEChargeLine["bucket"] | "mixed" = "mixed"
     ) => {
         setAnalysisResult(result);
-        if (result.source_batch_id) {
-            if (targetBucket === "mixed") {
-                setPrimarySourceBatchId(result.source_batch_id);
-            } else {
-                setSectionBatchIds((prev) => ({
-                    ...prev,
-                    [targetBucket]: result.source_batch_id!,
-                }));
-            }
+        if (result.source_batch_id && targetBucket === "mixed") {
+            setPrimarySourceBatchId(result.source_batch_id);
         }
         // Set the guard BEFORE the async reload so the useEffect doesn't fight us.
-        // Multi-source intake stays on the intake step until the user explicitly continues.
-        userAdvancedToReviewRef.current = !isMultiSourceIntake;
+        userAdvancedToReviewRef.current = true;
         if (speId && !isNew) {
             // Backend persists auto-populated charges (AI + standard DB suggestions) into the SPE.
             // Reload before entering review so the form displays the latest draft charges.
             await loadSPE(speId);
         }
-        if (!isMultiSourceIntake) {
-            setCurrentStep("review");
-        }
-    };
-
-    const getSourceStatusText = (section: IntakeSourceSection) => {
-        const imported = reviewFormCharges.filter((charge) => charge.bucket === section.id).length;
-        if (imported > 0) {
-            return `${imported} charge line${imported === 1 ? "" : "s"} imported`;
-        }
-        if (sectionBatchIds[section.id]) {
-            return "Source ready for re-analysis";
-        }
-        return "Awaiting source";
-    };
-
-    const getSourceStatusClasses = (section: IntakeSourceSection) => {
-        if (importedSpotBuckets.has(section.id)) {
-            return "border-emerald-200 bg-emerald-50 text-emerald-800";
-        }
-        if (sectionBatchIds[section.id]) {
-            return "border-amber-200 bg-amber-50 text-amber-800";
-        }
-        return "border-slate-200 bg-slate-50 text-slate-700";
+        setCurrentStep("review");
     };
 
     const setIntakeDirty = (key: string, isDirty: boolean) => {
@@ -700,7 +595,7 @@ export default function SpotRateEntryPage() {
                         </h1>
                         {currentStep === "intake" && (
                             <p className="mt-1 text-sm text-slate-600">
-                                Add the missing rates needed to complete this quote.
+                                Add all missing external rate inputs once. AI will split them into the right charge sections.
                             </p>
                         )}
                     </div>
@@ -783,72 +678,19 @@ export default function SpotRateEntryPage() {
             {/* Step Content */}
 
             {/* Step 1: Intake - Paste agent reply, AI analysis */}
-            {currentStep === "intake" && !isMultiSourceIntake && (
+            {currentStep === "intake" && (
                 <ReplyPasteCard
                     speId={speId as string}
                     missingComponents={missingComponents}
                     sourceBatchId={primarySourceBatchId}
+                    title="AI Rate Intake"
+                    description={intakeDescription}
+                    sourceKind="OTHER"
+                    targetBucket="mixed"
+                    sourceLabel="Unified AI Intake"
                     onAnalysisComplete={(result) => handleAnalysisComplete(result, "mixed")}
                     onDirtyChange={(isDirty) => setIntakeDirty("mixed", isDirty)}
                 />
-            )}
-
-            {currentStep === "intake" && isMultiSourceIntake && (
-                <div className="space-y-6">
-                    <Card className="border-slate-200">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="text-base font-semibold">Missing Source Intake</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-3 text-sm text-slate-700">
-                            <p>
-                                This quote needs multiple external inputs. Add each missing source below, then continue to review once all required sections are imported.
-                            </p>
-                            <div className="grid gap-3 md:grid-cols-3">
-                                {intakeSections.map((section) => (
-                                    <div
-                                        key={section.id}
-                                        className={`rounded-md border px-3 py-2 ${getSourceStatusClasses(section)}`}
-                                    >
-                                        <div className="font-medium">
-                                            {section.title}
-                                        </div>
-                                        <div className="mt-1 text-xs">
-                                            {getSourceStatusText(section)}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {intakeSections.map((section) => (
-                        <ReplyPasteCard
-                            key={section.id}
-                            speId={speId as string}
-                            sourceBatchId={sectionBatchIds[section.id] || null}
-                            title={section.title}
-                            description={section.description}
-                            sourceKind={section.sourceKind}
-                            targetBucket={section.id}
-                            sourceLabel={section.sourceLabel}
-                            hideMissingMessage
-                            onAnalysisComplete={(result) => handleAnalysisComplete(result, section.id)}
-                            onDirtyChange={(isDirty) => setIntakeDirty(section.id, isDirty)}
-                        />
-                    ))}
-
-                    <div className="flex justify-end">
-                        <Button
-                            onClick={() => {
-                                userAdvancedToReviewRef.current = true;
-                                setCurrentStep("review");
-                            }}
-                            disabled={!allMultiSourceSectionsReady}
-                        >
-                            Continue to Review
-                        </Button>
-                    </div>
-                </div>
             )}
 
             {/* Step 2: Review - Rate entry form with AI suggestions */}

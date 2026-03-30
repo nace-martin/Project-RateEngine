@@ -33,6 +33,7 @@ interface ReplyPasteCardProps {
     sourceReference?: string;
     hideMissingMessage?: boolean;
     onDirtyChange?: (isDirty: boolean) => void;
+    submitLabel?: string;
 }
 
 export function ReplyPasteCard({
@@ -41,14 +42,15 @@ export function ReplyPasteCard({
     speId,
     missingComponents = [],
     sourceBatchId = null,
-    title = "Reply Intake",
-    description = "Paste the rate reply email text you received from the agent or carrier, or upload a PDF quote. Email file uploads are not supported in this flow yet.",
+    title = "AI Rate Intake",
+    description = "Paste email replies, upload PDF quotes, or add all external rate details here once. AI will classify the charges automatically.",
     sourceKind = "OTHER",
     targetBucket = "mixed",
-    sourceLabel = "Primary SPOT Source",
+    sourceLabel = "Unified AI Intake",
     sourceReference,
     hideMissingMessage = false,
     onDirtyChange,
+    submitLabel = "Analyze Intake",
 }: ReplyPasteCardProps) {
     const [text, setText] = useState("");
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -89,9 +91,9 @@ export function ReplyPasteCard({
         const unique = Array.from(new Set(friendlyNames));
 
         return (
-            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mb-4 text-sm text-blue-800">
-                <span className="font-semibold">Hybrid Quote:</span> Standard rates are available for some components.
-                Please provide rates for: <strong>{unique.join(', ')}</strong>.
+            <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                <span className="font-semibold">Missing external rates:</span> Add everything once and AI will map it to{" "}
+                <strong>{unique.join(", ")}</strong>.
             </div>
         );
     };
@@ -132,12 +134,12 @@ export function ReplyPasteCard({
         setError(null);
 
         if (!text.trim() && !selectedFile) {
-            setError("Please paste the agent reply text or upload a PDF quote.");
+            setError("Please paste the rate details or upload a PDF quote.");
             return;
         }
 
         if (!selectedFile && text.trim().length < 20) {
-            setError("Reply seems too short. Please paste the complete email.");
+            setError("Input seems too short. Please paste the full rate reply or supporting notes.");
             return;
         }
 
@@ -171,7 +173,7 @@ export function ReplyPasteCard({
     return (
         <Card className="border-slate-200">
             <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 text-lg">
                     <Mail className="h-5 w-5 text-slate-600" />
                     {title}
                 </CardTitle>
@@ -183,7 +185,7 @@ export function ReplyPasteCard({
 
                 {sourceBatchId && (
                     <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                        Re-analyzing will update the current SPOT source instead of creating a duplicate source entry.
+                        Re-analyzing will refresh the current AI intake source instead of creating a duplicate source entry.
                     </div>
                 )}
 
@@ -220,7 +222,7 @@ export function ReplyPasteCard({
                             <div className="space-y-1">
                                 <p className="text-sm font-medium text-slate-900">Upload PDF quote</p>
                                 <p className="text-sm text-slate-600">
-                                    Drag and drop a carrier or agent PDF here, or browse for a file. For emails, paste the message text below.
+                                    Drag and drop any carrier or agent PDF here, or browse for a file. For email replies and mixed rate notes, paste the text below.
                                 </p>
                             </div>
                         </div>
@@ -269,9 +271,11 @@ export function ReplyPasteCard({
                         onChange={(e) => setText(e.target.value)}
                         placeholder={`Hi,
 
-Please see our rate for the shipment:
+Please see our rates for the shipment:
 
 A/F: USD 10.20/kg
+Origin handling: USD 85 / shipment
+Destination fee: PGK 120 / shipment
 Valid until: 31 Dec 2024
 Routing: SYD-SIN-POM
 Subject to space availability
@@ -299,7 +303,7 @@ Agent Name`}
                     >
                         {isLoading ? "Analyzing..." : (
                             <>
-                                Analyze Reply
+                                {submitLabel}
                                 <ArrowRight className="h-4 w-4 ml-2" />
                             </>
                         )}
@@ -310,7 +314,7 @@ Agent Name`}
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                         {selectedFile
                             ? "Analyzing uploaded document. Scanned PDFs can take a little longer while the system reads the quote."
-                            : "Analyzing reply text and classifying charges."}
+                            : "Analyzing intake text and classifying charges."}
                     </div>
                 )}
             </CardContent>
