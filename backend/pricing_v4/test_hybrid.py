@@ -338,6 +338,45 @@ class HybridPricingTest(TestCase):
         totals = adapter._calculate_totals(lines).totals
         self.assertFalse(totals.has_missing_rates)
 
+    def test_normal_mode_ignores_non_required_missing_lines_once_scope_is_covered(self):
+        """
+        Normal quotes should not remain INCOMPLETE when the required scope buckets
+        are covered and only extra standard lines are missing.
+        """
+        self.quote_input.shipment.shipment_type = 'EXPORT'
+        self.quote_input.shipment.service_scope = 'D2D'
+
+        adapter = PricingServiceV4Adapter(self.quote_input)
+        adapter.pricing_mode = PricingMode.NORMAL
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+
+        def make_line(code, bucket, amount, is_missing=False):
+            return CalculatedChargeLine(
+                service_component_code=code,
+                service_component_desc=f"{code} Desc",
+                cost_pgk=Decimal(amount),
+                sell_pgk=Decimal(amount),
+                sell_pgk_incl_gst=Decimal(amount),
+                sell_fcy=Decimal(amount),
+                sell_fcy_incl_gst=Decimal(amount),
+                sell_fcy_currency='PGK',
+                bucket=bucket,
+                cost_source='V4 Engine',
+                leg='L1',
+                service_component_id=uuid4(),
+                is_rate_missing=is_missing,
+            )
+
+        lines = [
+            make_line('EXP-FRT-AIR', 'airfreight', '500.00', is_missing=False),
+            make_line('EXP-CLEAR', 'origin_charges', '120.00', is_missing=False),
+            make_line('EXP-CLEAR-DEST', 'destination_charges', '200.00', is_missing=False),
+            make_line('EXP-AWB', 'origin_charges', '0.00', is_missing=True),
+        ]
+
+        totals = adapter._calculate_totals(lines).totals
+        self.assertFalse(totals.has_missing_rates)
+
     def test_spot_mode_skips_zero_amount_db_lines(self):
         """
         Legacy zero-amount SPE rows should be ignored instead of breaking SPOT validation.

@@ -791,54 +791,21 @@ class PricingServiceV4Adapter:
         # Base completeness signal: required components by scope.
         has_missing_rates = not coverage.is_complete
 
-        # SPOT mode should gate on required component coverage only.
-        # Missing non-required standard lines must not block finalization after SPOT completion.
+        # Normal mode should use the same required-component coverage model as the
+        # deterministic SPOT trigger. Extra missing standard lines in an already
+        # covered bucket should be visible in logs, but must not force the quote
+        # into INCOMPLETE or re-route a covered lane into the SPOT UX.
         if self.pricing_mode != PricingMode.SPOT:
-            if any(getattr(l, "is_rate_missing", False) for l in lines):
-                has_missing_rates = True
-
-            mandatory_ids = []
-            if shipment_type == 'EXPORT':
-                mandatory_ids = ExportPricingEngine.get_mandatory_product_codes(
-                    is_dg=is_dg,
-                    service_scope=service_scope,
-                    commodity_code=commodity_code,
-                    origin=origin_code,
-                    destination=destination_code,
-                    payment_term=payment_term,
-                    quote_date=quote_date,
+            non_blocking_missing_codes = [
+                getattr(line, "service_component_code", "UNKNOWN")
+                for line in lines
+                if getattr(line, "is_rate_missing", False)
+            ]
+            if non_blocking_missing_codes and coverage.is_complete:
+                logger.info(
+                    "Ignoring non-blocking missing standard lines after required scope coverage was satisfied: %s",
+                    ", ".join(non_blocking_missing_codes),
                 )
-            elif shipment_type == 'IMPORT':
-                mandatory_ids = ImportPricingEngine.get_mandatory_product_codes(
-                    is_dg=is_dg,
-                    service_scope=service_scope,
-                    commodity_code=commodity_code,
-                    origin=origin_code,
-                    destination=destination_code,
-                    payment_term=payment_term,
-                    quote_date=quote_date,
-                )
-            elif shipment_type == 'DOMESTIC':
-                mandatory_ids = DomesticPricingEngine.get_mandatory_product_codes(
-                    service_scope=service_scope,
-                    commodity_code=commodity_code,
-                    origin=origin_code,
-                    destination=destination_code,
-                    quote_date=quote_date,
-                )
-
-            resolved_codes = {l.service_component_code for l in lines}
-            resolved_ids = set()
-            if mandatory_ids:
-                resolved_ids = set(ProductCode.objects.filter(
-                    code__in=resolved_codes
-                ).values_list('id', flat=True))
-
-            missing_mandatories = [m for m in mandatory_ids if m not in resolved_ids]
-            if missing_mandatories:
-                has_missing_rates = True
-                missing_codes = list(ProductCode.objects.filter(id__in=missing_mandatories).values_list('code', flat=True))
-                logger.warning(f"Mandatory ProductCodes missing: {missing_codes}")
 
         totals = CalculatedTotals(
             total_cost_pgk=total_cost_pgk,
