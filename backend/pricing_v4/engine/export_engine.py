@@ -352,16 +352,14 @@ class ExportPricingEngine:
         sell_qs = ExportSellRate.objects.filter(
             product_code_id__in=product_code_ids, origin_airport=self.origin, destination_airport=self.destination,
             valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
-        )
+        ).order_by('product_code_id', '-valid_from', '-updated_at', '-id')
+        sell_candidates: Dict[int, List[ExportSellRate]] = {}
         for rate in sell_qs:
-            pc_id = rate.product_code_id
-            if self.payment_term == PaymentTerm.PREPAID:
-                if rate.currency == self.quote_currency: self._sell_rate_cache[pc_id] = rate
-                elif pc_id not in self._sell_rate_cache: self._sell_rate_cache[pc_id] = rate
-            else:
-                # COLLECT export must use PGK sell rates only.
-                if rate.currency == 'PGK':
-                    self._sell_rate_cache[pc_id] = rate
+            sell_candidates.setdefault(rate.product_code_id, []).append(rate)
+        for pc_id, candidates in sell_candidates.items():
+            selected_rate = self._select_export_sell_rate(candidates)
+            if selected_rate:
+                self._sell_rate_cache[pc_id] = selected_rate
         surcharges = Surcharge.objects.filter(
             product_code_id__in=product_code_ids, service_type__in=['EXPORT_AIR', 'EXPORT_ORIGIN', 'ALL'],
             is_active=True, valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
@@ -370,6 +368,33 @@ class ExportPricingEngine:
             if s.origin_filter and s.origin_filter != self.origin: continue
             if s.destination_filter and s.destination_filter != self.destination: continue
             self._surcharge_cache[(s.product_code_id, s.rate_side)] = s
+
+    def _select_export_sell_rate(self, candidates: List[ExportSellRate]) -> Optional[ExportSellRate]:
+        """
+        Pick one active export sell row deterministically.
+
+        Safe fallbacks matter here because the engine only knows how to convert a
+        PGK sell row into another quote currency. It must not treat an arbitrary
+        foreign-currency row as a PGK base and then apply margin/FX again.
+        """
+        if not candidates:
+            return None
+
+        if self.payment_term == PaymentTerm.COLLECT:
+            for rate in candidates:
+                if rate.currency == 'PGK':
+                    return rate
+            return None
+
+        for rate in candidates:
+            if rate.currency == self.quote_currency:
+                return rate
+
+        for rate in candidates:
+            if rate.currency == 'PGK':
+                return rate
+
+        return None
 
     def _get_product_code(self, product_code_id: int) -> Optional[ProductCode]:
         return self._pc_cache.get(product_code_id) if hasattr(self, '_pc_cache') else ProductCode.objects.filter(id=product_code_id).first()
@@ -436,11 +461,17 @@ class ExportPricingEngine:
                 if self.payment_term == PaymentTerm.COLLECT:
                     # COLLECT export must not silently fall back to non-PGK rows.
                     return None
+                if preferred_currency == 'PGK':
+                    # PREPAID export in PGK must not misinterpret a foreign-currency
+                    # sell row as a PGK base amount.
+                    return None
 
-            # Fallback: exact payment term first, then ANY term, in any currency.
-            local = local_rates.filter(payment_term=payment_term_value).first() or local_rates.filter(payment_term='ANY').first()
-            if local:
-                return local
+                pgk_rates = local_rates.filter(currency='PGK')
+                local = pgk_rates.filter(payment_term=payment_term_value).first() or pgk_rates.filter(payment_term='ANY').first()
+                if local:
+                    return local
+                return None
+
             return None
         if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache: return self._sell_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'SELL'))

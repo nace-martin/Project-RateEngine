@@ -8,7 +8,15 @@ from decimal import Decimal
 from datetime import date, timedelta
 from django.test import TestCase
 
-from pricing_v4.models import CommodityChargeRule, ProductCode, Agent, LocalCOGSRate, LocalSellRate
+from pricing_v4.models import (
+    CommodityChargeRule,
+    ProductCode,
+    Agent,
+    ExportCOGS,
+    ExportSellRate,
+    LocalCOGSRate,
+    LocalSellRate,
+)
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm
 
 
@@ -40,6 +48,18 @@ class ExportEngineTestCase(TestCase):
             gl_revenue_code='4304',
             gl_cost_code='5304',
             default_unit='SHIPMENT',
+        )
+        cls.pc_freight = ProductCode.objects.create(
+            id=1505,
+            code='EXP-FRT-AIR-TEST',
+            description='Export Air Freight Test',
+            domain='EXPORT',
+            category='FREIGHT',
+            is_gst_applicable=False,
+            gst_rate=Decimal('0.00'),
+            gl_revenue_code='4305',
+            gl_cost_code='5305',
+            default_unit=ProductCode.UNIT_KG,
         )
 
         cls.agent = Agent.objects.create(
@@ -192,6 +212,71 @@ class ExportLocalSellRateSelectionTest(ExportEngineTestCase):
         line = result.lines[0]
         self.assertEqual(line.sell_currency, 'USD')
         self.assertEqual(line.sell_amount, Decimal('135.00'))
+
+
+class ExportSellRateSelectionTest(ExportEngineTestCase):
+    """Export freight sell lookup must not depend on database row order."""
+
+    def setUp(self):
+        ExportCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_airport='POM',
+            destination_airport='SIN',
+            agent=self.agent,
+            currency='PGK',
+            weight_breaks=[
+                {"min_kg": 0, "rate": "9.00"},
+                {"min_kg": 100, "rate": "8.50"},
+            ],
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+        # Insert an FCY row first to prove selection is not based on insertion order.
+        ExportSellRate.objects.create(
+            product_code=self.pc_freight,
+            origin_airport='POM',
+            destination_airport='SIN',
+            currency='USD',
+            weight_breaks=[
+                {"min_kg": 0, "rate": "4.70"},
+                {"min_kg": 100, "rate": "4.50"},
+            ],
+            min_charge=Decimal('60.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+        ExportSellRate.objects.create(
+            product_code=self.pc_freight,
+            origin_airport='POM',
+            destination_airport='SIN',
+            currency='PGK',
+            weight_breaks=[
+                {"min_kg": 0, "rate": "17.65"},
+                {"min_kg": 100, "rate": "13.25"},
+            ],
+            min_charge=Decimal('200.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+    def test_prepaid_pgk_quote_prefers_exact_pgk_export_sell_rate(self):
+        engine = ExportPricingEngine(
+            quote_date=date.today(),
+            origin='POM',
+            destination='SIN',
+            chargeable_weight_kg=Decimal('100'),
+            payment_term=PaymentTerm.PREPAID,
+            tt_sell=Decimal('2.78'),
+            caf_rate=Decimal('0.05'),
+            destination_currency='PGK',
+        )
+
+        result = engine.calculate_quote([self.pc_freight.id])
+        self.assertEqual(len(result.lines), 1)
+        line = result.lines[0]
+
+        self.assertEqual(line.sell_currency, 'PGK')
+        self.assertEqual(line.sell_amount, Decimal('1325.00'))
 
 
 class ExportPercentRateSelectionTest(ExportEngineTestCase):
