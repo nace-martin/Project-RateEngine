@@ -56,6 +56,17 @@ class SellSeedUtilsTests(TestCase):
             gl_cost_code="5100",
             default_unit="PERCENT",
         )
+        self.export_destination_local = ProductCode.objects.create(
+            id=1080,
+            code="EXP-CLEAR-DEST-TEST",
+            description="Export Destination Clearance Test",
+            domain="EXPORT",
+            category="CLEARANCE",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
         self.import_local = ProductCode.objects.create(
             id=2010,
             code="IMP-CLEAR-TEST",
@@ -109,6 +120,25 @@ class SellSeedUtilsTests(TestCase):
         self.assertEqual(local.direction, "EXPORT")
         self.assertEqual(local.payment_term, "PREPAID")
         self.assertEqual(local.amount, Decimal("50.00"))
+
+    def test_export_destination_local_seed_uses_destination_station(self):
+        result = seed_export_sell_rate(
+            product_code=self.export_destination_local,
+            origin_airport="POM",
+            destination_airport="SIN",
+            currency="USD",
+            valid_from=date(2026, 1, 1),
+            valid_until=date(2026, 12, 31),
+            rate_per_shipment=Decimal("85.00"),
+            payment_term="PREPAID",
+        )
+
+        self.assertEqual(result.table_name, "LocalSellRate")
+        local = LocalSellRate.objects.get(product_code=self.export_destination_local)
+        self.assertEqual(local.location, "SIN")
+        self.assertEqual(local.direction, "EXPORT")
+        self.assertEqual(local.payment_term, "PREPAID")
+        self.assertEqual(local.amount, Decimal("85.00"))
 
     def test_export_freight_seed_stays_lane_based(self):
         result = seed_export_sell_rate(

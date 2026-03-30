@@ -26,6 +26,7 @@ from .services import (
     get_or_create_shipment_settings,
     persist_generated_pdf,
 )
+from core.storage_utils import file_field_basename, file_field_storage_exists
 
 
 class ShipmentWritePermission(permissions.BasePermission):
@@ -250,11 +251,15 @@ class ShipmentDocumentDownloadAPIView(OrganizationScopedMixin, APIView):
             pk=shipment_id,
         )
         document = get_object_or_404(ShipmentDocument.objects.filter(shipment=shipment), pk=document_id)
-        file_path = getattr(document.file, "path", None)
-        if not file_path or not os.path.exists(file_path):
+        if not file_field_storage_exists(document.file):
             raise ValidationError("Document file is unavailable.")
 
-        response = FileResponse(open(file_path, "rb"), content_type=document.content_type or "application/octet-stream")
+        response = FileResponse(
+            document.file.storage.open(document.file.name, "rb"),
+            content_type=document.content_type or "application/octet-stream",
+        )
         disposition = "inline" if document.document_type == ShipmentDocument.DocumentType.CONNOTE_PDF else "attachment"
-        response["Content-Disposition"] = f'{disposition}; filename="{document.file_name or os.path.basename(file_path)}"'
+        response["Content-Disposition"] = (
+            f'{disposition}; filename="{document.file_name or file_field_basename(document.file)}"'
+        )
         return response

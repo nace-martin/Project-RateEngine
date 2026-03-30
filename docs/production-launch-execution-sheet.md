@@ -8,6 +8,7 @@ Read together with:
 - [production-cutover-checklist.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-cutover-checklist.md)
 - [vercel-render-beta-deploy.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/vercel-render-beta-deploy.md)
 - [go-live-status-tracker.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/go-live-status-tracker.md)
+- [production-data-onboarding-plan.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-data-onboarding-plan.md)
 
 ## Target Deployment Shape
 
@@ -43,7 +44,7 @@ gunicorn rate_engine.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads
 ```
 
 - Health Check Path: `/api/health/`
-- Persistent Disk Mount Path: `/opt/render/project/src/backend/branding`
+- Persistent Disk Mount Path: `/opt/render/project/src/backend/media`
 
 ### Vercel Frontend
 
@@ -136,7 +137,7 @@ The cron job should inherit:
 
 - Create Render Postgres.
 - Create Render backend from `backend/`.
-- Attach the persistent disk at `/opt/render/project/src/backend/branding`.
+- Attach the persistent disk at `/opt/render/project/src/backend/media`.
 - Create the Render cron job for FX refresh.
 - Create the Vercel project from `frontend/`.
 

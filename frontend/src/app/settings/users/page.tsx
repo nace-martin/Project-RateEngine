@@ -32,12 +32,13 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/context/toast-context';
+import { API_BASE_URL } from '@/lib/config';
 import {
     Users, Plus, Search, Edit2, UserX, Shield,
     Building2, RefreshCw
 } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = API_BASE_URL;
 
 interface User {
     id: number;

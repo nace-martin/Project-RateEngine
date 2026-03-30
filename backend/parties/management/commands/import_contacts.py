@@ -2,12 +2,12 @@ from contextlib import nullcontext
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models.functions import Lower
 
 from parties.models import Company, Contact
 
 from ._seed_utils import (
     ensure_required_columns,
-    is_nullish,
     load_csv_rows,
     parse_bool,
     parse_optional_uuid,
@@ -55,10 +55,15 @@ class Command(BaseCommand):
             "deactivated": 0,
         }
         expected_emails_by_company: dict[str, set[str]] = {}
+        companies_by_uuid, companies_by_name = self._prefetch_companies(rows)
+        contacts_by_email = self._prefetch_contacts(rows)
 
         try:
             context = nullcontext() if dry_run else transaction.atomic()
             with context:
+                create_contacts: list[Contact] = []
+                update_contacts: list[Contact] = []
+                primary_email_by_company: dict[str, str] = {}
                 for row_number, row in rows:
                     self._process_row(
                         row_number,
@@ -67,9 +72,25 @@ class Command(BaseCommand):
                         allow_reassign,
                         counts,
                         expected_emails_by_company,
+                        companies_by_uuid,
+                        companies_by_name,
+                        contacts_by_email,
+                        create_contacts,
+                        update_contacts,
+                        primary_email_by_company,
+                    )
+                if not dry_run:
+                    self._apply_bulk_changes(
+                        create_contacts,
+                        update_contacts,
+                        primary_email_by_company,
+                        expected_emails_by_company,
+                        strict_sync,
+                        counts,
                     )
                 if strict_sync:
-                    self._apply_strict_sync(expected_emails_by_company, dry_run, counts)
+                    if dry_run:
+                        self._apply_strict_sync(expected_emails_by_company, counts, dry_run=True)
                 if dry_run:
                     raise CommandError("Dry run complete")
         except CommandError as exc:
@@ -95,17 +116,24 @@ class Command(BaseCommand):
         allow_reassign: bool,
         counts: dict,
         expected_emails_by_company: dict[str, set[str]],
+        companies_by_uuid: dict[str, Company],
+        companies_by_name: dict[str, Company],
+        contacts_by_email: dict[str, Contact],
+        create_contacts: list[Contact],
+        update_contacts: list[Contact],
+        primary_email_by_company: dict[str, str],
     ):
         email = row.get("email", "").strip().lower()
         if not email:
             raise CommandError(f"Row {row_number}: email is required")
 
-        company = self._resolve_company(row_number, row)
+        company = self._resolve_company(row_number, row, companies_by_uuid, companies_by_name)
         if not company:
             raise CommandError(
                 f"Row {row_number}: company not found by company_uuid/company_name"
             )
-        expected_emails_by_company.setdefault(str(company.id), set()).add(email)
+        company_id = str(company.id)
+        expected_emails_by_company.setdefault(company_id, set()).add(email)
 
         full_name = row.get("full_name", "").strip()
         first_name = row.get("first_name", "").strip()
@@ -125,8 +153,10 @@ class Command(BaseCommand):
         phone = row.get("phone", "").strip()
         is_primary = parse_bool(row.get("is_primary", ""), "is_primary", row_number)
         is_primary = bool(is_primary) if is_primary is not None else False
+        if is_primary:
+            primary_email_by_company[company_id] = email
 
-        contact = Contact.objects.filter(email__iexact=email).first()
+        contact = contacts_by_email.get(email)
         if contact and contact.company_id != company.id and not allow_reassign:
             raise CommandError(
                 f"Row {row_number}: contact '{email}' belongs to another company. "
@@ -143,11 +173,9 @@ class Command(BaseCommand):
                 is_primary=is_primary,
                 is_active=True,
             )
+            contacts_by_email[email] = contact
             if not dry_run:
-                contact.save()
-                if is_primary:
-                    demoted = Contact.objects.filter(company=company, is_primary=True).exclude(id=contact.id).update(is_primary=False)
-                    counts["demoted_primary"] += demoted
+                create_contacts.append(contact)
             counts["created"] += 1
             return
 
@@ -173,36 +201,115 @@ class Command(BaseCommand):
 
         if changed:
             if not dry_run:
-                contact.save()
-                if is_primary:
-                    demoted = Contact.objects.filter(company=company, is_primary=True).exclude(id=contact.id).update(is_primary=False)
-                    counts["demoted_primary"] += demoted
+                update_contacts.append(contact)
             counts["updated"] += 1
         else:
             counts["unchanged"] += 1
 
-    def _apply_strict_sync(self, expected_emails_by_company: dict[str, set[str]], dry_run: bool, counts: dict):
+    def _apply_bulk_changes(
+        self,
+        create_contacts: list[Contact],
+        update_contacts: list[Contact],
+        primary_email_by_company: dict[str, str],
+        expected_emails_by_company: dict[str, set[str]],
+        strict_sync: bool,
+        counts: dict,
+    ):
+        if create_contacts:
+            Contact.objects.bulk_create(create_contacts, batch_size=500)
+        if update_contacts:
+            Contact.objects.bulk_update(
+                update_contacts,
+                ["company", "first_name", "last_name", "phone", "is_primary", "is_active"],
+                batch_size=500,
+            )
+
+        for company_id, primary_email in primary_email_by_company.items():
+            demoted_candidates = Contact.objects.filter(company_id=company_id, is_primary=True).annotate(
+                email_lower=Lower("email")
+            ).exclude(
+                email_lower=primary_email
+            )
+            demoted = (
+                Contact.objects.filter(id__in=demoted_candidates.values_list("id", flat=True))
+                .update(is_primary=False)
+            )
+            counts["demoted_primary"] += demoted
+
+        if strict_sync:
+            self._apply_strict_sync(expected_emails_by_company, counts, dry_run=False)
+
+    def _apply_strict_sync(self, expected_emails_by_company: dict[str, set[str]], counts: dict, dry_run: bool):
         for company_id, expected_emails in expected_emails_by_company.items():
-            active_contacts = Contact.objects.filter(company_id=company_id, is_active=True)
-            to_deactivate = []
-            for contact in active_contacts:
-                if (contact.email or "").lower() not in expected_emails:
-                    contact.is_active = False
-                    contact.is_primary = False
-                    to_deactivate.append(contact)
+            to_deactivate = Contact.objects.filter(company_id=company_id, is_active=True).annotate(
+                email_lower=Lower("email")
+            ).exclude(
+                email_lower__in=expected_emails
+            )
+            deactivated = (
+                to_deactivate.count()
+                if dry_run
+                else Contact.objects.filter(
+                    id__in=to_deactivate.values_list("id", flat=True)
+                ).update(is_active=False, is_primary=False)
+            )
+            counts["deactivated"] += deactivated
 
-            if to_deactivate:
-                counts["deactivated"] += len(to_deactivate)
-                if not dry_run:
-                    Contact.objects.bulk_update(to_deactivate, ["is_active", "is_primary"])
+    def _prefetch_companies(self, rows: list[tuple[int, dict]]) -> tuple[dict[str, Company], dict[str, Company]]:
+        company_uuids = set()
+        company_names = set()
+        for row_number, row in rows:
+            company_uuid = parse_optional_uuid(row.get("company_uuid", ""), "company_uuid", row_number)
+            if company_uuid:
+                company_uuids.add(company_uuid)
+            company_name = row.get("company_name", "").strip()
+            if company_name:
+                company_names.add(company_name.lower())
 
-    def _resolve_company(self, row_number: int, row: dict):
+        companies_by_uuid: dict[str, Company] = {}
+        companies_by_name: dict[str, Company] = {}
+
+        for company in Company.objects.filter(id__in=company_uuids).only("id", "name"):
+            companies_by_uuid[str(company.id)] = company
+            companies_by_name[company.name.lower()] = company
+
+        if company_names:
+            for company in Company.objects.all().only("id", "name"):
+                lower_name = company.name.lower()
+                if lower_name in company_names:
+                    companies_by_uuid.setdefault(str(company.id), company)
+                    companies_by_name[lower_name] = company
+
+        return companies_by_uuid, companies_by_name
+
+    def _prefetch_contacts(self, rows: list[tuple[int, dict]]) -> dict[str, Contact]:
+        emails = {
+            row.get("email", "").strip().lower()
+            for _, row in rows
+            if row.get("email", "").strip()
+        }
+        if not emails:
+            return {}
+        return {
+            (contact.email or "").lower(): contact
+            for contact in Contact.objects.annotate(email_lower=Lower("email")).filter(
+                email_lower__in=emails
+            )
+        }
+
+    def _resolve_company(
+        self,
+        row_number: int,
+        row: dict,
+        companies_by_uuid: dict[str, Company],
+        companies_by_name: dict[str, Company],
+    ):
         company_uuid = parse_optional_uuid(row.get("company_uuid", ""), "company_uuid", row_number)
         if company_uuid:
-            company = Company.objects.filter(id=company_uuid).first()
+            company = companies_by_uuid.get(str(company_uuid))
             if company:
                 return company
         company_name = row.get("company_name", "").strip()
         if not company_name:
             return None
-        return Company.objects.filter(name__iexact=company_name).first()
+        return companies_by_name.get(company_name.lower())

@@ -5,7 +5,7 @@ import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/context/toast-context";
 import { useRouter } from "next/navigation";
 import { getQuoteV3, computeQuoteV3, getContactsForCompany } from "@/lib/api";
-import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_CARGO_TYPES, V3_PACKAGE_TYPES } from "@/lib/schemas/quoteSchema";
+import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_PACKAGE_TYPES } from "@/lib/schemas/quoteSchema";
 import { CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
@@ -14,7 +14,11 @@ import PageBackButton from "@/components/navigation/PageBackButton";
 import { useConfirm } from "@/hooks/useConfirm";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
-import { buildQuoteComputePayload, getQuoteMissingRateFlags } from "@/lib/quote-workflow";
+import {
+    buildQuoteComputePayload,
+    getCargoTypeForCommodityCode,
+    getQuoteMissingRateFlags,
+} from "@/lib/quote-workflow";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -153,6 +157,11 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 const incoterm = String(payload.incoterm || shipmentPayload?.incoterm || "EXW");
                 const paymentTerm = String(payload.payment_term || shipmentPayload?.payment_term || "PREPAID");
                 const serviceScope = String(payload.service_scope || shipmentPayload?.service_scope || "A2A");
+                const commodityCode = String(
+                    payload.commodity_code
+                    || shipmentPayload?.commodity_code
+                    || ""
+                );
                 const isDangerousGoods = Boolean(
                     payload.is_dangerous_goods
                     ?? shipmentPayload?.is_dangerous_goods
@@ -172,7 +181,7 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     destination_location_id: destinationLocationId,
                     origin_location_type: V3_LOCATION_TYPES.AIRPORT,
                     destination_location_type: V3_LOCATION_TYPES.AIRPORT,
-                    cargo_type: isDangerousGoods ? V3_CARGO_TYPES.DANGEROUS_GOODS : V3_CARGO_TYPES.GENERAL,
+                    cargo_type: getCargoTypeForCommodityCode(commodityCode, isDangerousGoods),
                     dimensions: dimensions,
                 };
 

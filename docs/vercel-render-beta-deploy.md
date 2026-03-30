@@ -14,6 +14,7 @@ Use this with:
 - [go-live-status-tracker.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/go-live-status-tracker.md)
 - [beta-readiness-efm.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/beta-readiness-efm.md)
 - [production-launch-execution-sheet.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-launch-execution-sheet.md)
+- [production-data-onboarding-plan.md](/C:/Users/commercial.manager/dev/Project-RateEngine/docs/production-data-onboarding-plan.md)
 
 ## Architecture
 
@@ -21,7 +22,7 @@ Use this with:
 - Render hosts the Django API from `backend/`
 - Render Postgres provides the production database
 - Render Cron refreshes FX on schedule
-- uploaded branding assets are stored on a Render persistent disk mounted at `backend/branding`
+- uploaded branding assets and shipment documents are stored on a Render persistent disk mounted at `backend/media`
 
 ## Repo Support Added
 
@@ -82,7 +83,7 @@ If you do not want Blueprint sync, create the same resources manually:
 1. Render Postgres
 2. Render Web Service for `backend/`
 3. Render Cron Job for FX refresh
-4. Persistent disk mounted to `/opt/render/project/src/backend/branding`
+4. Persistent disk mounted to `/opt/render/project/src/backend/media`
 
 ## Render Web Service Settings
 
@@ -115,7 +116,7 @@ gunicorn rate_engine.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads
 ```
 
 - Persistent Disk:
-  - Mount Path: `/opt/render/project/src/backend/branding`
+  - Mount Path: `/opt/render/project/src/backend/media`
   - Size: `1 GB`
 
 ## Render Backend Environment Variables
@@ -182,10 +183,10 @@ Notes:
 
 ## Important Beta Notes
 
-- uploaded branding files are now expected to live on the Render persistent disk at `backend/branding`
+- uploaded branding files and shipment PDFs are expected to live on the Render persistent disk at `backend/media`
 - Django static files are served directly by the beta API service for simplicity
 - branding logos and shipment documents are exposed through explicit application endpoints instead of a generic `/media` mount
-- this is acceptable for a small beta, but a more production-hardened setup should later move static/media behind a dedicated asset strategy
+- this keeps uploaded media durable across Render deploys and restarts as long as the disk stays attached
 
 ## Go / No-Go For Beta
 

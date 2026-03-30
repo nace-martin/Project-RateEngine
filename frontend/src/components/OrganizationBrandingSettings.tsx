@@ -142,6 +142,46 @@ export default function OrganizationBrandingSettings() {
     setSuccess(null);
   };
 
+  const renderLogoState = (
+    label: "primary" | "small",
+    previewUrl: string | null | undefined,
+    isMissing: boolean | undefined,
+    pendingFile: File | null,
+    isCleared: boolean,
+    onClear: () => void,
+  ) => {
+    if (isCleared || pendingFile) {
+      return null;
+    }
+
+    if (previewUrl) {
+      return (
+        <div className="mt-2 flex items-center gap-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={previewUrl} alt={`${label === "primary" ? "Primary" : "Small"} logo`} className="h-12 w-auto rounded border bg-white p-2" />
+          <Button type="button" variant="ghost" size="sm" onClick={onClear} className="text-destructive">
+            Remove
+          </Button>
+        </div>
+      );
+    }
+
+    if (isMissing) {
+      return (
+        <Alert className="mt-2">
+          <AlertDescription className="flex items-center justify-between gap-4">
+            <span>This logo file is missing from storage. Upload a replacement or remove the stale reference.</span>
+            <Button type="button" variant="ghost" size="sm" onClick={onClear} className="text-destructive">
+              Remove
+            </Button>
+          </AlertDescription>
+        </Alert>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -214,23 +254,25 @@ export default function OrganizationBrandingSettings() {
               <div className="space-y-2">
                 <Label htmlFor="logo_primary">Primary Logo</Label>
                 <Input id="logo_primary" type="file" accept="image/*" onChange={(e) => { setLogoPrimaryFile(e.target.files?.[0] || null); setClearPrimaryLogo(false); }} />
-                {settings?.logo_primary_url && !clearPrimaryLogo && !logoPrimaryFile && (
-                  <div className="flex items-center gap-4 mt-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={settings.logo_primary_url} alt="Primary logo" className="h-12 w-auto rounded border bg-white p-2" />
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setClearPrimaryLogo(true)} className="text-destructive">Remove</Button>
-                  </div>
+                {renderLogoState(
+                  "primary",
+                  settings?.logo_primary_url,
+                  settings?.logo_primary_missing,
+                  logoPrimaryFile,
+                  clearPrimaryLogo,
+                  () => setClearPrimaryLogo(true),
                 )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="logo_small">Small Logo</Label>
                 <Input id="logo_small" type="file" accept="image/*" onChange={(e) => { setLogoSmallFile(e.target.files?.[0] || null); setClearSmallLogo(false); }} />
-                {settings?.logo_small_url && !clearSmallLogo && !logoSmallFile && (
-                  <div className="flex items-center gap-4 mt-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={settings.logo_small_url} alt="Small logo" className="h-12 w-auto rounded border bg-white p-2" />
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setClearSmallLogo(true)} className="text-destructive">Remove</Button>
-                  </div>
+                {renderLogoState(
+                  "small",
+                  settings?.logo_small_url,
+                  settings?.logo_small_missing,
+                  logoSmallFile,
+                  clearSmallLogo,
+                  () => setClearSmallLogo(true),
                 )}
               </div>
             </div>

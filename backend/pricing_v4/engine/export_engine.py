@@ -34,7 +34,10 @@ from pricing_v4.models import (
     ProductCode, ExportCOGS, ExportSellRate,
     LocalSellRate, LocalCOGSRate, Surcharge
 )
-from pricing_v4.category_rules import is_local_rate_category
+from pricing_v4.category_rules import (
+    is_local_rate_category,
+    resolve_export_local_location,
+)
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
 
@@ -375,8 +378,16 @@ class ExportPricingEngine:
     def _get_cogs(self, product_code_id: int) -> Optional[any]:
         pc = self._get_product_code(product_code_id)
         if pc and is_local_rate_category(pc.category):
+            local_location = resolve_export_local_location(
+                code=pc.code,
+                description=pc.description,
+                origin_airport=self.origin,
+                destination_airport=self.destination,
+            )
             local = LocalCOGSRate.objects.filter(
-                product_code_id=product_code_id, location=self.origin, direction='EXPORT',
+                product_code_id=product_code_id,
+                location=local_location,
+                direction='EXPORT',
                 valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
             ).first()
             if local:
@@ -390,8 +401,16 @@ class ExportPricingEngine:
         pc = self._get_product_code(product_code_id)
         if pc and is_local_rate_category(pc.category):
             payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
+            local_location = resolve_export_local_location(
+                code=pc.code,
+                description=pc.description,
+                origin_airport=self.origin,
+                destination_airport=self.destination,
+            )
             local_rates = LocalSellRate.objects.filter(
-                product_code_id=product_code_id, location=self.origin, direction='EXPORT',
+                product_code_id=product_code_id,
+                location=local_location,
+                direction='EXPORT',
                 payment_term__in=[payment_term_value, 'ANY'], valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
             )
             # Enforce rate-type compatibility to avoid selecting placeholder FIXED rows

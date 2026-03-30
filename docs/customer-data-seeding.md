@@ -4,6 +4,10 @@ This project now includes safe, idempotent management commands for importing rea
 
 ## Commands
 
+- `python backend/manage.py check_media_storage --write-test`
+- `python backend/manage.py export_customers --file <customers.csv>`
+- `python backend/manage.py export_contacts --file <contacts.csv>`
+- `python backend/manage.py export_customer_discounts --file <discounts.csv>`
 - `python backend/manage.py prepare_customer_seed_csv --input <raw.csv> --customers-out <customers.csv> --contacts-out <contacts.csv>`
 - `python backend/manage.py validate_customer_seed --customers <customers.csv> --contacts <contacts.csv>`
 - `python backend/manage.py import_customers --file <customers.csv> --dry-run`
@@ -59,11 +63,19 @@ Notes:
 
 ## Recommended rollout
 
-1. If your data is in raw sheet format, run `prepare_customer_seed_csv` first.
-2. Run `validate_customer_seed`.
-3. Run both imports with `--dry-run`.
-4. Review the summary counts.
-5. Run both imports without `--dry-run`.
+1. In production, run `check_media_storage --write-test` after the Render disk is attached.
+2. In dev, export the approved launch set with `export_customers`, `export_contacts`, and `export_customer_discounts`.
+3. If your source is a raw sheet instead of the dev DB, run `prepare_customer_seed_csv` first.
+4. Run `validate_customer_seed`.
+5. Run both imports with `--dry-run`.
+6. Review the summary counts.
+7. Run both imports without `--dry-run`.
+
+Never include dev transactional records in the production launch bundle:
+
+- exclude the current 160 dev quotes
+- exclude the current 4 dev shipments
+- exclude the current 3 dev shipment address-book entries
 
 ## Discounts CSV
 

@@ -418,13 +418,17 @@ class RateAvailabilityService:
         # Import models here to avoid circular imports
         from pricing_v4.models import (
             ExportCOGS,
+            ExportSellRate,
             ImportCOGS,
+            ImportSellRate,
             Surcharge,
             ProductCode,
             DomesticCOGS,
+            DomesticSellRate,
             LocalCOGSRate,
             LocalSellRate,
         )
+        from pricing_v4.category_rules import is_export_destination_local_code
         from datetime import date
         
         origin_airport = (origin_airport or "").strip().upper()
@@ -510,30 +514,57 @@ class RateAvailabilityService:
         
         # 1. Freight Coverage (AIRFREIGHT)
         if direction == 'DOMESTIC':
-            availability[COMPONENT_FREIGHT] = DomesticCOGS.objects.filter(
-                origin_zone=origin_airport,
-                destination_zone=destination_airport,
-                product_code__category=ProductCode.CATEGORY_FREIGHT,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists()
+            availability[COMPONENT_FREIGHT] = (
+                DomesticCOGS.objects.filter(
+                    origin_zone=origin_airport,
+                    destination_zone=destination_airport,
+                    product_code__category=ProductCode.CATEGORY_FREIGHT,
+                    valid_from__lte=today,
+                    valid_until__gte=today
+                ).exists()
+                or DomesticSellRate.objects.filter(
+                    origin_zone=origin_airport,
+                    destination_zone=destination_airport,
+                    product_code__category=ProductCode.CATEGORY_FREIGHT,
+                    valid_from__lte=today,
+                    valid_until__gte=today
+                ).exists()
+            )
             return availability
         if direction == 'EXPORT':
-            availability[COMPONENT_FREIGHT] = ExportCOGS.objects.filter(
-                origin_airport=origin_airport,
-                destination_airport=destination_airport,
-                product_code__category=ProductCode.CATEGORY_FREIGHT,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists()
+            availability[COMPONENT_FREIGHT] = (
+                ExportCOGS.objects.filter(
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    product_code__category=ProductCode.CATEGORY_FREIGHT,
+                    valid_from__lte=today,
+                    valid_until__gte=today
+                ).exists()
+                or ExportSellRate.objects.filter(
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    product_code__category=ProductCode.CATEGORY_FREIGHT,
+                    valid_from__lte=today,
+                    valid_until__gte=today
+                ).exists()
+            )
         else:
-            availability[COMPONENT_FREIGHT] = ImportCOGS.objects.filter(
-                origin_airport=origin_airport,
-                destination_airport=destination_airport,
-                product_code__category=ProductCode.CATEGORY_FREIGHT,
-                valid_from__lte=today,
-                valid_until__gte=today
-            ).exists()
+            availability[COMPONENT_FREIGHT] = (
+                ImportCOGS.objects.filter(
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    product_code__category=ProductCode.CATEGORY_FREIGHT,
+                    valid_from__lte=today,
+                    valid_until__gte=today
+                ).exists()
+                or ImportSellRate.objects.filter(
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    product_code__category=ProductCode.CATEGORY_FREIGHT,
+                    valid_from__lte=today,
+                    valid_until__gte=today
+                ).exists()
+            )
 
         def classify_export_component(code: str, category: str) -> str:
             code = (code or "").upper()
@@ -565,13 +596,54 @@ class RateAvailabilityService:
             for code, category in export_codes:
                 availability[classify_export_component(code, category)] = True
 
-            if LocalCOGSRate.objects.filter(
-                location=origin_airport,
+            export_local_sell_qs = LocalSellRate.objects.filter(
+                location__in=[loc for loc in [origin_airport, destination_airport] if loc],
                 direction='EXPORT',
                 valid_from__lte=today,
-                valid_until__gte=today
-            ).exists():
-                availability[COMPONENT_ORIGIN_LOCAL] = True
+                valid_until__gte=today,
+            )
+            if payment_term_normalized:
+                export_local_sell_qs = export_local_sell_qs.filter(
+                    payment_term__in=[payment_term_normalized, 'ANY']
+                )
+
+            export_local_cogs_qs = LocalCOGSRate.objects.filter(
+                location__in=[loc for loc in [origin_airport, destination_airport] if loc],
+                direction='EXPORT',
+                valid_from__lte=today,
+                valid_until__gte=today,
+            )
+
+            destination_local_fallback_at_origin = False
+
+            for location, code, category in export_local_cogs_qs.values_list(
+                'location', 'product_code__code', 'product_code__category'
+            ):
+                component = classify_export_component(code, category)
+                location_code = (location or '').upper()
+                if component == COMPONENT_ORIGIN_LOCAL and location_code == origin_airport:
+                    availability[COMPONENT_ORIGIN_LOCAL] = True
+                elif component == COMPONENT_DESTINATION_LOCAL:
+                    if location_code == destination_airport:
+                        availability[COMPONENT_DESTINATION_LOCAL] = True
+                    elif location_code == origin_airport:
+                        destination_local_fallback_at_origin = True
+
+            for location, code, category in export_local_sell_qs.values_list(
+                'location', 'product_code__code', 'product_code__category'
+            ):
+                component = classify_export_component(code, category)
+                location_code = (location or '').upper()
+                if component == COMPONENT_ORIGIN_LOCAL and location_code == origin_airport:
+                    availability[COMPONENT_ORIGIN_LOCAL] = True
+                elif component == COMPONENT_DESTINATION_LOCAL:
+                    if location_code == destination_airport:
+                        availability[COMPONENT_DESTINATION_LOCAL] = True
+                    elif location_code == origin_airport and is_export_destination_local_code(code):
+                        destination_local_fallback_at_origin = True
+
+            if not availability[COMPONENT_DESTINATION_LOCAL] and destination_local_fallback_at_origin:
+                availability[COMPONENT_DESTINATION_LOCAL] = True
 
             if surcharge_exists('EXPORT_ORIGIN', origin=origin_airport):
                 availability[COMPONENT_ORIGIN_LOCAL] = True
@@ -650,6 +722,12 @@ class RateAvailabilityService:
                 component=COMPONENT_ORIGIN_LOCAL,
                 direction_value="EXPORT",
                 locations=[origin_airport],
+                classifier=classify_export_component,
+            )
+            apply_payment_term_gate(
+                component=COMPONENT_DESTINATION_LOCAL,
+                direction_value="EXPORT",
+                locations=[destination_airport, origin_airport],
                 classifier=classify_export_component,
             )
         elif direction == 'IMPORT':
@@ -749,8 +827,11 @@ class CommodityRateRuleService:
         from pricing_v4.category_rules import is_local_rate_category
         from pricing_v4.models import (
             DomesticCOGS,
+            DomesticSellRate,
             ExportCOGS,
+            ExportSellRate,
             ImportCOGS,
+            ImportSellRate,
             LocalCOGSRate,
             LocalSellRate,
             Surcharge,
@@ -798,10 +879,10 @@ class CommodityRateRuleService:
             else:
                 has_local_sell = local_sell_qs.exists()
 
-            # Import destination-local commodity lines can price from explicit local sell tariffs
-            # even when there is no dedicated commodity LocalCOGSRate row.
+            # Destination-local commodity lines can price from explicit local sell
+            # tariffs even when there is no dedicated LocalCOGSRate row.
             if (
-                rule.shipment_type == rule.SHIPMENT_TYPE_IMPORT
+                rule.shipment_type in {rule.SHIPMENT_TYPE_IMPORT, rule.SHIPMENT_TYPE_EXPORT}
                 and (rule.leg or "").upper() == "DESTINATION"
             ):
                 return has_local_sell
@@ -820,21 +901,57 @@ class CommodityRateRuleService:
             return True
 
         if rule.shipment_type == rule.SHIPMENT_TYPE_EXPORT:
-            return ExportCOGS.objects.filter(
+            return (
+                ExportCOGS.objects.filter(
+                    product_code=product_code,
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    valid_from__lte=today,
+                    valid_until__gte=today,
+                ).exists()
+                or ExportSellRate.objects.filter(
+                    product_code=product_code,
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    valid_from__lte=today,
+                    valid_until__gte=today,
+                ).exists()
+            )
+
+        if rule.shipment_type == rule.SHIPMENT_TYPE_IMPORT:
+            return (
+                ImportCOGS.objects.filter(
+                    product_code=product_code,
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    valid_from__lte=today,
+                    valid_until__gte=today,
+                ).exists()
+                or ImportSellRate.objects.filter(
+                    product_code=product_code,
+                    origin_airport=origin_airport,
+                    destination_airport=destination_airport,
+                    valid_from__lte=today,
+                    valid_until__gte=today,
+                ).exists()
+            )
+
+        return (
+            DomesticCOGS.objects.filter(
                 product_code=product_code,
-                origin_airport=origin_airport,
-                destination_airport=destination_airport,
+                origin_zone=origin_airport,
+                destination_zone=destination_airport,
                 valid_from__lte=today,
                 valid_until__gte=today,
             ).exists()
-
-        return ImportCOGS.objects.filter(
-            product_code=product_code,
-            origin_airport=origin_airport,
-            destination_airport=destination_airport,
-            valid_from__lte=today,
-            valid_until__gte=today,
-        ).exists()
+            or DomesticSellRate.objects.filter(
+                product_code=product_code,
+                origin_zone=origin_airport,
+                destination_zone=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).exists()
+        )
 
     @staticmethod
     def _local_location_candidates(

@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from fpdf import FPDF
 
+from core.storage_utils import materialize_file_field
 from .models import Shipment
 from .services import get_or_create_shipment_settings
 
@@ -132,10 +133,12 @@ def generate_shipment_pdf(shipment: Shipment) -> bytes:
     pdf.rect(10, 10, 190, 30, style="F")
 
     if branding and getattr(branding, "logo_primary", None):
-        try:
-            pdf.image(branding.logo_primary.path, x=14, y=14, w=36)
-        except Exception:
-            pass
+        with materialize_file_field(branding.logo_primary) as logo_path:
+            if logo_path:
+                try:
+                    pdf.image(logo_path, x=14, y=14, w=36)
+                except Exception:
+                    pass
 
     pdf.set_xy(54, 14)
     pdf.set_font("Helvetica", "B", 16)

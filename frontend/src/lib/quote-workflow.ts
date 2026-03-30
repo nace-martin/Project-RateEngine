@@ -19,11 +19,41 @@ const DESTINATION_COMPONENT_CODES = [
   "DST_CHARGES",
 ];
 
+export const CARGO_TYPE_TO_COMMODITY_CODE: Record<string, string> = {
+  "General Cargo": "GCR",
+  "Dangerous Goods": "DG",
+  "Perishable / Cold Chain": "PER",
+  "Live Animals": "AVI",
+  "Valuable / High-Value": "HVC",
+  "Oversized / OOG": "OOG",
+};
+
+export const getCargoTypeForCommodityCode = (
+  commodityCode?: string | null,
+  isDangerousGoods?: boolean,
+): QuoteFormSchemaV3["cargo_type"] => {
+  switch ((commodityCode || "").trim().toUpperCase()) {
+    case "DG":
+      return "Dangerous Goods";
+    case "PER":
+      return "Perishable / Cold Chain";
+    case "AVI":
+      return "Live Animals";
+    case "HVC":
+      return "Valuable / High-Value";
+    case "OOG":
+      return "Oversized / OOG";
+    default:
+      return isDangerousGoods ? "Dangerous Goods" : "General Cargo";
+  }
+};
+
 export const buildQuoteComputePayload = (
   data: QuoteFormSchemaV3,
   spotRates?: QuoteSpotRateOverrides,
   existingQuoteId?: string | null,
 ): V3QuoteComputeRequest => {
+  const commodityCode = CARGO_TYPE_TO_COMMODITY_CODE[data.cargo_type] || "GCR";
   const payload: V3QuoteComputeRequest = {
     quote_id: existingQuoteId || undefined,
     customer_id: data.customer_id,
@@ -42,6 +72,7 @@ export const buildQuoteComputePayload = (
       gross_weight_kg: dimension.gross_weight_kg,
       package_type: dimension.package_type,
     })),
+    commodity_code: commodityCode,
     overrides: data.overrides?.map((override) => ({
       service_component_id: override.service_component_id,
       cost_fcy: override.cost_fcy,
@@ -49,7 +80,7 @@ export const buildQuoteComputePayload = (
       unit: override.unit,
       min_charge_fcy: override.min_charge_fcy,
     })),
-    is_dangerous_goods: data.cargo_type === "Dangerous Goods",
+    is_dangerous_goods: commodityCode === "DG",
     output_currency: data.output_currency || undefined,
   };
 

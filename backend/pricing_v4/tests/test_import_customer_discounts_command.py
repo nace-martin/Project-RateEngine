@@ -1,3 +1,4 @@
+import csv
 import os
 import tempfile
 from io import StringIO
@@ -74,3 +75,30 @@ class ImportCustomerDiscountsCommandTests(TestCase):
         self.assertEqual(discount.min_charge, Decimal("10.00"))
         self.assertEqual(discount.max_charge, Decimal("50.00"))
         self.assertEqual(discount.notes, "Updated")
+
+    def test_export_customer_discounts_outputs_import_ready_shape(self):
+        CustomerDiscount.objects.create(
+            customer=self.customer,
+            product_code=self.product,
+            discount_type=CustomerDiscount.TYPE_PERCENTAGE,
+            discount_value=Decimal("5.5000"),
+            currency="PGK",
+            valid_from=date(2026, 1, 1),
+            valid_until=date(2026, 12, 31),
+            notes="Launch discount",
+        )
+        output = self._write_csv(
+            "customer_uuid,customer_name,product_code_id,product_code,discount_type,discount_value,currency,min_charge,max_charge,valid_from,valid_until,notes\n"
+        )
+
+        call_command("export_customer_discounts", file=output, stdout=StringIO())
+
+        with open(output, "r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+
+        self.assertEqual(len(rows), 1)
+        exported = rows[0]
+        self.assertEqual(exported["customer_name"], "Seed Customer")
+        self.assertEqual(exported["product_code"], "EXP-FRT-AIR")
+        self.assertEqual(exported["discount_type"], CustomerDiscount.TYPE_PERCENTAGE)
+        self.assertEqual(exported["notes"], "Launch discount")

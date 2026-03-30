@@ -29,6 +29,18 @@ class ExportEngineTestCase(TestCase):
             gl_cost_code='5300',
             default_unit='SHIPMENT'
         )
+        cls.pc_dest_clearance = ProductCode.objects.create(
+            id=1504,
+            code='EXP-CLEAR-DEST-TEST',
+            description='Export Destination Clearance Test',
+            domain='EXPORT',
+            category='CLEARANCE',
+            is_gst_applicable=False,
+            gst_rate=Decimal('0.00'),
+            gl_revenue_code='4304',
+            gl_cost_code='5304',
+            default_unit='SHIPMENT',
+        )
 
         cls.agent = Agent.objects.create(
             code='TEST-AGENT',
@@ -150,6 +162,36 @@ class ExportLocalSellRateSelectionTest(ExportEngineTestCase):
         line = result.lines[0]
         self.assertEqual(line.sell_currency, 'USD')
         self.assertEqual(line.sell_amount, Decimal('90.00'))
+
+    def test_destination_local_export_rate_uses_destination_station(self):
+        LocalSellRate.objects.create(
+            product_code=self.pc_dest_clearance,
+            location='SIN',
+            direction='EXPORT',
+            payment_term='PREPAID',
+            currency='USD',
+            rate_type='FIXED',
+            amount=Decimal('135.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        engine = ExportPricingEngine(
+            quote_date=date.today(),
+            origin='POM',
+            destination='SIN',
+            chargeable_weight_kg=Decimal('1'),
+            payment_term=PaymentTerm.PREPAID,
+            tt_sell=Decimal('2.50'),
+            caf_rate=Decimal('0.00'),
+            destination_currency='USD'
+        )
+
+        result = engine.calculate_quote([self.pc_dest_clearance.id])
+        self.assertEqual(len(result.lines), 1)
+        line = result.lines[0]
+        self.assertEqual(line.sell_currency, 'USD')
+        self.assertEqual(line.sell_amount, Decimal('135.00'))
 
 
 class ExportPercentRateSelectionTest(ExportEngineTestCase):

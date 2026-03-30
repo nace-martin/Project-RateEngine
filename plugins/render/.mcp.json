@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "render": {
+      "type": "http",
+      "url": "[TODO: Render MCP server URL]",
+      "note": "[TODO: Document auth setup and supported Render capabilities.]"
+    }
+  }
+}

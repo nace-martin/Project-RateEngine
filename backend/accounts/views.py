@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 
 from core.security import get_request_ip
+from core.storage_utils import file_field_storage_exists
 from parties.branding_urls import build_public_branding_logo_url
 
 from .models import CustomUser
@@ -38,8 +39,10 @@ def _serialize_branding(branding, request=None):
     if not branding:
         return None
 
-    logo_url = build_public_branding_logo_url(branding, "small", request=request)
-    if not logo_url:
+    logo_url = None
+    if file_field_storage_exists(getattr(branding, "logo_small", None)):
+        logo_url = build_public_branding_logo_url(branding, "small", request=request)
+    elif file_field_storage_exists(getattr(branding, "logo_primary", None)):
         logo_url = build_public_branding_logo_url(branding, "primary", request=request)
 
     return {

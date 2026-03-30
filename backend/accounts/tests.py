@@ -8,10 +8,14 @@ Covers:
 - RBAC permission enforcement
 """
 import json
+from io import BytesIO
+
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
+from PIL import Image
 from core.models import Currency
 from parties.models import Organization, OrganizationBranding
 from .models import CustomUser
@@ -122,8 +126,15 @@ class LoginTests(TestCase):
     def test_login_branding_uses_primary_logo_when_small_logo_is_missing(self):
         branding = self.organization.branding
         branding.logo_small = None
-        branding.logo_primary = 'branding/efm-express-air-cargo/primary-logo.png'
-        branding.save(update_fields=['logo_small', 'logo_primary'])
+        buffer = BytesIO()
+        Image.new("RGB", (2, 2), color="#0F2A56").save(buffer, format="PNG")
+        buffer.seek(0)
+        branding.logo_primary.save(
+            "primary-logo.png",
+            SimpleUploadedFile("primary-logo.png", buffer.read(), content_type="image/png"),
+            save=True,
+        )
+        branding.save(update_fields=['logo_small'])
 
         response = self.client.post(
             self.login_url,
@@ -138,6 +149,22 @@ class LoginTests(TestCase):
                 '/api/v3/public/branding/efm-express-air-cargo/primary/'
             )
         )
+
+    def test_login_branding_omits_missing_logo_urls(self):
+        branding = self.organization.branding
+        branding.logo_small = "branding/efm-express-air-cargo/missing-small.png"
+        branding.logo_primary = "branding/efm-express-air-cargo/missing-primary.png"
+        branding.save(update_fields=["logo_small", "logo_primary"])
+
+        response = self.client.post(
+            self.login_url,
+            {'username': 'testuser', 'password': 'testpass123'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIsNone(data['user']['organization']['branding']['logo_url'])
 
 
 class RegistrationTests(TestCase):

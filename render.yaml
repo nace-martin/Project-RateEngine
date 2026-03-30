@@ -15,8 +15,8 @@ services:
     startCommand: gunicorn rate_engine.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads 2 --access-logfile - --error-logfile -
     healthCheckPath: /api/health/
     disk:
-      name: branding-assets
-      mountPath: /opt/render/project/src/backend/branding
+      name: media-assets
+      mountPath: /opt/render/project/src/backend/media
       sizeGB: 1
     envVars:
       - key: DATABASE_URL

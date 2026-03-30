@@ -7,6 +7,7 @@ from pricing_v4.models import (
     Agent,
     CommodityChargeRule,
     ExportCOGS,
+    ExportSellRate,
     ImportCOGS,
     LocalCOGSRate,
     LocalSellRate,
@@ -213,6 +214,95 @@ def test_export_d2a_rates_are_detected_with_lowercase_inputs():
     assert availability[COMPONENT_ORIGIN_LOCAL] is True
 
     is_spot, trigger = _evaluate("EXPORT", "D2A", availability)
+    assert is_spot is False
+    assert trigger is None
+
+
+def test_export_d2a_sell_only_rows_do_not_trigger_spot():
+    valid_from, valid_until = _today_window()
+    pc_freight = _pc(1983, "EXP-FRT-AIR-SELL-ONLY", "EXPORT", "FREIGHT", unit="KG")
+    pc_origin = _pc(1984, "EXP-DOC-SELL-ONLY", "EXPORT", "DOCUMENTATION")
+
+    ExportSellRate.objects.create(
+        product_code=pc_freight,
+        origin_airport="POM",
+        destination_airport="MNL",
+        currency="USD",
+        rate_per_kg=Decimal("3.75"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="USD",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "POM", "MNL", "EXPORT", "D2A", payment_term="PREPAID"
+    )
+    assert availability[COMPONENT_FREIGHT] is True
+    assert availability[COMPONENT_ORIGIN_LOCAL] is True
+
+    is_spot, trigger = _evaluate("EXPORT", "D2A", availability)
+    assert is_spot is False
+    assert trigger is None
+
+
+def test_export_d2d_destination_local_sell_on_destination_station_is_covered():
+    valid_from, valid_until = _today_window()
+    pc_freight = _pc(1985, "EXP-FRT-AIR-D2D-SELL", "EXPORT", "FREIGHT", unit="KG")
+    pc_origin = _pc(1986, "EXP-DOC-D2D-SELL", "EXPORT", "DOCUMENTATION")
+    pc_dest = _pc(1987, "EXP-CLEAR-DEST-D2D-SELL", "EXPORT", "CLEARANCE")
+
+    ExportSellRate.objects.create(
+        product_code=pc_freight,
+        origin_airport="POM",
+        destination_airport="SIN",
+        currency="USD",
+        rate_per_kg=Decimal("4.10"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="USD",
+        rate_type="FIXED",
+        amount=Decimal("65.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_dest,
+        location="SIN",
+        direction="EXPORT",
+        payment_term="PREPAID",
+        currency="USD",
+        rate_type="FIXED",
+        amount=Decimal("145.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        "POM", "SIN", "EXPORT", "D2D", payment_term="PREPAID"
+    )
+    assert availability == {
+        COMPONENT_FREIGHT: True,
+        COMPONENT_ORIGIN_LOCAL: True,
+        COMPONENT_DESTINATION_LOCAL: True,
+    }
+
+    is_spot, trigger = _evaluate("EXPORT", "D2D", availability)
     assert is_spot is False
     assert trigger is None
 

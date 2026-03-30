@@ -5,7 +5,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from pricing_v4.category_rules import is_local_rate_category
+from pricing_v4.category_rules import (
+    is_local_rate_category,
+    resolve_export_local_location,
+)
 from pricing_v4.models import ExportSellRate, ImportSellRate, LocalSellRate, ProductCode
 
 
@@ -36,7 +39,12 @@ def seed_export_sell_rate(
     if is_local_rate_category(product_code.category):
         created = _upsert_local_sell_rate(
             product_code=product_code,
-            location=origin_airport,
+            location=resolve_export_local_location(
+                code=product_code.code,
+                description=product_code.description,
+                origin_airport=origin_airport,
+                destination_airport=destination_airport,
+            ),
             direction="EXPORT",
             payment_term=payment_term,
             currency=currency,

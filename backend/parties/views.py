@@ -21,6 +21,7 @@ from .serializers import (
     OrganizationBrandingSettingsSerializer,
 )
 from accounts.models import CustomUser
+from core.storage_utils import file_field_basename, file_field_storage_exists
 
 
 class CustomerAccessPermission(BasePermission):
@@ -191,12 +192,11 @@ class PublicOrganizationBrandingLogoView(APIView):
         if not logo_field:
             raise Http404("Logo not found.")
 
-        file_path = getattr(logo_field, "path", None)
-        if not file_path or not os.path.exists(file_path):
+        if not file_field_storage_exists(logo_field):
             raise Http404("Logo file not found.")
 
         content_type = "image/png"
-        file_name = os.path.basename(file_path)
+        file_name = file_field_basename(logo_field)
         lower_name = file_name.lower()
         if lower_name.endswith((".jpg", ".jpeg")):
             content_type = "image/jpeg"
@@ -205,7 +205,7 @@ class PublicOrganizationBrandingLogoView(APIView):
         elif lower_name.endswith(".webp"):
             content_type = "image/webp"
 
-        response = FileResponse(open(file_path, "rb"), content_type=content_type)
+        response = FileResponse(logo_field.storage.open(logo_field.name, "rb"), content_type=content_type)
         response["Content-Disposition"] = f'inline; filename="{file_name}"'
         response["Cache-Control"] = "public, max-age=300"
         return response

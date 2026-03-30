@@ -3,6 +3,7 @@
 from rest_framework import serializers
 
 from core.security import validate_image_upload
+from core.storage_utils import file_field_storage_exists
 from parties.branding_urls import build_public_branding_logo_url
 
 from .models import Company, Contact, OrganizationBranding
@@ -113,6 +114,8 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
     organization_slug = serializers.CharField(source="organization.slug", read_only=True)
     logo_primary_url = serializers.SerializerMethodField()
     logo_small_url = serializers.SerializerMethodField()
+    logo_primary_missing = serializers.SerializerMethodField()
+    logo_small_missing = serializers.SerializerMethodField()
     clear_primary_logo = serializers.BooleanField(required=False, write_only=True)
     clear_small_logo = serializers.BooleanField(required=False, write_only=True)
 
@@ -134,8 +137,10 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
             "accent_color",
             "logo_primary",
             "logo_primary_url",
+            "logo_primary_missing",
             "logo_small",
             "logo_small_url",
+            "logo_small_missing",
             "is_active",
             "clear_primary_logo",
             "clear_small_logo",
@@ -158,14 +163,20 @@ class OrganizationBrandingSettingsSerializer(serializers.ModelSerializer):
         }
 
     def get_logo_primary_url(self, obj):
-        if not obj.logo_primary:
+        if not file_field_storage_exists(obj.logo_primary):
             return None
         return build_public_branding_logo_url(obj, "primary", request=self.context.get("request"))
 
     def get_logo_small_url(self, obj):
-        if not obj.logo_small:
+        if not file_field_storage_exists(obj.logo_small):
             return None
         return build_public_branding_logo_url(obj, "small", request=self.context.get("request"))
+
+    def get_logo_primary_missing(self, obj):
+        return bool(obj.logo_primary and not file_field_storage_exists(obj.logo_primary))
+
+    def get_logo_small_missing(self, obj):
+        return bool(obj.logo_small and not file_field_storage_exists(obj.logo_small))
 
     def validate_logo_primary(self, value):
         if value:

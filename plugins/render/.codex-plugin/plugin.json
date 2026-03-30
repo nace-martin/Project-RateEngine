@@ -1,0 +1,47 @@
+{
+  "name": "render",
+  "version": "0.1.0",
+  "description": "[TODO: Brief plugin description for Render workflows]",
+  "author": {
+    "name": "[TODO: Author Name]",
+    "email": "[TODO: author@example.com]",
+    "url": "[TODO: https://example.com/author]"
+  },
+  "homepage": "[TODO: https://docs.example.com/render-plugin]",
+  "repository": "[TODO: https://github.com/example/render-plugin]",
+  "license": "[TODO: License identifier]",
+  "keywords": [
+    "[TODO: keyword1]",
+    "[TODO: keyword2]"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "apps": "./.app.json",
+  "interface": {
+    "displayName": "[TODO: Plugin Display Name]",
+    "shortDescription": "[TODO: Short description for subtitle]",
+    "longDescription": "[TODO: Long description for details page]",
+    "developerName": "[TODO: Developer Name]",
+    "category": "[TODO: Category]",
+    "capabilities": [
+      "[TODO: Capability 1]",
+      "[TODO: Capability 2]"
+    ],
+    "websiteURL": "[TODO: https://example.com]",
+    "privacyPolicyURL": "[TODO: https://example.com/privacy]",
+    "termsOfServiceURL": "[TODO: https://example.com/terms]",
+    "defaultPrompt": [
+      "Inspect my Render services and recent deploys.",
+      "Debug a failed Render deployment.",
+      "Review Render env vars and service settings."
+    ],
+    "brandColor": "[TODO: #RRGGBB]",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot1.png",
+      "./assets/screenshot2.png",
+      "./assets/screenshot3.png"
+    ]
+  }
+}

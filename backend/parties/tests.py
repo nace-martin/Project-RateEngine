@@ -77,6 +77,33 @@ class CustomerSeedCommandTests(TestCase):
         self.assertEqual(company.commercial_profile.preferred_quote_currency.code, "USD")
         self.assertEqual(company.commercial_profile.payment_term_default, "PREPAID")
 
+    def test_export_customers_outputs_import_ready_shape(self):
+        company = Company.objects.create(
+            name="Export Customer",
+            is_customer=True,
+            is_agent=True,
+            company_type="CUSTOMER",
+            tax_id="TAX-999",
+        )
+        call_command(
+            "import_customers",
+            file=self._write_csv(
+                "company_name,preferred_quote_currency,payment_term_default,default_margin_percent,min_margin_percent\n"
+                "Export Customer,USD,PREPAID,12.50,8.00\n"
+            ),
+            stdout=StringIO(),
+        )
+        output = self._write_csv("company_uuid,company_name\n")
+
+        call_command("export_customers", file=output, stdout=StringIO())
+
+        rows = self._read_csv(output)
+        exported = next(row for row in rows if row["company_name"] == "Export Customer")
+        self.assertEqual(exported["company_uuid"], str(company.id))
+        self.assertEqual(exported["preferred_quote_currency"], "USD")
+        self.assertEqual(exported["payment_term_default"], "PREPAID")
+        self.assertEqual(exported["is_agent"], "true")
+
     def test_import_contacts_sets_primary_and_demotes_existing(self):
         company = Company.objects.create(name="Seed Customer", is_customer=True, company_type="CUSTOMER")
         Contact.objects.create(
@@ -100,6 +127,54 @@ class CustomerSeedCommandTests(TestCase):
         self.assertFalse(old_contact.is_primary)
         self.assertTrue(new_contact.is_active)
 
+    def test_import_contacts_matches_existing_email_case_insensitively(self):
+        company = Company.objects.create(name="Case Customer", is_customer=True, company_type="CUSTOMER")
+        existing = Contact.objects.create(
+            company=company,
+            first_name="Alice",
+            last_name="Original",
+            email="Alice@Example.com",
+            phone="+6750000",
+            is_primary=False,
+            is_active=True,
+        )
+
+        contacts = self._write_csv(
+            "company_name,email,first_name,last_name,is_primary,phone\n"
+            "Case Customer,alice@example.com,Alicia,Updated,true,+6751111\n"
+        )
+
+        call_command("import_contacts", file=contacts, stdout=StringIO())
+
+        self.assertEqual(Contact.objects.count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.first_name, "Alicia")
+        self.assertEqual(existing.last_name, "Updated")
+        self.assertEqual(existing.phone, "+6751111")
+        self.assertTrue(existing.is_primary)
+
+    def test_export_contacts_outputs_import_ready_shape(self):
+        company = Company.objects.create(name="Contact Export Customer", is_customer=True, company_type="CUSTOMER")
+        Contact.objects.create(
+            company=company,
+            first_name="Casey",
+            last_name="Export",
+            email="casey.export@example.com",
+            phone="+675123456",
+            is_primary=True,
+            is_active=True,
+        )
+        output = self._write_csv("company_uuid,company_name,email,first_name,last_name,full_name,phone,is_primary\n")
+
+        call_command("export_contacts", file=output, stdout=StringIO())
+
+        rows = self._read_csv(output)
+        self.assertEqual(len(rows), 1)
+        exported = rows[0]
+        self.assertEqual(exported["company_name"], "Contact Export Customer")
+        self.assertEqual(exported["full_name"], "Casey Export")
+        self.assertEqual(exported["is_primary"], "true")
+
     def test_import_contacts_strict_sync_deactivates_missing(self):
         company = Company.objects.create(name="Sync Customer", is_customer=True, company_type="CUSTOMER")
         keep = Contact.objects.create(
@@ -122,6 +197,39 @@ class CustomerSeedCommandTests(TestCase):
         contacts = self._write_csv(
             "company_name,email,first_name,last_name,is_primary\n"
             "Sync Customer,keep@example.com,Keep,Me,true\n"
+        )
+
+        call_command("import_contacts", file=contacts, strict_sync=True, stdout=StringIO())
+
+        keep.refresh_from_db()
+        drop.refresh_from_db()
+        self.assertTrue(keep.is_active)
+        self.assertTrue(keep.is_primary)
+        self.assertFalse(drop.is_active)
+        self.assertFalse(drop.is_primary)
+
+    def test_import_contacts_strict_sync_matches_email_case_insensitively(self):
+        company = Company.objects.create(name="Case Sync Customer", is_customer=True, company_type="CUSTOMER")
+        keep = Contact.objects.create(
+            company=company,
+            first_name="Keep",
+            last_name="Me",
+            email="Keep@Example.com",
+            is_primary=True,
+            is_active=True,
+        )
+        drop = Contact.objects.create(
+            company=company,
+            first_name="Drop",
+            last_name="Me",
+            email="drop@example.com",
+            is_primary=False,
+            is_active=True,
+        )
+
+        contacts = self._write_csv(
+            "company_name,email,first_name,last_name,is_primary\n"
+            "Case Sync Customer,keep@example.com,Keep,Me,true\n"
         )
 
         call_command("import_contacts", file=contacts, strict_sync=True, stdout=StringIO())
@@ -396,3 +504,18 @@ class OrganizationBrandingSettingsAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("/api/v3/public/branding/efm-express-air-cargo/primary/", response.data["logo_primary_url"])
+
+    def test_branding_settings_hide_missing_logo_urls_and_flag_missing_file(self):
+        self.client.force_authenticate(user=self.admin)
+        buffer = BytesIO()
+        Image.new("RGB", (2, 2), color="#0F2A56").save(buffer, format="PNG")
+        buffer.seek(0)
+        valid_logo = SimpleUploadedFile("logo.png", buffer.read(), content_type="image/png")
+        self.branding.logo_primary.save("logo.png", valid_logo, save=True)
+        self.branding.logo_primary.storage.delete(self.branding.logo_primary.name)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data["logo_primary_url"])
+        self.assertTrue(response.data["logo_primary_missing"])

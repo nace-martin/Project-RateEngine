@@ -9,6 +9,7 @@ import {
   downloadQuotePDF,
   transitionQuoteStatus,
 } from "@/lib/api";
+import { createSpotEnvelope, evaluateSpotTrigger } from "@/lib/api/spot";
 import {
   V3QuoteComputeResponse,
   QuoteComputeResult,
@@ -23,6 +24,7 @@ import { Loader2, ArrowLeft, CheckCircle, CheckCircle2, Pencil, ArrowRight } fro
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
 import { formatServiceScope } from "@/lib/display";
 import { getCustomerName, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
+import type { SPECommodity, TriggerResult } from "@/lib/spot-types";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -43,12 +45,14 @@ export default function QuoteDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfDownloading, setPdfDownloading] = useState(false);
+  const [spotLaunching, setSpotLaunching] = useState(false);
+  const [spotLaunchError, setSpotLaunchError] = useState<string | null>(null);
   const redirectingSpotRef = useRef(false);
   const spotWorkflowHref = (() => {
     if (!quote) return null;
     const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
     if (currentStatus !== "INCOMPLETE") return null;
-    const existingSpotEnvelopeId = quote.spot_negotiation?.id || readSpotEnvelopeId(quote.id);
+    const existingSpotEnvelopeId = quote.spot_negotiation?.id;
     if (!existingSpotEnvelopeId) return null;
     const params = buildSpotWorkflowParams(quote);
     params.set("returnTo", `/quotes/${quote.id}`);
@@ -92,6 +96,61 @@ export default function QuoteDetailPage() {
     redirectingSpotRef.current = true;
     router.replace(spotWorkflowHref);
   }, [router, spotWorkflowHref]);
+
+  const handleLaunchSpotWorkflow = async () => {
+    if (!quote) return;
+
+    setSpotLaunchError(null);
+    setSpotLaunching(true);
+
+    try {
+      const context = buildSpotResumeContext(quote);
+      const triggerResult = await evaluateSpotTrigger({
+        origin_country: context.originCountry,
+        destination_country: context.destinationCountry,
+        commodity: context.commodity,
+        origin_airport: context.originCode,
+        destination_airport: context.destinationCode,
+        has_valid_buy_rate: true,
+        service_scope: context.serviceScope,
+        payment_term: context.paymentTerm,
+      });
+
+      if (!triggerResult.is_spot_required || !triggerResult.trigger) {
+        router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
+        return;
+      }
+
+      const spe = await createSpotEnvelope({
+        shipment_context: {
+          origin_country: context.originCountry,
+          destination_country: context.destinationCountry,
+          origin_code: context.originCode,
+          destination_code: context.destinationCode,
+          customer_name: context.customerName,
+          commodity: context.commodity,
+          total_weight_kg: context.chargeableWeight,
+          pieces: context.pieces,
+          service_scope: context.serviceScope.toLowerCase(),
+          payment_term: context.paymentTerm === "COLLECT" ? "collect" : "prepaid",
+          missing_components: triggerResult.trigger.missing_components,
+        },
+        charges: [],
+        trigger_code: triggerResult.trigger.code,
+        trigger_text: triggerResult.trigger.text,
+        conditions: { rate_validity_hours: 72 },
+      });
+
+      const params = buildSpotWorkflowParams(quote);
+      applySpotTriggerToParams(params, context, triggerResult.trigger);
+      params.set("returnTo", `/quotes/${quote.id}`);
+      router.push(`/quotes/spot/${spe.id}?${params.toString()}`);
+    } catch (err) {
+      setSpotLaunchError(err instanceof Error ? err.message : "Failed to open SPOT workflow.");
+    } finally {
+      setSpotLaunching(false);
+    }
+  };
 
 
   if (loading) {
@@ -246,19 +305,7 @@ export default function QuoteDetailPage() {
           {(!isArchived && (effectiveStatus === "DRAFT" || effectiveStatus === "INCOMPLETE")) && (
             <Button
               variant="outline"
-              onClick={() => {
-                if (quote.shipment_type === "SPOT_NEGOTIATION" && quote.spot_negotiation) {
-                  // For spot, we might still want to go to spot details
-                  // But if it's a standard quote stored in our system, we should support edit
-                  // Assuming we map spot ID somewhere?
-                  // The original code: router.push(`/quotes/spot/${speId}`);
-                  // We need to keep that logic if possible
-                  const speId = quote.spot_negotiation.id;
-                  router.push(`/quotes/spot/${speId}?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
-                } else {
-                  router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
-                }
-              }}
+              onClick={() => router.push(buildQuoteEditHref(quote))}
               className="gap-2"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -401,7 +448,12 @@ export default function QuoteDetailPage() {
 
         {/* Main Content Area */}
         {isIncomplete ? (
-          <SpotWorkflowUnavailableCard quoteId={quote.id} />
+          <SpotWorkflowRequiredCard
+            quote={quote}
+            spotLaunching={spotLaunching}
+            spotLaunchError={spotLaunchError}
+            onLaunchSpot={handleLaunchSpotWorkflow}
+          />
         ) : (
           /* Full-width Layout for Finalized Quotes */
           <div className="space-y-6">
@@ -484,19 +536,7 @@ export default function QuoteDetailPage() {
                   variant="outline"
                   size="sm"
                   className="gap-2 mr-2 hidden sm:flex"
-                  onClick={() => {
-                    if (quote.shipment_type === "SPOT_NEGOTIATION" && quote.spot_negotiation) {
-                      const params = new URLSearchParams({
-                        customer_name: getCustomerName(quote.customer),
-                        service_scope: quote.service_scope || "D2D",
-                        payment_term: quote.payment_term || "PREPAID",
-                      });
-                      params.set("returnTo", `/quotes/${quote.id}`);
-                      router.push(`/quotes/spot/${quote.spot_negotiation.id}?${params.toString()}`);
-                    } else {
-                        router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
-                    }
-                  }}
+                  onClick={() => router.push(buildQuoteEditHref(quote))}
                 >
                   <Pencil className="h-4 w-4" />
                   Edit Quote
@@ -521,54 +561,207 @@ export default function QuoteDetailPage() {
   );
 }
 
-function SpotWorkflowUnavailableCard({ quoteId }: { quoteId: string }) {
+function SpotWorkflowRequiredCard({
+  quote,
+  spotLaunching,
+  spotLaunchError,
+  onLaunchSpot,
+}: {
+  quote: V3QuoteComputeResponse;
+  spotLaunching: boolean;
+  spotLaunchError: string | null;
+  onLaunchSpot: () => Promise<void>;
+}) {
   const router = useRouter();
   return (
     <Card className="border-amber-200 bg-amber-50/40">
       <CardHeader>
         <CardTitle className="text-lg text-amber-800">SPOT Workflow Required</CardTitle>
         <CardDescription>
-          This quote is incomplete, but it no longer uses the legacy in-page SPOT launcher.
-          Re-open the quote from the edit flow if you need to re-enter SPOT.
+          This quote is incomplete and is not linked to an active SPOT envelope yet.
+          Launch the current SPOT workflow from here, or return to edit if you need to refresh the quote inputs.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          No active SPOT envelope is linked to this quote detail view.
+      <CardContent className="flex items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="text-sm text-muted-foreground">Quote: {quote.quote_number}</div>
+          {spotLaunchError ? (
+            <div className="text-sm text-destructive">{spotLaunchError}</div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              The detail view will evaluate the latest SPOT trigger and open the live workflow if it is still required.
+            </div>
+          )}
         </div>
-        <Button onClick={() => router.push(`/quotes/${quoteId}/edit`)}>
-          Return To Quote Edit
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => router.push(`/quotes/${quote.id}/edit`)}>
+            Return To Quote Edit
+          </Button>
+          <Button onClick={() => void onLaunchSpot()} disabled={spotLaunching}>
+            {spotLaunching ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Opening SPOT...
+              </>
+            ) : (
+              "Open SPOT Workflow"
+            )}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
 }
 
+function buildQuoteEditHref(quote: V3QuoteComputeResponse): string {
+  if (quote.spot_negotiation?.id) {
+    const params = buildSpotWorkflowParams(quote);
+    params.set("returnTo", `/quotes/${quote.id}`);
+    return `/quotes/spot/${quote.spot_negotiation.id}?${params.toString()}`;
+  }
+
+  return `/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`;
+}
+
 function buildSpotWorkflowParams(quote: V3QuoteComputeResponse): URLSearchParams {
-  const weightInfo = computeChargeableWeight(quote);
+  const context = buildSpotResumeContext(quote);
   return new URLSearchParams({
-    customer_name: getCustomerName(quote.customer),
-    service_scope: quote.service_scope || "D2D",
-    payment_term: quote.payment_term || "PREPAID",
-    output_currency: quote.output_currency || "PGK",
-    shipment_type: quote.shipment_type,
-    weight: String(weightInfo.chargeableWeight),
-    pieces: String(weightInfo.pieces),
+    customer_name: context.customerName,
+    service_scope: context.serviceScope,
+    payment_term: context.paymentTerm,
+    output_currency: context.outputCurrency,
+    shipment_type: context.shipmentType,
+    weight: String(context.chargeableWeight),
+    pieces: String(context.pieces),
   });
 }
 
-const SPOT_ENVELOPE_STORAGE_KEY = "spotEnvelopeByQuoteId";
-
-function readSpotEnvelopeId(quoteId: string): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(SPOT_ENVELOPE_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return parsed[quoteId] || null;
-  } catch {
-    return null;
+function applySpotTriggerToParams(
+  params: URLSearchParams,
+  context: SpotResumeContext,
+  trigger: TriggerResult,
+) {
+  params.set("origin_country", context.originCountry);
+  params.set("dest_country", context.destinationCountry);
+  params.set("origin_code", context.originCode);
+  params.set("dest_code", context.destinationCode);
+  params.set("commodity", context.commodity);
+  params.set("trigger_code", trigger.code);
+  params.set("trigger_text", trigger.text);
+  if (context.customerId) {
+    params.set("customer_id", context.customerId);
   }
+  if (trigger.missing_components?.length) {
+    params.set("missing_components", trigger.missing_components.join(","));
+  } else {
+    params.delete("missing_components");
+  }
+}
+
+type SpotResumeContext = {
+  originCode: string;
+  destinationCode: string;
+  originCountry: string;
+  destinationCountry: string;
+  commodity: SPECommodity;
+  serviceScope: string;
+  paymentTerm: "PREPAID" | "COLLECT";
+  chargeableWeight: number;
+  pieces: number;
+  outputCurrency: string;
+  shipmentType: string;
+  customerId: string | null;
+  customerName: string;
+};
+
+const SPOT_AIRPORT_COUNTRY_MAP: Record<string, string> = {
+  POM: "PG",
+  LAE: "PG",
+  MTV: "PG",
+  SIN: "SG",
+  HKG: "HK",
+  BNE: "AU",
+  SYD: "AU",
+  CNS: "AU",
+  NAN: "FJ",
+  HIR: "SB",
+  VLI: "VU",
+};
+
+function buildSpotResumeContext(quote: V3QuoteComputeResponse): SpotResumeContext {
+  const request = (quote.request_details_json || {}) as Record<string, unknown>;
+  const payload = (quote.latest_version?.payload_json || {}) as Record<string, unknown>;
+  const shipment = (payload.shipment || {}) as Record<string, unknown>;
+  const weightInfo = computeChargeableWeight(quote);
+
+  const originCode = normalizeAirportCode(
+    payload.origin_airport,
+    request.origin_airport,
+    shipment.origin_airport,
+    quote.origin_location,
+  );
+  const destinationCode = normalizeAirportCode(
+    payload.destination_airport,
+    request.destination_airport,
+    shipment.destination_airport,
+    quote.destination_location,
+  );
+  const originCountry = normalizeCountryCode(
+    payload.origin_country,
+    request.origin_country,
+    shipment.origin_country,
+    originCode,
+  );
+  const destinationCountry = normalizeCountryCode(
+    payload.destination_country,
+    request.destination_country,
+    shipment.destination_country,
+    destinationCode,
+  );
+  const commodity = String(
+    payload.commodity_code ||
+    request.commodity_code ||
+    shipment.commodity_code ||
+    "GCR",
+  ).toUpperCase() as SPECommodity;
+
+  return {
+    originCode,
+    destinationCode,
+    originCountry,
+    destinationCountry,
+    commodity,
+    serviceScope: String(quote.service_scope || payload.service_scope || request.service_scope || "D2D").toUpperCase(),
+    paymentTerm: String(quote.payment_term || payload.payment_term || request.payment_term || "PREPAID").toUpperCase() === "COLLECT"
+      ? "COLLECT"
+      : "PREPAID",
+    chargeableWeight: weightInfo.chargeableWeight,
+    pieces: weightInfo.pieces,
+    outputCurrency: String(quote.output_currency || payload.output_currency || request.output_currency || "PGK").toUpperCase(),
+    shipmentType: String(quote.shipment_type || request.shipment_type || "EXPORT").toUpperCase(),
+    customerId: typeof request.customer_id === "string" ? request.customer_id : null,
+    customerName: getCustomerName(quote.customer),
+  };
+}
+
+function normalizeAirportCode(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim().toUpperCase();
+    if (!value) continue;
+    if (/^[A-Z]{3}$/.test(value)) return value;
+    const match = value.match(/^([A-Z]{3})\s*-/);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+function normalizeCountryCode(...candidates: unknown[]): string {
+  for (let index = 0; index < candidates.length - 1; index += 1) {
+    const value = String(candidates[index] || "").trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(value)) return value;
+  }
+  const airportCode = String(candidates[candidates.length - 1] || "").trim().toUpperCase();
+  return SPOT_AIRPORT_COUNTRY_MAP[airportCode] || "OTHER";
 }
 
 function computeChargeableWeight(quote: V3QuoteComputeResponse) {

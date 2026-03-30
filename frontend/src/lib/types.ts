@@ -78,8 +78,10 @@ export interface OrganizationBrandingSettings {
   accent_color?: string;
   logo_primary?: string | null;
   logo_primary_url?: string | null;
+  logo_primary_missing?: boolean;
   logo_small?: string | null;
   logo_small_url?: string | null;
+  logo_small_missing?: boolean;
   is_active: boolean;
 }
 
@@ -204,6 +206,7 @@ export interface V3QuoteComputeRequest {
   destination_location_id: string;
   dimensions: V3DimensionInput[];
   payment_term: string;
+  commodity_code?: string;
   is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];
   output_currency?: string;

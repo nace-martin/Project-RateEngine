@@ -228,12 +228,26 @@ STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']  # Project-level static files
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # Collected static files for production
 MEDIA_URL = '/media/'
-# Uploaded files still live under BASE_DIR-relative paths via upload_to.
-# We do not expose BASE_DIR through a generic production /media route; branding logos
-# and shipment documents are served through explicit application endpoints instead.
-MEDIA_ROOT = BASE_DIR
+# Uploaded files are stored under a dedicated media root so branding assets and
+# shipment documents can share the same persistent storage target in production.
+# We still serve branding logos and shipment documents through explicit
+# application endpoints instead of a generic production /media route.
+MEDIA_ROOT = BASE_DIR / 'media'
 SERVE_STATIC_FILES = _env_bool('SERVE_STATIC_FILES', DEBUG)
 SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', DEBUG)
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": str(MEDIA_ROOT),
+            "base_url": MEDIA_URL,
+        },
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 CSV_UPLOAD_MAX_BYTES = int(os.environ.get('CSV_UPLOAD_MAX_BYTES', 5 * 1024 * 1024))
 PDF_UPLOAD_MAX_BYTES = int(os.environ.get('PDF_UPLOAD_MAX_BYTES', 10 * 1024 * 1024))
