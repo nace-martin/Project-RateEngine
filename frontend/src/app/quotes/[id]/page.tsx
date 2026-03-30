@@ -47,6 +47,10 @@ export default function QuoteDetailPage() {
   const [pdfDownloading, setPdfDownloading] = useState(false);
   const [spotLaunching, setSpotLaunching] = useState(false);
   const [spotLaunchError, setSpotLaunchError] = useState<string | null>(null);
+  const [spotTriggerResult, setSpotTriggerResult] = useState<TriggerResult | null>(null);
+  const [spotTriggerChecking, setSpotTriggerChecking] = useState(false);
+  const [spotTriggerChecked, setSpotTriggerChecked] = useState(false);
+  const [spotTriggerCheckError, setSpotTriggerCheckError] = useState<string | null>(null);
   const redirectingSpotRef = useRef(false);
   const spotWorkflowHref = (() => {
     if (!quote) return null;
@@ -97,6 +101,59 @@ export default function QuoteDetailPage() {
     router.replace(spotWorkflowHref);
   }, [router, spotWorkflowHref]);
 
+  useEffect(() => {
+    if (!quote) {
+      setSpotTriggerResult(null);
+      setSpotTriggerChecking(false);
+      setSpotTriggerChecked(false);
+      setSpotTriggerCheckError(null);
+      return;
+    }
+
+    const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
+    if (currentStatus !== "INCOMPLETE" || quote.spot_negotiation?.id) {
+      setSpotTriggerResult(null);
+      setSpotTriggerChecking(false);
+      setSpotTriggerChecked(false);
+      setSpotTriggerCheckError(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkSpotTrigger = async () => {
+      setSpotTriggerChecking(true);
+      setSpotTriggerChecked(false);
+      setSpotTriggerCheckError(null);
+      try {
+        const result = await evaluateLatestSpotTrigger(quote);
+        if (cancelled) {
+          return;
+        }
+        setSpotTriggerResult(result.trigger ?? null);
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        setSpotTriggerResult(null);
+        setSpotTriggerCheckError(
+          err instanceof Error ? err.message : "Failed to verify the latest SPOT trigger.",
+        );
+      } finally {
+        if (!cancelled) {
+          setSpotTriggerChecking(false);
+          setSpotTriggerChecked(true);
+        }
+      }
+    };
+
+    void checkSpotTrigger();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [quote]);
+
   const handleLaunchSpotWorkflow = async () => {
     if (!quote) return;
 
@@ -105,16 +162,7 @@ export default function QuoteDetailPage() {
 
     try {
       const context = buildSpotResumeContext(quote);
-      const triggerResult = await evaluateSpotTrigger({
-        origin_country: context.originCountry,
-        destination_country: context.destinationCountry,
-        commodity: context.commodity,
-        origin_airport: context.originCode,
-        destination_airport: context.destinationCode,
-        has_valid_buy_rate: true,
-        service_scope: context.serviceScope,
-        payment_term: context.paymentTerm,
-      });
+      const triggerResult = await evaluateLatestSpotTrigger(quote);
 
       if (!triggerResult.is_spot_required || !triggerResult.trigger) {
         router.push(`/quotes/${quote.id}/edit?returnTo=${encodeURIComponent(`/quotes/${quote.id}`)}`);
@@ -188,6 +236,7 @@ export default function QuoteDetailPage() {
 
   const effectiveStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
   const isIncomplete = effectiveStatus === "INCOMPLETE";
+  const isSpotRequired = Boolean(spotTriggerResult);
   const isArchived = quote.is_archived;
   const canDownloadPDF = (effectiveStatus === "FINALIZED" || effectiveStatus === "SENT");
   const displayTotals = computeResult?.totals ?? quote.latest_version?.totals;
@@ -448,12 +497,41 @@ export default function QuoteDetailPage() {
 
         {/* Main Content Area */}
         {isIncomplete ? (
-          <SpotWorkflowRequiredCard
-            quote={quote}
-            spotLaunching={spotLaunching}
-            spotLaunchError={spotLaunchError}
-            onLaunchSpot={handleLaunchSpotWorkflow}
-          />
+          spotTriggerChecking || !spotTriggerChecked ? (
+            <SpotTriggerCheckingCard quote={quote} />
+          ) : isSpotRequired ? (
+            <SpotWorkflowRequiredCard
+              quote={quote}
+              spotLaunching={spotLaunching}
+              spotLaunchError={spotLaunchError}
+              onLaunchSpot={handleLaunchSpotWorkflow}
+            />
+          ) : (
+            <IncompleteQuoteCard
+              quote={quote}
+              triggerCheckError={spotTriggerCheckError}
+              onRetryCheck={async () => {
+                if (!quote) {
+                  return;
+                }
+                setSpotTriggerChecking(true);
+                setSpotTriggerChecked(false);
+                setSpotTriggerCheckError(null);
+                try {
+                  const result = await evaluateLatestSpotTrigger(quote);
+                  setSpotTriggerResult(result.trigger ?? null);
+                } catch (err) {
+                  setSpotTriggerResult(null);
+                  setSpotTriggerCheckError(
+                    err instanceof Error ? err.message : "Failed to verify the latest SPOT trigger.",
+                  );
+                } finally {
+                  setSpotTriggerChecking(false);
+                  setSpotTriggerChecked(true);
+                }
+              }}
+            />
+          )
         ) : (
           /* Full-width Layout for Finalized Quotes */
           <div className="space-y-6">
@@ -611,6 +689,90 @@ function SpotWorkflowRequiredCard({
       </CardContent>
     </Card>
   );
+}
+
+function SpotTriggerCheckingCard({
+  quote,
+}: {
+  quote: V3QuoteComputeResponse;
+}) {
+  return (
+    <Card className="border-slate-200 bg-slate-50/60">
+      <CardHeader>
+        <CardTitle className="text-lg text-slate-900">Checking Quote Completion</CardTitle>
+        <CardDescription>
+          This quote is currently marked incomplete. Verifying the latest SPOT trigger before deciding whether the SPOT workflow is still required.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex items-center gap-3 text-sm text-slate-600">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Re-checking {quote.quote_number} against the latest SPOT trigger...
+      </CardContent>
+    </Card>
+  );
+}
+
+function IncompleteQuoteCard({
+  quote,
+  triggerCheckError,
+  onRetryCheck,
+}: {
+  quote: V3QuoteComputeResponse;
+  triggerCheckError: string | null;
+  onRetryCheck: () => Promise<void>;
+}) {
+  const router = useRouter();
+
+  return (
+    <Card className="border-slate-200 bg-slate-50/60">
+      <CardHeader>
+        <CardTitle className="text-lg text-slate-900">Incomplete Quote</CardTitle>
+        <CardDescription>
+          The latest SPOT trigger check does not require the SPOT workflow for this quote. The quote is still incomplete, so return to edit and refresh the missing rate inputs.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="text-sm text-muted-foreground">Quote: {quote.quote_number}</div>
+          {triggerCheckError ? (
+            <div className="text-sm text-destructive">
+              Unable to verify the latest SPOT trigger automatically: {triggerCheckError}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">
+              Return to the quote editor to refresh pricing coverage instead of launching SPOT.
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {triggerCheckError ? (
+            <Button variant="outline" onClick={() => void onRetryCheck()}>
+              Retry Trigger Check
+            </Button>
+          ) : null}
+          <Button variant="outline" onClick={() => router.push(`/quotes/${quote.id}/edit`)}>
+            Return To Quote Edit
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+async function evaluateLatestSpotTrigger(
+  quote: V3QuoteComputeResponse,
+) {
+  const context = buildSpotResumeContext(quote);
+  return evaluateSpotTrigger({
+    origin_country: context.originCountry,
+    destination_country: context.destinationCountry,
+    commodity: context.commodity,
+    origin_airport: context.originCode,
+    destination_airport: context.destinationCode,
+    has_valid_buy_rate: true,
+    service_scope: context.serviceScope,
+    payment_term: context.paymentTerm,
+  });
 }
 
 function buildQuoteEditHref(quote: V3QuoteComputeResponse): string {
