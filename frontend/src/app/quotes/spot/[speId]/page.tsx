@@ -12,7 +12,6 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
 import { useSpotMode } from "@/hooks/use-spot-mode";
 import {
     ExpiredBanner,
@@ -49,7 +48,7 @@ const BUY_SIDE_SOURCE_MARKERS = ["COGS", "BUY"];
 
 const isBuySideCharge = (charge: SPEChargeLine) => {
     const source = (charge.source_reference || "").toUpperCase();
-    // Standard Rate charges are computed FROM COGS but are sell-side charges — don't filter them out
+    // Standard Rate charges are computed FROM COGS but are sell-side charges, so keep them visible.
     if (source.startsWith("STANDARD RATE")) return false;
     // AI/Analysis suggestions are always user-facing
     if (source.includes("AI") || source.includes("ANALYSIS") || source.includes("AGENT REPLY")) return false;
@@ -71,6 +70,47 @@ const BUCKET_LABELS: Record<SPEChargeLine["bucket"], string> = {
     airfreight: "Freight",
     origin_charges: "Origin Charges",
     destination_charges: "Destination Charges",
+};
+
+const NON_ACTIONABLE_AI_WARNING_PATTERNS = [
+    "validity not specified - assuming 72 hours",
+    "routing not specified - may involve multiple legs",
+    "space/acceptance not confirmed",
+];
+
+const sanitizeSummaryMessage = (message: string) =>
+    message.replace(/^[^A-Za-z0-9]+/, "").trim();
+
+const normalizeSummaryMessage = (message: string) => {
+    const cleaned = sanitizeSummaryMessage(message);
+
+    return cleaned
+        .replace(/^AI:\s*/i, "")
+        .replace(/^AI critic flagged possible missed charges:\s*/i, "Possible missed charges: ")
+        .replace(/^AI critic flagged possible hallucinations:\s*/i, "Please verify these charges: ")
+        .replace(/^AI returned unmapped charges requiring manual review:\s*/i, "Some imported charges need manual review: ")
+        .replace(/^AI analysis failed:\s*/i, "Import check failed: ")
+        .replace(/^AI intake did not produce any charge lines to review\.?$/i, "No charge lines were imported for review.")
+        .replace(/^AI analysis is missing required rate or currency fields\.?$/i, "Some imported lines are missing rate or currency details.")
+        .replace(/^(Line \d+): Low-confidence normalization for /i, "$1: Please verify the charge label for ");
+};
+
+const isActionableAiWarning = (warning: string) => {
+    const normalized = normalizeSummaryMessage(warning).toLowerCase();
+    return !NON_ACTIONABLE_AI_WARNING_PATTERNS.some((pattern) => normalized.includes(pattern));
+};
+
+const getSourceSummaryTitle = (label: string, targetBucket: SPEChargeLine["bucket"] | "mixed") => {
+    const cleaned = label.replace(/\bAI\b/gi, "").replace(/\s{2,}/g, " ").trim();
+    if (cleaned.toLowerCase() === "unified intake") return "Uploaded rates";
+    if (cleaned) return cleaned;
+    if (targetBucket === "mixed") return "Uploaded rates";
+    return `${BUCKET_LABELS[targetBucket]} import`;
+};
+
+const getSourceSummarySubtitle = (bucket: SPEChargeLine["bucket"] | "mixed") => {
+    if (bucket === "mixed") return "Imported lines are grouped for this quote";
+    return `${BUCKET_LABELS[bucket]} lines are grouped for this quote`;
 };
 
 const formatMissingComponents = (components?: string[]) => {
@@ -141,14 +181,12 @@ export default function SpotRateEntryPage() {
             ),
         [missingComponents]
     );
-    const { loadSPE, reviewSourceBatch } = actions;
+    const { loadSPE } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
     const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
     const [intakeDirtyMap, setIntakeDirtyMap] = useState<Record<string, boolean>>({});
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
-    const [reviewingSourceBatchId, setReviewingSourceBatchId] = useState<string | null>(null);
-    const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
     // Guard ref: prevents the auto-detection useEffect from overriding
     // an explicit step transition (e.g. after analysis completes).
     const userAdvancedToReviewRef = useRef(false);
@@ -206,7 +244,7 @@ export default function SpotRateEntryPage() {
         const autoSplitTargets = missingRateLabels.length
             ? formatListWithAnd(missingRateLabels)
             : "the right quote components";
-        return `Paste email replies, upload PDFs, or enter all external rate details once. AI will automatically split them into ${autoSplitTargets}.`;
+        return `Paste email replies, upload PDFs, or enter all external rate details once. They will be sorted into ${autoSplitTargets}.`;
     }, [missingRateLabels]);
 
     // Load existing SPE
@@ -331,38 +369,63 @@ export default function SpotRateEntryPage() {
         const charges = (state.spe?.charges || EMPTY_CHARGES).filter(
             (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
         );
+        const visibleImportedCharges = reviewFormCharges.filter(
+            (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
+        );
         return (state.spe?.sources || []).map((source) => {
             const sourceCharges = charges.filter((charge) => charge.source_batch_id === source.id);
-            const sourceCurrencies = Array.from(new Set(sourceCharges.map((charge) => charge.currency)));
+            const fallbackVisibleCharges =
+                sourceCharges.length > 0
+                    ? sourceCharges
+                    : source.target_bucket === "mixed" && (state.spe?.sources?.length || 0) === 1
+                        ? visibleImportedCharges
+                        : [];
+            const sourceCurrencies = Array.from(
+                new Set((fallbackVisibleCharges.length > 0 ? fallbackVisibleCharges : sourceCharges).map((charge) => charge.currency))
+            );
             const currencies = source.detected_currencies?.length
                 ? source.detected_currencies
                 : sourceCurrencies;
-            const buckets = Array.from(new Set(sourceCharges.map((charge) => charge.bucket)));
+            const buckets = Array.from(
+                new Set((fallbackVisibleCharges.length > 0 ? fallbackVisibleCharges : sourceCharges).map((charge) => charge.bucket))
+            );
+            const resolvedBuckets =
+                buckets.length > 0
+                    ? buckets
+                    : source.target_bucket === "mixed"
+                        ? editableBuckets
+                        : [source.target_bucket];
+            const actionableWarnings = (source.warnings || [])
+                .map(normalizeSummaryMessage)
+                .filter(isActionableAiWarning);
+            const attentionItems = Array.from(
+                new Set([
+                    ...actionableWarnings,
+                    ...(source.blocking_reasons || []).map(normalizeSummaryMessage),
+                ])
+            );
             return {
                 id: source.id,
-                label: source.label,
+                label: getSourceSummaryTitle(source.label, source.target_bucket),
                 targetBucket: source.target_bucket,
-                sourceKind: source.source_kind,
-                lineCount: sourceCharges.length,
+                lineCount: fallbackVisibleCharges.length || sourceCharges.length || source.charge_count || 0,
                 currencies,
-                buckets,
-                warnings: source.warnings || [],
-                reviewRequired: source.review_required,
-                reviewStatus: source.review_status,
-                reviewedSafeToQuote: source.reviewed_safe_to_quote,
-                reviewedAt: source.reviewed_at,
-                reviewNote: source.review_note,
-                riskFlags: source.risk_flags || [],
-                blockingReasons: source.blocking_reasons || [],
-                riskLevel: source.risk_level || "LOW",
-                requiresReviewNote: source.requires_review_note,
+                buckets: resolvedBuckets,
+                subtitle: getSourceSummarySubtitle(source.target_bucket),
+                attentionItems,
+                needsAttention: attentionItems.length > 0,
             };
         });
-    }, [state.spe?.charges, state.spe?.sources]);
+    }, [editableBuckets, reviewFormCharges, state.spe?.charges, state.spe?.sources]);
 
     const intakeSafety = state.spe?.intake_safety;
-    const intakeBlockingIssues = intakeSafety?.blocking_issues || EMPTY_COMPONENTS;
     const quoteCreationBlocked = Boolean(intakeSafety && !intakeSafety.is_safe_to_quote);
+    const hasAttentionItems = sourceReviewSummaries.some((summary) => summary.needsAttention);
+    const totalAttentionItems = sourceReviewSummaries.reduce(
+        (count, summary) => count + summary.attentionItems.length,
+        0
+    );
+    const totalImportedLines = sourceReviewSummaries.reduce((count, summary) => count + summary.lineCount, 0);
 
     const overlapWarnings = useMemo(() => {
         const warnings = new Set<string>();
@@ -395,20 +458,6 @@ export default function SpotRateEntryPage() {
 
         return Array.from(warnings);
     }, [editableBuckets, sourceReviewSummaries]);
-
-    const handleReviewSource = async (sourceBatchId: string) => {
-        if (reviewingSourceBatchId) return;
-        const note = (reviewNotes[sourceBatchId] || "").trim();
-        setReviewingSourceBatchId(sourceBatchId);
-        try {
-            await reviewSourceBatch(sourceBatchId, {
-                reviewed_safe_to_quote: true,
-                review_note: note || undefined,
-            });
-        } finally {
-            setReviewingSourceBatchId(null);
-        }
-    };
 
     // Handle saving charges, acknowledging, and creating the final quote in one flow
     const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
@@ -595,7 +644,7 @@ export default function SpotRateEntryPage() {
                         </h1>
                         {currentStep === "intake" && (
                             <p className="mt-1 text-sm text-slate-600">
-                                Add all missing external rate inputs once. AI will split them into the right charge sections.
+                                Add all missing external rate inputs once. They will be split into the right charge sections.
                             </p>
                         )}
                     </div>
@@ -626,7 +675,7 @@ export default function SpotRateEntryPage() {
                         <div className="flex flex-col gap-1">
                             <span className="text-muted-foreground font-medium">Route</span>
                             <span className="font-bold text-slate-900">
-                                {originCode || state.spe?.shipment.origin_code} → {destCode || state.spe?.shipment.destination_code}
+                                {originCode || state.spe?.shipment.origin_code} {"->"} {destCode || state.spe?.shipment.destination_code}
                             </span>
                         </div>
                         <div className="flex flex-col gap-1">
@@ -683,11 +732,11 @@ export default function SpotRateEntryPage() {
                     speId={speId as string}
                     missingComponents={missingComponents}
                     sourceBatchId={primarySourceBatchId}
-                    title="AI Rate Intake"
+                    title="Rate Intake"
                     description={intakeDescription}
                     sourceKind="OTHER"
                     targetBucket="mixed"
-                    sourceLabel="Unified AI Intake"
+                    sourceLabel="Uploaded rates"
                     onAnalysisComplete={(result) => handleAnalysisComplete(result, "mixed")}
                     onDirtyChange={(isDirty) => setIntakeDirty("mixed", isDirty)}
                 />
@@ -705,173 +754,165 @@ export default function SpotRateEntryPage() {
                         }}
                         className="mb-4"
                     >
-                        ← Back to Intake
+                        {"<-"} Back to Intake
                     </Button>
 
                     {sourceReviewSummaries.length > 0 && (
-                        <Card className="border-slate-200">
-                            <CardHeader className="pb-3">
-                                <CardTitle className="text-base font-semibold">Imported Source Summary</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                {intakeBlockingIssues.length > 0 && (
-                                    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
-                                        <div className="text-sm font-medium text-amber-900">Review Required Before Quote Creation</div>
-                                        <ul className="mt-2 space-y-2 text-sm text-amber-900">
-                                            {intakeBlockingIssues.map((issue) => (
-                                                <li key={issue}>• {issue}</li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
-
-                                <div className="grid gap-3 md:grid-cols-2">
-                                    {sourceReviewSummaries.map((summary) => (
-                                        <div key={summary.id} className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div>
-                                                    <div className="font-medium text-slate-900">{summary.label}</div>
-                                                    <div className="mt-1 text-sm text-slate-600">
-                                                        {summary.sourceKind} source
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col items-end gap-2">
-                                                    <div className="rounded-full border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700">
-                                                        {summary.targetBucket === "mixed" ? "Mixed" : BUCKET_LABELS[summary.targetBucket]}
-                                                    </div>
-                                                    <div
-                                                        className={`rounded-full px-2 py-1 text-xs font-medium ${
-                                                            summary.reviewRequired
-                                                                ? summary.reviewedSafeToQuote
-                                                                    ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
-                                                                    : "border border-amber-200 bg-amber-50 text-amber-800"
-                                                                : "border border-slate-300 bg-white text-slate-700"
-                                                        }`}
-                                                    >
-                                                        {summary.reviewRequired
-                                                            ? summary.reviewedSafeToQuote
-                                                                ? "Reviewed"
-                                                                : "Pending review"
-                                                            : "No review required"}
-                                                    </div>
-                                                    <div
-                                                        className={`rounded-full px-2 py-1 text-xs font-medium ${
-                                                            summary.riskLevel === "HIGH"
-                                                                ? "border border-red-200 bg-red-50 text-red-800"
-                                                                : summary.riskLevel === "MEDIUM"
-                                                                    ? "border border-amber-200 bg-amber-50 text-amber-800"
-                                                                    : "border border-slate-300 bg-white text-slate-700"
-                                                        }`}
-                                                    >
-                                                        {summary.riskLevel} risk
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-3">
-                                                <div>
-                                                    <div className="text-xs uppercase tracking-wide text-slate-500">Lines</div>
-                                                    <div className="font-medium">{summary.lineCount}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs uppercase tracking-wide text-slate-500">Currencies</div>
-                                                    <div className="font-medium">{summary.currencies.join(", ") || "None"}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs uppercase tracking-wide text-slate-500">Buckets</div>
-                                                    <div className="font-medium">
-                                                        {summary.buckets.map((bucket) => BUCKET_LABELS[bucket]).join(", ") || "None"}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            {summary.warnings.length > 0 && (
-                                                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-                                                    <div className="text-xs font-semibold uppercase tracking-wide text-amber-900">AI warnings</div>
-                                                    <ul className="mt-2 space-y-1 text-sm text-amber-900">
-                                                        {summary.warnings.map((warning) => (
-                                                            <li key={`${summary.id}-${warning}`}>• {warning}</li>
-                                                        ))}
-                                                    </ul>
-                                                </div>
-                                            )}
-                                            {summary.blockingReasons.length > 0 && (
-                                                <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2">
-                                                    <div className="text-xs font-semibold uppercase tracking-wide text-red-900">Risk checks</div>
-                                                    <ul className="mt-2 space-y-1 text-sm text-red-900">
-                                                        {summary.blockingReasons.map((reason) => (
-                                                            <li key={`${summary.id}-${reason}`}>• {reason}</li>
-                                                        ))}
-                                                    </ul>
-                                                </div>
-                                            )}
-                                            {summary.reviewRequired && !summary.reviewedSafeToQuote && (
-                                                <div className="mt-3 rounded-md border border-slate-200 bg-white px-3 py-3">
-                                                    <div className="text-sm text-slate-700">
-                                                        Review the extracted lines below, correct them if needed, then mark this source as reviewed.
-                                                    </div>
-                                                    {summary.requiresReviewNote && (
-                                                        <div className="mt-3 space-y-2">
-                                                            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                                                                Reviewer note required
-                                                            </div>
-                                                            <Textarea
-                                                                value={reviewNotes[summary.id] ?? summary.reviewNote ?? ""}
-                                                                onChange={(event) =>
-                                                                    setReviewNotes((prev) => ({
-                                                                        ...prev,
-                                                                        [summary.id]: event.target.value,
-                                                                    }))
-                                                                }
-                                                                placeholder="Explain how you verified the missed or unclear charges before approving this source."
-                                                                rows={3}
-                                                            />
-                                                        </div>
-                                                    )}
-                                                    <div className="mt-3 flex justify-end">
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            onClick={() => handleReviewSource(summary.id)}
-                                                            disabled={
-                                                                Boolean(reviewingSourceBatchId && reviewingSourceBatchId !== summary.id) ||
-                                                                state.isLoading ||
-                                                                (summary.requiresReviewNote && !(reviewNotes[summary.id] || "").trim())
-                                                            }
-                                                            loading={reviewingSourceBatchId === summary.id}
-                                                            loadingText="Saving review..."
-                                                        >
-                                                            Mark Reviewed
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {summary.reviewRequired && summary.reviewedSafeToQuote && summary.reviewedAt && (
-                                                <div className="mt-3 space-y-2 text-xs text-slate-500">
-                                                    <div>
-                                                        Reviewed at {new Date(summary.reviewedAt).toLocaleString()}
-                                                    </div>
-                                                    {summary.reviewNote && (
-                                                        <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                                                            {summary.reviewNote}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
+                        <Card className="overflow-hidden border-slate-200/80 bg-white shadow-[0_22px_70px_-38px_rgba(15,23,42,0.35)]">
+                            <CardHeader className="border-b border-slate-200 bg-[linear-gradient(135deg,#f8fafc_0%,#eef6ff_45%,#f7fffb_100%)] pb-6">
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="max-w-3xl">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-700">
+                                            Imported rates
                                         </div>
+                                        <CardTitle className="mt-2 text-2xl font-semibold text-slate-950">
+                                            Imported quote inputs are organized
+                                        </CardTitle>
+                                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                                            Review the imported lines below. Only items that still need a decision are highlighted.
+                                        </p>
+                                    </div>
+                                    <div className="grid gap-3 rounded-3xl border border-white/70 bg-white/85 p-4 shadow-sm backdrop-blur sm:grid-cols-3 lg:min-w-[360px]">
+                                        <div>
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                                                Sources
+                                            </div>
+                                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                                                {sourceReviewSummaries.length}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                                                Imported lines
+                                            </div>
+                                            <div className="mt-2 text-2xl font-semibold text-slate-950">
+                                                {totalImportedLines}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                                                Needs check
+                                            </div>
+                                            <div className={`mt-2 text-2xl font-semibold ${hasAttentionItems ? "text-amber-700" : "text-emerald-700"}`}>
+                                                {hasAttentionItems ? totalAttentionItems : 0}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="space-y-5 p-6">
+                                <div className="grid gap-4">
+                                    {sourceReviewSummaries.map((summary) => (
+                                        <section
+                                            key={summary.id}
+                                            className="grid gap-5 rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_18px_50px_-40px_rgba(15,23,42,0.45)] lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.8fr)]"
+                                        >
+                                            <div className="space-y-5">
+                                                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                                    <div>
+                                                        <div className="font-semibold text-slate-950">{summary.label}</div>
+                                                        <div className="mt-1 text-sm leading-6 text-slate-600">
+                                                            {summary.subtitle}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                                                            {summary.targetBucket === "mixed" ? "Mixed input" : BUCKET_LABELS[summary.targetBucket]}
+                                                        </div>
+                                                        <div
+                                                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                                                summary.needsAttention
+                                                                    ? "border border-amber-200 bg-amber-50 text-amber-800"
+                                                                    : "border border-emerald-200 bg-emerald-50 text-emerald-800"
+                                                            }`}
+                                                        >
+                                                            {summary.needsAttention
+                                                                ? `${summary.attentionItems.length} item${summary.attentionItems.length === 1 ? "" : "s"} to check`
+                                                                : "Ready to confirm"}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="grid gap-3 sm:grid-cols-3">
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                                                            Lines
+                                                        </div>
+                                                        <div className="mt-2 text-2xl font-semibold text-slate-950">{summary.lineCount}</div>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                                                            Currency
+                                                        </div>
+                                                        <div className="mt-2 text-lg font-semibold text-slate-950">
+                                                            {summary.currencies.join(", ") || "None"}
+                                                        </div>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+                                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                                                            Applied to
+                                                        </div>
+                                                        <div className="mt-2 text-lg font-semibold text-slate-950">
+                                                            {summary.buckets.map((bucket) => BUCKET_LABELS[bucket]).join(", ") || "None"}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <aside
+                                                className={`rounded-[24px] border px-4 py-4 ${
+                                                    summary.attentionItems.length > 0
+                                                        ? "border-amber-200 bg-[linear-gradient(180deg,#fff8eb_0%,#fffdf8_100%)]"
+                                                        : "border-emerald-200 bg-[linear-gradient(180deg,#edfcf4_0%,#f7fffb_100%)]"
+                                                }`}
+                                            >
+                                                <div className={`text-[11px] font-semibold uppercase tracking-[0.24em] ${summary.attentionItems.length > 0 ? "text-amber-800" : "text-emerald-800"}`}>
+                                                    {summary.attentionItems.length > 0 ? "Check before sending" : "Ready to send"}
+                                                </div>
+                                                <p className={`mt-3 text-sm leading-6 ${summary.attentionItems.length > 0 ? "text-amber-950" : "text-emerald-950"}`}>
+                                                    {summary.attentionItems.length > 0
+                                                        ? "These are the only imported items that still need your attention before you send the quote."
+                                                        : "This imported source is already organized and ready to be included in the final quote."}
+                                                </p>
+                                                {summary.attentionItems.length > 0 ? (
+                                                    <ul className="mt-4 space-y-3 text-sm leading-6 text-amber-950">
+                                                        {summary.attentionItems.map((item) => (
+                                                            <li key={`${summary.id}-${item}`} className="flex gap-3">
+                                                                <span className="mt-2 h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                                                <span>{item}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                ) : (
+                                                    <div className="mt-4 rounded-2xl border border-emerald-200/80 bg-white/70 px-4 py-3 text-sm text-emerald-900">
+                                                        No issues need review for this import.
+                                                    </div>
+                                                )}
+                                            </aside>
+                                        </section>
                                     ))}
                                 </div>
 
                                 {overlapWarnings.length > 0 ? (
-                                    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
-                                        <div className="text-sm font-medium text-amber-900">Review Warnings</div>
-                                        <ul className="mt-2 space-y-2 text-sm text-amber-900">
+                                    <div className="rounded-[24px] border border-amber-200 bg-[linear-gradient(135deg,#fff8eb_0%,#fffdf8_100%)] px-5 py-4">
+                                        <div className="text-sm font-semibold text-amber-900">Check pricing mix</div>
+                                        <p className="mt-1 text-sm text-amber-900">
+                                            Some imported lines overlap with existing quote charges. Pick the final mix below before confirming.
+                                        </p>
+                                        <ul className="mt-3 space-y-2 text-sm text-amber-900">
                                             {overlapWarnings.map((warning) => (
-                                                <li key={warning}>• {warning}</li>
+                                                <li key={warning} className="flex gap-3">
+                                                    <span className="mt-2 h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                                    <span>{warning}</span>
+                                                </li>
                                             ))}
                                         </ul>
                                     </div>
+                                ) : hasAttentionItems ? (
+                                    <div className="rounded-[24px] border border-sky-200 bg-[linear-gradient(135deg,#f5fbff_0%,#f8fcff_100%)] px-5 py-4 text-sm text-sky-950">
+                                        The imported lines are already assigned to the right quote sections. Review the highlighted items below, then confirm the quote.
+                                    </div>
                                 ) : (
-                                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                                        Imported source batches align with the missing quote buckets. Review the lines below and confirm the final charge mix.
+                                    <div className="rounded-[24px] border border-emerald-200 bg-[linear-gradient(135deg,#edfcf4_0%,#f8fffb_100%)] px-5 py-4 text-sm text-emerald-900">
+                                        Imported charges match the missing parts of this quote and are ready to confirm.
                                     </div>
                                 )}
                             </CardContent>
@@ -889,11 +930,7 @@ export default function SpotRateEntryPage() {
                         missingComponents={missingComponents}
                         submitLabel="Confirm & Create Quote"
                         submitDisabled={quoteCreationBlocked}
-                        submitDisabledReason={
-                            quoteCreationBlocked
-                                ? "Quote creation is blocked until every imported AI source has been explicitly reviewed."
-                                : null
-                        }
+                        submitDisabledReason={quoteCreationBlocked ? "Quote creation is temporarily unavailable." : null}
                         onSaveDraft={handleSaveDraft}
                     />
 
@@ -901,7 +938,7 @@ export default function SpotRateEntryPage() {
                     <Card className="border-amber-200 bg-amber-50/60">
                         <CardContent className="pt-4">
                             <p className="text-sm text-amber-900">
-                                Final submission records the SPOT acknowledgement and creates the quote only after all imported AI sources have been reviewed. Rates are still conditional until carrier and space are confirmed.
+                                Final submission records the SPOT acknowledgement and creates the quote from the imported charges. Rates are still conditional until carrier and space are confirmed.
                             </p>
                         </CardContent>
                     </Card>
@@ -912,4 +949,5 @@ export default function SpotRateEntryPage() {
         </div >
     );
 }
+
 

@@ -14,6 +14,7 @@ class Command(BaseCommand):
                 'password': 'admin123',
                 'role': 'admin',
                 'department': None,
+                'is_active': True,
                 'is_staff': True,
                 'is_superuser': True
             },
@@ -23,6 +24,7 @@ class Command(BaseCommand):
                 'password': 'manager123',
                 'role': 'manager',
                 'department': 'AIR',
+                'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
             },
@@ -32,6 +34,7 @@ class Command(BaseCommand):
                 'password': 'sales123',
                 'role': 'sales',
                 'department': 'AIR',
+                'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
             },
@@ -41,6 +44,7 @@ class Command(BaseCommand):
                 'password': 'finance123',
                 'role': 'finance',
                 'department': None,
+                'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
             },
@@ -51,6 +55,7 @@ class Command(BaseCommand):
                 'password': 'sales123',
                 'role': 'sales',
                 'department': 'SEA',
+                'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
             }

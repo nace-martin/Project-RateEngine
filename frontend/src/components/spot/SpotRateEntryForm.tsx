@@ -32,6 +32,16 @@ interface SpotRateEntryFormProps {
     onSaveDraft?: (charges: Omit<SPEChargeLine, 'id'>[]) => Promise<void>;
 }
 
+const normalizeSourceReference = (value?: string | null) => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+
+    return text
+        .replace(/\s*\(AI\)\s*/gi, "")
+        .replace(/^AI\s*\/\s*Analysis Suggestion$/i, "Imported rates")
+        .replace(/^Analysis Suggestion$/i, "Imported rates");
+};
+
 const CHARGE_BUCKETS: { id: SPEChargeBucket; label: string }[] = [
     { id: "airfreight", label: "Airfreight" },
     { id: "origin_charges", label: "Origin Charges" },
@@ -169,7 +179,7 @@ export function SpotRateEntryForm({
             bucket,
             is_primary_cost: bucket === "airfreight",
             conditional: assertion.status === "conditional",
-            source_reference: "AI / Analysis Suggestion",
+            source_reference: "Imported rates",
             min_charge,
             percentage_basis,
         };
@@ -242,7 +252,7 @@ export function SpotRateEntryForm({
             bucket: charge.bucket,
             is_primary_cost: charge.is_primary_cost,
             conditional: charge.conditional,
-            source_reference: charge.source_reference,
+            source_reference: normalizeSourceReference(charge.source_reference),
             min_charge: charge.min_charge ? String(charge.min_charge) : null,
             note: charge.note || "",
             exclude_from_totals: charge.exclude_from_totals,
@@ -290,7 +300,7 @@ export function SpotRateEntryForm({
             bucket: line.bucket,
             is_primary_cost: line.is_primary_cost,
             conditional: line.conditional,
-            source_reference: line.source_reference,
+            source_reference: normalizeSourceReference(line.source_reference),
             note: line.note,
             exclude_from_totals: line.exclude_from_totals,
             percentage_basis: line.percentage_basis || undefined,
@@ -306,7 +316,7 @@ export function SpotRateEntryForm({
         bucket: charge.bucket,
         is_primary_cost: charge.is_primary_cost,
         conditional: charge.conditional,
-        source_reference: charge.source_reference,
+        source_reference: normalizeSourceReference(charge.source_reference),
         min_charge: charge.min_charge,
         note: charge.note,
         exclude_from_totals: charge.exclude_from_totals,

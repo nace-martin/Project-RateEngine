@@ -42,11 +42,11 @@ export function ReplyPasteCard({
     speId,
     missingComponents = [],
     sourceBatchId = null,
-    title = "AI Rate Intake",
-    description = "Paste email replies, upload PDF quotes, or add all external rate details here once. AI will classify the charges automatically.",
+    title = "Rate Intake",
+    description = "Paste email replies, upload PDF quotes, or add all external rate details here once. Charges will be classified automatically.",
     sourceKind = "OTHER",
     targetBucket = "mixed",
-    sourceLabel = "Unified AI Intake",
+    sourceLabel = "Uploaded rates",
     sourceReference,
     hideMissingMessage = false,
     onDirtyChange,
@@ -92,7 +92,7 @@ export function ReplyPasteCard({
 
         return (
             <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-                <span className="font-semibold">Missing external rates:</span> Add everything once and AI will map it to{" "}
+                <span className="font-semibold">Missing external rates:</span> Add everything once and it will be mapped to{" "}
                 <strong>{unique.join(", ")}</strong>.
             </div>
         );
@@ -185,7 +185,7 @@ export function ReplyPasteCard({
 
                 {sourceBatchId && (
                     <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                        Re-analyzing will refresh the current AI intake source instead of creating a duplicate source entry.
+                        Re-analyzing will refresh the current imported source instead of creating a duplicate source entry.
                     </div>
                 )}
 

@@ -11,17 +11,29 @@ class Command(BaseCommand):
         username = os.getenv("DEV_ADMIN_USER", "nas")
         email = os.getenv("DEV_ADMIN_EMAIL", "nas@example.com")
         password = os.getenv("DEV_ADMIN_PASS", "ChangeMe123!")
+        admin_role = getattr(User, "ROLE_ADMIN", "admin")
 
         user, created = User.objects.get_or_create(
             username=username,
-            defaults={"email": email, "is_staff": True, "is_superuser": True},
+            defaults={
+                "email": email,
+                "role": admin_role,
+                "is_active": True,
+                "is_staff": True,
+                "is_superuser": True,
+            },
         )
-        if created:
-            user.set_password(password)
-            user.save()
-            self.stdout.write(self.style.SUCCESS(f"Created superuser '{username}'"))
-        else:
-            self.stdout.write(f"Superuser '{username}' already exists")
+        user.email = email
+        if hasattr(user, "role"):
+            user.role = admin_role
+        user.is_active = True
+        user.is_staff = True
+        user.is_superuser = True
+        user.set_password(password)
+        user.save()
+
+        action = "Created" if created else "Reset"
+        self.stdout.write(self.style.SUCCESS(f"{action} superuser '{username}'"))
 
         try:
             from rest_framework.authtoken.models import Token

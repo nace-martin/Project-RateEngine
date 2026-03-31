@@ -258,7 +258,7 @@ def _intake_safety_error_response(spe_db: SpotPricingEnvelopeDB):
         return None
     return Response(
         {
-            "error": "AI intake review is incomplete. Review each imported source and confirm it is safe before continuing.",
+            "error": "Imported source review is incomplete. Review each imported source before continuing.",
             "intake_safety": intake_safety,
         },
         status=status.HTTP_400_BAD_REQUEST,
@@ -1381,7 +1381,7 @@ class SpotReplyAnalysisAPIView(APIView):
 
                 source_reference = str(
                     request.data.get('source_reference')
-                    or (pdf_file.name if pdf_file else "Agent reply (AI)")
+                    or (pdf_file.name if pdf_file else "Agent reply")
                 )
                 source_label = str(
                     request.data.get('label')
@@ -1806,7 +1806,7 @@ class SpotSourceBatchReviewAPIView(APIView):
         if reviewed_safe_to_quote and summary["requires_review_note"] and not review_note:
             return Response(
                 {
-                    "error": "High-risk AI findings require a reviewer note before this source can be approved.",
+                    "error": "High-risk import findings require a reviewer note before this source can be approved.",
                     "source_batch_id": str(batch.id),
                     "blocking_reasons": summary["blocking_reasons"],
                 },

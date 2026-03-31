@@ -285,6 +285,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'N/A',
             'BASE_COST',
             'DEFAULT',
+            'AGENT REPLY',
             'AGENT REPLY (AI)',
             'SYSTEM',
             '',

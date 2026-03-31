@@ -5,10 +5,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Control, UseFieldArrayRemove, FieldArrayWithId } from "react-hook-form";
+import { Control, UseFieldArrayRemove, FieldArrayWithId, useWatch } from "react-hook-form";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
 import type { SPEChargeBucket } from "@/lib/spot-types";
 import { SmartMoneyInput } from "./SmartMoneyInput";
+import { useConfirm } from "@/hooks/useConfirm";
+import { useToast } from "@/context/toast-context";
 
 interface ChargeBucketSectionProps {
     bucket: { id: SPEChargeBucket; label: string };
@@ -30,6 +32,19 @@ const CHARGE_UNITS = [
     { value: "per_man", label: "Per Man" },
 ];
 
+const IMPORTED_SOURCE_MARKERS = [
+    "AGENT REPLY",
+    "ANALYSIS",
+    "RATE INTAKE",
+    "UPLOADED RATES",
+];
+
+const isImportedChargeLine = (sourceReference?: string | null) => {
+    const normalized = String(sourceReference || "").trim().toUpperCase();
+    if (!normalized) return false;
+    return IMPORTED_SOURCE_MARKERS.some((marker) => normalized.includes(marker));
+};
+
 export function ChargeBucketSection({
     bucket,
     control,
@@ -37,14 +52,54 @@ export function ChargeBucketSection({
     onAdd,
     onRemove
 }: ChargeBucketSectionProps) {
+    const confirm = useConfirm();
+    const { toast } = useToast();
+    const watchedCharges = useWatch({
+        control,
+        name: "charges",
+    });
+
+    const handleRemove = async (index: number) => {
+        const currentLine = watchedCharges?.[index];
+        const lineNumber = fields.findIndex((item) => item.index === index) + 1;
+        const description = String(currentLine?.description || "").trim() || `Line ${lineNumber}`;
+        const sourceReference = String(currentLine?.source_reference || "").trim();
+
+        if (isImportedChargeLine(sourceReference)) {
+            const confirmed = await confirm({
+                title: "Remove imported charge line?",
+                description: `Line ${lineNumber} (${description}) came from the imported rates. If you remove it, it will stay out of this quote unless you add it back manually or re-import the source.`,
+                confirmLabel: "Remove line",
+                cancelLabel: "Keep line",
+                variant: "destructive",
+            });
+            if (!confirmed) return;
+
+            onRemove(index);
+            toast({
+                title: "Imported line removed",
+                description: `Line ${lineNumber} was removed from ${bucket.label}.`,
+                variant: "success",
+            });
+            return;
+        }
+
+        onRemove(index);
+    };
+
     return (
         <Card className="border-border shadow-sm">
             <CardHeader className="pb-4 border-b border-border bg-muted/20">
                 <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                        <CardTitle className="text-lg font-semibold text-primary">
-                            {bucket.label}
-                        </CardTitle>
+                        <div className="flex items-center gap-3">
+                            <CardTitle className="text-lg font-semibold text-primary">
+                                {bucket.label}
+                            </CardTitle>
+                            <div className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                                {fields.length} line{fields.length === 1 ? "" : "s"}
+                            </div>
+                        </div>
                         <CardDescription>
                             {bucket.id === "airfreight" ? "Primary cost line required" : "Enter itemized charges"}
                         </CardDescription>
@@ -62,9 +117,10 @@ export function ChargeBucketSection({
             </CardHeader>
             <CardContent className="p-0">
                 {fields.length > 0 ? (
-                    <Table>
-                        <TableHeader className="bg-muted/10">
+                        <Table>
+                            <TableHeader className="bg-muted/10">
                             <TableRow>
+                                <TableHead className="w-[72px]">Line</TableHead>
                                 <TableHead className="w-[30%]">Description</TableHead>
                                 <TableHead className="w-[25%]">Amount</TableHead>
                                 <TableHead className="w-[15%]">Unit</TableHead>
@@ -75,6 +131,11 @@ export function ChargeBucketSection({
                         <TableBody>
                             {fields.map(({ field, index }) => (
                                 <TableRow key={field.id} className="group align-top">
+                                    <TableCell className="align-top py-4">
+                                        <div className="inline-flex min-w-[44px] items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                                            {index + 1}
+                                        </div>
+                                    </TableCell>
                                     <TableCell className="align-top py-4">
                                         <FormField
                                             control={control}
@@ -190,7 +251,7 @@ export function ChargeBucketSection({
                                             type="button"
                                             variant="ghost"
                                             size="sm"
-                                            onClick={() => onRemove(index)}
+                                            onClick={() => void handleRemove(index)}
                                             className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
                                         >
                                             <span className="sr-only">Remove</span>

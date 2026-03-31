@@ -1871,12 +1871,12 @@ class ReplyAnalysisService:
             if audit_result:
                 if audit_result.missed_charges:
                     warnings.append(
-                        "⚠️ AI critic flagged possible missed charges: "
+                        "⚠️ Possible missed charges: "
                         + ", ".join(audit_result.missed_charges)
                     )
                 if audit_result.hallucinations_detected:
                     warnings.append(
-                        "⚠️ AI critic flagged possible hallucinations: "
+                        "⚠️ Please verify these charges: "
                         + ", ".join(audit_result.hallucinations_detected)
                     )
 
@@ -1887,15 +1887,15 @@ class ReplyAnalysisService:
             ]
             if unmapped_labels:
                 warnings.append(
-                    "⚠️ AI returned unmapped charges requiring manual review: "
+                    "⚠️ Some imported charges need manual review: "
                     + ", ".join(unmapped_labels)
                 )
 
             if not ai_result.success:
-                warnings.append(f"⚠️ AI analysis failed: {ai_result.error}. Falling back to standard rates.")
+                warnings.append(f"⚠️ Import analysis failed: {ai_result.error}. Falling back to standard rates.")
             elif ai_result.warnings:
                 for w in ai_result.warnings:
-                    warnings.append(f"⚠️ AI: {w}")
+                    warnings.append(f"⚠️ {w}")
 
         return ReplyAnalysisResult(
             raw_text=raw_text,
@@ -1973,19 +1973,13 @@ class ReplyAnalysisService:
         
         warnings = []
         
+        # Only surface warnings that require a pricing decision or follow-up.
+        # Routine AI assumptions should not be promoted into review warnings.
         # Mandatory field warnings
         if not summary.has_rate:
             warnings.append("⛔ MISSING: Airfreight rate is required")
         if not summary.has_currency:
             warnings.append("⛔ MISSING: Rate currency is required")
-        if not summary.has_validity:
-            warnings.append("⚠️ Validity not specified - assuming 72 hours")
-        
-        # Optional field warnings
-        if not summary.has_routing:
-            warnings.append("⚠️ Routing not specified - may involve multiple legs")
-        if not summary.has_acceptance:
-            warnings.append("⚠️ Space/acceptance not confirmed")
         
         # Conditional/implicit warnings
         conditional = [a for a in assertions if a.status == AssertionStatus.CONDITIONAL]

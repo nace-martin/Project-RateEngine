@@ -762,7 +762,7 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     assert data["is_complete"] is True
 
 
-def test_ai_source_review_required_before_acknowledgement_and_quote_creation(monkeypatch):
+def test_ai_source_warnings_do_not_block_acknowledgement(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_spe(
         user=user,
@@ -808,45 +808,10 @@ def test_ai_source_review_required_before_acknowledgement_and_quote_creation(mon
     detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
     assert detail_response.status_code == 200
     detail_payload = detail_response.json()
-    assert detail_payload["intake_safety"]["is_safe_to_quote"] is False
-    assert detail_payload["sources"][0]["review_status"] == "PENDING"
+    assert detail_payload["intake_safety"]["is_safe_to_quote"] is True
+    assert detail_payload["intake_safety"]["blocking_issues"] == []
+    assert detail_payload["sources"][0]["review_status"] == "NOT_REQUIRED"
     assert detail_payload["sources"][0]["warnings"] == ["Possible missed destination charges. Review before quoting."]
-
-    acknowledge_response = client.post(
-        f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
-        {},
-        format="json",
-    )
-    assert acknowledge_response.status_code == 400
-    assert "AI intake review is incomplete" in acknowledge_response.json()["error"]
-
-    create_quote_response = client.post(
-        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
-        {"quote_request": {"service_scope": "D2D", "payment_term": "PREPAID", "output_currency": "PGK"}},
-        format="json",
-    )
-    assert create_quote_response.status_code == 400
-    assert "AI intake review is incomplete" in create_quote_response.json()["error"]
-
-    source_batch_id = detail_payload["sources"][0]["id"]
-    review_response = client.post(
-        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
-        {"reviewed_safe_to_quote": True},
-        format="json",
-    )
-    assert review_response.status_code == 400
-    assert "reviewer note" in review_response.json()["error"].lower()
-
-    review_response = client.post(
-        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch_id}/review/",
-        {"reviewed_safe_to_quote": True, "review_note": "Compared against supplier email and added the missing destination fee manually."},
-        format="json",
-    )
-    assert review_response.status_code == 200
-    reviewed_payload = review_response.json()
-    assert reviewed_payload["intake_safety"]["is_safe_to_quote"] is True
-    assert reviewed_payload["sources"][0]["review_status"] == "APPROVED"
-    assert reviewed_payload["sources"][0]["reviewed_safe_to_quote"] is True
 
     acknowledge_response = client.post(
         f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
@@ -950,8 +915,8 @@ def test_ai_autofill_only_adds_ai_charges_and_preserves_existing_standard_lines(
     assert origin_charge.source_reference == "Standard Rate (ExportCOGS)"
     assert origin_charge.amount == Decimal("50.00")
 
-    # AI line has AGENT_REPLY_AI source
-    assert destination_charge.source_reference == "Agent reply (AI)"
+    # Imported line keeps the agent reply source reference
+    assert destination_charge.source_reference == "Agent reply"
     assert destination_charge.amount == Decimal("75.00")
 
 
