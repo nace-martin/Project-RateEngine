@@ -354,22 +354,26 @@ export default function SpotRateEntryPage() {
         return Array.from(mergedMap.values());
     }, [state.spe?.charges, standardPrefillCharges]);
 
-    const reviewFormCharges = useMemo(() => {
+    const allReviewFormCharges = useMemo(() => {
         // Review form should only contain SPOT-entered/manual rates.
         // Exclude any DB standard-rate lines from the editable SPE payload.
         const candidateCharges = mergedFormCharges.filter(
             (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
         );
-        if (editableBuckets.length === 0) return candidateCharges;
+        return candidateCharges;
+    }, [mergedFormCharges]);
+
+    const visibleReviewFormCharges = useMemo(() => {
+        if (editableBuckets.length === 0) return allReviewFormCharges;
         const editableBucketSet = new Set(editableBuckets);
-        return candidateCharges.filter((charge) => editableBucketSet.has(charge.bucket));
-    }, [mergedFormCharges, editableBuckets]);
+        return allReviewFormCharges.filter((charge) => editableBucketSet.has(charge.bucket));
+    }, [allReviewFormCharges, editableBuckets]);
 
     const sourceReviewSummaries = useMemo(() => {
         const charges = (state.spe?.charges || EMPTY_CHARGES).filter(
             (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
         );
-        const visibleImportedCharges = reviewFormCharges.filter(
+        const visibleImportedCharges = visibleReviewFormCharges.filter(
             (charge) => !isBuySideCharge(charge) && !isStandardRateCharge(charge)
         );
         return (state.spe?.sources || []).map((source) => {
@@ -416,7 +420,7 @@ export default function SpotRateEntryPage() {
                 needsAttention: attentionItems.length > 0,
             };
         });
-    }, [editableBuckets, reviewFormCharges, state.spe?.charges, state.spe?.sources]);
+    }, [editableBuckets, state.spe?.charges, state.spe?.sources, visibleReviewFormCharges]);
 
     const intakeSafety = state.spe?.intake_safety;
     const quoteCreationBlocked = Boolean(intakeSafety && !intakeSafety.is_safe_to_quote);
@@ -923,7 +927,7 @@ export default function SpotRateEntryPage() {
                     <SpotRateEntryForm
                         onSubmit={handleSaveAndCreateQuote}
                         isLoading={state.isLoading}
-                        initialCharges={reviewFormCharges}
+                        initialCharges={allReviewFormCharges}
                         suggestedCharges={analysisResult?.assertions || []}
                         shipmentType={resolvedShipmentType}
                         serviceScope={serviceScope}

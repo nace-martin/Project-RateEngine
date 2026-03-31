@@ -276,11 +276,11 @@ export function SpotRateEntryForm({
 
     const hiddenExistingCharges = useMemo(
         () => {
-            // In strict missing-components mode, keep non-visible buckets out of SPE submit payload.
-            if (missingComponents.length > 0) return [];
+            // Preserve non-visible SPOT charges so saving one bucket does not wipe out
+            // previously imported or edited charges in the other required buckets.
             return initialCharges.filter(c => !visibleBuckets.includes(c.bucket));
         },
-        [initialCharges, visibleBuckets, missingComponents.length]
+        [initialCharges, visibleBuckets]
     );
 
     const { fields, append, remove } = useFieldArray({
