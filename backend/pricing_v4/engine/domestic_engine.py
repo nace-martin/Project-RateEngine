@@ -10,6 +10,13 @@ from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_cod
 from pricing_v4.models import ProductCode
 from pricing_v4.models import DomesticCOGS, DomesticSellRate, Surcharge
 from core.charge_rules import evaluate_charge_rule
+from quotes.quote_result_contract import (
+    QuoteComponent,
+    QuoteCostSource,
+    QuoteRateSource,
+    QuoteRuleFamily,
+    basis_for_unit,
+)
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
 @dataclass
@@ -248,13 +255,20 @@ class DomesticPricingEngine:
                 QuoteLineItem(
                     product_code=charge.product_code,
                     description=charge.description.replace(" (Cost)", ""),
+                    component=QuoteComponent.FREIGHT if charge.product_code == 'DOM-FRT-AIR' else QuoteComponent.ORIGIN_LOCAL,
+                    basis=basis_for_unit('KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT'),
+                    rule_family=QuoteRuleFamily.STANDARD_RATE if charge.product_code == 'DOM-FRT-AIR' else QuoteRuleFamily.FLAT,
+                    unit_type='KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT',
+                    quantity=Decimal('1.00'),
+                    currency='PGK',
                     category='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'SURCHARGE',
                     leg='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'ORIGIN',
                 ),
             )
             item.cost_amount += charge.amount
             item.cost_currency = 'PGK'
-            item.cost_source = 'COGS'
+            item.cost_source = QuoteCostSource.DB_TARIFF
+            item.rate_source = QuoteRateSource.DB_TARIFF
             item.agent_name = charge.agent_name
 
         for charge in sell_breakdown:
@@ -263,15 +277,23 @@ class DomesticPricingEngine:
                 QuoteLineItem(
                     product_code=charge.product_code,
                     description=charge.description,
+                    component=QuoteComponent.FREIGHT if charge.product_code == 'DOM-FRT-AIR' else QuoteComponent.ORIGIN_LOCAL,
+                    basis=basis_for_unit('KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT'),
+                    rule_family=QuoteRuleFamily.STANDARD_RATE if charge.product_code == 'DOM-FRT-AIR' else QuoteRuleFamily.FLAT,
+                    unit_type='KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT',
+                    quantity=Decimal('1.00'),
+                    currency='PGK',
                     category='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'SURCHARGE',
                     leg='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'ORIGIN',
                 ),
             )
             item.sell_amount += charge.amount
             item.sell_currency = 'PGK'
+            item.tax_code = 'service_in_PNG'
             item.gst_category = 'service_in_PNG'
             item.gst_rate = Decimal('0.10')
             item.gst_amount = item.sell_amount * Decimal('0.10')
+            item.tax_amount = item.gst_amount
             item.sell_incl_gst = item.sell_amount + item.gst_amount
             item.margin_amount = item.sell_amount - item.cost_amount
             if item.cost_amount > 0:

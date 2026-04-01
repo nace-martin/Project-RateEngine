@@ -19,6 +19,7 @@ from quotes.intake_safety import (
     evaluate_envelope_intake_safety,
     normalize_source_analysis_summary,
 )
+from quotes.quote_result_contract import build_quote_result_from_quote
 # --- END IMPORTS ---
 
 # --- V3 Serializers ---
@@ -240,6 +241,88 @@ class QuoteBrandingSerializer(serializers.Serializer):
     accent_color = serializers.CharField(allow_blank=True)
     logo_url = serializers.CharField(allow_null=True, allow_blank=True)
 
+
+class CanonicalFxAppliedSerializer(serializers.Serializer):
+    applied = serializers.BooleanField()
+    rate = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True)
+    source = serializers.CharField(allow_null=True, allow_blank=True)
+    snapshot_date = serializers.DateTimeField(allow_null=True)
+    caf_percent = serializers.DecimalField(max_digits=10, decimal_places=4, allow_null=True)
+    currency = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class CanonicalTaxBreakdownSerializer(serializers.Serializer):
+    gst_percent = serializers.DecimalField(max_digits=10, decimal_places=2)
+    gst_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    tax_basis = serializers.CharField(allow_null=True, allow_blank=True)
+    by_code = serializers.DictField(child=serializers.DecimalField(max_digits=18, decimal_places=2))
+
+
+class CanonicalQuoteLineItemSerializer(serializers.Serializer):
+    line_id = serializers.CharField(allow_blank=True)
+    product_code = serializers.CharField(allow_blank=True)
+    description = serializers.CharField()
+    component = serializers.CharField()
+    basis = serializers.CharField()
+    rule_family = serializers.CharField()
+    unit_type = serializers.CharField()
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=2)
+    currency = serializers.CharField()
+    cost_currency = serializers.CharField(required=False)
+    sell_currency = serializers.CharField(required=False)
+    rate = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True)
+    cost_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    sell_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    tax_code = serializers.CharField()
+    tax_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    included_in_total = serializers.BooleanField()
+    cost_source = serializers.CharField()
+    rate_source = serializers.CharField()
+    calculation_notes = serializers.CharField(allow_null=True, allow_blank=True)
+    is_spot_sourced = serializers.BooleanField()
+    is_manual_override = serializers.BooleanField()
+    sort_order = serializers.IntegerField()
+
+
+class CanonicalQuoteResultSerializer(serializers.Serializer):
+    quote_id = serializers.CharField()
+    status = serializers.CharField(allow_null=True, allow_blank=True)
+    customer_name = serializers.CharField(allow_null=True, allow_blank=True)
+    service_scope = serializers.CharField(allow_null=True, allow_blank=True)
+    mode = serializers.CharField(allow_null=True, allow_blank=True)
+    origin = serializers.CharField(allow_blank=True)
+    destination = serializers.CharField(allow_blank=True)
+    incoterm = serializers.CharField(allow_null=True, allow_blank=True)
+    cargo_type = serializers.CharField(allow_null=True, allow_blank=True)
+    pieces = serializers.IntegerField()
+    actual_weight = serializers.DecimalField(max_digits=18, decimal_places=2)
+    volumetric_weight = serializers.DecimalField(max_digits=18, decimal_places=2)
+    chargeable_weight = serializers.DecimalField(max_digits=18, decimal_places=2)
+    dimensions_summary = serializers.CharField(allow_null=True, allow_blank=True)
+    line_items = CanonicalQuoteLineItemSerializer(many=True)
+    currency = serializers.CharField()
+    sell_total = serializers.DecimalField(max_digits=18, decimal_places=2)
+    total_cost_pgk = serializers.DecimalField(max_digits=18, decimal_places=2)
+    total_sell_pgk = serializers.DecimalField(max_digits=18, decimal_places=2)
+    margin_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    margin_percent = serializers.DecimalField(max_digits=18, decimal_places=2)
+    fx_applied = CanonicalFxAppliedSerializer()
+    tax_breakdown = CanonicalTaxBreakdownSerializer()
+    warnings = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    missing_components = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    spot_required = serializers.BooleanField()
+    engine_name = serializers.CharField(allow_null=True, allow_blank=True)
+    rate_source = serializers.CharField()
+    service_notes = serializers.CharField(allow_null=True, allow_blank=True)
+    customer_notes = serializers.CharField(allow_null=True, allow_blank=True)
+    internal_notes = serializers.CharField(allow_null=True, allow_blank=True)
+    prepared_by = serializers.CharField(allow_null=True, allow_blank=True)
+    created_at = serializers.DateTimeField(allow_null=True)
+    calculated_at = serializers.DateTimeField(allow_null=True)
+    quote_version = serializers.IntegerField(allow_null=True)
+    payment_term = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    valid_until = serializers.DateField(allow_null=True, required=False)
+
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
     The main serializer for the Quote model, used for GET requests
@@ -259,6 +342,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     rate_provider = serializers.SerializerMethodField()
     spot_negotiation = serializers.SerializerMethodField()
     branding = serializers.SerializerMethodField()
+    quote_result = serializers.SerializerMethodField()
     
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -326,6 +410,12 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         branding = get_quote_branding(obj, request=request)
         return QuoteBrandingSerializer(branding).data
 
+    def get_quote_result(self, obj):
+        if not getattr(obj, "latest_version", None):
+            return None
+        payload = build_quote_result_from_quote(obj, obj.latest_version)
+        return CanonicalQuoteResultSerializer(payload).data
+
     class Meta:
         model = Quote
         fields = (
@@ -334,7 +424,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'origin_location', 'destination_location',
             'status', 'valid_until', 'created_at',
             'latest_version', 'request_details_json', 'spot_negotiation',
-            'created_by', 'rate_provider', 'branding'
+            'created_by', 'rate_provider', 'branding', 'quote_result'
         )
 
 class QuoteListSerializerV3(serializers.ModelSerializer):

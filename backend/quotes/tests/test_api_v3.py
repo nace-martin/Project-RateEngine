@@ -14,6 +14,7 @@ from parties.models import Company, Contact, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.spot_models import SpotPricingEnvelopeDB
 from core.models import Location
+from services.models import ServiceComponent
 
 
 class QuoteRetrieveV3APITest(APITestCase):
@@ -320,3 +321,183 @@ class QuoteListV3APITest(APITestCase):
         # Totals should still be there
         self.assertIn("totals", first_quote["latest_version"])
         self.assertEqual(first_quote["latest_version"]["totals"]["total_sell_fcy"], "100.00")
+
+
+class QuoteCanonicalResultContractAPITest(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="canonicaltester",
+            password="pass123",
+            email="canonicaltester@example.com",
+        )
+        self.client.force_authenticate(user=self.user)
+
+        customer = Company.objects.create(name="Canonical Customer")
+        contact = Contact.objects.create(
+            company=customer,
+            first_name="Casey",
+            last_name="Ng",
+            email="casey.ng@example.com",
+        )
+        origin_location = create_location(name="Sydney", code="SYD")
+        destination_location = create_location(name="Port Moresby", code="POM")
+
+        self.quote = Quote.objects.create(
+            customer=customer,
+            contact=contact,
+            mode="AIR",
+            shipment_type=Quote.ShipmentType.IMPORT,
+            incoterm="DAP",
+            payment_term=Quote.PaymentTerm.PREPAID,
+            service_scope="D2D",
+            output_currency="USD",
+            origin_location=origin_location,
+            destination_location=destination_location,
+            status=Quote.Status.INCOMPLETE,
+            created_by=self.user,
+            request_details_json={
+                "dimensions": [
+                    {
+                        "pieces": 2,
+                        "length_cm": "40",
+                        "width_cm": "30",
+                        "height_cm": "20",
+                        "gross_weight_kg": "25",
+                        "package_type": "Box",
+                    }
+                ]
+            },
+        )
+
+        version = QuoteVersion.objects.create(
+            quote=self.quote,
+            version_number=1,
+            status=Quote.Status.INCOMPLETE,
+            created_by=self.user,
+            engine_version="V4",
+            payload_json=self.quote.request_details_json,
+        )
+        self.quote.latest_version = version
+
+        freight_component = ServiceComponent.objects.create(
+            code=f"FRTTEST-{uuid4().hex[:6].upper()}",
+            description="Air Freight Test",
+            mode="AIR",
+            leg="MAIN",
+            category="TRANSPORT",
+            unit="KG",
+        )
+
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=freight_component,
+            cost_pgk=Decimal("120.00"),
+            sell_pgk=Decimal("180.00"),
+            sell_pgk_incl_gst=Decimal("198.00"),
+            sell_fcy=Decimal("55.00"),
+            sell_fcy_incl_gst=Decimal("60.50"),
+            sell_fcy_currency="USD",
+            exchange_rate=Decimal("0.520000"),
+            bucket="airfreight",
+            leg="MAIN",
+            cost_source="BASE_COST",
+            cost_source_description="Tariff freight line",
+            gst_category="service_in_PNG",
+            gst_rate=Decimal("0.1000"),
+            gst_amount=Decimal("18.00"),
+            is_rate_missing=False,
+        )
+
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=None,
+            cost_pgk=Decimal("0.00"),
+            sell_pgk=Decimal("0.00"),
+            sell_pgk_incl_gst=Decimal("0.00"),
+            sell_fcy=Decimal("0.00"),
+            sell_fcy_incl_gst=Decimal("0.00"),
+            sell_fcy_currency="USD",
+            bucket="origin_charges",
+            leg="ORIGIN",
+            cost_source=None,
+            cost_source_description=None,
+            gst_amount=Decimal("0.00"),
+            is_rate_missing=True,
+        )
+
+        QuoteTotal.objects.create(
+            quote_version=version,
+            total_cost_pgk=Decimal("120.00"),
+            total_sell_pgk=Decimal("180.00"),
+            total_sell_pgk_incl_gst=Decimal("198.00"),
+            total_sell_fcy=Decimal("55.00"),
+            total_sell_fcy_incl_gst=Decimal("60.50"),
+            total_sell_fcy_currency="USD",
+            has_missing_rates=True,
+            notes="Legacy totals note",
+        )
+
+        self.detail_url = reverse("quotes:quote-v3-detail", kwargs={"pk": self.quote.id})
+        self.compute_url = f"/api/v3/quotes/{self.quote.id}/compute_v3/"
+
+    def test_detail_and_compute_v3_expose_same_canonical_quote_result(self):
+        detail_response = self.client.get(self.detail_url)
+        compute_response = self.client.get(self.compute_url)
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(compute_response.status_code, status.HTTP_200_OK)
+
+        detail_quote_result = detail_response.json()["quote_result"]
+        compute_quote_result = compute_response.json()["quote_result"]
+
+        self.assertEqual(detail_quote_result, compute_quote_result)
+        self.assertIn("line_items", detail_quote_result)
+        self.assertEqual(detail_quote_result["quote_id"], str(self.quote.id))
+        self.assertEqual(detail_quote_result["currency"], "USD")
+        self.assertEqual(detail_quote_result["rate_source"], "FALLBACK_RULE")
+        self.assertTrue(detail_quote_result["spot_required"])
+        self.assertCountEqual(
+            detail_quote_result["missing_components"],
+            ["ORIGIN_LOCAL", "DESTINATION_LOCAL"],
+        )
+
+    def test_canonical_line_items_include_required_audit_fields_and_safe_defaults(self):
+        response = self.client.get(self.detail_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        line_items = response.json()["quote_result"]["line_items"]
+        self.assertEqual(len(line_items), 2)
+
+        freight_line = next(line for line in line_items if line["product_code"])
+        fallback_line = next(line for line in line_items if not line["product_code"])
+
+        self.assertEqual(freight_line["component"], "FREIGHT")
+        self.assertEqual(freight_line["unit_type"], "KG")
+        self.assertEqual(freight_line["cost_source"], "DB_TARIFF")
+        self.assertEqual(freight_line["rate_source"], "DB_TARIFF")
+        self.assertEqual(freight_line["tax_code"], "service_in_PNG")
+
+        self.assertEqual(fallback_line["basis"], "Per Shipment")
+        self.assertEqual(fallback_line["rule_family"], "FLAT")
+        self.assertEqual(fallback_line["cost_source"], "FALLBACK_RULE")
+        self.assertEqual(fallback_line["rate_source"], "FALLBACK_RULE")
+        self.assertEqual(fallback_line["included_in_total"], False)
+        self.assertEqual(fallback_line["quantity"], "1.00")
+
+    def test_canonical_quote_result_surfaces_safe_top_level_defaults(self):
+        response = self.client.get(self.detail_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        quote_result = response.json()["quote_result"]
+        self.assertEqual(quote_result["pieces"], 2)
+        self.assertEqual(quote_result["actual_weight"], "50.00")
+        self.assertEqual(quote_result["volumetric_weight"], "8.00")
+        self.assertEqual(quote_result["chargeable_weight"], "50.00")
+        self.assertEqual(quote_result["sell_total"], "60.50")
+        self.assertEqual(quote_result["margin_amount"], "60.00")
+        self.assertEqual(quote_result["margin_percent"], "33.33")
+        self.assertEqual(quote_result["fx_applied"]["applied"], True)
+        self.assertEqual(quote_result["service_notes"], "Legacy totals note")
+        self.assertEqual(quote_result["customer_notes"], None)
+        self.assertEqual(quote_result["internal_notes"], None)
