@@ -1,5 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
+import { useFormContext, useWatch } from "react-hook-form";
+
 import {
   FormControl,
   FormDescription,
@@ -16,18 +19,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  getValidIncoterms,
+  type QuoteFormSchemaV3,
   V3_INCOTERMS,
   V3_PAYMENT_TERMS,
 } from "@/lib/schemas/quoteSchema";
 import { formatPaymentTerm } from "@/lib/display";
+import { useQuoteStore } from "@/store/useQuoteStore";
 
-import type { QuoteTermsSectionProps } from "./quote-section-types";
+export default function QuoteTermsSection() {
+  const form = useFormContext<QuoteFormSchemaV3>();
+  const destinationLocation = useQuoteStore((state) => state.destinationLocation);
+  const serviceScope = useWatch({ control: form.control, name: "service_scope" });
+  const paymentTerm = useWatch({ control: form.control, name: "payment_term" });
+  const isImport = destinationLocation?.country_code === "PG";
+  const validIncoterms = useMemo(
+    () => getValidIncoterms(isImport, serviceScope, paymentTerm),
+    [isImport, paymentTerm, serviceScope],
+  );
 
-export default function QuoteTermsSection({
-  form,
-  isImport,
-  validIncoterms,
-}: QuoteTermsSectionProps) {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       <FormField

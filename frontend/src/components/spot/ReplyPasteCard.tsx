@@ -59,17 +59,22 @@ export function ReplyPasteCard({
     const [internalIsLoading, setInternalIsLoading] = useState(false);
     const submitLockRef = useRef(false);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const onDirtyChangeRef = useRef(onDirtyChange);
 
     const isLoading = externalIsLoading || internalIsLoading;
 
     useEffect(() => {
+        onDirtyChangeRef.current = onDirtyChange;
+    }, [onDirtyChange]);
+
+    useEffect(() => {
         const isDirty = Boolean(text.trim() || selectedFile);
-        onDirtyChange?.(isDirty);
+        onDirtyChangeRef.current?.(isDirty);
 
         return () => {
-            onDirtyChange?.(false);
+            onDirtyChangeRef.current?.(false);
         };
-    }, [onDirtyChange, selectedFile, text]);
+    }, [selectedFile, text]);
 
     // Helper to format missing components
     const getMissingMessage = () => {

@@ -1,9 +1,12 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { useForm, useFieldArray, useWatch, Resolver } from "react-hook-form";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useForm, useWatch, Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 import { getContactsForCompany } from "@/lib/api/parties";
 import { validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api/spot";
+import {
+    calculateCargoMetrics,
+} from "@/components/forms/quote-sections/quote-section-types";
 import {
     quoteFormSchemaV3,
     type QuoteFormSchemaV3,
@@ -16,6 +19,9 @@ import {
 } from "@/lib/schemas/quoteSchema";
 import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
 import { SPECommodity } from "@/lib/spot-types";
+import { useQuoteStore } from "@/store/useQuoteStore";
+
+const EMPTY_CONTACTS: Contact[] = [];
 
 // Helper to map cargo type to commodity code
 const mapCargoToSPECommodity = (cargoType: string): SPECommodity => {
@@ -74,7 +80,7 @@ interface UseQuoteLogicProps {
 export function useQuoteLogic({
     defaultValues,
     initialCustomer,
-    initialContacts = [],
+    initialContacts = EMPTY_CONTACTS,
     initialOrigin,
     initialDestination,
     user,
@@ -82,14 +88,17 @@ export function useQuoteLogic({
     isEditMode = false,
 }: UseQuoteLogicProps) {
     const router = useRouter();
-    const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(defaultValues?.customer_id || null);
-    const [selectedCustomer, setSelectedCustomer] = useState<CompanySearchResult | null>(initialCustomer || null);
-    const [contacts, setContacts] = useState<Contact[]>(initialContacts);
-    const [isLoadingContacts, setIsLoadingContacts] = useState(false);
     const [internalError, setInternalError] = useState<string | null>(null);
-    const [originLocation, setOriginLocation] = useState<LocationSearchResult | null>(initialOrigin || null);
-    const [destinationLocation, setDestinationLocation] = useState<LocationSearchResult | null>(initialDestination || null);
     const submitLockRef = useRef(false);
+    const selectedCustomer = useQuoteStore((state) => state.selectedCustomer);
+    const originLocation = useQuoteStore((state) => state.originLocation);
+    const destinationLocation = useQuoteStore((state) => state.destinationLocation);
+    const setContacts = useQuoteStore((state) => state.setContacts);
+    const setIsLoadingContacts = useQuoteStore((state) => state.setIsLoadingContacts);
+    const setSelectedCustomer = useQuoteStore((state) => state.setSelectedCustomer);
+    const setOriginLocation = useQuoteStore((state) => state.setOriginLocation);
+    const setDestinationLocation = useQuoteStore((state) => state.setDestinationLocation);
+    const setSpotMode = useQuoteStore((state) => state.setSpotMode);
 
     const form = useForm<QuoteFormSchemaV3>({
         resolver: zodResolver(quoteFormSchemaV3) as Resolver<QuoteFormSchemaV3>,
@@ -121,56 +130,53 @@ export function useQuoteLogic({
         },
     });
 
-    const { fields, append, remove } = useFieldArray({
-        control: form.control,
-        name: "dimensions",
-    });
+    useEffect(() => {
+        setSelectedCustomer(initialCustomer || null);
+        setContacts(initialContacts);
+        setOriginLocation(initialOrigin || null);
+        setDestinationLocation(initialDestination || null);
+        setSpotMode(false);
+    }, [
+        initialContacts,
+        initialCustomer,
+        initialDestination,
+        initialOrigin,
+        setContacts,
+        setDestinationLocation,
+        setOriginLocation,
+        setSelectedCustomer,
+        setSpotMode,
+    ]);
 
-    // --- Metrics Calculation ---
     const watchedDimensions = useWatch({
         control: form.control,
         name: "dimensions",
     });
+    const selectedCustomerId = useWatch({
+        control: form.control,
+        name: "customer_id",
+    });
+    const serviceScope = useWatch({
+        control: form.control,
+        name: "service_scope",
+    });
+    const paymentTerm = useWatch({
+        control: form.control,
+        name: "payment_term",
+    });
+    const currentIncoterm = useWatch({
+        control: form.control,
+        name: "incoterm",
+    });
 
     const cargoMetrics = useMemo(() => {
-        if (!watchedDimensions || watchedDimensions.length === 0) {
-            return { pieces: 0, actualWeight: 0, volumetricWeight: 0, chargeableWeight: 0 };
-        }
-
-        let totalPieces = 0;
-        let totalActual = 0;
-        let totalVolumetric = 0;
-
-        for (const dim of watchedDimensions) {
-            const pcs = parseInt(String(dim.pieces), 10) || 0;
-            const l = parseFloat(String(dim.length_cm)) || 0;
-            const w = parseFloat(String(dim.width_cm)) || 0;
-            const h = parseFloat(String(dim.height_cm)) || 0;
-            const kg = parseFloat(String(dim.gross_weight_kg)) || 0;
-
-            totalPieces += pcs;
-            totalActual += kg * pcs;
-            totalVolumetric += (l * w * h / 6000) * pcs;
-        }
-
-        const chargeableRaw = Math.max(totalActual, totalVolumetric);
-        const chargeableRounded = chargeableRaw > 0 ? Math.ceil(chargeableRaw) : 0;
-
-        return {
-            pieces: totalPieces,
-            actualWeight: Math.round(totalActual * 10) / 10,
-            volumetricWeight: Math.round(totalVolumetric * 10) / 10,
-            chargeableWeight: chargeableRounded,
-        };
+        return calculateCargoMetrics(watchedDimensions);
     }, [watchedDimensions]);
 
     // --- Side Effects & Derived State ---
 
     // Auto-update Incoterms
     const isImport = destinationLocation?.country_code === 'PG';
-    const serviceScope = form.watch('service_scope');
-    const paymentTerm = form.watch('payment_term');
-    const currentIncoterm = form.watch('incoterm');
     const validIncoterms = useMemo(() => {
         return getValidIncoterms(isImport, serviceScope, paymentTerm);
     }, [isImport, serviceScope, paymentTerm]);
@@ -219,7 +225,7 @@ export function useQuoteLogic({
         return () => {
             isActive = false;
         };
-    }, [selectedCustomerId, user]);
+    }, [selectedCustomerId, setContacts, setIsLoadingContacts, user]);
 
     // --- Handlers ---
 
@@ -228,6 +234,7 @@ export function useQuoteLogic({
 
         submitLockRef.current = true;
         setInternalError(null);
+        setSpotMode(false);
 
         try {
             if (!user) {
@@ -278,6 +285,7 @@ export function useQuoteLogic({
                 });
 
                 if (triggerResult.is_spot_required && triggerResult.trigger) {
+                    setSpotMode(true);
                     const spe = await createSpotEnvelope({
                         shipment_context: {
                             origin_country: originCountry,
@@ -328,51 +336,18 @@ export function useQuoteLogic({
                 console.error("Spot/Trigger logic error", e);
             }
 
+            setSpotMode(false);
             await onSubmit(data);
         } finally {
             submitLockRef.current = false;
         }
     };
 
-    const setLocationFields = (
-        kind: "origin" | "destination",
-        location: LocationSearchResult | null,
-        onLocationIdChange: (value: string) => void,
-    ) => {
-        const locationId = location?.id ?? "";
-        const airportCode = (location?.code ?? "").toUpperCase();
-
-        onLocationIdChange(locationId);
-
-        if (kind === "origin") {
-            form.setValue("origin_location_type", V3_LOCATION_TYPES.AIRPORT, { shouldDirty: true, shouldValidate: true });
-            form.setValue("origin_airport", airportCode, { shouldDirty: true, shouldValidate: true });
-        } else {
-            form.setValue("destination_location_type", V3_LOCATION_TYPES.AIRPORT, { shouldDirty: true, shouldValidate: true });
-            form.setValue("destination_airport", airportCode, { shouldDirty: true, shouldValidate: true });
-        }
-    };
-
     return {
         form,
-        fields,
-        append,
-        remove,
         cargoMetrics,
         internalError,
-        contacts,
-        setContacts,
-        isLoadingContacts,
-        selectedCustomer,
-        setSelectedCustomer,
-        selectedCustomerId,
-        setSelectedCustomerId,
-        originLocation,
-        setOriginLocation,
-        destinationLocation,
-        setDestinationLocation,
         handleFormSubmit,
-        setLocationFields,
         validIncoterms,
         setInternalError
     };

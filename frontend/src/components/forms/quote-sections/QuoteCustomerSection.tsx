@@ -1,6 +1,12 @@
 "use client";
 
+import { useFormContext, useWatch } from "react-hook-form";
+
 import CompanySearch from "@/components/CompanySearchCombobox";
+import {
+  getCompletedFieldClass,
+  type QuoteFormData,
+} from "@/components/forms/quote-sections/quote-section-types";
 import {
   FormControl,
   FormField,
@@ -15,19 +21,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useQuoteStore } from "@/store/useQuoteStore";
 
-import type { QuoteCustomerSectionProps } from "./quote-section-types";
+export default function QuoteCustomerSection() {
+  const form = useFormContext<QuoteFormData>();
+  const customerId = useWatch({ control: form.control, name: "customer_id" });
+  const contacts = useQuoteStore((state) => state.contacts);
+  const isLoadingContacts = useQuoteStore((state) => state.isLoadingContacts);
+  const selectedCustomer = useQuoteStore((state) => state.selectedCustomer);
+  const setSelectedCustomer = useQuoteStore((state) => state.setSelectedCustomer);
 
-export default function QuoteCustomerSection({
-  form,
-  contacts,
-  isLoadingContacts,
-  selectedCustomer,
-  selectedCustomerId,
-  setSelectedCustomer,
-  setSelectedCustomerId,
-  getCompletedFieldClass,
-}: QuoteCustomerSectionProps) {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
       <FormField
@@ -40,7 +43,6 @@ export default function QuoteCustomerSection({
               <CompanySearch
                 onSelect={(company) => {
                   field.onChange(company?.id);
-                  setSelectedCustomerId(company?.id || null);
                   setSelectedCustomer(company);
                   form.setValue("contact_id", "");
                 }}
@@ -63,7 +65,7 @@ export default function QuoteCustomerSection({
             <Select
               onValueChange={field.onChange}
               value={field.value}
-              disabled={!selectedCustomerId || isLoadingContacts}
+              disabled={!customerId || isLoadingContacts}
             >
               <FormControl>
                 <SelectTrigger className={getCompletedFieldClass(Boolean(field.value) && (fieldState.isTouched || fieldState.isDirty))}>
@@ -71,7 +73,7 @@ export default function QuoteCustomerSection({
                     placeholder={
                       isLoadingContacts
                         ? "Loading..."
-                        : !selectedCustomerId
+                        : !customerId
                           ? "Select customer first"
                           : "Select contact"
                     }

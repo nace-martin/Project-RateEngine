@@ -8,7 +8,7 @@
  * 2. Review (Confirm & Create) - Review charges and create quote
  */
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -539,7 +539,7 @@ export default function SpotRateEntryPage() {
         setCurrentStep("review");
     };
 
-    const setIntakeDirty = (key: string, isDirty: boolean) => {
+    const setIntakeDirty = useCallback((key: string, isDirty: boolean) => {
         setIntakeDirtyMap((prev) => {
             if (prev[key] === isDirty) {
                 return prev;
@@ -550,7 +550,14 @@ export default function SpotRateEntryPage() {
                 [key]: isDirty,
             };
         });
-    };
+    }, []);
+
+    const handleMixedIntakeDirtyChange = useCallback(
+        (isDirty: boolean) => {
+            setIntakeDirty("mixed", isDirty);
+        },
+        [setIntakeDirty],
+    );
 
 
 
@@ -742,7 +749,7 @@ export default function SpotRateEntryPage() {
                     targetBucket="mixed"
                     sourceLabel="Uploaded rates"
                     onAnalysisComplete={(result) => handleAnalysisComplete(result, "mixed")}
-                    onDirtyChange={(isDirty) => setIntakeDirty("mixed", isDirty)}
+                    onDirtyChange={handleMixedIntakeDirtyChange}
                 />
             )}
 

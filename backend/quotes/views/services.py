@@ -403,14 +403,14 @@ class StationListAPIView(APIView):
 
 class AIRateIntakeAPIView(APIView):
     """
-    POST: Parse unstructured rate quote text/PDF into structured charge lines.
+    POST: Parse unstructured rate quote text/PDF into structured quote input payload.
     
     Accepts:
     - JSON body with 'text' field for plain text input
     - Multipart form with 'file' for PDF upload
     
     Returns:
-    - Validated SpotChargeLine[] with warnings
+    - Structured quote_input payload with warnings
     - Human review required before accepting
     """
     permission_classes = [CanUseAIIntake]  # Sales/Manager/Admin only; Finance excluded
@@ -467,9 +467,9 @@ class AIRateIntakeAPIView(APIView):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
         
-        # Serialize SpotChargeLine objects
-        lines_data = []
-        for line in result.lines:
+        quote_input = result.quote_input or None
+        charge_lines = []
+        for line in (quote_input.charge_lines if quote_input else []):
             line_dict = {
                 'id': line.id,
                 'bucket': line.bucket,
@@ -491,11 +491,14 @@ class AIRateIntakeAPIView(APIView):
                 'notes': line.notes,
                 'confidence': line.confidence,
             }
-            lines_data.append(line_dict)
+            charge_lines.append(line_dict)
         
         return Response({
             'success': True,
-            'lines': lines_data,
+            'quote_input': {
+                'quote_currency': quote_input.quote_currency if quote_input else None,
+                'charge_lines': charge_lines,
+            },
             'analysis_text': result.analysis_text,
             'warnings': result.warnings,
             'raw_text_length': result.raw_text_length,

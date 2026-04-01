@@ -1744,7 +1744,8 @@ class ReplyAnalysisService:
             # Call existing AI service with context to help it categorize
             ai_result = parse_rate_quote_text(raw_text, context=shipment_context)
             audit_result = getattr(ai_result, "extraction_audit", None)
-            lines = getattr(ai_result, "lines", []) or []
+            quote_input = getattr(ai_result, "quote_input", None)
+            lines = getattr(quote_input, "charge_lines", []) or []
             unmapped_line_count = sum(
                 1
                 for line in lines
@@ -1882,7 +1883,7 @@ class ReplyAnalysisService:
 
             unmapped_labels = [
                 line.description
-                for line in (getattr(ai_result, "lines", []) or [])
+                for line in (getattr(getattr(ai_result, "quote_input", None), "charge_lines", []) or [])
                 if getattr(line, "v4_product_code", None) == "UNMAPPED"
             ]
             if unmapped_labels:

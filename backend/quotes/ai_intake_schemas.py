@@ -366,6 +366,19 @@ class SpotChargeLine(BaseModel):
         }
 
 
+class QuoteInputPayload(BaseModel):
+    """Validated AI-produced pricing input handed to the pricing engines."""
+
+    quote_currency: Optional[str] = Field(
+        None,
+        description="Detected quote currency for the imported rate sheet.",
+    )
+    charge_lines: List[SpotChargeLine] = Field(
+        default_factory=list,
+        description="Structured charge inputs ready for downstream engine pricing.",
+    )
+
+
 # =============================================================================
 # MULTI-AGENT PIPELINE STAGE SCHEMAS
 # =============================================================================

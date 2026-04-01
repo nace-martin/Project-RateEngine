@@ -40,6 +40,7 @@ from pricing_v4.category_rules import (
 )
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
+from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
 class PaymentTerm(Enum):
     COLLECT = "COLLECT"
@@ -82,34 +83,6 @@ class ChargeLineResult:
     fx_applied: bool = False
     caf_applied: bool = False
     margin_applied: bool = False
-
-
-@dataclass
-class QuoteResult:
-    """Complete quote result."""
-    origin: str
-    destination: str
-    quote_date: date
-    chargeable_weight_kg: Decimal
-    
-    # Charge lines
-    lines: List[ChargeLineResult]
-    
-    # Totals (in quote currency)
-    total_cost: Decimal
-    total_sell: Decimal
-    total_margin: Decimal
-    total_gst: Decimal
-    total_sell_incl_gst: Decimal
-    
-    # Currency and conversion info
-    currency: str
-    quote_currency: str = 'PGK'
-    payment_term: str = 'PREPAID'
-    fx_rate_used: Optional[Decimal] = None
-    effective_fx_rate: Optional[Decimal] = None
-    caf_rate: Optional[Decimal] = None
-
 
 
 class ExportPricingEngine:
@@ -324,14 +297,24 @@ class ExportPricingEngine:
         total_margin = sum(line.margin_amount for line in lines)
         total_gst = sum(line.gst_amount for line in lines)
         total_sell_incl_gst = sum(line.sell_incl_gst for line in lines)
-        
+
+        line_items = [self._to_quote_line_item(line) for line in lines]
+        total_cost_pgk = sum((self._convert_amount_to_pgk(line.cost_amount, line.cost_currency) for line in lines), Decimal('0.00'))
+        total_sell_pgk = sum((self._convert_amount_to_pgk(line.sell_amount, line.sell_currency) for line in lines), Decimal('0.00'))
+
         return QuoteResult(
+            line_items=line_items,
+            total_cost_pgk=total_cost_pgk,
+            total_sell_pgk=total_sell_pgk,
+            fx_applied=any(item.fx_applied for item in line_items),
+            tax_breakdown=build_tax_breakdown(line_items, converter=self._convert_amount_to_pgk),
             origin=self.origin, destination=self.destination, quote_date=self.quote_date,
-            chargeable_weight_kg=self.chargeable_weight_kg, lines=lines,
-            total_cost=total_cost, total_sell=total_sell, total_margin=total_margin,
-            total_gst=total_gst, total_sell_incl_gst=total_sell_incl_gst,
-            currency=self.quote_currency, quote_currency=self.quote_currency,
+            chargeable_weight_kg=self.chargeable_weight_kg,
+            direction='EXPORT',
             payment_term=self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term),
+            service_scope=service_scope,
+            currency=self.quote_currency, quote_currency=self.quote_currency,
+            total_margin=total_margin, total_gst=total_gst, total_sell_incl_gst=total_sell_incl_gst,
             fx_rate_used=self.tt_sell if self.payment_term == PaymentTerm.PREPAID else None,
             effective_fx_rate=self._get_effective_fx_rate() if self.payment_term == PaymentTerm.PREPAID else None,
             caf_rate=self.caf_rate if self.payment_term == PaymentTerm.PREPAID else None,
@@ -615,3 +598,50 @@ class ExportPricingEngine:
         for tier in sorted_breaks:
             if weight >= Decimal(str(tier.get('min_kg', 0))): return weight * Decimal(str(tier.get('rate', 0)))
         return weight * Decimal(str(sorted_breaks[-1].get('rate', 0)))
+
+    def _convert_amount_to_pgk(self, amount: Decimal, currency: str) -> Decimal:
+        if currency == 'PGK':
+            return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        effective_rate = self._get_effective_fx_rate()
+        if effective_rate <= 0:
+            return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        if effective_rate >= 1:
+            pgk = amount * effective_rate
+        else:
+            pgk = amount / effective_rate
+        return pgk.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+    @staticmethod
+    def _to_quote_line_item(line: ChargeLineResult) -> QuoteLineItem:
+        leg = 'ORIGIN'
+        if line.category == 'FREIGHT' or 'FRT' in line.product_code.upper():
+            leg = 'FREIGHT'
+        elif 'DEST' in line.product_code.upper() or 'DEST' in line.description.upper():
+            leg = 'DESTINATION'
+
+        return QuoteLineItem(
+            product_code_id=line.product_code_id,
+            product_code=line.product_code,
+            description=line.description,
+            category=line.category,
+            leg=leg,
+            cost_amount=line.cost_amount,
+            cost_currency=line.cost_currency,
+            cost_source=line.cost_source,
+            agent_name=line.agent_name,
+            sell_amount=line.sell_amount,
+            sell_currency=line.sell_currency,
+            margin_amount=line.margin_amount,
+            margin_percent=line.margin_percent,
+            gst_category=line.gst_category,
+            gst_rate=line.gst_rate,
+            gst_amount=line.gst_amount,
+            sell_incl_gst=line.sell_incl_gst,
+            is_rate_missing=line.is_rate_missing,
+            notes=line.notes,
+            fx_applied=line.fx_applied,
+            caf_applied=line.caf_applied,
+            margin_applied=line.margin_applied,
+        )

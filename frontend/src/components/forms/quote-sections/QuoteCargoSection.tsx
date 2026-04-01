@@ -1,8 +1,12 @@
 "use client";
 
+import { useMemo } from "react";
+import { useFieldArray, useFormContext, useWatch } from "react-hook-form";
+
 import { Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { calculateCargoMetrics } from "@/components/forms/quote-sections/quote-section-types";
 import {
   FormControl,
   FormField,
@@ -23,16 +27,20 @@ import {
   V3_CARGO_TYPES,
   V3_PACKAGE_TYPES,
 } from "@/lib/schemas/quoteSchema";
+import type { QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 
-import type { QuoteCargoSectionProps } from "./quote-section-types";
+export default function QuoteCargoSection() {
+  const form = useFormContext<QuoteFormSchemaV3>();
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "dimensions",
+  });
+  const dimensions = useWatch({
+    control: form.control,
+    name: "dimensions",
+  });
+  const cargoMetrics = useMemo(() => calculateCargoMetrics(dimensions), [dimensions]);
 
-export default function QuoteCargoSection({
-  form,
-  fields,
-  append,
-  remove,
-  cargoMetrics,
-}: QuoteCargoSectionProps) {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">

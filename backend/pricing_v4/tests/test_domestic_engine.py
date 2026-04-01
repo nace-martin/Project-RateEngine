@@ -11,6 +11,7 @@ Tests the DomesticPricingEngine for:
 """
 from decimal import Decimal
 from datetime import date, timedelta
+from dataclasses import fields
 from django.test import TestCase
 
 from pricing_v4.models import (
@@ -19,6 +20,11 @@ from pricing_v4.models import (
     DomesticCOGS, DomesticSellRate, Surcharge
 )
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
+from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult
+
+
+EXPECTED_QUOTE_RESULT_FIELDS = {field.name for field in fields(QuoteResult)}
+EXPECTED_LINE_ITEM_FIELDS = {field.name for field in fields(QuoteLineItem)}
 
 
 class DomesticEngineTestCase(TestCase):
@@ -118,9 +124,15 @@ class DomesticFreightTest(DomesticEngineTestCase):
         # SELL: 50kg * 8.00 = 400.00
         self.assertEqual(len(result.cogs_breakdown), 1)
         self.assertEqual(len(result.sell_breakdown), 1)
+        self.assertEqual(len(result.line_items), 1)
         
         self.assertEqual(result.cogs_breakdown[0].amount, Decimal('325.00'))
         self.assertEqual(result.sell_breakdown[0].amount, Decimal('400.00'))
+        self.assertEqual(result.total_cost_pgk, Decimal('325.00'))
+        self.assertEqual(result.total_sell_pgk, Decimal('400.00'))
+        self.assertIn('service_in_PNG', result.tax_breakdown)
+        self.assertEqual(set(result.__dict__.keys()), EXPECTED_QUOTE_RESULT_FIELDS)
+        self.assertEqual(set(result.line_items[0].__dict__.keys()), EXPECTED_LINE_ITEM_FIELDS)
     
     def test_minimum_charge_enforcement(self):
         """Test that minimum charge is applied for small shipments."""
@@ -150,6 +162,7 @@ class DomesticFreightTest(DomesticEngineTestCase):
         # No freight rates found
         self.assertEqual(len(result.cogs_breakdown), 0)
         self.assertEqual(len(result.sell_breakdown), 0)
+        self.assertEqual(result.tax_breakdown, {'service_in_PNG': Decimal('0.00')})
 
 
 class DomesticWeightBreaksTest(DomesticEngineTestCase):

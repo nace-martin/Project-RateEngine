@@ -11,6 +11,12 @@ import QuoteCargoSection from "@/components/forms/quote-sections/QuoteCargoSecti
 import QuoteCustomerSection from "@/components/forms/quote-sections/QuoteCustomerSection";
 import QuoteRouteSection from "@/components/forms/quote-sections/QuoteRouteSection";
 import QuoteTermsSection from "@/components/forms/quote-sections/QuoteTermsSection";
+import {
+  getQuoteValidationState,
+  getSequentialQuoteStep,
+  type QuoteSectionIndex,
+  type QuoteSectionStatus,
+} from "@/components/forms/quote-sections/quote-section-types";
 import { SummaryCard, SummaryStack, type SummaryLine } from "@/components/ui/summary-card";
 import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
@@ -32,20 +38,7 @@ import type {
   User,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-const getCompletedFieldClass = (isComplete: boolean) =>
-  isComplete
-    ? "border-primary bg-primary text-white ring-1 ring-primary/25 hover:border-primary hover:bg-primary/95 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 [&_svg]:text-white/80"
-    : "";
-
-const hasText = (value: unknown) =>
-  typeof value === "string" && value.trim().length > 0;
-
-const isPositiveValue = (value: unknown) => {
-  const numericValue =
-    typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
-  return Number.isFinite(numericValue) && numericValue > 0;
-};
+import { useQuoteStore } from "@/store/useQuoteStore";
 
 const compactSummaryLines = (lines: SummaryLine[]) => lines.filter((line) => Boolean(line.text));
 
@@ -57,13 +50,9 @@ const cloneValue = <T,>(value: T): T => {
   return JSON.parse(JSON.stringify(value)) as T;
 };
 
-type QuoteSectionStatus = "active" | "completed";
-type QuoteSectionIndex = 0 | 1 | 2 | 3 | 4;
-
 type QuoteSavedSnapshot = {
   values: QuoteFormSchemaV3;
   selectedCustomer: CompanySearchResult | null;
-  selectedCustomerId: string | null;
   contacts: Contact[];
   originLocation: LocationSearchResult | null;
   destinationLocation: LocationSearchResult | null;
@@ -102,24 +91,9 @@ export function QuoteForm({
 }: QuoteFormProps) {
   const {
     form,
-    fields,
-    append,
-    remove,
     cargoMetrics,
     internalError,
-    contacts,
-    setContacts,
-    isLoadingContacts,
-    selectedCustomer,
-    setSelectedCustomer,
-    selectedCustomerId,
-    setSelectedCustomerId,
-    originLocation,
-    setOriginLocation,
-    destinationLocation,
-    setDestinationLocation,
     handleFormSubmit,
-    setLocationFields,
     validIncoterms,
     setInternalError,
   } = useQuoteLogic({
@@ -136,6 +110,18 @@ export function QuoteForm({
   const watchedValues = useWatch({
     control: form.control,
   });
+  const contacts = useQuoteStore((state) => state.contacts);
+  const selectedCustomer = useQuoteStore((state) => state.selectedCustomer);
+  const originLocation = useQuoteStore((state) => state.originLocation);
+  const destinationLocation = useQuoteStore((state) => state.destinationLocation);
+  const setContacts = useQuoteStore((state) => state.setContacts);
+  const setSelectedCustomer = useQuoteStore((state) => state.setSelectedCustomer);
+  const setOriginLocation = useQuoteStore((state) => state.setOriginLocation);
+  const setDestinationLocation = useQuoteStore((state) => state.setDestinationLocation);
+  const activeSection = useQuoteStore((state) => state.currentStep) as QuoteSectionIndex;
+  const setValidationState = useQuoteStore((state) => state.setValidationState);
+  const setCurrentStep = useQuoteStore((state) => state.setCurrentStep);
+  const resetQuote = useQuoteStore((state) => state.resetQuote);
 
   const isImport = destinationLocation?.country_code === "PG";
   const submitBusy = isSubmitting || form.formState.isSubmitting;
@@ -144,63 +130,36 @@ export function QuoteForm({
     (): QuoteSavedSnapshot => ({
       values: cloneValue(form.getValues()),
       selectedCustomer: selectedCustomer ? cloneValue(selectedCustomer) : null,
-      selectedCustomerId,
       contacts: cloneValue(contacts),
       originLocation: originLocation ? cloneValue(originLocation) : null,
       destinationLocation: destinationLocation ? cloneValue(destinationLocation) : null,
     }),
-    [contacts, destinationLocation, form, originLocation, selectedCustomer, selectedCustomerId],
+    [contacts, destinationLocation, form, originLocation, selectedCustomer],
   );
 
   const restoreSnapshot = (snapshot: QuoteSavedSnapshot) => {
     form.reset(cloneValue(snapshot.values), { keepDefaultValues: true });
     setSelectedCustomer(snapshot.selectedCustomer ? cloneValue(snapshot.selectedCustomer) : null);
-    setSelectedCustomerId(snapshot.selectedCustomerId);
     setContacts(cloneValue(snapshot.contacts));
     setOriginLocation(snapshot.originLocation ? cloneValue(snapshot.originLocation) : null);
     setDestinationLocation(snapshot.destinationLocation ? cloneValue(snapshot.destinationLocation) : null);
     setInternalError(null);
   };
 
-  const customerComplete =
-    hasText(watchedValues.customer_id) && hasText(watchedValues.contact_id);
-  const routeComplete =
-    hasText(watchedValues.mode) &&
-    hasText(watchedValues.service_scope) &&
-    hasText(watchedValues.origin_location_id) &&
-    hasText(watchedValues.destination_location_id) &&
-    /^[A-Z]{3}$/.test((watchedValues.origin_airport || "").trim().toUpperCase()) &&
-    /^[A-Z]{3}$/.test((watchedValues.destination_airport || "").trim().toUpperCase());
-  const termsComplete =
-    hasText(watchedValues.payment_term) &&
-    hasText(watchedValues.incoterm) &&
-    validIncoterms.includes(watchedValues.incoterm || "");
-  const cargoComplete =
-    hasText(watchedValues.cargo_type) &&
-    Array.isArray(watchedValues.dimensions) &&
-    watchedValues.dimensions.length > 0 &&
-    watchedValues.dimensions.every((dimension) => (
-      isPositiveValue(dimension?.pieces) &&
-      isPositiveValue(dimension?.length_cm) &&
-      isPositiveValue(dimension?.width_cm) &&
-      isPositiveValue(dimension?.height_cm) &&
-      isPositiveValue(dimension?.gross_weight_kg) &&
-      hasText(dimension?.package_type)
-    ));
+  const sectionValidation = useMemo(
+    () => getQuoteValidationState(watchedValues as Partial<QuoteFormSchemaV3>, validIncoterms),
+    [validIncoterms, watchedValues],
+  );
+  const customerComplete = sectionValidation.customer;
+  const routeComplete = sectionValidation.route;
+  const termsComplete = sectionValidation.terms;
+  const cargoComplete = sectionValidation.cargo;
+  const unlockedSection = getSequentialQuoteStep(sectionValidation);
 
-  const sequentialValidityIndex = useMemo<QuoteSectionIndex>(() => {
-    if (!customerComplete) return 0;
-    if (!routeComplete) return 1;
-    if (!termsComplete) return 2;
-    if (!cargoComplete) return 3;
-    return 4;
-  }, [cargoComplete, customerComplete, routeComplete, termsComplete]);
-
-  const [savedProgressIndex, setSavedProgressIndex] = useState<QuoteSectionIndex>(sequentialValidityIndex);
+  const [savedProgressIndex, setSavedProgressIndex] = useState<QuoteSectionIndex>(0);
   const [savedSnapshot, setSavedSnapshot] = useState<QuoteSavedSnapshot>(() => buildSnapshot());
   const [sectionSnapshots, setSectionSnapshots] = useState<Partial<Record<QuoteSectionIndex, QuoteSavedSnapshot>>>({});
-  const [furthestSection, setFurthestSection] = useState<QuoteSectionIndex>(sequentialValidityIndex);
-  const [activeSection, setActiveSection] = useState<QuoteSectionIndex>(sequentialValidityIndex);
+  const [furthestSection, setFurthestSection] = useState<QuoteSectionIndex>(0);
   const [recentlyRevealedSection, setRecentlyRevealedSection] = useState<QuoteSectionIndex | null>(null);
 
   useEffect(() => {
@@ -208,38 +167,48 @@ export function QuoteForm({
   }, [form.formState.isDirty, onDirtyChange]);
 
   useEffect(() => {
+    setValidationState(sectionValidation);
+  }, [sectionValidation, setValidationState]);
+
+  useEffect(() => () => {
+    resetQuote();
+  }, [resetQuote]);
+
+  useEffect(() => {
     if (!form.formState.isDirty) {
       const nextSnapshot = buildSnapshot();
       const nextSectionSnapshots: Partial<Record<QuoteSectionIndex, QuoteSavedSnapshot>> = {};
 
-      for (let index = 0; index < sequentialValidityIndex; index += 1) {
+      for (let index = 0; index < unlockedSection; index += 1) {
         nextSectionSnapshots[index as QuoteSectionIndex] = nextSnapshot;
       }
 
       setSavedSnapshot(nextSnapshot);
       setSectionSnapshots(nextSectionSnapshots);
-      setSavedProgressIndex(sequentialValidityIndex);
-      setFurthestSection(sequentialValidityIndex);
-      setActiveSection(sequentialValidityIndex);
+      setSavedProgressIndex(unlockedSection);
+      setFurthestSection(unlockedSection);
+      setCurrentStep(unlockedSection);
       setRecentlyRevealedSection(null);
       return;
     }
 
     setFurthestSection(() => {
-      const nextVisibleSection = Math.min(savedProgressIndex, sequentialValidityIndex) as QuoteSectionIndex;
+      const nextVisibleSection = Math.min(savedProgressIndex, unlockedSection) as QuoteSectionIndex;
       return nextVisibleSection;
     });
   }, [
     buildSnapshot,
-    form,
     form.formState.isDirty,
     savedProgressIndex,
-    sequentialValidityIndex,
+    setCurrentStep,
+    unlockedSection,
   ]);
 
   useEffect(() => {
-    setActiveSection((current) => Math.min(current, furthestSection) as QuoteSectionIndex);
-  }, [furthestSection]);
+    if (activeSection > furthestSection) {
+      setCurrentStep(furthestSection);
+    }
+  }, [activeSection, furthestSection, setCurrentStep]);
 
   useEffect(() => {
     if (recentlyRevealedSection === null) {
@@ -337,13 +306,13 @@ export function QuoteForm({
   };
 
   const openSection = (index: QuoteSectionIndex) => {
-    setActiveSection(index);
+    setCurrentStep(index);
     scrollToSection(index);
   };
 
   const commitSection = (sectionIndex: QuoteSectionIndex, nextIndex: QuoteSectionIndex) => {
     const snapshot = buildSnapshot();
-    const nextSavedProgress = Math.max(nextIndex, sequentialValidityIndex) as QuoteSectionIndex;
+    const nextSavedProgress = Math.max(nextIndex, unlockedSection) as QuoteSectionIndex;
     const nextSectionSnapshots: Partial<Record<QuoteSectionIndex, QuoteSavedSnapshot>> = {};
 
     for (let index = 0; index < nextSavedProgress; index += 1) {
@@ -358,7 +327,7 @@ export function QuoteForm({
     }));
     setSavedProgressIndex(nextSavedProgress);
     setFurthestSection(nextSavedProgress);
-    setActiveSection(nextSavedProgress);
+    setCurrentStep(nextSavedProgress);
     setRecentlyRevealedSection(nextSavedProgress === sectionIndex ? null : nextSavedProgress);
     scrollToSection(nextSavedProgress);
   };
@@ -367,7 +336,7 @@ export function QuoteForm({
     const snapshot = sectionSnapshots[activeSection] || savedSnapshot;
     restoreSnapshot(snapshot);
     setFurthestSection(savedProgressIndex);
-    setActiveSection(savedProgressIndex);
+    setCurrentStep(savedProgressIndex);
     setRecentlyRevealedSection(null);
     scrollToSection(savedProgressIndex);
   };
@@ -400,8 +369,8 @@ export function QuoteForm({
   const onFormError = (errors: Record<string, unknown>) => {
     if (Object.keys(errors).length > 0) {
       console.warn("Form validation errors:", errors);
-      setActiveSection(sequentialValidityIndex);
-      scrollToSection(sequentialValidityIndex);
+      setCurrentStep(unlockedSection);
+      scrollToSection(unlockedSection);
     }
   };
 
@@ -455,16 +424,7 @@ export function QuoteForm({
               onAction={getSectionStatus(0) === "completed" ? () => openSection(0) : undefined}
             >
               <div className="space-y-6">
-                <QuoteCustomerSection
-                  form={form}
-                  contacts={contacts}
-                  isLoadingContacts={isLoadingContacts}
-                  selectedCustomer={selectedCustomer}
-                  selectedCustomerId={selectedCustomerId}
-                  setSelectedCustomer={setSelectedCustomer}
-                  setSelectedCustomerId={setSelectedCustomerId}
-                  getCompletedFieldClass={getCompletedFieldClass}
-                />
+                <QuoteCustomerSection />
 
                 <QuoteWorkflowActionBar
                   secondaryAction={renderSectionDiscardAction()}
@@ -492,15 +452,7 @@ export function QuoteForm({
                 onAction={getSectionStatus(1) === "completed" ? () => openSection(1) : undefined}
               >
                 <div className="space-y-6">
-                  <QuoteRouteSection
-                    form={form}
-                    originLocation={originLocation}
-                    destinationLocation={destinationLocation}
-                    setOriginLocation={setOriginLocation}
-                    setDestinationLocation={setDestinationLocation}
-                    setLocationFields={setLocationFields}
-                    getCompletedFieldClass={getCompletedFieldClass}
-                  />
+                  <QuoteRouteSection />
 
                   <QuoteWorkflowActionBar
                     secondaryAction={renderSectionDiscardAction()}
@@ -536,11 +488,7 @@ export function QuoteForm({
                 onAction={getSectionStatus(2) === "completed" ? () => openSection(2) : undefined}
               >
                 <div className="space-y-6">
-                  <QuoteTermsSection
-                    form={form}
-                    isImport={isImport}
-                    validIncoterms={validIncoterms}
-                  />
+                  <QuoteTermsSection />
 
                   <QuoteWorkflowActionBar
                     secondaryAction={renderSectionDiscardAction()}
@@ -569,13 +517,7 @@ export function QuoteForm({
                 onAction={getSectionStatus(3) === "completed" ? () => openSection(3) : undefined}
               >
                 <div className="space-y-6">
-                  <QuoteCargoSection
-                    form={form}
-                    fields={fields}
-                    append={append}
-                    remove={remove}
-                    cargoMetrics={cargoMetrics}
-                  />
+                  <QuoteCargoSection />
 
                   <QuoteWorkflowActionBar
                     secondaryAction={renderSectionDiscardAction()}

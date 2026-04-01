@@ -11,6 +11,7 @@ Tests the ImportPricingEngine for:
 """
 from decimal import Decimal
 from datetime import date, timedelta
+from dataclasses import fields
 from django.test import TestCase
 
 from pricing_v4.models import (
@@ -21,6 +22,11 @@ from pricing_v4.models import (
 from pricing_v4.engine.import_engine import (
     ImportPricingEngine, PaymentTerm, ServiceScope
 )
+from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult
+
+
+EXPECTED_QUOTE_RESULT_FIELDS = {field.name for field in fields(QuoteResult)}
+EXPECTED_LINE_ITEM_FIELDS = {field.name for field in fields(QuoteLineItem)}
 
 
 class ImportEngineTestCase(TestCase):
@@ -354,8 +360,13 @@ class ImportFullQuoteTest(ImportEngineTestCase):
         self.assertEqual(result.direction, 'IMPORT')
         self.assertEqual(result.payment_term, 'COLLECT')
         self.assertEqual(result.service_scope, 'A2D')
+        self.assertGreaterEqual(len(result.line_items), 1)
+        self.assertGreaterEqual(result.total_sell_pgk, Decimal('0.00'))
+        self.assertIsInstance(result.tax_breakdown, dict)
         self.assertIsNotNone(result.fx_rate_used)
         self.assertIsNotNone(result.caf_rate)
+        self.assertEqual(set(result.__dict__.keys()), EXPECTED_QUOTE_RESULT_FIELDS)
+        self.assertEqual(set(result.line_items[0].__dict__.keys()), EXPECTED_LINE_ITEM_FIELDS)
 
 
 class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
@@ -474,6 +485,7 @@ class ImportD2DOriginLaneCogsTest(ImportEngineTestCase):
         line = doc_origin_lines[0]
         self.assertFalse(getattr(line, 'is_rate_missing', False))
         self.assertEqual(line.cost_currency, 'AUD')
+        self.assertEqual(line.cost_source, 'COGS')
         self.assertGreater(line.sell_amount, Decimal('0'))
 
 

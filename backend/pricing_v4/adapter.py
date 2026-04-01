@@ -416,7 +416,9 @@ class PricingServiceV4Adapter:
         # Domestic: QuoteResult.cogs_breakdown / sell_breakdown -> BillableCharge (separated)
         
         import_or_export_lines = []
-        if hasattr(result, 'lines'): # Export
+        if hasattr(result, 'line_items'):
+            import_or_export_lines = result.line_items
+        elif hasattr(result, 'lines'): # Export
             import_or_export_lines = result.lines
         elif hasattr(result, 'origin_lines'): # Import
             import_or_export_lines = result.origin_lines + result.freight_lines + result.destination_lines
@@ -483,7 +485,7 @@ class PricingServiceV4Adapter:
                 consolidated[code]['sell_incl_gst'] += line.sell_amount # Assume no GST if not specified
                 
         # Process Domestic Style (Separated Lists)
-        if hasattr(result, 'cogs_breakdown'):
+        if not hasattr(result, 'line_items') and hasattr(result, 'cogs_breakdown'):
             for item in result.cogs_breakdown:
                 code = item.product_code
                 bucket = 'airfreight' if code in DOMESTIC_AIRFREIGHT_CODES else 'origin_charges'

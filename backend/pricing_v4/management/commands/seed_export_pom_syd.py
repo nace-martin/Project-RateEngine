@@ -127,6 +127,18 @@ class Command(BaseCommand):
                 'gl_cost_code': '5100',
                 'default_unit': ProductCode.UNIT_KG,
             },
+            {
+                'id': 1002,
+                'code': 'EXP-FSC-AIR',
+                'description': 'Airline Export Fuel Surcharge',
+                'category': ProductCode.CATEGORY_SURCHARGE,
+                'is_gst_applicable': True,
+                'gst_rate': Decimal('0.10'),
+                'gst_treatment': ProductCode.GST_TREATMENT_STANDARD,
+                'gl_revenue_code': '4000',
+                'gl_cost_code': '5000',
+                'default_unit': ProductCode.UNIT_KG,
+            },
             # 1010-1019: Documentation
             {
                 'id': 1010,
@@ -221,6 +233,31 @@ class Command(BaseCommand):
             },
             # 1050-1059: Cartage (Pickup) - defined first, insert here
             pickup_code,
+            # 1080-1089: Destination local charges (requested for A2D/D2D)
+            {
+                'id': 1080,
+                'code': 'EXP-CLEAR-DEST',
+                'description': 'Destination Clearance',
+                'category': ProductCode.CATEGORY_CLEARANCE,
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.10'),
+                'gst_treatment': ProductCode.GST_TREATMENT_ZERO_RATED,
+                'gl_revenue_code': '4000',
+                'gl_cost_code': '5000',
+                'default_unit': ProductCode.UNIT_SHIPMENT,
+            },
+            {
+                'id': 1081,
+                'code': 'EXP-DELIVERY-DEST',
+                'description': 'Destination Delivery/Cartage',
+                'category': ProductCode.CATEGORY_CARTAGE,
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.10'),
+                'gst_treatment': ProductCode.GST_TREATMENT_ZERO_RATED,
+                'gl_revenue_code': '4000',
+                'gl_cost_code': '5000',
+                'default_unit': ProductCode.UNIT_SHIPMENT,
+            },
             # 1070-1079: Dangerous Goods
             {
                 'id': 1070,
@@ -246,6 +283,7 @@ class Command(BaseCommand):
                     'category': code_data['category'],
                     'is_gst_applicable': code_data['is_gst_applicable'],
                     'gst_rate': code_data['gst_rate'],
+                    'gst_treatment': code_data.get('gst_treatment', ProductCode.GST_TREATMENT_STANDARD),
                     'gl_revenue_code': code_data['gl_revenue_code'],
                     'gl_cost_code': code_data['gl_cost_code'],
                     'default_unit': code_data['default_unit'],

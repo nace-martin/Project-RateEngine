@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .ai_intake_schemas import (
     ExtractionAuditResult,
     NormalizedCharge,
+    QuoteInputPayload,
     RawExtractedCharge,
     SpotChargeLine,
     VALID_CURRENCIES,
@@ -86,7 +87,7 @@ class AIRateIntakePipelineResult(BaseModel):
     """Service return shape kept compatible with existing API formatters."""
 
     success: bool
-    lines: List[SpotChargeLine] = Field(default_factory=list)
+    quote_input: Optional[QuoteInputPayload] = None
     warnings: List[str] = Field(default_factory=list)
     error: Optional[str] = None
     raw_text_length: int = 0
@@ -97,6 +98,12 @@ class AIRateIntakePipelineResult(BaseModel):
     raw_extracted_charges: List[RawExtractedCharge] = Field(default_factory=list)
     normalized_charges: List[NormalizedCharge] = Field(default_factory=list)
     extraction_audit: Optional[ExtractionAuditResult] = None
+
+    @property
+    def lines(self) -> List[SpotChargeLine]:
+        if not self.quote_input:
+            return []
+        return list(self.quote_input.charge_lines or [])
 
 
 class PDFRateQuoteTextResult(BaseModel):
@@ -305,7 +312,7 @@ def parse_rate_quote_text(
         )
         audit_result = _audit_extraction(model, text, normalized_charges)
 
-        lines, line_warnings = _build_final_spot_charge_lines(
+        charge_lines, line_warnings = _build_final_spot_charge_lines(
             normalized_charges=normalized_charges,
             raw_charges=raw_charges,
             quote_currency_hint=quote_currency,
@@ -326,7 +333,10 @@ def parse_rate_quote_text(
 
         return AIRateIntakePipelineResult(
             success=audit_result.is_safe_to_proceed,
-            lines=lines,
+            quote_input=QuoteInputPayload(
+                quote_currency=quote_currency,
+                charge_lines=charge_lines,
+            ),
             warnings=warnings,
             error=None if audit_result.is_safe_to_proceed else "Extraction audit marked result unsafe to proceed",
             raw_text_length=len(text),

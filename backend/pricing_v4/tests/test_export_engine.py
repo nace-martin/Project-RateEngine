@@ -6,6 +6,7 @@ Tests the ExportPricingEngine for FCY margin reporting on PREPAID quotes.
 """
 from decimal import Decimal
 from datetime import date, timedelta
+from dataclasses import fields
 from django.test import TestCase
 
 from pricing_v4.models import (
@@ -18,6 +19,11 @@ from pricing_v4.models import (
     LocalSellRate,
 )
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm
+from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult
+
+
+EXPECTED_QUOTE_RESULT_FIELDS = {field.name for field in fields(QuoteResult)}
+EXPECTED_LINE_ITEM_FIELDS = {field.name for field in fields(QuoteLineItem)}
 
 
 class ExportEngineTestCase(TestCase):
@@ -115,6 +121,7 @@ class ExportPrepaidFcyMarginTest(ExportEngineTestCase):
 
         result = engine.calculate_quote([self.pc_clearance.id])
         self.assertEqual(len(result.lines), 1)
+        self.assertEqual(len(result.line_items), 1)
         line = result.lines[0]
 
         # Cost remains PGK, sell is FCY (USD). Margin uses cost converted to FCY.
@@ -123,6 +130,11 @@ class ExportPrepaidFcyMarginTest(ExportEngineTestCase):
         self.assertEqual(line.cost_amount, Decimal('100.00'))
         self.assertEqual(line.margin_amount, Decimal('30.00'))
         self.assertEqual(line.margin_percent, Decimal('60.00'))
+        self.assertGreater(result.total_cost_pgk, Decimal('0.00'))
+        self.assertGreater(result.total_sell_pgk, Decimal('0.00'))
+        self.assertFalse(result.fx_applied)
+        self.assertEqual(set(result.__dict__.keys()), EXPECTED_QUOTE_RESULT_FIELDS)
+        self.assertEqual(set(line.__dict__.keys()), EXPECTED_LINE_ITEM_FIELDS)
 
 
 class ExportLocalSellRateSelectionTest(ExportEngineTestCase):

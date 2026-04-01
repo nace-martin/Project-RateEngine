@@ -3,7 +3,7 @@ from django.test import TestCase
 from unittest.mock import MagicMock, patch
 from decimal import Decimal
 from quotes.spot_services import ReplyAnalysisService
-from quotes.ai_intake_schemas import SpotChargeLine
+from quotes.ai_intake_schemas import QuoteInputPayload, SpotChargeLine
 from quotes.ai_intake_service import AIRateIntakePipelineResult
 from quotes.reply_schemas import AssertionStatus, AssertionCategory
 from quotes.spot_schemas import SPEChargeLine
@@ -24,15 +24,18 @@ class CurrencyFallbackTest(TestCase):
         mock_parse.return_value = AIRateIntakePipelineResult(
             success=True,
             quote_currency="SGD",
-            lines=[
-                SpotChargeLine(
-                    bucket="ORIGIN",
-                    description="Terminal Fee",
-                    amount=Decimal("35.00"),
-                    unit_basis="PER_SHIPMENT",
-                    currency=None # MISSING CURRENCY
-                )
-            ],
+            quote_input=QuoteInputPayload(
+                quote_currency="SGD",
+                charge_lines=[
+                    SpotChargeLine(
+                        bucket="ORIGIN",
+                        description="Terminal Fee",
+                        amount=Decimal("35.00"),
+                        unit_basis="PER_SHIPMENT",
+                        currency=None # MISSING CURRENCY
+                    )
+                ],
+            ),
             raw_text_length=100
         )
         

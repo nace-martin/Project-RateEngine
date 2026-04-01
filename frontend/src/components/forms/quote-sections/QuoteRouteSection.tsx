@@ -1,8 +1,14 @@
 "use client";
 
+import { useFormContext } from "react-hook-form";
+
 import { Plane, Ship } from "lucide-react";
 
 import LocationSearch from "@/components/LocationSearchCombobox";
+import {
+  getCompletedFieldClass,
+  type QuoteFormData,
+} from "@/components/forms/quote-sections/quote-section-types";
 import {
   FormControl,
   FormDescription,
@@ -22,18 +28,15 @@ import {
   V3_LOCATION_TYPES,
 } from "@/lib/schemas/quoteSchema";
 import { SERVICE_SCOPE_OPTIONS } from "@/lib/display";
+import { useQuoteStore } from "@/store/useQuoteStore";
 
-import type { QuoteRouteSectionProps } from "./quote-section-types";
+export default function QuoteRouteSection() {
+  const form = useFormContext<QuoteFormData>();
+  const originLocation = useQuoteStore((state) => state.originLocation);
+  const destinationLocation = useQuoteStore((state) => state.destinationLocation);
+  const setOriginLocation = useQuoteStore((state) => state.setOriginLocation);
+  const setDestinationLocation = useQuoteStore((state) => state.setDestinationLocation);
 
-export default function QuoteRouteSection({
-  form,
-  originLocation,
-  destinationLocation,
-  setOriginLocation,
-  setDestinationLocation,
-  setLocationFields,
-  getCompletedFieldClass,
-}: QuoteRouteSectionProps) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
@@ -108,7 +111,15 @@ export default function QuoteRouteSection({
                 <LocationSearch
                   onSelect={(loc) => {
                     setOriginLocation(loc);
-                    setLocationFields("origin", loc, field.onChange);
+                    field.onChange(loc?.id ?? "");
+                    form.setValue("origin_location_type", V3_LOCATION_TYPES.AIRPORT, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                    form.setValue("origin_airport", (loc?.code ?? "").toUpperCase(), {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
                   }}
                   value={field.value}
                   selectedLabel={originLocation ? `${originLocation.display_name} (${originLocation.code})` : undefined}
@@ -134,7 +145,15 @@ export default function QuoteRouteSection({
                 <LocationSearch
                   onSelect={(loc) => {
                     setDestinationLocation(loc);
-                    setLocationFields("destination", loc, field.onChange);
+                    field.onChange(loc?.id ?? "");
+                    form.setValue("destination_location_type", V3_LOCATION_TYPES.AIRPORT, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                    form.setValue("destination_airport", (loc?.code ?? "").toUpperCase(), {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
                   }}
                   value={field.value}
                   selectedLabel={destinationLocation ? `${destinationLocation.display_name} (${destinationLocation.code})` : undefined}

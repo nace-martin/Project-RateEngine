@@ -29,6 +29,7 @@ from pricing_v4.category_rules import is_local_rate_category
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
+from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +57,16 @@ class ChargeLine:
     # Cost in original currency
     cost_amount: Decimal
     cost_currency: str
-    agent_name: Optional[str]  # NEW: Rate Provider
+    cost_source: str = 'N/A'
+    agent_name: Optional[str] = None  # Rate Provider
     
     # Sell in quote currency
-    sell_amount: Decimal
-    sell_currency: str
+    sell_amount: Decimal = Decimal('0')
+    sell_currency: str = 'PGK'
     
     # Margin info
-    margin_amount: Decimal
-    margin_percent: Decimal
+    margin_amount: Decimal = Decimal('0')
+    margin_percent: Decimal = Decimal('0')
     
     # Flags
     fx_applied: bool = False
@@ -78,38 +80,6 @@ class ChargeLine:
     sell_incl_gst: Decimal = Decimal('0')
     
     notes: str = ""
-
-
-@dataclass
-class QuoteResult:
-    """Complete quote result."""
-    origin: str
-    destination: str
-    quote_date: date
-    chargeable_weight_kg: Decimal
-    
-    direction: str
-    payment_term: str
-    service_scope: str
-    
-    quote_currency: str
-    
-    # Breakdown
-    origin_lines: List[ChargeLine] = field(default_factory=list)
-    freight_lines: List[ChargeLine] = field(default_factory=list)
-    destination_lines: List[ChargeLine] = field(default_factory=list)
-    
-    # Totals
-    total_cost: Decimal = Decimal('0')
-    total_sell: Decimal = Decimal('0')
-    total_margin: Decimal = Decimal('0')
-    total_gst: Decimal = Decimal('0')
-    total_sell_incl_gst: Decimal = Decimal('0')
-    
-    # FX info used
-    fx_rate_used: Optional[Decimal] = None
-    effective_fx_rate: Optional[Decimal] = None
-    caf_rate: Optional[Decimal] = None
 
 
 class ImportPricingEngine:
@@ -367,6 +337,7 @@ class ImportPricingEngine:
             payment_term=self.payment_term.value,
             service_scope=self.service_scope.value,
             quote_currency=self.quote_currency,
+            currency=self.quote_currency,
             fx_rate_used=self.tt_buy if self.payment_term == PaymentTerm.COLLECT else self.tt_sell,
             caf_rate=self.caf_rate,
         )
@@ -440,7 +411,7 @@ class ImportPricingEngine:
                     line = ChargeLine(
                         product_code_id=pc.id, product_code=pc.code, description=pc.description,
                         category=pc.category, leg=leg, cost_amount=Decimal('0'),
-                        cost_currency='PGK', agent_name=None, sell_amount=Decimal('300.00'),
+                        cost_currency='PGK', cost_source='Default', agent_name=None, sell_amount=Decimal('300.00'),
                         sell_currency=self.quote_currency, margin_amount=Decimal('300.00'),
                         margin_percent=Decimal('100.00'), notes="Default Customs Brokerage Fee applied.",
                     )
@@ -466,6 +437,7 @@ class ImportPricingEngine:
                         leg=leg,
                         cost_amount=Decimal('0'),
                         cost_currency='PGK',
+                        cost_source='N/A',
                         agent_name=None,
                         sell_amount=Decimal('0'),
                         sell_currency=self.quote_currency,
@@ -477,19 +449,24 @@ class ImportPricingEngine:
 
             if line:
                 if leg == 'ORIGIN':
-                    result.origin_lines.append(line)
+                    result.line_items.append(self._to_quote_line_item(line))
                 elif leg == 'FREIGHT':
-                    result.freight_lines.append(line)
+                    result.line_items.append(self._to_quote_line_item(line))
                 else:
-                    result.destination_lines.append(line)
+                    result.line_items.append(self._to_quote_line_item(line))
         
         # Calculate totals
-        all_lines = result.origin_lines + result.freight_lines + result.destination_lines
-        result.total_cost = sum(line.cost_amount for line in all_lines)
-        result.total_sell = sum(line.sell_amount for line in all_lines)
+        all_lines = result.line_items
+        result.total_cost_pgk = sum((self._convert_cross_currency(line.cost_amount, line.cost_currency, 'PGK') for line in all_lines), Decimal('0.00'))
+        result.total_sell_pgk = sum((self._convert_cross_currency(line.sell_amount, line.sell_currency, 'PGK') for line in all_lines), Decimal('0.00'))
         result.total_margin = sum(line.margin_amount for line in all_lines)
         result.total_gst = sum(line.gst_amount for line in all_lines)
         result.total_sell_incl_gst = sum(line.sell_incl_gst for line in all_lines)
+        result.fx_applied = any(line.fx_applied for line in all_lines)
+        result.tax_breakdown = build_tax_breakdown(
+            all_lines,
+            converter=lambda amount, currency: self._convert_cross_currency(amount, currency, 'PGK'),
+        )
         
         return result
 
@@ -651,6 +628,7 @@ class ImportPricingEngine:
             leg=leg,
             cost_amount=cost_amount,
             cost_currency=cost_currency,
+            cost_source='COGS' if cogs else 'N/A',
             agent_name=cogs.agent.name if cogs and cogs.agent else None,
             sell_amount=sell_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
             sell_currency=sell_currency,
@@ -663,6 +641,33 @@ class ImportPricingEngine:
             gst_rate=gst_rate,
             gst_amount=gst_amount,
             sell_incl_gst=sell_incl_gst,
+        )
+
+    @staticmethod
+    def _to_quote_line_item(line: ChargeLine) -> QuoteLineItem:
+        return QuoteLineItem(
+            product_code_id=line.product_code_id,
+            product_code=line.product_code,
+            description=line.description,
+            category=line.category,
+            leg=line.leg,
+            cost_amount=line.cost_amount,
+            cost_currency=line.cost_currency,
+            cost_source=line.cost_source,
+            agent_name=line.agent_name,
+            sell_amount=line.sell_amount,
+            sell_currency=line.sell_currency,
+            margin_amount=line.margin_amount,
+            margin_percent=line.margin_percent,
+            gst_category=line.gst_category,
+            gst_rate=line.gst_rate,
+            gst_amount=line.gst_amount,
+            sell_incl_gst=line.sell_incl_gst,
+            is_rate_missing=getattr(line, 'is_rate_missing', False),
+            notes=line.notes,
+            fx_applied=line.fx_applied,
+            caf_applied=line.caf_applied,
+            margin_applied=line.margin_applied,
         )
     
     def _calculate_sell_amount(self, sell_rate) -> Decimal:
