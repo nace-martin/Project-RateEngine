@@ -9,6 +9,12 @@ from datetime import date, timedelta
 from dataclasses import fields
 from django.test import TestCase
 
+from core.charge_rules import (
+    CALCULATION_LOOKUP_RATE,
+    CALCULATION_PERCENT_OF_BASE,
+    CALCULATION_PER_UNIT,
+    CALCULATION_TIERED_BREAK,
+)
 from pricing_v4.models import (
     CommodityChargeRule,
     ProductCode,
@@ -130,6 +136,7 @@ class ExportPrepaidFcyMarginTest(ExportEngineTestCase):
         self.assertEqual(line.cost_amount, Decimal('100.00'))
         self.assertEqual(line.margin_amount, Decimal('30.00'))
         self.assertEqual(line.margin_percent, Decimal('60.00'))
+        self.assertEqual(line.rule_family, CALCULATION_LOOKUP_RATE)
         self.assertGreater(result.total_cost_pgk, Decimal('0.00'))
         self.assertGreater(result.total_sell_pgk, Decimal('0.00'))
         self.assertFalse(result.fx_applied)
@@ -289,6 +296,7 @@ class ExportSellRateSelectionTest(ExportEngineTestCase):
 
         self.assertEqual(line.sell_currency, 'PGK')
         self.assertEqual(line.sell_amount, Decimal('1325.00'))
+        self.assertEqual(line.rule_family, CALCULATION_TIERED_BREAK)
 
 
 class ExportPercentRateSelectionTest(ExportEngineTestCase):
@@ -380,6 +388,8 @@ class ExportPercentRateSelectionTest(ExportEngineTestCase):
         self.assertIn(self.pc_fsc_pickup.code, by_code)
         self.assertEqual(by_code[self.pc_pickup.code].sell_amount, Decimal('25.00'))
         self.assertEqual(by_code[self.pc_fsc_pickup.code].sell_amount, Decimal('2.50'))
+        self.assertEqual(by_code[self.pc_pickup.code].rule_family, CALCULATION_PER_UNIT)
+        self.assertEqual(by_code[self.pc_fsc_pickup.code].rule_family, CALCULATION_PERCENT_OF_BASE)
 
 
 class ExportProductCodeSelectionTest(TestCase):

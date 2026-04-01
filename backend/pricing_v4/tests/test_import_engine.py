@@ -14,6 +14,10 @@ from datetime import date, timedelta
 from dataclasses import fields
 from django.test import TestCase
 
+from core.charge_rules import (
+    CALCULATION_FLAT,
+    CALCULATION_LOOKUP_RATE,
+)
 from pricing_v4.models import (
     CommodityChargeRule,
     ProductCode, Agent,
@@ -367,6 +371,7 @@ class ImportFullQuoteTest(ImportEngineTestCase):
         self.assertIsNotNone(result.caf_rate)
         self.assertEqual(set(result.__dict__.keys()), EXPECTED_QUOTE_RESULT_FIELDS)
         self.assertEqual(set(result.line_items[0].__dict__.keys()), EXPECTED_LINE_ITEM_FIELDS)
+        self.assertEqual(result.line_items[0].rule_family, CALCULATION_LOOKUP_RATE)
 
 
 class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
@@ -485,8 +490,9 @@ class ImportD2DOriginLaneCogsTest(ImportEngineTestCase):
         line = doc_origin_lines[0]
         self.assertFalse(getattr(line, 'is_rate_missing', False))
         self.assertEqual(line.cost_currency, 'AUD')
-        self.assertEqual(line.cost_source, 'COGS')
+        self.assertEqual(line.cost_source, 'DB_TARIFF')
         self.assertGreater(line.sell_amount, Decimal('0'))
+        self.assertEqual(line.rule_family, CALCULATION_FLAT)
 
 
 class ImportCommodityRuleSelectionTest(ImportEngineTestCase):

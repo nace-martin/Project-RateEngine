@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { QuoteComputeResult, SellLine, V3QuoteComputeResponse } from "@/lib/types";
+import {
+    CanonicalQuoteLineItem,
+    CanonicalQuoteResult,
+    QuoteComputeResult,
+    SellLine,
+    V3QuoteComputeResponse,
+} from "@/lib/types";
 import {
     Card,
     CardContent,
@@ -26,6 +32,7 @@ interface QuoteFinancialBreakdownProps {
 type LooseRecord = Record<string, unknown>;
 type BreakdownLine = SellLine & { sell_fcy_currency?: string };
 type BreakdownDataShape = {
+    quote_result?: CanonicalQuoteResult | null;
     latest_version?: {
         sell_lines?: BreakdownLine[];
         lines?: BreakdownLine[];
@@ -35,6 +42,71 @@ type BreakdownDataShape = {
     lines?: BreakdownLine[];
     totals?: LooseRecord;
 };
+
+function toMoneyString(value: number): string {
+    return value.toFixed(2);
+}
+
+function mapCanonicalComponentToLeg(component: string): SellLine["leg"] {
+    switch ((component || "").toUpperCase()) {
+        case "ORIGIN_LOCAL":
+            return "ORIGIN";
+        case "DESTINATION_LOCAL":
+            return "DESTINATION";
+        case "FREIGHT":
+            return "FREIGHT";
+        default:
+            return "DESTINATION";
+    }
+}
+
+function mapCanonicalLineItemToBreakdownLine(
+    item: CanonicalQuoteLineItem,
+    currency: string,
+): BreakdownLine {
+    const sellAmount = parseFloat(item.sell_amount || "0");
+    const taxAmount = parseFloat(item.tax_amount || "0");
+    const sellInclTax = sellAmount + taxAmount;
+
+    return {
+        line_type: "COMPONENT",
+        component: item.product_code || item.component,
+        description: item.description,
+        leg: mapCanonicalComponentToLeg(item.component),
+        cost_pgk: item.cost_amount,
+        sell_pgk: currency === "PGK" ? item.sell_amount : "0.00",
+        sell_pgk_incl_gst: currency === "PGK" ? toMoneyString(sellInclTax) : "0.00",
+        gst_amount: item.tax_amount,
+        sell_fcy: currency !== "PGK" ? item.sell_amount : item.sell_amount,
+        sell_fcy_incl_gst: currency !== "PGK" ? toMoneyString(sellInclTax) : toMoneyString(sellInclTax),
+        sell_currency: currency,
+        sell_fcy_currency: currency !== "PGK" ? currency : undefined,
+        margin_percent: "0",
+        exchange_rate: "0",
+        source: item.cost_source,
+        is_informational: !item.included_in_total,
+    };
+}
+
+function buildCanonicalTotals(result: CanonicalQuoteResult): LooseRecord {
+    const currency = (result.currency || "PGK").toUpperCase();
+    const sellTotal = parseFloat(result.sell_total || "0");
+    const gstAmount = parseFloat(result.tax_breakdown?.gst_amount || "0");
+    const exGst = sellTotal - gstAmount;
+
+    return {
+        currency,
+        total_quote_amount: toMoneyString(sellTotal),
+        total_gst: result.tax_breakdown?.gst_amount || "0.00",
+        gst_amount: result.tax_breakdown?.gst_amount || "0.00",
+        total_sell_pgk: result.total_sell_pgk,
+        total_sell_pgk_incl_gst: currency === "PGK" ? result.sell_total : result.total_sell_pgk,
+        total_sell_ex_gst: toMoneyString(exGst),
+        total_sell_fcy: currency !== "PGK" ? toMoneyString(exGst) : undefined,
+        total_sell_fcy_incl_gst: currency !== "PGK" ? result.sell_total : undefined,
+        total_sell_fcy_currency: currency !== "PGK" ? currency : undefined,
+    };
+}
 
 // Simplified currency display without symbol (for cleaner table display)
 const formatAmount = (amountStr: string | number | undefined, currency: string) => {
@@ -84,12 +156,17 @@ function getDisplaySellAmount(line: BreakdownLine, isShowingFCY: boolean): numbe
 
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
-    // BACKWARD COMPATIBILITY FIX: 
-    // If we receive a full Quote object (V3), map its latest_version to the expected fields
     const normalizedResult = result as unknown as BreakdownDataShape;
+    const canonicalResult = normalizedResult.quote_result ?? null;
     const data = normalizedResult.latest_version ?? normalizedResult;
-    const sell_lines = ((data.sell_lines || data.lines || []) as unknown[]) as BreakdownLine[];
-    const totals = data.totals;
+    const canonicalCurrency = (canonicalResult?.currency || "PGK").toUpperCase();
+    const canonicalLines = canonicalResult?.line_items?.length
+        ? canonicalResult.line_items.map((item) => mapCanonicalLineItemToBreakdownLine(item, canonicalCurrency))
+        : [];
+    const sell_lines = canonicalLines.length > 0
+        ? canonicalLines
+        : (((data.sell_lines || data.lines || []) as unknown[]) as BreakdownLine[]);
+    const totals = canonicalResult ? buildCanonicalTotals(canonicalResult) : data.totals;
 
     // Detect display currency and logic flags
     const firstLineCurrency = sell_lines[0]?.sell_fcy_currency || sell_lines[0]?.sell_currency || 'PGK';

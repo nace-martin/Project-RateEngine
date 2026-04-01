@@ -9,12 +9,15 @@ from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from pricing_v4.models import ProductCode
 from pricing_v4.models import DomesticCOGS, DomesticSellRate, Surcharge
-from core.charge_rules import evaluate_charge_rule
+from core.charge_rules import (
+    CALCULATION_LOOKUP_RATE,
+    RuleEvaluation,
+    evaluate_rate_lookup_rule,
+)
 from quotes.quote_result_contract import (
     QuoteComponent,
     QuoteCostSource,
     QuoteRateSource,
-    QuoteRuleFamily,
     basis_for_unit,
 )
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
@@ -26,6 +29,7 @@ class BillableCharge:
     product_code: str = ''
     is_gst_applicable: bool = True
     agent_name: Optional[str] = None  # NEW
+    rule_family: str = CALCULATION_LOOKUP_RATE
 
 class DomesticPricingEngine:
     """
@@ -153,10 +157,18 @@ class DomesticPricingEngine:
             ):
                 cogs = None
         if cogs:
-            cost = self._calc_weight_based_amount(cogs.rate_per_kg, cogs.weight_breaks, cogs.min_charge)
-            if cost > 0:
+            cost_eval = self._evaluate_rate_record(cogs)
+            if cost_eval.amount > 0:
                 agent_name = cogs.agent.name if cogs.agent else None
-                cogs_breakdown.append(BillableCharge("Air Freight (Cost)", cost, product_code='DOM-FRT-AIR', agent_name=agent_name))
+                cogs_breakdown.append(
+                    BillableCharge(
+                        "Air Freight (Cost)",
+                        cost_eval.amount,
+                        product_code='DOM-FRT-AIR',
+                        agent_name=agent_name,
+                        rule_family=cost_eval.rule_family,
+                    )
+                )
             
         # SELL
         sell = (
@@ -182,9 +194,16 @@ class DomesticPricingEngine:
             ):
                 sell = None
         if sell:
-            amt = self._calc_weight_based_amount(sell.rate_per_kg, sell.weight_breaks, sell.min_charge)
-            if amt > 0:
-                sell_breakdown.append(BillableCharge("Air Freight", amt, product_code='DOM-FRT-AIR'))
+            sell_eval = self._evaluate_rate_record(sell)
+            if sell_eval.amount > 0:
+                sell_breakdown.append(
+                    BillableCharge(
+                        "Air Freight",
+                        sell_eval.amount,
+                        product_code='DOM-FRT-AIR',
+                        rule_family=sell_eval.rule_family,
+                    )
+                )
 
     def _calculate_surcharges(self, cogs_breakdown: List[BillableCharge], sell_breakdown: List[BillableCharge]):
         cogs_freight_basis = sum(
@@ -216,8 +235,15 @@ class DomesticPricingEngine:
                 quote_date=self.quote_date,
             ):
                 continue
-            amount = self._calc_surcharge_amount(sur, basis_amount=cogs_freight_basis)
-            cogs_breakdown.append(BillableCharge(f"{sur.product_code.description} (Cost)", amount, product_code=sur.product_code.code))
+            surcharge_eval = self._calc_surcharge_amount(sur, basis_amount=cogs_freight_basis)
+            cogs_breakdown.append(
+                BillableCharge(
+                    f"{sur.product_code.description} (Cost)",
+                    surcharge_eval.amount,
+                    product_code=sur.product_code.code,
+                    rule_family=surcharge_eval.rule_family,
+                )
+            )
 
         # SELL Surcharges (prefetch product_code to avoid N+1)
         sell_surcharges = Surcharge.objects.filter(
@@ -239,8 +265,15 @@ class DomesticPricingEngine:
                 quote_date=self.quote_date,
             ):
                 continue
-            amount = self._calc_surcharge_amount(sur, basis_amount=sell_freight_basis)
-            sell_breakdown.append(BillableCharge(sur.product_code.description, amount, product_code=sur.product_code.code))
+            surcharge_eval = self._calc_surcharge_amount(sur, basis_amount=sell_freight_basis)
+            sell_breakdown.append(
+                BillableCharge(
+                    sur.product_code.description,
+                    surcharge_eval.amount,
+                    product_code=sur.product_code.code,
+                    rule_family=surcharge_eval.rule_family,
+                )
+            )
 
     def _build_line_items(
         self,
@@ -257,7 +290,7 @@ class DomesticPricingEngine:
                     description=charge.description.replace(" (Cost)", ""),
                     component=QuoteComponent.FREIGHT if charge.product_code == 'DOM-FRT-AIR' else QuoteComponent.ORIGIN_LOCAL,
                     basis=basis_for_unit('KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT'),
-                    rule_family=QuoteRuleFamily.STANDARD_RATE if charge.product_code == 'DOM-FRT-AIR' else QuoteRuleFamily.FLAT,
+                    rule_family=charge.rule_family or CALCULATION_LOOKUP_RATE,
                     unit_type='KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT',
                     quantity=Decimal('1.00'),
                     currency='PGK',
@@ -270,6 +303,7 @@ class DomesticPricingEngine:
             item.cost_source = QuoteCostSource.DB_TARIFF
             item.rate_source = QuoteRateSource.DB_TARIFF
             item.agent_name = charge.agent_name
+            item.rule_family = charge.rule_family
 
         for charge in sell_breakdown:
             item = indexed.setdefault(
@@ -279,7 +313,7 @@ class DomesticPricingEngine:
                     description=charge.description,
                     component=QuoteComponent.FREIGHT if charge.product_code == 'DOM-FRT-AIR' else QuoteComponent.ORIGIN_LOCAL,
                     basis=basis_for_unit('KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT'),
-                    rule_family=QuoteRuleFamily.STANDARD_RATE if charge.product_code == 'DOM-FRT-AIR' else QuoteRuleFamily.FLAT,
+                    rule_family=charge.rule_family or CALCULATION_LOOKUP_RATE,
                     unit_type='KG' if charge.product_code == 'DOM-FRT-AIR' else 'SHIPMENT',
                     quantity=Decimal('1.00'),
                     currency='PGK',
@@ -290,6 +324,7 @@ class DomesticPricingEngine:
             item.sell_amount += charge.amount
             item.sell_currency = 'PGK'
             item.tax_code = 'service_in_PNG'
+            item.rule_family = charge.rule_family or item.rule_family
             item.gst_category = 'service_in_PNG'
             item.gst_rate = Decimal('0.10')
             item.gst_amount = item.sell_amount * Decimal('0.10')
@@ -301,72 +336,15 @@ class DomesticPricingEngine:
 
         return list(indexed.values())
 
-    def _calc_surcharge_amount(self, surcharge: Surcharge, basis_amount: Decimal = Decimal('0.00')) -> Decimal:
-        amount = Decimal('0.00')
-        shipment_ctx = {
-            'chargeable_weight_kg': self.weight,
-            'shipment_count': Decimal('1'),
-            'basis_amounts': {'freight': basis_amount},
-        }
-        
-        if surcharge.rate_type == 'FLAT':
-            amount = evaluate_charge_rule(
-                {'calculation_type': 'FLAT', 'rate': surcharge.amount, 'min_amount': surcharge.min_charge},
-                shipment_ctx,
-            )
-        elif surcharge.rate_type == 'PER_KG':
-            calc_type = 'MIN_OR_PER_UNIT' if surcharge.min_charge else 'PER_UNIT'
-            amount = evaluate_charge_rule(
-                {
-                    'calculation_type': calc_type,
-                    'unit_type': 'KG',
-                    'rate': surcharge.amount,
-                    'min_amount': surcharge.min_charge,
-                },
-                shipment_ctx,
-            )
-        elif surcharge.rate_type == 'PERCENT':
-            amount = evaluate_charge_rule(
-                {
-                    'calculation_type': 'PERCENT_OF',
-                    'percent': surcharge.amount,
-                    'percent_basis': 'freight',
-                    'min_amount': surcharge.min_charge,
-                    'max_amount': surcharge.max_charge,
-                },
-                shipment_ctx,
-            )
-            
-        return amount
+    def _calc_surcharge_amount(self, surcharge: Surcharge, basis_amount: Decimal = Decimal('0.00')) -> RuleEvaluation:
+        return evaluate_rate_lookup_rule(
+            rate=surcharge,
+            quantity=self.weight,
+            base_amount=basis_amount,
+        )
 
-    def _calc_weight_based_amount(self, rate_per_kg: Optional[Decimal], weight_breaks: Optional[List[Dict]], min_charge: Optional[Decimal]) -> Decimal:
-        """
-        Calculate amount using weight breaks when provided; fallback to flat rate_per_kg.
-        """
-        amount = Decimal('0.00')
-        if weight_breaks:
-            # Expect list of {"min_kg": x, "rate": y}; take highest min_kg the weight qualifies for
-            sorted_breaks = sorted(weight_breaks, key=lambda b: Decimal(str(b.get('min_kg', 0))), reverse=True)
-            for tier in sorted_breaks:
-                min_kg = Decimal(str(tier.get('min_kg', 0)))
-                if self.weight >= min_kg:
-                    amount = self.weight * Decimal(str(tier.get('rate', 0)))
-                    break
-        elif rate_per_kg:
-            calc_type = 'MIN_OR_PER_UNIT' if min_charge else 'PER_UNIT'
-            amount = evaluate_charge_rule(
-                {
-                    'calculation_type': calc_type,
-                    'unit_type': 'KG',
-                    'rate': rate_per_kg,
-                    'min_amount': min_charge,
-                },
-                {'chargeable_weight_kg': self.weight},
-            )
-        elif min_charge:
-            amount = evaluate_charge_rule(
-                {'calculation_type': 'FLAT', 'rate': amount, 'min_amount': min_charge},
-                {'shipment_count': Decimal('1')},
-            )
-        
-        return amount
+    def _evaluate_rate_record(self, rate) -> RuleEvaluation:
+        return evaluate_rate_lookup_rule(
+            rate=rate,
+            quantity=self.weight,
+        )

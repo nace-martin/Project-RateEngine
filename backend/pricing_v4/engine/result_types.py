@@ -3,13 +3,12 @@ from datetime import date
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional
 
+from core.charge_rules import CALCULATION_LOOKUP_RATE
 from quotes.quote_result_contract import (
     QuoteComponent,
     QuoteCostSource,
     QuoteRateSource,
-    QuoteRuleFamily,
 )
-
 
 ZERO_DECIMAL = Decimal("0.00")
 
@@ -30,7 +29,7 @@ class QuoteLineItem:
     description: str = ""
     component: str = QuoteComponent.OTHER
     basis: str = "Per Shipment"
-    rule_family: str = QuoteRuleFamily.UNKNOWN
+    rule_family: str = CALCULATION_LOOKUP_RATE
     unit_type: str = "SHIPMENT"
     quantity: Decimal = Decimal("1.00")
     currency: str = "PGK"

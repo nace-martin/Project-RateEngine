@@ -14,6 +14,11 @@ from datetime import date, timedelta
 from dataclasses import fields
 from django.test import TestCase
 
+from core.charge_rules import (
+    CALCULATION_FLAT,
+    CALCULATION_MIN_OR_PER_UNIT,
+    CALCULATION_TIERED_BREAK,
+)
 from pricing_v4.models import (
     CommodityChargeRule,
     ProductCode, Carrier, Agent,
@@ -133,6 +138,7 @@ class DomesticFreightTest(DomesticEngineTestCase):
         self.assertIn('service_in_PNG', result.tax_breakdown)
         self.assertEqual(set(result.__dict__.keys()), EXPECTED_QUOTE_RESULT_FIELDS)
         self.assertEqual(set(result.line_items[0].__dict__.keys()), EXPECTED_LINE_ITEM_FIELDS)
+        self.assertEqual(result.line_items[0].rule_family, CALCULATION_MIN_OR_PER_UNIT)
     
     def test_minimum_charge_enforcement(self):
         """Test that minimum charge is applied for small shipments."""
@@ -209,6 +215,7 @@ class DomesticWeightBreaksTest(DomesticEngineTestCase):
         
         # 75 * 7.50 = 562.50
         self.assertEqual(result.cogs_breakdown[0].amount, Decimal('562.50'))
+        self.assertEqual(result.line_items[0].rule_family, CALCULATION_TIERED_BREAK)
         
     def test_highest_weight_break(self):
         """Test that highest tier is used for heavy shipments."""
@@ -320,6 +327,9 @@ class DomesticSurchargeTest(DomesticEngineTestCase):
         self.assertIsNotNone(doc_sell)
         self.assertEqual(doc_cogs.amount, Decimal('25.00'))
         self.assertEqual(doc_sell.amount, Decimal('35.00'))
+        doc_line = next((line for line in result.line_items if line.product_code == 'DOM-DOC'), None)
+        self.assertIsNotNone(doc_line)
+        self.assertEqual(doc_line.rule_family, CALCULATION_FLAT)
     
     def test_per_kg_surcharge_applied(self):
         """Test per-kg surcharges are calculated correctly."""
