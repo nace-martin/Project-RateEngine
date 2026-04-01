@@ -291,6 +291,88 @@ export interface V3QuoteVersion {
   total_weight_kg?: number; // Added via serializer
 }
 
+export interface CanonicalQuoteFxApplied {
+  applied: boolean;
+  rate: string | null;
+  source: string | null;
+  snapshot_date: string | null;
+  caf_percent: string | null;
+  currency: string | null;
+}
+
+export interface CanonicalQuoteTaxBreakdown {
+  gst_percent: string;
+  gst_amount: string;
+  tax_basis: string | null;
+  by_code: Record<string, string>;
+}
+
+export interface CanonicalQuoteLineItem {
+  line_id: string;
+  product_code: string;
+  description: string;
+  component: string;
+  basis: string;
+  rule_family: string;
+  unit_type: string;
+  quantity: string;
+  currency: string;
+  cost_currency?: string;
+  sell_currency?: string;
+  rate: string | null;
+  cost_amount: string;
+  sell_amount: string;
+  tax_code: string;
+  tax_amount: string;
+  included_in_total: boolean;
+  cost_source: string;
+  rate_source: string;
+  calculation_notes: string | null;
+  is_spot_sourced: boolean;
+  is_manual_override: boolean;
+  sort_order: number;
+}
+
+export interface CanonicalQuoteResult {
+  quote_id: string;
+  status: string | null;
+  customer_name: string | null;
+  service_scope: string | null;
+  mode: string | null;
+  origin: string;
+  destination: string;
+  incoterm: string | null;
+  cargo_type: string | null;
+  pieces: number;
+  actual_weight: string;
+  volumetric_weight: string;
+  chargeable_weight: string;
+  dimensions_summary: string | null;
+  line_items: CanonicalQuoteLineItem[];
+  currency: string;
+  sell_total: string;
+  total_cost_pgk: string;
+  total_sell_pgk: string;
+  margin_amount: string;
+  margin_percent: string;
+  fx_applied: CanonicalQuoteFxApplied;
+  tax_breakdown: CanonicalQuoteTaxBreakdown;
+  warnings: string[];
+  missing_components: string[];
+  spot_required: boolean;
+  engine_name: string | null;
+  rate_source: string;
+  service_notes: string | null;
+  customer_notes: string | null;
+  internal_notes: string | null;
+  prepared_by: string | null;
+  created_at: string | null;
+  calculated_at: string | null;
+  quote_version: number | null;
+  payment_term?: string | null;
+  valid_until?: string | null;
+}
+
 export interface V3QuoteComputeResponse {
   id: string; // UUID
   quote_number: string;
@@ -317,6 +399,7 @@ export interface V3QuoteComputeResponse {
   created_by?: string | null; // Assigned Agent (Sales Rep)
   rate_provider?: string | null; // Agent who provided rates
   latest_version: V3QuoteVersion;
+  quote_result?: CanonicalQuoteResult | null;
 }
 
 export type QuoteVersionChargeInput = V3ManualOverride;
@@ -400,6 +483,7 @@ export interface QuoteComputeResult {
   computation_date: string;
   routing?: RoutingInfo;
   notes: string[];
+  quote_result?: CanonicalQuoteResult | null;
 }
 
 export interface Tier1Stats {

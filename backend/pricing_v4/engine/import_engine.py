@@ -29,6 +29,13 @@ from pricing_v4.category_rules import is_local_rate_category
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from core.charge_rules import evaluate_charge_rule
 from quotes.tax_policy import get_png_gst_category
+from quotes.quote_result_contract import (
+    QuoteComponent,
+    basis_for_unit,
+    infer_rule_family,
+    normalize_cost_source,
+    normalize_rate_source,
+)
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
 logger = logging.getLogger(__name__)
@@ -645,24 +652,57 @@ class ImportPricingEngine:
 
     @staticmethod
     def _to_quote_line_item(line: ChargeLine) -> QuoteLineItem:
+        component = QuoteComponent.ORIGIN_LOCAL
+        if line.leg == 'FREIGHT':
+            component = QuoteComponent.FREIGHT
+        elif line.leg == 'DESTINATION':
+            component = QuoteComponent.DESTINATION_LOCAL
+        unit_type = 'KG' if line.leg == 'FREIGHT' else 'SHIPMENT'
+        is_spot_sourced = 'SPOT' in str(line.cost_source or '').upper()
+        is_manual_override = any(token in str(line.cost_source or '').upper() for token in ['MANUAL', 'OVERRIDE'])
         return QuoteLineItem(
             product_code_id=line.product_code_id,
             product_code=line.product_code,
             description=line.description,
+            component=component,
+            basis=basis_for_unit(unit_type),
+            rule_family=infer_rule_family(
+                unit_type=unit_type,
+                fx_applied=line.fx_applied,
+                caf_applied=line.caf_applied,
+                margin_applied=line.margin_applied,
+            ),
+            unit_type=unit_type,
+            quantity=Decimal('1.00'),
+            currency=line.sell_currency,
             category=line.category,
             leg=line.leg,
             cost_amount=line.cost_amount,
             cost_currency=line.cost_currency,
-            cost_source=line.cost_source,
+            cost_source=normalize_cost_source(
+                line.cost_source,
+                is_spot_sourced=is_spot_sourced,
+                is_manual_override=is_manual_override,
+            ),
             agent_name=line.agent_name,
             sell_amount=line.sell_amount,
             sell_currency=line.sell_currency,
             margin_amount=line.margin_amount,
             margin_percent=line.margin_percent,
+            tax_code=line.gst_category or 'GST',
+            tax_amount=line.gst_amount,
             gst_category=line.gst_category,
             gst_rate=line.gst_rate,
             gst_amount=line.gst_amount,
             sell_incl_gst=line.sell_incl_gst,
+            rate_source=normalize_rate_source(
+                line.cost_source,
+                is_spot_sourced=is_spot_sourced,
+                is_manual_override=is_manual_override,
+            ),
+            calculation_notes=line.notes or None,
+            is_spot_sourced=is_spot_sourced,
+            is_manual_override=is_manual_override,
             is_rate_missing=getattr(line, 'is_rate_missing', False),
             notes=line.notes,
             fx_applied=line.fx_applied,

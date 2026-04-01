@@ -16,7 +16,12 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.decorators import action
 
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
-from quotes.serializers import QuoteModelSerializerV3, QuoteListSerializerV3
+from quotes.serializers import (
+    CanonicalQuoteResultSerializer,
+    QuoteListSerializerV3,
+    QuoteModelSerializerV3,
+)
+from quotes.quote_result_contract import build_quote_result_from_quote
 from services.models import ServiceComponent
 from pricing_v4.adapter import PricingServiceV4Adapter
 from core.dataclasses import QuoteInput, ManualOverride
@@ -439,6 +444,9 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             'computation_date': latest_version.created_at.isoformat() if latest_version.created_at else timezone.now().isoformat(),
             'routing': None,
             'notes': notes,
+            'quote_result': CanonicalQuoteResultSerializer(
+                build_quote_result_from_quote(quote, latest_version)
+            ).data,
         }
         return Response(payload)
 

@@ -396,10 +396,16 @@ export async function getQuoteV3(
 }
 
 function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComputeResult {
+  const canonicalResult = quote.quote_result ?? null;
   const version = quote.latest_version;
   const totals = version?.totals;
   const lines = version?.lines ?? [];
-  const displayCurrency = totals?.currency || totals?.total_sell_fcy_currency || quote.output_currency || 'PGK';
+  const displayCurrency =
+    canonicalResult?.currency ||
+    totals?.currency ||
+    totals?.total_sell_fcy_currency ||
+    quote.output_currency ||
+    'PGK';
 
   const exchange_rates: Record<string, string> = {};
   for (const line of lines) {
@@ -410,7 +416,7 @@ function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComp
   }
 
   return {
-    quote_id: quote.id,
+    quote_id: canonicalResult?.quote_id || quote.id,
     quote_number: quote.quote_number,
     buy_lines: [],
     sell_lines: lines.map((line) => {
@@ -467,8 +473,9 @@ function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComp
       total_sell_fcy_currency: totals?.total_sell_fcy_currency || displayCurrency,
     },
     exchange_rates,
-    computation_date: version?.created_at || quote.updated_at || quote.created_at,
-    notes: totals?.notes ? [totals.notes] : [],
+    computation_date: canonicalResult?.calculated_at || version?.created_at || quote.updated_at || quote.created_at,
+    notes: canonicalResult?.warnings?.length ? canonicalResult.warnings : (totals?.notes ? [totals.notes] : []),
+    quote_result: canonicalResult,
   };
 }
 
