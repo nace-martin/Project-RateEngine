@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional
 
+from core.charge_rules import CALCULATION_LOOKUP_RATE
 
 ZERO_DECIMAL = Decimal("0.00")
 
@@ -20,6 +21,7 @@ class QuoteLineItem:
     product_code_id: Optional[int] = None
     product_code: str = ""
     description: str = ""
+    rule_family: str = CALCULATION_LOOKUP_RATE
     category: str = ""
     leg: str = "ORIGIN"
     cost_amount: Decimal = ZERO_DECIMAL

@@ -27,7 +27,12 @@ from pricing_v4.models import (
 )
 from pricing_v4.category_rules import is_local_rate_category
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
-from core.charge_rules import evaluate_charge_rule
+from core.charge_rules import (
+    CALCULATION_FLAT,
+    CALCULATION_LOOKUP_RATE,
+    RuleEvaluation,
+    evaluate_rate_lookup_rule,
+)
 from quotes.tax_policy import get_png_gst_category
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
@@ -80,6 +85,7 @@ class ChargeLine:
     sell_incl_gst: Decimal = Decimal('0')
     
     notes: str = ""
+    rule_family: str = CALCULATION_LOOKUP_RATE
 
 
 class ImportPricingEngine:
@@ -246,53 +252,18 @@ class ImportPricingEngine:
             Decimal('0.01'), rounding=ROUND_HALF_UP
         )
     
-    def _calculate_cogs_amount(self, cogs, pc: ProductCode) -> Decimal:
+    def _calculate_cogs_amount(self, cogs, pc: ProductCode) -> RuleEvaluation:
         """Calculate COGS amount for a rate record."""
-        amount = Decimal('0')
-        
-        # Percentage-based (FSC)
+        base_amount = Decimal('0.00')
         if cogs.percent_rate:
-            # FSC - find base charge
             base_pc = pc.percent_of_product_code
             if base_pc and base_pc.code in self._cost_cache:
                 base_amount = self._cost_cache[base_pc.code]
-                amount = base_amount * (cogs.percent_rate / Decimal('100'))
-            return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        
-        # Weight breaks
-        if cogs.weight_breaks:
-            wb = sorted(cogs.weight_breaks, key=lambda x: Decimal(str(x['min_kg'])), reverse=True)
-            for tier in wb:
-                if self.weight >= Decimal(str(tier['min_kg'])):
-                    amount = self.weight * Decimal(str(tier['rate']))
-                    break
-        elif cogs.rate_per_kg:
-            calc_type = 'MIN_OR_PER_UNIT' if cogs.min_charge else 'PER_UNIT'
-            amount = evaluate_charge_rule(
-                {
-                    'calculation_type': calc_type,
-                    'unit_type': 'KG',
-                    'rate': cogs.rate_per_kg,
-                    'min_amount': cogs.min_charge,
-                    'max_amount': cogs.max_charge,
-                },
-                {'chargeable_weight_kg': self.weight},
-            )
-        
-        # Flat rate
-        if cogs.rate_per_shipment:
-            if amount == 0:
-                amount = cogs.rate_per_shipment
-            elif hasattr(cogs, 'is_additive') and cogs.is_additive:
-                amount += cogs.rate_per_shipment
-        
-        # Min/Max
-        if cogs.min_charge and amount < cogs.min_charge and not cogs.rate_per_kg:
-            amount = cogs.min_charge
-        if cogs.max_charge and amount > cogs.max_charge:
-            amount = cogs.max_charge
-        
-        return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return evaluate_rate_lookup_rule(
+            rate=cogs,
+            quantity=self.weight,
+            base_amount=base_amount,
+        )
     
     def _get_leg_for_product_code(self, pc: ProductCode) -> str:
         """Determine which leg a ProductCode belongs to."""
@@ -381,8 +352,8 @@ class ImportPricingEngine:
             ).first()
             
             if cogs:
-                cost = self._calculate_cogs_amount(cogs, pc)
-                self._cost_cache[pc.code] = cost
+                cost_eval = self._calculate_cogs_amount(cogs, pc)
+                self._cost_cache[pc.code] = cost_eval.amount
         
         # Second pass: Calculate all charges including FSC
         for pc in import_pcs:
@@ -414,6 +385,7 @@ class ImportPricingEngine:
                         cost_currency='PGK', cost_source='Default', agent_name=None, sell_amount=Decimal('300.00'),
                         sell_currency=self.quote_currency, margin_amount=Decimal('300.00'),
                         margin_percent=Decimal('100.00'), notes="Default Customs Brokerage Fee applied.",
+                        rule_family=CALCULATION_FLAT,
                     )
                     # Handle FCY conversion for PREPAID quotes
                     if self.quote_currency != 'PGK':
@@ -444,6 +416,7 @@ class ImportPricingEngine:
                         margin_amount=Decimal('0'),
                         margin_percent=Decimal('0'),
                         notes=f"Requested rate missing for {pc.code}",
+                        rule_family=CALCULATION_LOOKUP_RATE,
                     )
                     line.is_rate_missing = True # Dynamically added for adapter detection
 
@@ -548,9 +521,11 @@ class ImportPricingEngine:
         # Calculate cost
         cost_amount = Decimal('0')
         cost_currency = 'AUD'  # Default for origin
+        cost_eval = RuleEvaluation(CALCULATION_LOOKUP_RATE, Decimal('0.00'))
         
         if cogs:
-            cost_amount = self._calculate_cogs_amount(cogs, pc)
+            cost_eval = self._calculate_cogs_amount(cogs, pc)
+            cost_amount = cost_eval.amount
             cost_currency = cogs.currency
             self._cost_cache[pc.code] = cost_amount
         
@@ -560,17 +535,17 @@ class ImportPricingEngine:
         fx_applied = False
         caf_applied = False
         margin_applied = False
+        sell_eval = RuleEvaluation(CALCULATION_LOOKUP_RATE, Decimal('0.00'))
         
         if leg == 'DESTINATION' and sell_rate:
             # Destination: Use explicit sell rate
+            base_sell = Decimal('0.00')
             if sell_rate.percent_rate:
-                # FSC percentage
                 base_pc = pc.percent_of_product_code
                 if base_pc:
                     base_sell = self._get_dest_sell_amount(base_pc)
-                    sell_amount = base_sell * (sell_rate.percent_rate / Decimal('100'))
-            else:
-                sell_amount = self._calculate_sell_amount(sell_rate)
+            sell_eval = self._calculate_sell_amount(sell_rate, base_amount=base_sell)
+            sell_amount = sell_eval.amount
             
             # Currency handling for destination charges
             # If sell rate currency != quote currency, we must convert.
@@ -584,6 +559,7 @@ class ImportPricingEngine:
         else:
             # Origin/Freight: Cost-Plus
             sell_amount = cost_amount
+            sell_eval = cost_eval
             
             # FX conversion if needed
             if cost_currency != self.quote_currency:
@@ -641,6 +617,7 @@ class ImportPricingEngine:
             gst_rate=gst_rate,
             gst_amount=gst_amount,
             sell_incl_gst=sell_incl_gst,
+            rule_family=sell_eval.rule_family if sell_eval.amount > 0 else cost_eval.rule_family,
         )
 
     @staticmethod
@@ -649,6 +626,7 @@ class ImportPricingEngine:
             product_code_id=line.product_code_id,
             product_code=line.product_code,
             description=line.description,
+            rule_family=line.rule_family,
             category=line.category,
             leg=line.leg,
             cost_amount=line.cost_amount,
@@ -670,48 +648,20 @@ class ImportPricingEngine:
             margin_applied=line.margin_applied,
         )
     
-    def _calculate_sell_amount(self, sell_rate) -> Decimal:
+    def _calculate_sell_amount(self, sell_rate, *, base_amount: Decimal = Decimal('0.00')) -> RuleEvaluation:
         """Calculate sell amount from explicit sell rate."""
-        amount = Decimal('0')
-        
-        if sell_rate.weight_breaks:
-            wb = sorted(sell_rate.weight_breaks, key=lambda x: Decimal(str(x['min_kg'])), reverse=True)
-            for tier in wb:
-                if self.weight >= Decimal(str(tier['min_kg'])):
-                    amount = self.weight * Decimal(str(tier['rate']))
-                    break
-        elif sell_rate.rate_per_kg:
-            calc_type = 'MIN_OR_PER_UNIT' if sell_rate.min_charge else 'PER_UNIT'
-            amount = evaluate_charge_rule(
-                {
-                    'calculation_type': calc_type,
-                    'unit_type': 'KG',
-                    'rate': sell_rate.rate_per_kg,
-                    'min_amount': sell_rate.min_charge,
-                    'max_amount': sell_rate.max_charge,
-                },
-                {'chargeable_weight_kg': self.weight},
-            )
-        
-        if sell_rate.rate_per_shipment:
-            if amount == 0:
-                amount = sell_rate.rate_per_shipment
-            elif hasattr(sell_rate, 'is_additive') and sell_rate.is_additive:
-                amount += sell_rate.rate_per_shipment
-        
-        if sell_rate.min_charge and amount < sell_rate.min_charge and not sell_rate.rate_per_kg:
-            amount = sell_rate.min_charge
-        if sell_rate.max_charge and amount > sell_rate.max_charge:
-            amount = sell_rate.max_charge
-        
-        return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return evaluate_rate_lookup_rule(
+            rate=sell_rate,
+            quantity=self.weight,
+            base_amount=base_amount,
+        )
     
     def _get_dest_sell_amount(self, pc: ProductCode) -> Decimal:
         """Get destination sell amount for FSC base calculation."""
         sell_rate = self._get_destination_sell_rate(pc)
         
         if sell_rate:
-            sell_amount = self._calculate_sell_amount(sell_rate)
+            sell_amount = self._calculate_sell_amount(sell_rate).amount
             if sell_rate.currency != self.quote_currency:
                 sell_amount = self._convert_cross_currency(sell_amount, sell_rate.currency, self.quote_currency)
             return sell_amount

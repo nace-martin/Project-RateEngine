@@ -38,7 +38,13 @@ from pricing_v4.category_rules import (
     is_local_rate_category,
     resolve_export_local_location,
 )
-from core.charge_rules import evaluate_charge_rule
+from core.charge_rules import (
+    CALCULATION_FLAT,
+    CALCULATION_PERCENT_OF_BASE,
+    RuleEvaluation,
+    evaluate_percent_of_base_rule,
+    evaluate_rate_lookup_rule,
+)
 from quotes.tax_policy import get_png_gst_category
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
 
@@ -83,6 +89,7 @@ class ChargeLineResult:
     fx_applied: bool = False
     caf_applied: bool = False
     margin_applied: bool = False
+    rule_family: str = CALCULATION_FLAT
 
 
 class ExportPricingEngine:
@@ -501,8 +508,10 @@ class ExportPricingEngine:
         
         agent_name = getattr(cogs, 'agent', None)
         if agent_name: agent_name = agent_name.name
-        cost_amount = self._calculate_amount(cogs) if cogs else Decimal('0')
-        sell_amount_base = self._calculate_amount(sell_rate)
+        cost_eval = self._calculate_amount(cogs) if cogs else RuleEvaluation(CALCULATION_FLAT, Decimal('0.00'))
+        sell_eval = self._calculate_amount(sell_rate)
+        cost_amount = cost_eval.amount
+        sell_amount_base = sell_eval.amount
         
         fx_applied, caf_applied, margin_applied = False, False, False
         rate_is_fcy = (sell_rate.currency == self.quote_currency)
@@ -535,6 +544,7 @@ class ExportPricingEngine:
             margin_amount=margin_amount, margin_percent=margin_percent,
             gst_category=gst_category, gst_rate=gst_rate, gst_amount=gst_amount, sell_incl_gst=sell_incl_gst,
             is_rate_missing=False, notes='', fx_applied=fx_applied, caf_applied=caf_applied, margin_applied=margin_applied,
+            rule_family=sell_eval.rule_family if sell_eval.amount > 0 else cost_eval.rule_family,
         )
 
     def _create_default_line(self, pc: ProductCode, sell_amount: Decimal, notes: str) -> ChargeLineResult:
@@ -550,7 +560,7 @@ class ExportPricingEngine:
             cost_source='Default', agent_name=None, sell_amount=sell_amount,
             sell_currency=sell_currency, margin_amount=sell_amount,
             margin_percent=Decimal('100.00'), gst_amount=gst_amount, sell_incl_gst=sell_amount+gst_amount,
-            is_rate_missing=False, notes=notes,
+            is_rate_missing=False, notes=notes, rule_family=CALCULATION_FLAT,
         )
     
     def _calculate_percentage_charge(self, product_code_id: int) -> Optional[ChargeLineResult]:
@@ -559,9 +569,10 @@ class ExportPricingEngine:
         sell_rate = self._get_sell_rate(product_code_id)
         if not sell_rate or not sell_rate.percent_rate: return None
         base_sell = self._sell_cache.get(base_pc.id, Decimal('0')); base_cost = self._cost_cache.get(base_pc.id, Decimal('0'))
-        percent = sell_rate.percent_rate / Decimal('100')
-        sell_amount = (base_sell * percent).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-        cost_amount = (base_cost * percent).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        percent_eval = evaluate_percent_of_base_rule(sell_rate.percent_rate, base_sell)
+        cost_eval = evaluate_percent_of_base_rule(sell_rate.percent_rate, base_cost)
+        sell_amount = percent_eval.amount
+        cost_amount = cost_eval.amount
         margin_amount = sell_amount - cost_amount
         margin_percent = (margin_amount / cost_amount * 100) if cost_amount > 0 else Decimal('0')
         gst_category, gst_rate = get_png_gst_category(product_code=pc, shipment_type='EXPORT', leg='ORIGIN')
@@ -574,30 +585,14 @@ class ExportPricingEngine:
             sell_currency=self.quote_currency, margin_amount=margin_amount, margin_percent=margin_percent,
             gst_category=gst_category, gst_rate=gst_rate, gst_amount=gst_amount, sell_incl_gst=sell_amount+gst_amount,
             is_rate_missing=False, notes=f'Based on {base_pc.code}: K{base_sell}', agent_name=None,
+            rule_family=CALCULATION_PERCENT_OF_BASE,
         )
     
-    def _calculate_amount(self, rate) -> Decimal:
-        weight = self.chargeable_weight_kg
-        if hasattr(rate, 'amount') and not hasattr(rate, 'rate_per_kg'): # Surcharge table
-            amount = weight * rate.amount if rate.rate_type == 'PER_KG' else rate.amount
-        elif rate.weight_breaks: amount = self._calculate_weight_break(rate.weight_breaks, weight)
-        elif getattr(rate, 'is_additive', False) and rate.rate_per_kg and rate.rate_per_shipment:
-            amount = (weight * rate.rate_per_kg) + rate.rate_per_shipment
-        elif rate.rate_per_kg:
-            amount = weight * rate.rate_per_kg
-            if rate.min_charge and amount < rate.min_charge: amount = rate.min_charge
-        elif rate.rate_per_shipment: amount = rate.rate_per_shipment
-        else: amount = Decimal('0')
-        if hasattr(rate, 'min_charge') and rate.min_charge and amount < rate.min_charge: amount = rate.min_charge
-        if hasattr(rate, 'max_charge') and rate.max_charge and amount > rate.max_charge: amount = rate.max_charge
-        return amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    
-    def _calculate_weight_break(self, breaks: list, weight: Decimal) -> Decimal:
-        if not breaks: return Decimal('0')
-        sorted_breaks = sorted(breaks, key=lambda x: Decimal(str(x.get('min_kg', 0))), reverse=True)
-        for tier in sorted_breaks:
-            if weight >= Decimal(str(tier.get('min_kg', 0))): return weight * Decimal(str(tier.get('rate', 0)))
-        return weight * Decimal(str(sorted_breaks[-1].get('rate', 0)))
+    def _calculate_amount(self, rate) -> RuleEvaluation:
+        return evaluate_rate_lookup_rule(
+            rate=rate,
+            quantity=self.chargeable_weight_kg,
+        )
 
     def _convert_amount_to_pgk(self, amount: Decimal, currency: str) -> Decimal:
         if currency == 'PGK':
@@ -625,6 +620,7 @@ class ExportPricingEngine:
             product_code_id=line.product_code_id,
             product_code=line.product_code,
             description=line.description,
+            rule_family=line.rule_family,
             category=line.category,
             leg=leg,
             cost_amount=line.cost_amount,
