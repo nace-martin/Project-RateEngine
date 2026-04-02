@@ -293,7 +293,9 @@ class TestSpotTriggerEvaluation:
         assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
         assert result.manual_required_product_codes == ["EXP-AVI-MANUAL"]
         assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
-        assert result.missing_product_codes == ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
+        assert sorted(result.missing_product_codes) == sorted(
+            ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
+        )
         assert "manual charge entry" in result.text
         assert "Export Live Animal Manual Charge (EXP-AVI-MANUAL)" in result.text
         assert "EXP-AVI-SPOT" in result.text
@@ -303,11 +305,10 @@ class TestSpotTriggerEvaluation:
 class TestRateAvailabilityService:
     """Rate availability detection against V4 rate tables."""
 
-    def test_import_d2d_origin_local_detected_from_destination_fallback(self):
+    def test_import_d2d_destination_side_import_local_rows_do_not_cover_origin_local(self):
         """
-        IMPORT D2D compatibility:
-        if ORIGIN local rows were migrated under destination location,
-        availability must still mark ORIGIN_LOCAL=True.
+        IMPORT D2D must keep component side aligned:
+        destination-side import local rows cannot satisfy ORIGIN_LOCAL.
         """
         from datetime import date, timedelta
         from pricing_v4.models import ProductCode, Agent, ImportCOGS, LocalCOGSRate
@@ -367,7 +368,7 @@ class TestRateAvailabilityService:
             valid_until=valid_until,
         )
 
-        # Legacy migrated shape: origin local row stored under destination station.
+        # Destination-side import local row with an ORIGIN code must not cover origin-local.
         LocalCOGSRate.objects.create(
             product_code=pc_origin,
             location="POM",
@@ -399,7 +400,7 @@ class TestRateAvailabilityService:
         )
 
         assert availability[COMPONENT_FREIGHT] is True
-        assert availability[COMPONENT_ORIGIN_LOCAL] is True
+        assert availability[COMPONENT_ORIGIN_LOCAL] is False
         assert availability[COMPONENT_DESTINATION_LOCAL] is True
 
 

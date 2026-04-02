@@ -374,10 +374,11 @@ class ImportFullQuoteTest(ImportEngineTestCase):
         self.assertEqual(result.line_items[0].rule_family, CALCULATION_LOOKUP_RATE)
 
 
-class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
+class ImportD2DOriginLocalLocationAlignmentTest(ImportEngineTestCase):
     """
     Regression guard:
-    Import ORIGIN local charges must be resolvable from LocalCOGSRate.
+    Import ORIGIN local charges must not be sourced from destination-side
+    LocalCOGSRate rows when origin-side coverage is missing.
     """
 
     def setUp(self):
@@ -393,7 +394,6 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
             gl_cost_code='5200',
             default_unit='SHIPMENT'
         )
-
         # Freight lane COGS exists for linehaul
         ImportCOGS.objects.create(
             product_code=self.pc_freight,
@@ -406,8 +406,7 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
             valid_until=self.valid_until
         )
 
-        # Import ORIGIN local charge stored in LocalCOGSRate using destination location
-        # (legacy migration compatibility shape).
+        # Destination-side row with an ORIGIN product code must not satisfy ORIGIN_LOCAL.
         LocalCOGSRate.objects.create(
             product_code=self.pc_doc_origin,
             location='POM',
@@ -419,8 +418,30 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
             valid_from=self.valid_from,
             valid_until=self.valid_until
         )
+        LocalCOGSRate.objects.create(
+            product_code=self.pc_clearance,
+            location='POM',
+            direction='IMPORT',
+            agent=self.agent_efm,
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('350.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.pc_clearance,
+            location='POM',
+            direction='IMPORT',
+            payment_term='COLLECT',
+            currency='PGK',
+            rate_type='FIXED',
+            amount=Decimal('500.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until
+        )
 
-    def test_d2d_collect_does_not_mark_origin_local_as_missing(self):
+    def test_d2d_collect_keeps_origin_local_missing_when_only_destination_local_db_rows_exist(self):
         engine = ImportPricingEngine(
             quote_date=date.today(),
             origin='BNE',
@@ -434,7 +455,12 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
         doc_origin_lines = [l for l in result.origin_lines if l.product_code == 'IMP-DOC-ORIGIN']
         self.assertEqual(len(doc_origin_lines), 1)
         line = doc_origin_lines[0]
-        self.assertFalse(getattr(line, 'is_rate_missing', False))
+        self.assertTrue(getattr(line, 'is_rate_missing', False))
+        self.assertEqual(line.cost_amount, Decimal('0'))
+
+        destination_lines = [l for l in result.destination_lines if l.product_code == 'IMP-CLEAR']
+        self.assertEqual(len(destination_lines), 1)
+        self.assertFalse(getattr(destination_lines[0], 'is_rate_missing', False))
 
 
 class ImportD2DOriginLaneCogsTest(ImportEngineTestCase):

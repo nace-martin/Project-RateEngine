@@ -748,8 +748,9 @@ class ImportPricingEngine:
         """
         Get COGS for a product code.
         Destination-local import charges live in LocalCOGSRate.
-        Origin-local and freight import charges remain lane-based in ImportCOGS,
-        with a LocalCOGSRate fallback for legacy migrated datasets.
+        Origin-local and freight import charges remain aligned to the shipment
+        origin, so destination-side local tariffs must never satisfy missing
+        foreign origin-local charges.
         """
         if leg == 'DESTINATION' and is_local_rate_category(pc.category):
             return self._get_local_cogs(pc, leg)
@@ -790,12 +791,11 @@ class ImportPricingEngine:
         Lookup local COGS from centralized table for IMPORT.
 
         Lookup order:
-        - DESTINATION leg: destination station first.
-        - ORIGIN leg: origin station first.
-        - Compatibility fallback for legacy migrated datasets: destination station.
+        - DESTINATION leg: destination station only.
+        - ORIGIN leg: origin station only.
         """
         if leg == 'ORIGIN':
-            location_candidates = [self.origin, self.destination]
+            location_candidates = [self.origin]
         else:
             location_candidates = [self.destination]
 

@@ -5,6 +5,7 @@ import re
 from rest_framework import serializers
 from quotes.branding import get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+from .spot_models import _normalize_spot_shipment_context
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
 from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
@@ -127,7 +128,14 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
     service_component = V3ServiceComponentSerializer()
     # Alias for frontend compatibility (some components look for 'component' code)
     component = serializers.CharField(source='service_component.code', read_only=True)
-    description = serializers.CharField(source='service_component.description', read_only=True)
+    description = serializers.SerializerMethodField()
+
+    def get_description(self, obj):
+        return (
+            getattr(obj, 'cost_source_description', None)
+            or getattr(getattr(obj, 'service_component', None), 'description', None)
+            or 'Charge'
+        )
     
     class Meta:
         model = QuoteLine
@@ -399,10 +407,18 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         return ", ".join(sorted(providers))
 
     def get_spot_negotiation(self, obj):
-        spe = getattr(obj, 'spot_envelopes', None)
-        if not spe:
-            return None
-        latest = spe.order_by('-created_at', '-id').first()
+        prefetched = getattr(obj, "_prefetched_objects_cache", {}).get("spot_envelopes")
+        if prefetched is not None:
+            latest = max(
+                prefetched,
+                key=lambda item: (item.created_at, item.id),
+                default=None,
+            )
+        else:
+            spe = getattr(obj, 'spot_envelopes', None)
+            if not spe:
+                return None
+            latest = spe.only('id', 'created_at').order_by('-created_at', '-id').first()
         if not latest:
             return None
         return {'id': str(latest.id)}
@@ -656,7 +672,7 @@ class SPEAcknowledgementSerializer(serializers.ModelSerializer):
 
 class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     customer_name = serializers.SerializerMethodField()
-    shipment = serializers.JSONField(source='shipment_context_json')
+    shipment = serializers.SerializerMethodField()
     conditions = serializers.JSONField(source='conditions_json')
     charges = SPEChargeLineSerializer(source='charge_lines', many=True, read_only=True)
     sources = SPESourceBatchSerializer(source='source_batches', many=True, read_only=True)
@@ -689,6 +705,18 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
         if customer_name:
             return str(customer_name)
         return None
+
+    def get_shipment(self, obj):
+        shipment_ctx = _normalize_spot_shipment_context(
+            getattr(obj, "shipment_context_json", None) or {},
+            quote_payment_term=getattr(getattr(obj, "quote", None), "payment_term", None),
+        )
+        shipment_ctx["missing_components"] = list(
+            getattr(obj, "resolved_missing_components", None)
+            or shipment_ctx.get("missing_components")
+            or []
+        )
+        return shipment_ctx
 
     def get_has_acknowledgement(self, obj):
         return hasattr(obj, 'acknowledgement') and obj.acknowledgement is not None

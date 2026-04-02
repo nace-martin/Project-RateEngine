@@ -462,6 +462,7 @@ export default function SpotRateEntryPage() {
 
         return Array.from(warnings);
     }, [editableBuckets, sourceReviewSummaries]);
+    const speAlreadyReady = state.spe?.status === "ready" || Boolean(state.spe?.acknowledgement);
 
     // Handle saving charges, acknowledging, and creating the final quote in one flow
     const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
@@ -469,37 +470,40 @@ export default function SpotRateEntryPage() {
             if (quoteCreationBlocked) {
                 return;
             }
-            // 1. Update charges
-            const spe = await actions.updateSPE(state.spe.id, {
-                charges,
-                conditions: {
-                    space_not_confirmed: true,
-                    airline_acceptance_not_confirmed: true,
-                    rate_validity_hours: 72,
-                    conditional_charges_present: charges.some(c => c.conditional),
+            if (!speAlreadyReady) {
+                const spe = await actions.updateSPE(state.spe.id, {
+                    charges,
+                    conditions: {
+                        space_not_confirmed: true,
+                        airline_acceptance_not_confirmed: true,
+                        rate_validity_hours: 72,
+                        conditional_charges_present: charges.some(c => c.conditional),
+                    }
+                });
+
+                if (!spe) {
+                    return;
                 }
+
+                const success = await actions.submitAcknowledgement();
+                if (!success) {
+                    return;
+                }
+            }
+
+            const resolvedScope = serviceScope || "D2D";
+            const resolvedPaymentTerm = paymentTerm || "PREPAID";
+            const resolvedOutputCurrency = outputCurrency || "PGK";
+
+            const result = await actions.createQuote({
+                payment_term: resolvedPaymentTerm,
+                service_scope: resolvedScope,
+                output_currency: resolvedOutputCurrency,
+                customer_id: customerIdParam || undefined,
             });
 
-            if (spe) {
-                // 2. Auto-acknowledge
-                const success = await actions.submitAcknowledgement();
-                if (success) {
-                    // 3. Create the quote directly (backend handles compute internally)
-                    const resolvedScope = serviceScope || "D2D";
-                    const resolvedPaymentTerm = paymentTerm || "PREPAID";
-                    const resolvedOutputCurrency = outputCurrency || "PGK";
-
-                    const result = await actions.createQuote({
-                        payment_term: resolvedPaymentTerm,
-                        service_scope: resolvedScope,
-                        output_currency: resolvedOutputCurrency,
-                        customer_id: customerIdParam || undefined,
-                    });
-
-                    if (result?.success && result.quote_id) {
-                        router.push(`/quotes/${result.quote_id}`);
-                    }
-                }
+            if (result?.success && result.quote_id) {
+                router.push(`/quotes/${result.quote_id}`);
             }
         }
     };
@@ -939,17 +943,20 @@ export default function SpotRateEntryPage() {
                         shipmentType={resolvedShipmentType}
                         serviceScope={serviceScope}
                         missingComponents={missingComponents}
-                        submitLabel="Confirm & Create Quote"
+                        submitLabel={speAlreadyReady ? "Create Quote" : "Confirm & Create Quote"}
+                        submitLoadingText={speAlreadyReady ? "Creating quote..." : "Confirming and creating quote..."}
                         submitDisabled={quoteCreationBlocked}
                         submitDisabledReason={quoteCreationBlocked ? "Quote creation is temporarily unavailable." : null}
-                        onSaveDraft={handleSaveDraft}
+                        onSaveDraft={speAlreadyReady ? undefined : handleSaveDraft}
                     />
 
                     {/* Static disclaimer (acknowledgement is recorded on submit in backend flow) */}
                     <Card className="border-amber-200 bg-amber-50/60">
                         <CardContent className="pt-4">
                             <p className="text-sm text-amber-900">
-                                Final submission records the SPOT acknowledgement and creates the quote from the imported charges. Rates are still conditional until carrier and space are confirmed.
+                                {speAlreadyReady
+                                    ? "This SPOT acknowledgement is already recorded. Creating the quote will use the locked imported charges."
+                                    : "Final submission records the SPOT acknowledgement and creates the quote from the imported charges. Rates are still conditional until carrier and space are confirmed."}
                             </p>
                         </CardContent>
                     </Card>

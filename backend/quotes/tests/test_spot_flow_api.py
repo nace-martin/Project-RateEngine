@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from core.models import Location
 from core.tests.helpers import create_location
-from pricing_v4.models import CommodityChargeRule, ProductCode
+from pricing_v4.models import Agent, CommodityChargeRule, LocalCOGSRate, LocalSellRate, ProductCode
 from services.models import ServiceComponent
 from quotes.completeness import (
     COMPONENT_FREIGHT,
@@ -43,6 +43,71 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.create_url = reverse("quotes:spot-envelope-list-create")
         self.scope_url = reverse("quotes:spot-validate-scope")
         self.evaluate_url = reverse("quotes:spot-evaluate-trigger")
+
+    def _seed_import_destination_only_locals_for_can_to_pom(self):
+        valid_from = date.today() - timedelta(days=1)
+        valid_until = date.today() + timedelta(days=30)
+        agent = Agent.objects.create(
+            code="API-SPOT-IMP",
+            name="API Spot Import Agent",
+            country_code="CN",
+            agent_type="ORIGIN",
+        )
+        pc_origin = ProductCode.objects.create(
+            id=2974,
+            code="IMP-DOC-ORIGIN-API",
+            description="Import Origin Documentation API",
+            domain="IMPORT",
+            category="DOCUMENTATION",
+            is_gst_applicable=True,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        pc_dest = ProductCode.objects.create(
+            id=2975,
+            code="IMP-CLEAR-DEST-API",
+            description="Import Destination Clearance API",
+            domain="IMPORT",
+            category="CLEARANCE",
+            is_gst_applicable=True,
+            gl_revenue_code="4101",
+            gl_cost_code="5101",
+            default_unit="SHIPMENT",
+        )
+        LocalCOGSRate.objects.create(
+            product_code=pc_origin,
+            location="POM",
+            direction="IMPORT",
+            agent=agent,
+            currency="AUD",
+            rate_type="FIXED",
+            amount="80.00",
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+        LocalCOGSRate.objects.create(
+            product_code=pc_dest,
+            location="POM",
+            direction="IMPORT",
+            agent=agent,
+            currency="PGK",
+            rate_type="FIXED",
+            amount="350.00",
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+        LocalSellRate.objects.create(
+            product_code=pc_dest,
+            location="POM",
+            direction="IMPORT",
+            payment_term="COLLECT",
+            currency="PGK",
+            rate_type="FIXED",
+            amount="500.00",
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
 
     def test_spot_envelope_flow_acknowledge_compute(self):
         create_payload = {
@@ -492,3 +557,227 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         acknowledge_response = self.client.post(acknowledge_url, format="json")
         self.assertEqual(acknowledge_response.status_code, status.HTTP_200_OK)
         self.assertEqual(acknowledge_response.json()["status"], "ready")
+
+    def test_evaluate_trigger_import_d2d_collect_reports_origin_local_and_freight_missing(self):
+        self._seed_import_destination_only_locals_for_can_to_pom()
+
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "CN",
+                "destination_country": "PG",
+                "origin_airport": "CAN",
+                "destination_airport": "POM",
+                "service_scope": "D2D",
+                "payment_term": "COLLECT",
+                "commodity": "GCR",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertTrue(payload["is_spot_required"])
+        self.assertEqual(
+            set(payload["trigger"]["missing_components"]),
+            {COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL},
+        )
+        self.assertNotIn(COMPONENT_DESTINATION_LOCAL, payload["trigger"]["missing_components"])
+
+    def test_get_spe_detail_recomputes_stale_missing_components_for_import_d2d_collect(self):
+        self._seed_import_destination_only_locals_for_can_to_pom()
+        can = create_location(name="Guangzhou", code="CAN")
+
+        create_response = self.client.post(
+            self.create_url,
+            {
+                "shipment_context": {
+                    "origin_country": "CN",
+                    "destination_country": "PG",
+                    "origin_code": can.code,
+                    "destination_code": "POM",
+                    "commodity": "GCR",
+                    "total_weight_kg": 100,
+                    "pieces": 1,
+                    "service_scope": "d2d",
+                    "payment_term": "collect",
+                    "missing_components": ["FREIGHT"],
+                },
+                "charges": [],
+                "trigger_code": "MISSING_SCOPE_RATES",
+                "trigger_text": "Missing required rate components",
+                "conditions": {"rate_validity_hours": 72},
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+
+        detail_url = reverse(
+            "quotes:spot-envelope-detail", kwargs={"envelope_id": spe_id}
+        )
+        detail_response = self.client.get(detail_url, format="json")
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        shipment = detail_response.json()["shipment"]
+        self.assertEqual(
+            set(shipment["missing_components"]),
+            {COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL},
+        )
+        self.assertNotIn(COMPONENT_DESTINATION_LOCAL, shipment["missing_components"])
+
+    def test_get_spe_detail_drops_freight_from_missing_components_once_freight_is_present(self):
+        self._seed_import_destination_only_locals_for_can_to_pom()
+        can = create_location(name="Guangzhou", code="CAN")
+
+        create_response = self.client.post(
+            self.create_url,
+            {
+                "shipment_context": {
+                    "origin_country": "CN",
+                    "destination_country": "PG",
+                    "origin_code": can.code,
+                    "destination_code": "POM",
+                    "commodity": "GCR",
+                    "total_weight_kg": 100,
+                    "pieces": 1,
+                    "service_scope": "d2d",
+                    "payment_term": "collect",
+                    "missing_components": ["FREIGHT"],
+                },
+                "charges": [
+                    {
+                        "code": "FREIGHT",
+                        "description": "Airfreight",
+                        "amount": 6.8,
+                        "currency": "USD",
+                        "unit": "per_kg",
+                        "bucket": "airfreight",
+                        "is_primary_cost": True,
+                        "conditional": False,
+                        "source_reference": "Agent reply",
+                    }
+                ],
+                "trigger_code": "MISSING_SCOPE_RATES",
+                "trigger_text": "Missing required rate components",
+                "conditions": {"rate_validity_hours": 72},
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+
+        detail_url = reverse(
+            "quotes:spot-envelope-detail", kwargs={"envelope_id": spe_id}
+        )
+        detail_response = self.client.get(detail_url, format="json")
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        shipment = detail_response.json()["shipment"]
+        self.assertEqual(shipment["missing_components"], [COMPONENT_ORIGIN_LOCAL])
+
+    def test_get_spe_detail_keeps_conditional_origin_charge_missing(self):
+        create_response = self.client.post(
+            self.create_url,
+            {
+                "shipment_context": {
+                    "origin_country": "PG",
+                    "destination_country": "AU",
+                    "origin_code": "POM",
+                    "destination_code": "SYD",
+                    "commodity": "GCR",
+                    "total_weight_kg": 100,
+                    "pieces": 1,
+                    "service_scope": "d2a",
+                    "payment_term": "prepaid",
+                    "missing_components": [COMPONENT_ORIGIN_LOCAL],
+                },
+                "charges": [
+                    {
+                        "code": "ORIGIN-COND",
+                        "description": "Origin handling if applicable",
+                        "amount": 25,
+                        "currency": "USD",
+                        "unit": "flat",
+                        "bucket": "origin_charges",
+                        "conditional": True,
+                        "is_primary_cost": False,
+                        "source_reference": "Agent email",
+                    }
+                ],
+                "trigger_code": "MISSING_SCOPE_RATES",
+                "trigger_text": "Missing required rate components",
+                "conditions": {"rate_validity_hours": 72},
+            },
+            format="json",
+        )
+
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            create_response.json()["shipment"]["missing_components"],
+            [COMPONENT_ORIGIN_LOCAL],
+        )
+
+        detail_url = reverse(
+            "quotes:spot-envelope-detail",
+            kwargs={"envelope_id": create_response.json()["id"]},
+        )
+        detail_response = self.client.get(detail_url, format="json")
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            detail_response.json()["shipment"]["missing_components"],
+            [COMPONENT_ORIGIN_LOCAL],
+        )
+
+    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
+    def test_list_envelopes_uses_cached_missing_components(self, mock_availability):
+        spe = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": "POM",
+                "destination_code": "SYD",
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+                "service_scope": "d2a",
+                "payment_term": "PREPAID",
+                "missing_components": [COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL],
+            },
+            resolved_missing_components=[COMPONENT_ORIGIN_LOCAL],
+            conditions_json={"rate_validity_hours": 72},
+            spot_trigger_reason_code="MISSING_SCOPE_RATES",
+            spot_trigger_reason_text="Missing required rate components",
+            created_by=self.user,
+            expires_at=timezone.now() + timedelta(hours=72),
+        )
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="FREIGHT",
+            description="Airfreight",
+            amount="6.80",
+            currency="USD",
+            unit="per_kg",
+            bucket="airfreight",
+            is_primary_cost=True,
+            source_reference="Agent email",
+            entered_by=self.user,
+            entered_at=timezone.now(),
+        )
+        spe.resolved_missing_components = [COMPONENT_ORIGIN_LOCAL]
+        spe.save(update_fields=["resolved_missing_components"])
+
+        mock_availability.side_effect = AssertionError(
+            "list serializer should use cached resolved_missing_components"
+        )
+
+        response = self.client.get(self.create_url, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(
+            response.json()[0]["shipment"]["missing_components"],
+            [COMPONENT_ORIGIN_LOCAL],
+        )

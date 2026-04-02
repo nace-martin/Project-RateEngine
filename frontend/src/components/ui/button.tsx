@@ -7,8 +7,11 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+const CLICK_GUARD_MS = 500
+const SUBMIT_PENDING_FALLBACK_MS = 2000
+
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-[0.98] disabled:pointer-events-none disabled:translate-y-0 disabled:shadow-none disabled:opacity-50 disabled:cursor-not-allowed aria-busy:cursor-progress [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-[0.98] disabled:pointer-events-none disabled:translate-y-0 disabled:shadow-none disabled:opacity-50 disabled:cursor-not-allowed aria-busy:cursor-progress data-[pending=true]:translate-y-0 data-[pending=true]:scale-100 data-[pending=true]:shadow-none data-[pending=true]:ring-2 data-[pending=true]:ring-primary/15 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
   {
     variants: {
       variant: {
@@ -55,6 +58,7 @@ function Button({
   asChild = false,
   children,
   onClick,
+  type,
   disabled,
   loading = false,
   loadingText,
@@ -66,27 +70,107 @@ function Button({
     loadingText?: React.ReactNode
   }) {
   const [isPendingClick, setIsPendingClick] = React.useState(false)
+  const [isClickGuarded, setIsClickGuarded] = React.useState(false)
   const clickLockRef = React.useRef(false)
+  const clickGuardTimerRef = React.useRef<number | null>(null)
+  const pendingTimerRef = React.useRef<number | null>(null)
   const Comp = asChild ? Slot : "button"
+  const resolvedLoading = Boolean(loading || isPendingClick)
+
+  const clearClickGuard = React.useCallback(() => {
+    if (clickGuardTimerRef.current !== null) {
+      window.clearTimeout(clickGuardTimerRef.current)
+      clickGuardTimerRef.current = null
+    }
+    setIsClickGuarded(false)
+  }, [])
+
+  const clearPending = React.useCallback(() => {
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current)
+      pendingTimerRef.current = null
+    }
+    clickLockRef.current = false
+    setIsPendingClick(false)
+  }, [])
+
+  const startClickGuard = React.useCallback((durationMs = CLICK_GUARD_MS) => {
+    clearClickGuard()
+    clickLockRef.current = true
+    setIsClickGuarded(true)
+    clickGuardTimerRef.current = window.setTimeout(() => {
+      clickLockRef.current = false
+      setIsClickGuarded(false)
+      clickGuardTimerRef.current = null
+    }, durationMs)
+  }, [clearClickGuard])
+
+  const startPending = React.useCallback((fallbackMs?: number) => {
+    clearClickGuard()
+    clearPending()
+    clickLockRef.current = true
+    setIsPendingClick(true)
+    if (typeof fallbackMs === "number") {
+      pendingTimerRef.current = window.setTimeout(() => {
+        clearPending()
+      }, fallbackMs)
+    }
+  }, [clearClickGuard, clearPending])
+
+  React.useEffect(() => {
+    return () => {
+      clearClickGuard()
+      clearPending()
+    }
+  }, [clearClickGuard, clearPending])
 
   const handleClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    if (disabled || clickLockRef.current) {
+    if (disabled || loading || clickLockRef.current) {
       event.preventDefault()
       return
     }
 
+    const button = event.currentTarget
+    const form = button.form ?? button.closest("form")
+    const buttonType = type ?? (form ? "submit" : "button")
+
+    if (buttonType === "submit") {
+      startPending(SUBMIT_PENDING_FALLBACK_MS)
+
+      if (form instanceof HTMLFormElement) {
+        let submitObserved = false
+        const handleInvalid = () => {
+          window.setTimeout(() => {
+            clearPending()
+          }, 150)
+        }
+        const handleSubmitObserved = () => {
+          submitObserved = true
+        }
+
+        form.addEventListener("invalid", handleInvalid, { once: true, capture: true })
+        form.addEventListener("submit", handleSubmitObserved, { once: true, capture: true })
+
+        window.setTimeout(() => {
+          form.removeEventListener("invalid", handleInvalid, true)
+          if (!submitObserved && !loading) {
+            clearPending()
+          }
+        }, 0)
+      }
+    } else {
+      startClickGuard()
+    }
+
     const result = onClick?.(event)
     if (isPromiseLike(result)) {
-      clickLockRef.current = true
-      setIsPendingClick(true)
+      startPending()
       void result.finally(() => {
-        clickLockRef.current = false
-        setIsPendingClick(false)
+        clearPending()
       })
     }
-  }, [disabled, onClick])
+  }, [clearPending, disabled, loading, onClick, startClickGuard, startPending, type])
 
-  const resolvedLoading = Boolean(loading || isPendingClick)
   const renderedChildren = resolvedLoading ? (
     <>
       <Loader2 className="animate-spin" />
@@ -101,6 +185,7 @@ function Button({
         onClick={onClick}
         aria-busy={resolvedLoading || undefined}
         aria-disabled={disabled || resolvedLoading || undefined}
+        data-pending={resolvedLoading ? "true" : undefined}
         className={cn(buttonVariants({ variant, size, className }), (disabled || resolvedLoading) && "pointer-events-none opacity-50")}
         {...props}
       >
@@ -109,15 +194,17 @@ function Button({
     )
   }
 
-  const resolvedDisabled = Boolean(disabled || resolvedLoading)
+  const resolvedDisabled = Boolean(disabled || resolvedLoading || isClickGuarded)
 
   return (
     <Comp
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
       onClick={handleClick}
+      type={type}
       disabled={resolvedDisabled}
       aria-busy={resolvedLoading || undefined}
+      data-pending={resolvedLoading ? "true" : undefined}
       {...props}
     >
       {renderedChildren}

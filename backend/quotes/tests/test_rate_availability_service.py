@@ -67,7 +67,7 @@ def _evaluate(direction: str, scope: str, availability: dict[str, bool]):
     )
 
 
-def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
+def test_import_d2d_collect_does_not_count_destination_side_import_local_rows_as_origin_coverage():
     valid_from, valid_until = _today_window()
     agent = _agent()
     pc_freight = _pc(2951, "IMP-FRT-AIR-MATRIX", "IMPORT", "FREIGHT", unit="KG")
@@ -84,7 +84,7 @@ def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
         valid_from=valid_from,
         valid_until=valid_until,
     )
-    # Legacy migrated shape: origin local row stored at destination.
+    # Destination-side import local row must not count as origin-local coverage.
     LocalCOGSRate.objects.create(
         product_code=pc_origin,
         location="POM",
@@ -109,15 +109,15 @@ def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
     )
 
     availability = RateAvailabilityService.get_availability("BNE", "POM", "IMPORT", "D2D")
-    assert availability == {
-        COMPONENT_FREIGHT: True,
-        COMPONENT_ORIGIN_LOCAL: True,
-        COMPONENT_DESTINATION_LOCAL: True,
-    }
+    assert availability[COMPONENT_FREIGHT] is True
+    assert availability[COMPONENT_ORIGIN_LOCAL] is False
+    assert availability[COMPONENT_DESTINATION_LOCAL] is True
 
     is_spot, trigger = _evaluate("IMPORT", "D2D", availability)
-    assert is_spot is False
-    assert trigger is None
+    assert is_spot is True
+    assert trigger is not None
+    assert trigger.code == SpotTriggerReason.MISSING_SCOPE_RATES
+    assert trigger.missing_components == [COMPONENT_ORIGIN_LOCAL]
 
 
 def test_import_d2d_missing_origin_component_still_triggers_spot():
@@ -333,6 +333,47 @@ def test_import_destination_global_surcharge_counts_as_coverage():
     assert trigger is None
 
 
+def test_import_origin_global_surcharge_does_not_count_as_origin_local_coverage():
+    valid_from, valid_until = _today_window()
+    pc_surcharge = _pc(2982, "IMP-ORIGIN-SURCHARGE-MATRIX", "IMPORT", "SURCHARGE")
+    agent = _agent()
+    pc_dest = _pc(2983, "IMP-CARTAGE-DEST-SURCHARGE", "IMPORT", "CARTAGE")
+
+    Surcharge.objects.create(
+        product_code=pc_surcharge,
+        rate_side="COGS",
+        service_type="IMPORT_ORIGIN",
+        rate_type="FLAT",
+        amount=Decimal("25.00"),
+        currency="PGK",
+        origin_filter=None,
+        destination_filter=None,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        is_active=True,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_dest,
+        location="POM",
+        direction="IMPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("95.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+
+    availability = RateAvailabilityService.get_availability("CAN", "POM", "IMPORT", "D2D")
+    assert availability[COMPONENT_ORIGIN_LOCAL] is False
+    assert availability[COMPONENT_DESTINATION_LOCAL] is True
+
+    is_spot, trigger = _evaluate("IMPORT", "D2D", availability)
+    assert is_spot is True
+    assert trigger is not None
+    assert trigger.missing_components == [COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL]
+
+
 def test_export_d2a_payment_term_mismatch_does_not_count_origin_local():
     valid_from, valid_until = _today_window()
     agent = _agent()
@@ -510,6 +551,51 @@ def test_export_d2a_missing_commodity_rate_triggers_spot_when_scope_is_covered()
     assert trigger is not None
     assert trigger.code == SpotTriggerReason.MISSING_COMMODITY_RATES
     assert trigger.missing_product_codes == ["EXP-DG-COMMODITY"]
+
+
+def test_import_d2d_origin_commodity_rule_does_not_use_destination_side_local_tariffs():
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_origin = _pc(1954, "IMP-DOC-ORIGIN-COMMODITY", "IMPORT", "DOCUMENTATION")
+
+    CommodityChargeRule.objects.create(
+        shipment_type="IMPORT",
+        service_scope="D2D",
+        commodity_code="GEN",
+        product_code=pc_origin,
+        leg="ORIGIN",
+        trigger_mode="AUTO",
+        effective_from=valid_from,
+        effective_to=valid_until,
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="IMPORT",
+        agent=agent,
+        currency="AUD",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="IMPORT",
+        payment_term="COLLECT",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("120.00"),
+        valid_from=valid_from,
+        valid_until=valid_until,
+    )
+
+    coverage = CommodityRateRuleService.evaluate_coverage(
+        "CAN", "POM", "IMPORT", "D2D", "GEN", payment_term="COLLECT"
+    )
+
+    assert coverage.missing_product_codes == ["IMP-DOC-ORIGIN-COMMODITY"]
 
 
 def test_export_d2a_seeded_commodity_rate_does_not_trigger_spot_when_scope_is_covered():

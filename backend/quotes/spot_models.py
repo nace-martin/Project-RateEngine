@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -8,6 +9,131 @@ from django.utils.translation import gettext_lazy as _
 # =============================================================================
 # SPOT PRICING ENVELOPE (SPE) MODELS
 # =============================================================================
+
+
+def _normalize_spot_missing_components(raw_value):
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        raw_list = [item.strip() for item in raw_value.split(",")]
+    elif isinstance(raw_value, (list, tuple, set)):
+        raw_list = list(raw_value)
+    else:
+        return []
+    return [str(item).upper() for item in raw_list if str(item).strip()]
+
+
+def _normalize_spot_shipment_context(ctx: dict, quote_payment_term=None) -> dict:
+    normalized = dict(ctx or {})
+    origin_code = str(normalized.get("origin_code") or "").upper()
+    destination_code = str(normalized.get("destination_code") or "").upper()
+    normalized["origin_code"] = origin_code
+    normalized["destination_code"] = destination_code
+
+    try:
+        from quotes.spot_services import ScopeValidator
+
+        origin_country, destination_country = ScopeValidator.normalize_countries(
+            origin_country=normalized.get("origin_country"),
+            destination_country=normalized.get("destination_country"),
+            origin_airport=origin_code,
+            destination_airport=destination_code,
+        )
+        normalized["origin_country"] = origin_country
+        normalized["destination_country"] = destination_country
+    except Exception:
+        pass
+
+    payment_term = str(
+        normalized.get("payment_term")
+        or quote_payment_term
+        or ""
+    ).strip().upper()
+    if payment_term in {"PREPAID", "COLLECT"}:
+        normalized["payment_term"] = payment_term
+    elif "payment_term" in normalized:
+        normalized.pop("payment_term", None)
+
+    normalized["missing_components"] = _normalize_spot_missing_components(
+        normalized.get("missing_components")
+    )
+    return normalized
+
+
+def _shipment_type_from_spot_context(ctx: dict) -> str:
+    origin_country = str(ctx.get("origin_country") or "").upper()
+    destination_country = str(ctx.get("destination_country") or "").upper()
+    if origin_country == "PG" and destination_country == "PG":
+        return "DOMESTIC"
+    if origin_country == "PG":
+        return "EXPORT"
+    return "IMPORT"
+
+
+def resolve_spot_missing_components(
+    ctx: dict,
+    charge_lines,
+    *,
+    quote_payment_term=None,
+) -> list[str] | None:
+    normalized = _normalize_spot_shipment_context(
+        ctx,
+        quote_payment_term=quote_payment_term,
+    )
+    stored_missing = normalized.get("missing_components")
+    origin_code = normalized.get("origin_code") or ""
+    destination_code = normalized.get("destination_code") or ""
+    if not origin_code or not destination_code:
+        return stored_missing
+
+    service_scope = str(normalized.get("service_scope") or "P2P")
+    shipment_type = _shipment_type_from_spot_context(normalized)
+    payment_term = normalized.get("payment_term")
+
+    try:
+        from quotes.completeness import evaluate_from_lines
+        from quotes.spot_services import RateAvailabilityService
+
+        availability = RateAvailabilityService.get_availability(
+            origin_airport=origin_code,
+            destination_airport=destination_code,
+            direction=shipment_type,
+            service_scope=service_scope,
+            payment_term=payment_term,
+        )
+
+        availability_buckets = {
+            "FREIGHT": "airfreight",
+            "ORIGIN_LOCAL": "origin_charges",
+            "DESTINATION_LOCAL": "destination_charges",
+        }
+
+        coverage_lines = [
+            SimpleNamespace(bucket=bucket, is_rate_missing=False, is_informational=False)
+            for component, bucket in availability_buckets.items()
+            if availability.get(component)
+        ]
+
+        for line in charge_lines or ():
+            amount = getattr(line, "amount", None)
+            if amount is None or amount <= 0:
+                continue
+            if getattr(line, "conditional", False):
+                continue
+            if getattr(line, "exclude_from_totals", False):
+                continue
+            coverage_lines.append(
+                SimpleNamespace(
+                    bucket=getattr(line, "bucket", None),
+                    is_rate_missing=False,
+                    is_informational=False,
+                )
+            )
+
+        coverage = evaluate_from_lines(coverage_lines, shipment_type, service_scope)
+        return coverage.missing_required
+    except Exception:
+        return stored_missing
 
 class SpotPricingEnvelopeDB(models.Model):
     """
@@ -41,6 +167,10 @@ class SpotPricingEnvelopeDB(models.Model):
     shipment_context_hash = models.CharField(
         max_length=64,
         help_text="SHA256 hash of shipment_context_json for integrity verification."
+    )
+    resolved_missing_components = models.JSONField(
+        default=list,
+        help_text="Cached list of SPOT components still missing actionable charges."
     )
     
     # Conditions stored as JSON
@@ -97,6 +227,15 @@ class SpotPricingEnvelopeDB(models.Model):
         if not self.shipment_context_hash:
             normalized = json.dumps(self.shipment_context_json, sort_keys=True)
             self.shipment_context_hash = hashlib.sha256(normalized.encode()).hexdigest()
+        if self._state.adding and not self.resolved_missing_components:
+            self.resolved_missing_components = list(
+                resolve_spot_missing_components(
+                    self.shipment_context_json,
+                    (),
+                    quote_payment_term=getattr(self.quote, "payment_term", None),
+                )
+                or []
+            )
         
         super().save(*args, **kwargs)
     
@@ -113,6 +252,22 @@ class SpotPricingEnvelopeDB(models.Model):
     def is_expired(self) -> bool:
         """Check if SPE has expired."""
         return timezone.now() >= self.expires_at
+
+    def refresh_resolved_missing_components(self, *, save: bool = True) -> list[str]:
+        resolved = list(
+            resolve_spot_missing_components(
+                self.shipment_context_json,
+                self.charge_lines.all(),
+                quote_payment_term=getattr(self.quote, "payment_term", None),
+            )
+            or []
+        )
+        self.resolved_missing_components = resolved
+        if save and self.pk:
+            type(self).objects.filter(pk=self.pk).update(
+                resolved_missing_components=resolved
+            )
+        return resolved
 
 
 class SPESourceBatchDB(models.Model):
@@ -355,6 +510,11 @@ class SPEChargeLineDB(models.Model):
     
     def __str__(self):
         return f"{self.bucket}: {self.description} ({self.amount} {self.currency})"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.envelope_id:
+            self.envelope.refresh_resolved_missing_components(save=True)
 
 
 class SPEAcknowledgementDB(models.Model):

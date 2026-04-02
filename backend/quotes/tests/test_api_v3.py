@@ -139,6 +139,67 @@ class QuoteRetrieveV3APITest(APITestCase):
         self.assertEqual(totals["total_sell_fcy"], "55.00")
         self.assertEqual(totals["total_sell_fcy_currency"], "USD")
 
+    def test_retrieve_prefers_cost_source_description_for_line_description(self):
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        spot_component = ServiceComponent.objects.create(
+            code="SPOT_ORIGIN",
+            description="Spot Origin Charge",
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+        )
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=spot_component,
+            cost_pgk=Decimal("50.00"),
+            sell_pgk=Decimal("75.00"),
+            sell_pgk_incl_gst=Decimal("75.00"),
+            sell_fcy=Decimal("22.50"),
+            sell_fcy_incl_gst=Decimal("22.50"),
+            sell_fcy_currency="USD",
+            cost_source="Agent reply",
+            cost_source_description="Customs clearance",
+            is_rate_missing=False,
+        )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        descriptions = [line["description"] for line in response.json()["latest_version"]["lines"]]
+        self.assertIn("Customs clearance", descriptions)
+
+    def test_quote_result_prefers_cost_source_description_for_line_items(self):
+        latest_version = self.quote.versions.order_by('-version_number').first()
+        spot_component = ServiceComponent.objects.create(
+            code="SPOT_DEST",
+            description="Spot Destination Charge",
+            mode="AIR",
+            leg="DESTINATION",
+            category="LOCAL",
+        )
+        QuoteLine.objects.create(
+            quote_version=latest_version,
+            service_component=spot_component,
+            cost_pgk=Decimal("50.00"),
+            sell_pgk=Decimal("75.00"),
+            sell_pgk_incl_gst=Decimal("75.00"),
+            sell_fcy=Decimal("22.50"),
+            sell_fcy_incl_gst=Decimal("22.50"),
+            sell_fcy_currency="USD",
+            cost_source="Agent reply",
+            cost_source_description="Airport transfer",
+            is_rate_missing=False,
+        )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        line_item_descriptions = [
+            line["description"]
+            for line in response.json()["quote_result"]["line_items"]
+        ]
+        self.assertIn("Airport transfer", line_item_descriptions)
+
     def test_retrieve_requires_authentication(self):
         self.client.force_authenticate(user=None)
 
