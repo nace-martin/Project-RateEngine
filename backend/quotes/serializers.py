@@ -265,6 +265,7 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     component = serializers.CharField()
     basis = serializers.CharField()
     rule_family = serializers.CharField()
+    service_family = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     unit_type = serializers.CharField()
     quantity = serializers.DecimalField(max_digits=18, decimal_places=2)
     currency = serializers.CharField()

@@ -314,6 +314,7 @@ export interface CanonicalQuoteLineItem {
   component: string;
   basis: string;
   rule_family: string;
+  service_family?: string | null;
   unit_type: string;
   quantity: string;
   currency: string;

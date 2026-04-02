@@ -3,6 +3,15 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable, Optional
 
+from core.charge_rules import (
+    CALCULATION_FLAT,
+    CALCULATION_LOOKUP_RATE,
+    CALCULATION_MANUAL_OVERRIDE,
+    CALCULATION_MIN_OR_PER_UNIT,
+    CALCULATION_PERCENT_OF_BASE,
+    CALCULATION_PER_UNIT,
+    CALCULATION_TIERED_BREAK,
+)
 from core.commodity import DEFAULT_COMMODITY_CODE, commodity_label
 from quotes.buckets import resolve_quote_line_leg
 from quotes.completeness import (
@@ -306,15 +315,14 @@ def aggregate_rate_source(line_items: Iterable[dict[str, Any]], engine_version: 
     return QuoteRateSource.UNKNOWN
 
 
-def infer_rule_family(
+def infer_service_family(
     *,
     pricing_method: Optional[str] = None,
-    unit_type: Optional[str] = None,
     conditional: bool = False,
-    fx_applied: bool = False,
-    caf_applied: bool = False,
-    margin_applied: bool = False,
-) -> str:
+) -> Optional[str]:
+    # `rule_family` is reserved for calculation-family values in the canonical
+    # contract. Any legacy semantic grouping derived from service-code pricing
+    # metadata is surfaced separately as `service_family`.
     method = str(pricing_method or "").strip().upper()
     if conditional:
         return QuoteRuleFamily.CONDITIONAL
@@ -325,13 +333,42 @@ def infer_rule_family(
         QuoteRuleFamily.STANDARD_RATE,
     }:
         return method
-    if fx_applied or caf_applied or margin_applied:
-        return QuoteRuleFamily.FX_CAF_MARGIN
-    if str(unit_type or "").strip().upper() == "SHIPMENT":
-        return QuoteRuleFamily.FLAT
-    if unit_type:
-        return QuoteRuleFamily.STANDARD_RATE
-    return QuoteRuleFamily.UNKNOWN
+    return None
+
+
+def infer_stored_rule_family(
+    line: Any,
+    *,
+    service_component: Any = None,
+) -> str:
+    raw_source = str(getattr(line, "cost_source", "") or "").upper()
+    unit_type = str(getattr(service_component, "unit", None) or "SHIPMENT").strip().upper()
+
+    if "MANUAL" in raw_source or "OVERRIDE" in raw_source:
+        return CALCULATION_MANUAL_OVERRIDE
+    if getattr(service_component, "percent_of_component_id", None) or getattr(service_component, "percent_value", None):
+        return CALCULATION_PERCENT_OF_BASE
+    if "% OF " in raw_source:
+        return CALCULATION_PERCENT_OF_BASE
+    if getattr(service_component, "tiering_json", None):
+        return CALCULATION_TIERED_BREAK
+
+    shipment_like_units = {"", "SHIPMENT"}
+    per_unit_units = {"KG", "WM", "CBM", "TEU", "FEU", "PALLET", "KM", "PAGE", "AWB", "TRIP", "SET", "LINE", "MAN", "RT"}
+
+    if unit_type in per_unit_units:
+        min_charge = decimal_or_zero(getattr(service_component, "min_charge_pgk", None))
+        if min_charge > ZERO_DECIMAL:
+            return CALCULATION_MIN_OR_PER_UNIT
+        return CALCULATION_PER_UNIT
+
+    if bool(getattr(line, "is_rate_missing", False)):
+        return CALCULATION_LOOKUP_RATE
+
+    if unit_type in shipment_like_units:
+        return CALCULATION_FLAT
+
+    return CALCULATION_LOOKUP_RATE
 
 
 def quantity_for_unit(unit_type: Optional[str], metrics: dict[str, Any]) -> Decimal:
@@ -480,9 +517,9 @@ def line_item_from_quote_line(
         "description": getattr(service_component, "description", None) or getattr(line, "cost_source_description", None) or "Charge",
         "component": component,
         "basis": basis_for_unit(unit_type),
-        "rule_family": infer_rule_family(
+        "rule_family": infer_stored_rule_family(line, service_component=service_component),
+        "service_family": infer_service_family(
             pricing_method=getattr(service_code, "pricing_method", None),
-            unit_type=unit_type,
             conditional=bool(getattr(line, "conditional", False)),
         ),
         "unit_type": unit_type,

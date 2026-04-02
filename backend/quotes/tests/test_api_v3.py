@@ -10,11 +10,12 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.tests.helpers import create_location, indexed_iata_code
+from core.charge_rules import STANDARD_RULE_FAMILIES
 from parties.models import Company, Contact, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.spot_models import SpotPricingEnvelopeDB
 from core.models import Location
-from services.models import ServiceComponent
+from services.models import ServiceCode, ServiceComponent
 
 
 class QuoteRetrieveV3APITest(APITestCase):
@@ -380,6 +381,14 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         )
         self.quote.latest_version = version
 
+        freight_service_code = ServiceCode.objects.create(
+            code=f"FRT-STORED-{uuid4().hex[:6].upper()}",
+            description="Stored Freight Service Code",
+            location_type="MAIN",
+            service_category="FREIGHT",
+            pricing_method="STANDARD_RATE",
+        )
+
         freight_component = ServiceComponent.objects.create(
             code=f"FRTTEST-{uuid4().hex[:6].upper()}",
             description="Air Freight Test",
@@ -387,6 +396,7 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             leg="MAIN",
             category="TRANSPORT",
             unit="KG",
+            service_code=freight_service_code,
         )
 
         QuoteLine.objects.create(
@@ -474,16 +484,39 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
 
         self.assertEqual(freight_line["component"], "FREIGHT")
         self.assertEqual(freight_line["unit_type"], "KG")
+        self.assertEqual(freight_line["rule_family"], "PER_UNIT")
+        self.assertEqual(freight_line["service_family"], "STANDARD_RATE")
         self.assertEqual(freight_line["cost_source"], "DB_TARIFF")
         self.assertEqual(freight_line["rate_source"], "DB_TARIFF")
         self.assertEqual(freight_line["tax_code"], "service_in_PNG")
 
         self.assertEqual(fallback_line["basis"], "Per Shipment")
-        self.assertEqual(fallback_line["rule_family"], "FLAT")
+        self.assertEqual(fallback_line["rule_family"], "LOOKUP_RATE")
+        self.assertEqual(fallback_line["service_family"], None)
         self.assertEqual(fallback_line["cost_source"], "FALLBACK_RULE")
         self.assertEqual(fallback_line["rate_source"], "FALLBACK_RULE")
         self.assertEqual(fallback_line["included_in_total"], False)
         self.assertEqual(fallback_line["quantity"], "1.00")
+
+    def test_canonical_rule_family_uses_only_calculation_family_vocabulary(self):
+        response = self.client.get(self.detail_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        line_items = response.json()["quote_result"]["line_items"]
+        allowed = set(STANDARD_RULE_FAMILIES)
+        forbidden_semantic = {
+            "FX_CAF_MARGIN",
+            "PASSTHROUGH",
+            "RATE_OF_BASE",
+            "STANDARD_RATE",
+            "CONDITIONAL",
+            "UNKNOWN",
+        }
+
+        self.assertTrue(line_items)
+        for line_item in line_items:
+            self.assertIn(line_item["rule_family"], allowed)
+            self.assertNotIn(line_item["rule_family"], forbidden_semantic)
 
     def test_canonical_quote_result_surfaces_safe_top_level_defaults(self):
         response = self.client.get(self.detail_url)
