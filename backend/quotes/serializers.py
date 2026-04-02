@@ -310,6 +310,7 @@ class CanonicalQuoteResultSerializer(serializers.Serializer):
     fx_applied = CanonicalFxAppliedSerializer()
     tax_breakdown = CanonicalTaxBreakdownSerializer()
     warnings = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    audit_metadata = serializers.DictField(required=False)
     missing_components = serializers.ListField(child=serializers.CharField(), allow_empty=True)
     spot_required = serializers.BooleanField()
     engine_name = serializers.CharField(allow_null=True, allow_blank=True)

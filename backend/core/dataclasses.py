@@ -106,6 +106,19 @@ class CalculatedChargeLine(BaseModel):
     cost_source_description: Optional[str] = None
     is_rate_missing: bool = False
     bucket: str = "origin_charges"
+    product_code: Optional[str] = None
+    component: Optional[str] = None
+    basis: Optional[str] = None
+    rule_family: Optional[str] = None
+    service_family: Optional[str] = None
+    unit_type: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    rate: Optional[Decimal] = None
+    rate_source: Optional[str] = None
+    canonical_cost_source: Optional[str] = None
+    calculation_notes: Optional[str] = None
+    is_spot_sourced: bool = False
+    is_manual_override: bool = False
 
     is_informational: bool = False
     conditional: bool = False
@@ -130,6 +143,11 @@ class CalculatedTotals(BaseModel):
     
     has_missing_rates: bool = False
     notes: Optional[str] = None
+    service_notes: Optional[str] = None
+    customer_notes: Optional[str] = None
+    internal_notes: Optional[str] = None
+    warnings: List[str] = Field(default_factory=list)
+    audit_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class QuoteCharges(BaseModel):
     """The complete set of results from a calculation."""

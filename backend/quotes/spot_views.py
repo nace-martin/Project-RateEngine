@@ -60,6 +60,10 @@ from quotes.intake_safety import (
     normalize_source_analysis_summary,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer
+from quotes.quote_result_contract import (
+    build_persisted_line_item_metadata,
+    build_persisted_quote_total_metadata,
+)
 from quotes.selectors import get_quote_for_user
 from quotes.currency_rules import determine_quote_currency
 
@@ -1723,14 +1727,37 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         
         # --- 4. Save Lines ---
         
+        component_map = {
+            component.id: component
+            for component in ServiceComponent.objects.filter(
+                id__in=[line.service_component_id for line in result.lines if getattr(line, "service_component_id", None)]
+            ).select_related("service_code")
+        }
+
         for line_data in result.lines:
             # Resolve Component ID
-            sc = None
-            if line_data.service_component_id:
-                try:
-                    sc = ServiceComponent.objects.get(id=line_data.service_component_id)
-                except ServiceComponent.DoesNotExist:
-                    pass
+            sc = component_map.get(line_data.service_component_id)
+            canonical_metadata = build_persisted_line_item_metadata(
+                raw_cost_source=line_data.cost_source,
+                service_component=sc,
+                engine_version="V4",
+                product_code=getattr(line_data, "product_code", None) or getattr(line_data, "service_component_code", None),
+                component=getattr(line_data, "component", None),
+                basis=getattr(line_data, "basis", None),
+                rule_family=getattr(line_data, "rule_family", None),
+                service_family=getattr(line_data, "service_family", None),
+                unit_type=getattr(line_data, "unit_type", None),
+                quantity=getattr(line_data, "quantity", None),
+                rate=getattr(line_data, "rate", None),
+                sell_amount=line_data.sell_fcy if (line_data.sell_fcy_currency or "PGK").upper() != "PGK" else line_data.sell_pgk,
+                is_rate_missing=bool(line_data.is_rate_missing),
+                leg=getattr(line_data, "leg", None),
+                calculation_notes=getattr(line_data, "calculation_notes", None),
+                stored_is_spot_sourced=getattr(line_data, "is_spot_sourced", None),
+                stored_is_manual_override=getattr(line_data, "is_manual_override", None),
+                canonical_cost_source=getattr(line_data, "canonical_cost_source", None),
+                rate_source=getattr(line_data, "rate_source", None),
+            )
             
             QuoteLine.objects.create(
                 quote_version=version,
@@ -1754,9 +1781,22 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 gst_rate=getattr(line_data, 'gst_rate', 0),
                 gst_amount=getattr(line_data, 'gst_amount', 0),
                 conditional=getattr(line_data, 'conditional', False),
+                product_code=canonical_metadata["product_code"] or None,
+                component=canonical_metadata["component"],
+                basis=canonical_metadata["basis"],
+                rule_family=canonical_metadata["rule_family"],
+                service_family=canonical_metadata["service_family"],
+                unit_type=canonical_metadata["unit_type"],
+                rate=canonical_metadata["rate"],
+                rate_source=canonical_metadata["rate_source"],
+                canonical_cost_source=canonical_metadata["canonical_cost_source"],
+                is_spot_sourced=canonical_metadata["is_spot_sourced"],
+                is_manual_override=canonical_metadata["is_manual_override"],
+                calculation_notes=canonical_metadata["calculation_notes"],
             )
 
         # --- 5. Save Totals ---
+        total_metadata = build_persisted_quote_total_metadata(result.totals)
         QuoteTotal.objects.create(
             quote_version=version,
             total_cost_pgk=result.totals.total_cost_pgk,
@@ -1766,7 +1806,12 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             total_sell_fcy_incl_gst=result.totals.total_sell_fcy_incl_gst,
             total_sell_fcy_currency=result.totals.total_sell_fcy_currency,
             has_missing_rates=result.totals.has_missing_rates,
-            notes=result.totals.notes
+            notes=result.totals.notes,
+            service_notes=total_metadata["service_notes"],
+            customer_notes=total_metadata["customer_notes"],
+            internal_notes=total_metadata["internal_notes"],
+            warnings_json=total_metadata["warnings_json"],
+            audit_metadata_json=total_metadata["audit_metadata_json"],
         )
         
         return Response({

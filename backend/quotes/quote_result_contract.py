@@ -24,6 +24,7 @@ from quotes.completeness import (
 
 ZERO_DECIMAL = Decimal("0.00")
 ONE_DECIMAL = Decimal("1.00")
+RATE_PRECISION = Decimal("0.000001")
 
 
 class QuoteRateSource:
@@ -241,8 +242,172 @@ def _component_from_leg(leg: Optional[str]) -> str:
     return QuoteComponent.OTHER
 
 
+def component_from_leg(leg: Optional[str]) -> str:
+    return _component_from_leg(leg)
+
+
 def component_from_quote_line(line: Any) -> str:
     return _component_from_leg(resolve_quote_line_leg(line))
+
+
+def infer_source_flags(
+    raw_source: Any,
+    *,
+    stored_is_spot_sourced: Optional[bool] = None,
+    stored_is_manual_override: Optional[bool] = None,
+) -> tuple[bool, bool]:
+    source = str(raw_source or "").strip().upper()
+    is_spot_sourced = (
+        stored_is_spot_sourced
+        if stored_is_spot_sourced is not None
+        else ("SPOT" in source or "AGENT REPLY" in source or "PARTNER" in source)
+    )
+    is_manual_override = (
+        stored_is_manual_override
+        if stored_is_manual_override is not None
+        else any(token in source for token in ["MANUAL", "OVERRIDE"])
+    )
+    return bool(is_spot_sourced), bool(is_manual_override)
+
+
+def derive_canonical_rate(
+    *,
+    stored_rate: Any = None,
+    rule_family: Optional[str] = None,
+    unit_type: Optional[str] = None,
+    quantity: Any = None,
+    sell_amount: Any = None,
+) -> Optional[Decimal]:
+    explicit_rate = decimal_or_none(stored_rate)
+    if explicit_rate is not None:
+        return explicit_rate.quantize(RATE_PRECISION, rounding=ROUND_HALF_UP)
+
+    normalized_rule_family = str(rule_family or "").strip().upper()
+    normalized_unit_type = str(unit_type or "").strip().upper()
+    normalized_quantity = decimal_or_none(quantity)
+    normalized_sell_amount = decimal_or_none(sell_amount)
+    if normalized_sell_amount is None:
+        return None
+
+    if normalized_rule_family in {CALCULATION_PER_UNIT, CALCULATION_MIN_OR_PER_UNIT}:
+        if normalized_quantity and normalized_quantity > ZERO_DECIMAL:
+            return (normalized_sell_amount / normalized_quantity).quantize(
+                RATE_PRECISION,
+                rounding=ROUND_HALF_UP,
+            )
+        return None
+
+    if normalized_unit_type in {"", "SHIPMENT"} and normalized_rule_family in {
+        CALCULATION_FLAT,
+        CALCULATION_LOOKUP_RATE,
+        CALCULATION_MANUAL_OVERRIDE,
+    }:
+        return normalized_sell_amount.quantize(RATE_PRECISION, rounding=ROUND_HALF_UP)
+
+    return None
+
+
+def build_persisted_line_item_metadata(
+    *,
+    raw_cost_source: Any,
+    service_component: Any = None,
+    engine_version: Optional[str] = "V4",
+    product_code: Optional[str] = None,
+    component: Optional[str] = None,
+    basis: Optional[str] = None,
+    rule_family: Optional[str] = None,
+    service_family: Optional[str] = None,
+    unit_type: Optional[str] = None,
+    quantity: Any = None,
+    rate: Any = None,
+    sell_amount: Any = None,
+    is_rate_missing: bool = False,
+    leg: Optional[str] = None,
+    calculation_notes: Optional[str] = None,
+    stored_is_spot_sourced: Optional[bool] = None,
+    stored_is_manual_override: Optional[bool] = None,
+    canonical_cost_source: Optional[str] = None,
+    rate_source: Optional[str] = None,
+) -> dict[str, Any]:
+    service_code = getattr(service_component, "service_code", None)
+    persisted_unit_type = str(
+        unit_type or getattr(service_component, "unit", None) or "SHIPMENT"
+    ).strip().upper()
+    persisted_component = component or component_from_leg(leg)
+    persisted_rule_family = rule_family or infer_stored_rule_family(
+        type(
+            "_LineLike",
+            (),
+            {
+                "cost_source": raw_cost_source,
+                "is_rate_missing": is_rate_missing,
+            },
+        )(),
+        service_component=service_component,
+    )
+    persisted_service_family = service_family
+    if persisted_service_family in {"", None}:
+        persisted_service_family = infer_service_family(
+            pricing_method=getattr(service_code, "pricing_method", None),
+            conditional=False,
+        )
+
+    is_spot_sourced, is_manual_override = infer_source_flags(
+        raw_cost_source,
+        stored_is_spot_sourced=stored_is_spot_sourced,
+        stored_is_manual_override=stored_is_manual_override,
+    )
+    persisted_rate_source = rate_source or normalize_rate_source(
+        raw_cost_source,
+        engine_version=engine_version,
+        is_spot_sourced=is_spot_sourced,
+        is_manual_override=is_manual_override,
+        is_rate_missing=is_rate_missing,
+    )
+    persisted_cost_source = canonical_cost_source or normalize_cost_source(
+        raw_cost_source,
+        engine_version=engine_version,
+        is_spot_sourced=is_spot_sourced,
+        is_manual_override=is_manual_override,
+        is_rate_missing=is_rate_missing,
+    )
+    persisted_rate = derive_canonical_rate(
+        stored_rate=rate,
+        rule_family=persisted_rule_family,
+        unit_type=persisted_unit_type,
+        quantity=quantity,
+        sell_amount=sell_amount,
+    )
+
+    return {
+        "product_code": product_code or getattr(service_component, "code", None) or "",
+        "component": persisted_component,
+        "basis": basis or basis_for_unit(persisted_unit_type),
+        "rule_family": persisted_rule_family,
+        "service_family": persisted_service_family,
+        "unit_type": persisted_unit_type,
+        "rate": persisted_rate,
+        "rate_source": persisted_rate_source,
+        "canonical_cost_source": persisted_cost_source,
+        "is_spot_sourced": is_spot_sourced,
+        "is_manual_override": is_manual_override,
+        "calculation_notes": calculation_notes,
+    }
+
+
+def build_persisted_quote_total_metadata(totals: Any) -> dict[str, Any]:
+    service_notes = getattr(totals, "service_notes", None) or getattr(totals, "notes", None)
+    customer_notes = getattr(totals, "customer_notes", None)
+    internal_notes = getattr(totals, "internal_notes", None)
+    warnings = list(getattr(totals, "warnings", []) or [])
+    audit_metadata = getattr(totals, "audit_metadata", {}) or {}
+    return {
+        "service_notes": str(service_notes) if service_notes else None,
+        "customer_notes": str(customer_notes) if customer_notes else None,
+        "internal_notes": str(internal_notes) if internal_notes else None,
+        "warnings_json": warnings,
+        "audit_metadata_json": audit_metadata if isinstance(audit_metadata, dict) else {},
+    }
 
 
 def normalize_rate_source(
@@ -463,9 +628,10 @@ def line_item_from_quote_line(
     sort_order: int,
 ) -> dict[str, Any]:
     service_component = getattr(line, "service_component", None)
-    service_code = getattr(service_component, "service_code", None)
-    unit_type = str(getattr(service_component, "unit", None) or "SHIPMENT").upper()
-    component = component_from_quote_line(line)
+    unit_type = str(
+        getattr(line, "unit_type", None) or getattr(service_component, "unit", None) or "SHIPMENT"
+    ).upper()
+    component = getattr(line, "component", None) or component_from_quote_line(line)
     included_in_total = not any(
         [
             bool(getattr(line, "is_rate_missing", False)),
@@ -473,19 +639,19 @@ def line_item_from_quote_line(
             bool(getattr(line, "conditional", False)),
         ]
     )
-    is_spot_sourced = "SPOT" in str(getattr(line, "cost_source", "") or "").upper()
-    is_manual_override = any(
-        token in str(getattr(line, "cost_source", "") or "").upper()
-        for token in ["MANUAL", "OVERRIDE"]
+    is_spot_sourced, is_manual_override = infer_source_flags(
+        getattr(line, "cost_source", None),
+        stored_is_spot_sourced=getattr(line, "is_spot_sourced", None),
+        stored_is_manual_override=getattr(line, "is_manual_override", None),
     )
-    rate_source = normalize_rate_source(
+    rate_source = getattr(line, "rate_source", None) or normalize_rate_source(
         getattr(line, "cost_source", None),
         engine_version=engine_version,
         is_spot_sourced=is_spot_sourced,
         is_manual_override=is_manual_override,
         is_rate_missing=bool(getattr(line, "is_rate_missing", False)),
     )
-    cost_source = normalize_cost_source(
+    cost_source = getattr(line, "canonical_cost_source", None) or normalize_cost_source(
         getattr(line, "cost_source", None),
         engine_version=engine_version,
         is_spot_sourced=is_spot_sourced,
@@ -510,24 +676,43 @@ def line_item_from_quote_line(
             "Rate missing upstream" if getattr(line, "is_rate_missing", False) else "",
         ]
     )
+    calculation_notes = getattr(line, "calculation_notes", None) or (" | ".join(notes) if notes else None)
+    persisted_rule_family = getattr(line, "rule_family", None) or infer_stored_rule_family(
+        line,
+        service_component=service_component,
+    )
+    service_family = getattr(line, "service_family", None)
+    if service_family == "":
+        service_family = None
+    quantity = quantity_for_unit(unit_type, metrics)
 
     return {
         "line_id": str(getattr(line, "id", "") or ""),
-        "product_code": getattr(service_component, "code", None) or "",
+        "product_code": getattr(line, "product_code", None) or getattr(service_component, "code", None) or "",
         "description": getattr(service_component, "description", None) or getattr(line, "cost_source_description", None) or "Charge",
         "component": component,
-        "basis": basis_for_unit(unit_type),
-        "rule_family": infer_stored_rule_family(line, service_component=service_component),
-        "service_family": infer_service_family(
-            pricing_method=getattr(service_code, "pricing_method", None),
-            conditional=bool(getattr(line, "conditional", False)),
+        "basis": getattr(line, "basis", None) or basis_for_unit(unit_type),
+        "rule_family": persisted_rule_family,
+        "service_family": (
+            service_family
+            if service_family is not None
+            else infer_service_family(
+                pricing_method=getattr(getattr(service_component, "service_code", None), "pricing_method", None),
+                conditional=bool(getattr(line, "conditional", False)),
+            )
         ),
         "unit_type": unit_type,
-        "quantity": quantity_for_unit(unit_type, metrics),
+        "quantity": quantity,
         "currency": customer_currency,
         "cost_currency": "PGK",
         "sell_currency": customer_currency,
-        "rate": None,
+        "rate": derive_canonical_rate(
+            stored_rate=getattr(line, "rate", None),
+            rule_family=persisted_rule_family,
+            unit_type=unit_type,
+            quantity=quantity,
+            sell_amount=sell_amount,
+        ),
         "cost_amount": decimal_or_zero(getattr(line, "cost_pgk", None)),
         "sell_amount": sell_amount,
         "tax_code": getattr(line, "gst_category", None) or getattr(service_component, "tax_code", None) or "GST",
@@ -535,7 +720,7 @@ def line_item_from_quote_line(
         "included_in_total": included_in_total,
         "cost_source": cost_source,
         "rate_source": rate_source,
-        "calculation_notes": " | ".join(notes) if notes else None,
+        "calculation_notes": calculation_notes,
         "is_spot_sourced": is_spot_sourced,
         "is_manual_override": is_manual_override,
         "sort_order": sort_order,
@@ -574,6 +759,7 @@ def build_quote_result_from_quote(quote: Any, version: Any = None) -> dict[str, 
     coverage = evaluate_from_lines(lines, getattr(quote, "shipment_type", None), getattr(quote, "service_scope", None))
 
     warnings: list[str] = []
+    warnings.extend(list(getattr(totals, "warnings_json", []) or []))
     if totals and getattr(totals, "notes", None):
         warnings.append(str(totals.notes))
     if coverage.notes:
@@ -625,9 +811,14 @@ def build_quote_result_from_quote(quote: Any, version: Any = None) -> dict[str, 
         "spot_required": spot_required,
         "engine_name": f"{engine_version} Pricing Engine" if engine_version else "Stored Quote",
         "rate_source": line_rate_source,
-        "service_notes": getattr(totals, "notes", None) if totals else None,
-        "customer_notes": None,
-        "internal_notes": None,
+        "service_notes": (
+            getattr(totals, "service_notes", None)
+            if totals and getattr(totals, "service_notes", None)
+            else (getattr(totals, "notes", None) if totals else None)
+        ),
+        "customer_notes": getattr(totals, "customer_notes", None) if totals else None,
+        "internal_notes": getattr(totals, "internal_notes", None) if totals else None,
+        "audit_metadata": getattr(totals, "audit_metadata_json", {}) if totals else {},
         "prepared_by": prepared_by,
         "created_at": getattr(quote, "created_at", None),
         "calculated_at": getattr(active_version, "created_at", None) if active_version else getattr(quote, "created_at", None),

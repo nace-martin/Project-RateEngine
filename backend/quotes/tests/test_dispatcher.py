@@ -217,6 +217,57 @@ class TestPricingAdapterNormalization(TestCase):
         self.assertEqual(product_code_kwargs["origin"], "POM")
         self.assertEqual(product_code_kwargs["destination"], "SIN")
 
+    def test_adapter_promotes_fx_fallback_into_persistable_totals_metadata(self):
+        quote_input = QuoteInput(
+            customer_id=uuid4(),
+            contact_id=uuid4(),
+            output_currency="AUD",
+            shipment=ShipmentDetails(
+                mode="AIR",
+                shipment_type="EXPORT",
+                direction="EXPORT",
+                incoterm="FCA",
+                payment_term="PREPAID",
+                is_dangerous_goods=False,
+                pieces=[Piece(pieces=1, length_cm=Decimal("10"), width_cm=Decimal("10"), height_cm=Decimal("10"), gross_weight_kg=Decimal("25"))],
+                service_scope="D2A",
+                origin_location=LocationRef(
+                    id=uuid4(), code="POM", name="Port Moresby",
+                    country_code="PG", currency_code="PGK"
+                ),
+                destination_location=LocationRef(
+                    id=uuid4(), code="SIN", name="Singapore",
+                    country_code="SG", currency_code="SGD"
+                ),
+            ),
+        )
+
+        adapter = PricingServiceV4Adapter(quote_input)
+
+        def fake_standard_lines():
+            adapter._get_fx_sell_rate("AUD", {})
+            return []
+
+        with patch.object(adapter, "_calculate_standard_lines", side_effect=fake_standard_lines), patch.object(
+            adapter,
+            "_apply_customer_discounts",
+            side_effect=lambda lines: lines,
+        ):
+            charges = adapter.calculate_charges()
+
+        self.assertIn(
+            "FX SELL rate missing for AUD; used 1.0 fallback.",
+            charges.totals.warnings,
+        )
+        self.assertEqual(
+            charges.totals.audit_metadata,
+            {
+                "fx_fallbacks": [
+                    {"direction": "SELL", "currency": "AUD", "fallback_rate": "1.0"}
+                ]
+            },
+        )
+
 
 class TestPreFlightCheck(TestCase):
     """Tests for the pre-flight zero-charge detection."""

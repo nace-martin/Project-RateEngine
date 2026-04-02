@@ -30,6 +30,7 @@ class QuoteLineItem:
     component: str = QuoteComponent.OTHER
     basis: str = "Per Shipment"
     rule_family: str = CALCULATION_LOOKUP_RATE
+    service_family: Optional[str] = None
     unit_type: str = "SHIPMENT"
     quantity: Decimal = Decimal("1.00")
     currency: str = "PGK"
@@ -85,6 +86,7 @@ class QuoteResult:
     fx_applied: Dict[str, Optional[Decimal] | Optional[str] | Optional[bool] | Optional[date]] | bool = False
     tax_breakdown: Dict[str, Decimal | Dict[str, Decimal] | Optional[str]] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    audit_metadata: Dict[str, object] = field(default_factory=dict)
     missing_components: List[str] = field(default_factory=list)
     spot_required: bool = False
     engine_name: Optional[str] = None

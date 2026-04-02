@@ -139,6 +139,8 @@ class ImportPricingEngine:
         self.caf_rate = caf_rate or self.DEFAULT_CAF
         self.margin_rate = margin_rate or self.DEFAULT_MARGIN
         self.fx_rates = fx_rates or {}
+        self._warnings: List[str] = []
+        self._audit_metadata: Dict[str, List[dict[str, str]]] = {"fx_fallbacks": []}
         
         # Determine quote currency (prefer explicit override, else derive)
         self.quote_currency = quote_currency or self._determine_quote_currency()
@@ -205,6 +207,16 @@ class ImportPricingEngine:
             return Decimal(str(info[rate_type]))
             
         logger.warning(f"Missing {rate_type} rate for {currency}, defaulting to 1.0")
+        warning = f"FX {rate_type.upper()} rate missing for {currency}; used 1.0 fallback."
+        if warning not in self._warnings:
+            self._warnings.append(warning)
+        self._audit_metadata.setdefault("fx_fallbacks", []).append(
+            {
+                "currency": str(currency or "").upper() or "UNKNOWN",
+                "direction": rate_type.upper(),
+                "fallback_rate": "1.0",
+            }
+        )
         return Decimal('1.0')
 
     def _convert_fcy_to_pgk(self, amount: Decimal, currency: Optional[str] = None) -> Decimal:
@@ -317,6 +329,8 @@ class ImportPricingEngine:
             currency=self.quote_currency,
             fx_rate_used=self.tt_buy if self.payment_term == PaymentTerm.COLLECT else self.tt_sell,
             caf_rate=self.caf_rate,
+            warnings=list(self._warnings),
+            audit_metadata=self._audit_metadata,
         )
         
         # Calculate effective FX rate

@@ -21,6 +21,10 @@ from quotes.state_machine import (
     is_quote_editable,
 )
 from quotes.currency_rules import determine_quote_currency
+from quotes.quote_result_contract import (
+    build_persisted_line_item_metadata,
+    build_persisted_quote_total_metadata,
+)
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
@@ -392,6 +396,13 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             engine_version=engine_version,  # From dispatcher result
         )
 
+        component_map = {
+            component.id: component
+            for component in ServiceComponent.objects.filter(
+                id__in=[line.service_component_id for line in charges.lines if getattr(line, "service_component_id", None)]
+            ).select_related("service_code")
+        }
+
         # Create QuoteLines (bulk insert for performance)
         lines_to_create = [
             QuoteLine(
@@ -410,13 +421,47 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 cost_source_description=line_charge.cost_source_description,
                 is_rate_missing=line_charge.is_rate_missing,
                 leg=line_charge.leg,
-                bucket=line_charge.bucket
+                bucket=line_charge.bucket,
+                product_code=canonical_metadata["product_code"] or None,
+                component=canonical_metadata["component"],
+                basis=canonical_metadata["basis"],
+                rule_family=canonical_metadata["rule_family"],
+                service_family=canonical_metadata["service_family"],
+                unit_type=canonical_metadata["unit_type"],
+                rate=canonical_metadata["rate"],
+                rate_source=canonical_metadata["rate_source"],
+                canonical_cost_source=canonical_metadata["canonical_cost_source"],
+                is_spot_sourced=canonical_metadata["is_spot_sourced"],
+                is_manual_override=canonical_metadata["is_manual_override"],
+                calculation_notes=canonical_metadata["calculation_notes"],
             )
             for line_charge in charges.lines
+            for canonical_metadata in [build_persisted_line_item_metadata(
+                raw_cost_source=line_charge.cost_source,
+                service_component=component_map.get(line_charge.service_component_id),
+                engine_version=engine_version,
+                product_code=getattr(line_charge, "product_code", None) or getattr(line_charge, "service_component_code", None),
+                component=getattr(line_charge, "component", None),
+                basis=getattr(line_charge, "basis", None),
+                rule_family=getattr(line_charge, "rule_family", None),
+                service_family=getattr(line_charge, "service_family", None),
+                unit_type=getattr(line_charge, "unit_type", None),
+                quantity=getattr(line_charge, "quantity", None),
+                rate=getattr(line_charge, "rate", None),
+                sell_amount=line_charge.sell_fcy if (line_charge.sell_fcy_currency or "PGK").upper() != "PGK" else line_charge.sell_pgk,
+                is_rate_missing=bool(line_charge.is_rate_missing),
+                leg=line_charge.leg,
+                calculation_notes=getattr(line_charge, "calculation_notes", None),
+                stored_is_spot_sourced=getattr(line_charge, "is_spot_sourced", None),
+                stored_is_manual_override=getattr(line_charge, "is_manual_override", None),
+                canonical_cost_source=getattr(line_charge, "canonical_cost_source", None),
+                rate_source=getattr(line_charge, "rate_source", None),
+            )]
         ]
         QuoteLine.objects.bulk_create(lines_to_create)
             
         # Create QuoteTotal
+        total_metadata = build_persisted_quote_total_metadata(charges.totals)
         QuoteTotal.objects.create(
             quote_version=version,
             total_cost_pgk=charges.totals.total_cost_pgk,
@@ -428,6 +473,11 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             has_missing_rates=charges.totals.has_missing_rates,
             notes=charges.totals.notes,
             engine_version=engine_version,  # From dispatcher result
+            service_notes=total_metadata["service_notes"],
+            customer_notes=total_metadata["customer_notes"],
+            internal_notes=total_metadata["internal_notes"],
+            warnings_json=total_metadata["warnings_json"],
+            audit_metadata_json=total_metadata["audit_metadata_json"],
         )
 
         # Attach latest version for serializers expecting the attribute

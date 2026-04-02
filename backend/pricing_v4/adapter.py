@@ -13,7 +13,7 @@ from django.db import models
 from core.dataclasses import (
     QuoteInput, QuoteCharges, CalculatedChargeLine, CalculatedTotals
 )
-from core.charge_rules import evaluate_charge_rule
+from core.charge_rules import evaluate_charge_rule, normalize_charge_rule
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as ExportPaymentTerm
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
@@ -21,6 +21,7 @@ from pricing_v4.models import ProductCode, CustomerDiscount
 from services.models import ServiceComponent
 from quotes.completeness import evaluate_from_lines
 from quotes.currency_rules import determine_quote_currency
+from quotes.quote_result_contract import basis_for_unit, quantity_for_unit
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,9 @@ class PricingServiceV4Adapter:
         self.quote_input = quote_input
         self.spot_envelope_id = spot_envelope_id
         self.pricing_mode = PricingMode.SPOT if spot_envelope_id else PricingMode.NORMAL
+        self._source_result_context: dict[str, object] = {}
+        self._audit_warnings: list[str] = []
+        self._audit_metadata: dict[str, object] = {}
         
         # Fetch Policy and FX just like V3 did, so views can save them to Quote
         try:
@@ -79,6 +83,37 @@ class PricingServiceV4Adapter:
             self.fx_snapshot = FxSnapshot.objects.latest('as_of_timestamp')
         except FxSnapshot.DoesNotExist:
             self.fx_snapshot = None
+
+    def _reset_audit_capture(self) -> None:
+        self._source_result_context = {}
+        self._audit_warnings = []
+        self._audit_metadata = {}
+
+    def _dedupe_strings(self, values: List[str]) -> List[str]:
+        seen = set()
+        ordered: List[str] = []
+        for value in values:
+            normalized = str(value or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(normalized)
+        return ordered
+
+    def _record_fx_fallback(self, direction: str, currency: str) -> None:
+        curr = str(currency or "").upper() or "UNKNOWN"
+        warning = f"FX {direction.upper()} rate missing for {curr}; used 1.0 fallback."
+        self._audit_warnings.append(warning)
+        self._audit_metadata.setdefault("fx_fallbacks", [])
+        fx_fallbacks = self._audit_metadata["fx_fallbacks"]
+        if isinstance(fx_fallbacks, list):
+            fx_fallbacks.append(
+                {
+                    "direction": direction.upper(),
+                    "currency": curr,
+                    "fallback_rate": "1.0",
+                }
+            )
 
     def get_fx_snapshot(self):
         return self.fx_snapshot
@@ -233,6 +268,7 @@ class PricingServiceV4Adapter:
 
     def calculate_charges(self) -> QuoteCharges:
         shipment = self.quote_input.shipment
+        self._reset_audit_capture()
         
         # 1. Calculate Standard Charges (Base)
         standard_lines = []
@@ -260,7 +296,38 @@ class PricingServiceV4Adapter:
         final_lines = self._apply_customer_discounts(final_lines)
         
         # 5. Calculate Final Totals (Unified Pass)
-        return self._calculate_totals(final_lines)
+        charges = self._calculate_totals(final_lines)
+        source_context = self._source_result_context or {}
+        service_notes = source_context.get("service_notes") or charges.totals.notes
+        charges.totals.service_notes = str(service_notes) if service_notes else None
+        customer_notes = source_context.get("customer_notes")
+        charges.totals.customer_notes = str(customer_notes) if customer_notes else None
+        internal_notes = source_context.get("internal_notes")
+        charges.totals.internal_notes = str(internal_notes) if internal_notes else None
+        warnings = list(source_context.get("warnings") or [])
+        warnings.extend(self._audit_warnings)
+        if charges.totals.notes:
+            warnings.append(str(charges.totals.notes))
+        charges.totals.warnings = self._dedupe_strings(warnings)
+        audit_metadata = {}
+        source_audit_metadata = source_context.get("audit_metadata")
+        if isinstance(source_audit_metadata, dict):
+            audit_metadata.update(source_audit_metadata)
+        for key, value in self._audit_metadata.items():
+            if key not in audit_metadata:
+                audit_metadata[key] = value
+                continue
+            existing = audit_metadata[key]
+            if isinstance(existing, list) and isinstance(value, list):
+                audit_metadata[key] = existing + value
+            elif isinstance(existing, dict) and isinstance(value, dict):
+                merged = dict(existing)
+                merged.update(value)
+                audit_metadata[key] = merged
+            else:
+                audit_metadata[key] = value
+        charges.totals.audit_metadata = audit_metadata
+        return charges
 
     def _calculate_standard_lines(self) -> List[CalculatedChargeLine]:
         """Run standard V4 pricing engine and return raw charge lines."""
@@ -400,6 +467,13 @@ class PricingServiceV4Adapter:
 
     def _convert_result_to_lines(self, result) -> List[CalculatedChargeLine]:
         lines: List[CalculatedChargeLine] = []
+        self._source_result_context = {
+            "service_notes": getattr(result, "service_notes", None),
+            "customer_notes": getattr(result, "customer_notes", None),
+            "internal_notes": getattr(result, "internal_notes", None),
+            "warnings": list(getattr(result, "warnings", []) or []),
+            "audit_metadata": getattr(result, "audit_metadata", {}) or {},
+        }
         
         # We need to consolidate Cost and Sell lines into single ChargeLines for V3.
         # V3 expects ONE line per ServiceComponent (usually).
@@ -423,6 +497,11 @@ class PricingServiceV4Adapter:
         elif hasattr(result, 'origin_lines'): # Import
             import_or_export_lines = result.origin_lines + result.freight_lines + result.destination_lines
             
+        shipment_metrics = {
+            "chargeable_weight": self._calculate_chargeable_weight(),
+            "pieces": sum(int(getattr(piece, "pieces", 0) or 0) for piece in getattr(self.quote_input.shipment, "pieces", []) or []),
+        }
+
         # Process Import/Export Style (Unified lines)
         for line in import_or_export_lines:
             code = line.product_code
@@ -470,6 +549,19 @@ class PricingServiceV4Adapter:
                     'gst_rate': getattr(line, 'gst_rate', Decimal('0')),
                     'gst_amount': getattr(line, 'gst_amount', Decimal('0')),
                     'agent_name': getattr(line, 'agent_name', None),  # NEW
+                    'product_code': getattr(line, 'product_code', None) or code,
+                    'component': getattr(line, 'component', None),
+                    'basis': getattr(line, 'basis', None),
+                    'rule_family': getattr(line, 'rule_family', None),
+                    'service_family': getattr(line, 'service_family', None),
+                    'unit_type': getattr(line, 'unit_type', None),
+                    'quantity': quantity_for_unit(getattr(line, 'unit_type', None), shipment_metrics),
+                    'rate': getattr(line, 'rate', None),
+                    'rate_source': getattr(line, 'rate_source', None),
+                    'canonical_cost_source': getattr(line, 'cost_source', None),
+                    'calculation_notes': getattr(line, 'calculation_notes', None),
+                    'is_spot_sourced': bool(getattr(line, 'is_spot_sourced', False)),
+                    'is_manual_override': bool(getattr(line, 'is_manual_override', False)),
                 }
             
             # Sum up (though typically one per code)
@@ -499,6 +591,12 @@ class PricingServiceV4Adapter:
                         'bucket': bucket,
                         'leg': leg,
                         'agent_name': getattr(item, 'agent_name', None),
+                        'product_code': code,
+                        'component': 'FREIGHT' if bucket == 'airfreight' else 'ORIGIN_LOCAL',
+                        'basis': 'Per KG' if bucket == 'airfreight' else 'Per Shipment',
+                        'rule_family': getattr(item, 'rule_family', None),
+                        'unit_type': 'KG' if bucket == 'airfreight' else 'SHIPMENT',
+                        'quantity': quantity_for_unit('KG' if bucket == 'airfreight' else 'SHIPMENT', shipment_metrics),
                     }  # Domestic simplified
                 consolidated[code]['cost_amount'] += item.amount
 
@@ -515,6 +613,12 @@ class PricingServiceV4Adapter:
                         'bucket': bucket,
                         'leg': leg,
                         'agent_name': None,
+                        'product_code': code,
+                        'component': 'FREIGHT' if bucket == 'airfreight' else 'ORIGIN_LOCAL',
+                        'basis': 'Per KG' if bucket == 'airfreight' else 'Per Shipment',
+                        'rule_family': getattr(item, 'rule_family', None),
+                        'unit_type': 'KG' if bucket == 'airfreight' else 'SHIPMENT',
+                        'quantity': quantity_for_unit('KG' if bucket == 'airfreight' else 'SHIPMENT', shipment_metrics),
                     }
                 consolidated[code]['sell_amount'] += item.amount
                 
@@ -585,7 +689,19 @@ class PricingServiceV4Adapter:
                     cost_fcy=cost_fcy,
                     cost_fcy_currency=cost_currency,
                     bucket=data.get('bucket', 'origin_charges'),
-
+                    product_code=data.get('product_code') or code,
+                    component=data.get('component'),
+                    basis=data.get('basis'),
+                    rule_family=data.get('rule_family'),
+                    service_family=data.get('service_family'),
+                    unit_type=data.get('unit_type'),
+                    quantity=data.get('quantity'),
+                    rate=data.get('rate'),
+                    rate_source=data.get('rate_source'),
+                    canonical_cost_source=data.get('canonical_cost_source'),
+                    calculation_notes=data.get('calculation_notes'),
+                    is_spot_sourced=bool(data.get('is_spot_sourced', False)),
+                    is_manual_override=bool(data.get('is_manual_override', False)),
                     cost_source=cost_source,  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
                     # GST Fields
@@ -617,6 +733,19 @@ class PricingServiceV4Adapter:
                     cost_fcy=cost_fcy,
                     cost_fcy_currency=cost_fcy_currency,
                     bucket=data.get('bucket', 'origin_charges'),
+                    product_code=data.get('product_code') or code,
+                    component=data.get('component'),
+                    basis=data.get('basis'),
+                    rule_family=data.get('rule_family'),
+                    service_family=data.get('service_family'),
+                    unit_type=data.get('unit_type'),
+                    quantity=data.get('quantity'),
+                    rate=data.get('rate'),
+                    rate_source=data.get('rate_source'),
+                    canonical_cost_source=data.get('canonical_cost_source'),
+                    calculation_notes=data.get('calculation_notes'),
+                    is_spot_sourced=bool(data.get('is_spot_sourced', False)),
+                    is_manual_override=bool(data.get('is_manual_override', False)),
                     cost_source=cost_source,  # NEW: Use agent name if available
                     is_rate_missing=data.get('is_rate_missing', False),
                     # GST Fields
@@ -692,6 +821,7 @@ class PricingServiceV4Adapter:
         if info and info.get('tt_buy'):
             return Decimal(str(info['tt_buy']))
         logger.warning("No FX BUY rate found for %s; using 1.0", currency)
+        self._record_fx_fallback("BUY", currency)
         return Decimal('1')
 
     def _get_fx_sell_rate(self, currency: str, rates: dict) -> Decimal:
@@ -701,6 +831,7 @@ class PricingServiceV4Adapter:
         if info and info.get('tt_sell'):
             return Decimal(str(info['tt_sell']))
         logger.warning("No FX SELL rate found for %s; using 1.0", currency)
+        self._record_fx_fallback("SELL", currency)
         return Decimal('1')
 
     def _convert_fcy_to_pgk(self, amount: Decimal, fx_rate: Decimal, caf_pct: Decimal = Decimal('0')) -> Decimal:
@@ -1064,6 +1195,7 @@ class PricingServiceV4Adapter:
                 "min_charge": charge.min_charge,
                 "percentage_basis": charge.percentage_basis,
             }
+            normalized_rule = normalize_charge_rule(rule)
             cost_fcy = evaluate_charge_rule(rule, shipment_context)
             if cost_fcy < 0:
                 cost_fcy = Decimal("0")
@@ -1159,6 +1291,21 @@ class PricingServiceV4Adapter:
             # We assume database seeding has 'SPOT_CHARGE' or similar.
             sc_id = sc.id if sc else uuid.uuid4() # Danger but ensures UUID
             sc_desc = sc.description if sc else charge.description
+            unit_type = str(getattr(sc, "unit", None) or getattr(charge, "unit_type", None) or "SHIPMENT").upper()
+            canonical_component = (
+                "FREIGHT"
+                if charge.bucket == "airfreight"
+                else ("DESTINATION_LOCAL" if charge.bucket == "destination_charges" else "ORIGIN_LOCAL")
+            )
+            quantity = quantity_for_unit(
+                unit_type,
+                {
+                    "chargeable_weight": shipment_context["chargeable_weight_kg"],
+                    "pieces": int(shipment_context["shipment_count"]),
+                },
+            )
+            canonical_cost_source = "PARTNER_SPOT"
+            rate_source = "PARTNER_SPOT"
             
             lines.append(CalculatedChargeLine(
                 service_component_id=sc_id,
@@ -1176,6 +1323,18 @@ class PricingServiceV4Adapter:
                 cost_fcy_currency=charge.currency,
                 sell_fcy_currency=output_currency,
                 bucket=charge.bucket, # Ensure bucket is passed
+                product_code=charge.code,
+                component=canonical_component,
+                basis=basis_for_unit(unit_type),
+                rule_family=normalized_rule.get("calculation_type"),
+                unit_type=unit_type,
+                quantity=quantity,
+                rate=normalized_rule.get("percent") or normalized_rule.get("rate"),
+                rate_source=rate_source,
+                canonical_cost_source=canonical_cost_source,
+                calculation_notes=charge.description,
+                is_spot_sourced=True,
+                is_manual_override=False,
                 is_informational=is_info,
                 is_rate_missing=False,
                 # GST Fields

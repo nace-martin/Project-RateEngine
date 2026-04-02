@@ -21,7 +21,11 @@ from quotes.serializers import (
     QuoteListSerializerV3,
     QuoteModelSerializerV3,
 )
-from quotes.quote_result_contract import build_quote_result_from_quote
+from quotes.quote_result_contract import (
+    build_persisted_line_item_metadata,
+    build_persisted_quote_total_metadata,
+    build_quote_result_from_quote,
+)
 from services.models import ServiceComponent
 from pricing_v4.adapter import PricingServiceV4Adapter
 from core.dataclasses import QuoteInput, ManualOverride
@@ -82,7 +86,36 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges, ser
         engine_version='V4',  # Always V4 - V3 is deprecated
     )
 
+    component_map = {
+        component.id: component
+        for component in ServiceComponent.objects.filter(
+            id__in=[line.service_component_id for line in charges.lines if getattr(line, "service_component_id", None)]
+        ).select_related("service_code")
+    }
+
     for line_charge in charges.lines:
+        service_component = component_map.get(line_charge.service_component_id)
+        canonical_metadata = build_persisted_line_item_metadata(
+            raw_cost_source=line_charge.cost_source,
+            service_component=service_component,
+            engine_version="V4",
+            product_code=getattr(line_charge, "product_code", None) or getattr(line_charge, "service_component_code", None),
+            component=getattr(line_charge, "component", None),
+            basis=getattr(line_charge, "basis", None),
+            rule_family=getattr(line_charge, "rule_family", None),
+            service_family=getattr(line_charge, "service_family", None),
+            unit_type=getattr(line_charge, "unit_type", None),
+            quantity=getattr(line_charge, "quantity", None),
+            rate=getattr(line_charge, "rate", None),
+            sell_amount=line_charge.sell_fcy if (line_charge.sell_fcy_currency or "PGK").upper() != "PGK" else line_charge.sell_pgk,
+            is_rate_missing=bool(line_charge.is_rate_missing),
+            leg=line_charge.leg,
+            calculation_notes=getattr(line_charge, "calculation_notes", None),
+            stored_is_spot_sourced=getattr(line_charge, "is_spot_sourced", None),
+            stored_is_manual_override=getattr(line_charge, "is_manual_override", None),
+            canonical_cost_source=getattr(line_charge, "canonical_cost_source", None),
+            rate_source=getattr(line_charge, "rate_source", None),
+        )
         QuoteLine.objects.create(
             quote_version=version,
             service_component_id=line_charge.service_component_id,
@@ -103,9 +136,22 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges, ser
             gst_category=line_charge.gst_category,
             gst_rate=line_charge.gst_rate,
             gst_amount=line_charge.gst_amount,
+            product_code=canonical_metadata["product_code"] or None,
+            component=canonical_metadata["component"],
+            basis=canonical_metadata["basis"],
+            rule_family=canonical_metadata["rule_family"],
+            service_family=canonical_metadata["service_family"],
+            unit_type=canonical_metadata["unit_type"],
+            rate=canonical_metadata["rate"],
+            rate_source=canonical_metadata["rate_source"],
+            canonical_cost_source=canonical_metadata["canonical_cost_source"],
+            is_spot_sourced=canonical_metadata["is_spot_sourced"],
+            is_manual_override=canonical_metadata["is_manual_override"],
+            calculation_notes=canonical_metadata["calculation_notes"],
         )
 
     totals = charges.totals
+    total_metadata = build_persisted_quote_total_metadata(totals)
     QuoteTotal.objects.create(
         quote_version=version,
         total_cost_pgk=totals.total_cost_pgk,
@@ -117,6 +163,11 @@ def _create_quote_version_from_service(quote: Quote, payload: dict, charges, ser
         has_missing_rates=totals.has_missing_rates,
         notes=totals.notes,
         engine_version='V4',  # Always V4 - V3 is deprecated
+        service_notes=total_metadata["service_notes"],
+        customer_notes=total_metadata["customer_notes"],
+        internal_notes=total_metadata["internal_notes"],
+        warnings_json=total_metadata["warnings_json"],
+        audit_metadata_json=total_metadata["audit_metadata_json"],
     )
 
     quote.request_details_json = payload
@@ -641,6 +692,18 @@ class QuoteCloneAPIView(APIView):
                         gst_category=line.gst_category,
                         gst_rate=line.gst_rate,
                         gst_amount=line.gst_amount,
+                        product_code=line.product_code,
+                        component=line.component,
+                        basis=line.basis,
+                        rule_family=line.rule_family,
+                        service_family=line.service_family,
+                        unit_type=line.unit_type,
+                        rate=line.rate,
+                        rate_source=line.rate_source,
+                        canonical_cost_source=line.canonical_cost_source,
+                        is_spot_sourced=line.is_spot_sourced,
+                        is_manual_override=line.is_manual_override,
+                        calculation_notes=line.calculation_notes,
                     ))
                 if cloned_lines:
                     QuoteLine.objects.bulk_create(cloned_lines)
@@ -658,18 +721,25 @@ class QuoteCloneAPIView(APIView):
                         has_missing_rates=source_totals.has_missing_rates,
                         notes=source_totals.notes,
                         engine_version=source_totals.engine_version,
+                        service_notes=source_totals.service_notes,
+                        customer_notes=source_totals.customer_notes,
+                        internal_notes=source_totals.internal_notes,
+                        warnings_json=source_totals.warnings_json,
+                        audit_metadata_json=source_totals.audit_metadata_json,
                     )
                 else:
                     QuoteTotal.objects.create(
                         quote_version=new_version,
                         total_sell_fcy_currency=new_quote.output_currency or 'PGK',
                         notes='Cloned without source totals; baseline totals initialized.',
+                        service_notes='Cloned without source totals; baseline totals initialized.',
                     )
             else:
                 QuoteTotal.objects.create(
                     quote_version=new_version,
                     total_sell_fcy_currency=new_quote.output_currency or 'PGK',
                     notes='Cloned baseline version from request payload.',
+                    service_notes='Cloned baseline version from request payload.',
                 )
 
             new_quote.latest_version = new_version

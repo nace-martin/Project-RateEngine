@@ -382,6 +382,76 @@ class QuoteLine(models.Model):
     cost_source = models.CharField(max_length=50, null=True, blank=True)
     cost_source_description = models.CharField(max_length=255, null=True, blank=True)
     is_rate_missing = models.BooleanField(default=False)
+    product_code = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical product code used in quote_result.",
+    )
+    component = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical quote_result component.",
+    )
+    basis = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical quote_result basis label.",
+    )
+    rule_family = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical pricing calculation family.",
+    )
+    service_family = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        help_text="Optional semantic/commercial family kept separate from rule_family.",
+    )
+    unit_type = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical quote_result unit type.",
+    )
+    rate = models.DecimalField(
+        max_digits=18,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical line rate when a stable rate is available.",
+    )
+    rate_source = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical quote_result rate source.",
+    )
+    canonical_cost_source = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        help_text="Persisted canonical quote_result cost source.",
+    )
+    is_spot_sourced = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text="Persisted canonical SPOT-source flag.",
+    )
+    is_manual_override = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text="Persisted canonical manual-override flag.",
+    )
+    calculation_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Persisted canonical line-level audit notes.",
+    )
     is_informational = models.BooleanField(
         default=False,
         help_text="If True, this is a conditional charge shown as a note, not included in totals."
@@ -447,6 +517,31 @@ class QuoteTotal(models.Model):
 
     has_missing_rates = models.BooleanField(default=False)
     notes = models.TextField(null=True, blank=True)
+    service_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Persisted canonical service-facing notes.",
+    )
+    customer_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Persisted canonical customer-facing notes.",
+    )
+    internal_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Persisted canonical internal notes.",
+    )
+    warnings_json = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Persisted canonical quote_result warnings.",
+    )
+    audit_metadata_json = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Persisted structured audit metadata for quote_result.",
+    )
     
     # --- Engine Version Tracking (denormalized for reporting) ---
     engine_version = models.CharField(

@@ -417,6 +417,18 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             gst_rate=Decimal("0.1000"),
             gst_amount=Decimal("18.00"),
             is_rate_missing=False,
+            product_code=freight_component.code,
+            component="FREIGHT",
+            basis="Per KG",
+            rule_family="PER_UNIT",
+            service_family="STANDARD_RATE",
+            unit_type="KG",
+            rate=Decimal("3.600000"),
+            rate_source="DB_TARIFF",
+            canonical_cost_source="DB_TARIFF",
+            is_spot_sourced=False,
+            is_manual_override=False,
+            calculation_notes="Stored canonical freight audit note",
         )
 
         QuoteLine.objects.create(
@@ -434,6 +446,15 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             cost_source_description=None,
             gst_amount=Decimal("0.00"),
             is_rate_missing=True,
+            component="ORIGIN_LOCAL",
+            basis="Per Shipment",
+            rule_family="LOOKUP_RATE",
+            unit_type="SHIPMENT",
+            rate_source="FALLBACK_RULE",
+            canonical_cost_source="FALLBACK_RULE",
+            is_spot_sourced=False,
+            is_manual_override=False,
+            calculation_notes="Stored fallback audit note",
         )
 
         QuoteTotal.objects.create(
@@ -446,6 +467,18 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             total_sell_fcy_currency="USD",
             has_missing_rates=True,
             notes="Legacy totals note",
+            service_notes="Persisted service note",
+            customer_notes="Persisted customer note",
+            internal_notes="Persisted internal note",
+            warnings_json=[
+                "FX SELL rate missing for AUD; used 1.0 fallback.",
+                "Stored quote warning",
+            ],
+            audit_metadata_json={
+                "fx_fallbacks": [
+                    {"direction": "SELL", "currency": "AUD", "fallback_rate": "1.0"}
+                ]
+            },
         )
 
         self.detail_url = reverse("quotes:quote-v3-detail", kwargs={"pk": self.quote.id})
@@ -488,6 +521,10 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertEqual(freight_line["service_family"], "STANDARD_RATE")
         self.assertEqual(freight_line["cost_source"], "DB_TARIFF")
         self.assertEqual(freight_line["rate_source"], "DB_TARIFF")
+        self.assertEqual(freight_line["rate"], "3.600000")
+        self.assertEqual(freight_line["calculation_notes"], "Stored canonical freight audit note")
+        self.assertEqual(freight_line["is_spot_sourced"], False)
+        self.assertEqual(freight_line["is_manual_override"], False)
         self.assertEqual(freight_line["tax_code"], "service_in_PNG")
 
         self.assertEqual(fallback_line["basis"], "Per Shipment")
@@ -495,6 +532,7 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertEqual(fallback_line["service_family"], None)
         self.assertEqual(fallback_line["cost_source"], "FALLBACK_RULE")
         self.assertEqual(fallback_line["rate_source"], "FALLBACK_RULE")
+        self.assertEqual(fallback_line["calculation_notes"], "Stored fallback audit note")
         self.assertEqual(fallback_line["included_in_total"], False)
         self.assertEqual(fallback_line["quantity"], "1.00")
 
@@ -531,6 +569,16 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertEqual(quote_result["margin_amount"], "60.00")
         self.assertEqual(quote_result["margin_percent"], "33.33")
         self.assertEqual(quote_result["fx_applied"]["applied"], True)
-        self.assertEqual(quote_result["service_notes"], "Legacy totals note")
-        self.assertEqual(quote_result["customer_notes"], None)
-        self.assertEqual(quote_result["internal_notes"], None)
+        self.assertEqual(quote_result["service_notes"], "Persisted service note")
+        self.assertEqual(quote_result["customer_notes"], "Persisted customer note")
+        self.assertEqual(quote_result["internal_notes"], "Persisted internal note")
+        self.assertEqual(
+            quote_result["audit_metadata"],
+            {
+                "fx_fallbacks": [
+                    {"direction": "SELL", "currency": "AUD", "fallback_rate": "1.0"}
+                ]
+            },
+        )
+        self.assertIn("Stored quote warning", quote_result["warnings"])
+        self.assertIn("FX SELL rate missing for AUD; used 1.0 fallback.", quote_result["warnings"])
