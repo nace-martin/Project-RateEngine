@@ -8,8 +8,6 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const CLICK_GUARD_MS = 500
-const SUBMIT_PENDING_FALLBACK_MS = 2000
-
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all duration-200 hover:-translate-y-px active:translate-y-0 active:scale-[0.98] disabled:pointer-events-none disabled:translate-y-0 disabled:shadow-none disabled:opacity-50 disabled:cursor-not-allowed aria-busy:cursor-progress data-[pending=true]:translate-y-0 data-[pending=true]:scale-100 data-[pending=true]:shadow-none data-[pending=true]:ring-2 data-[pending=true]:ring-primary/15 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
   {
@@ -134,31 +132,7 @@ function Button({
     const form = button.form ?? button.closest("form")
     const buttonType = type ?? (form ? "submit" : "button")
 
-    if (buttonType === "submit") {
-      startPending(SUBMIT_PENDING_FALLBACK_MS)
-
-      if (form instanceof HTMLFormElement) {
-        let submitObserved = false
-        const handleInvalid = () => {
-          window.setTimeout(() => {
-            clearPending()
-          }, 150)
-        }
-        const handleSubmitObserved = () => {
-          submitObserved = true
-        }
-
-        form.addEventListener("invalid", handleInvalid, { once: true, capture: true })
-        form.addEventListener("submit", handleSubmitObserved, { once: true, capture: true })
-
-        window.setTimeout(() => {
-          form.removeEventListener("invalid", handleInvalid, true)
-          if (!submitObserved && !loading) {
-            clearPending()
-          }
-        }, 0)
-      }
-    } else {
+    if (buttonType !== "submit") {
       startClickGuard()
     }
 
