@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWatch } from "react-hook-form";
 import { AlertTriangle } from "lucide-react";
 
@@ -124,7 +124,9 @@ export function QuoteForm({
   const resetQuote = useQuoteStore((state) => state.resetQuote);
 
   const isImport = destinationLocation?.country_code === "PG";
-  const submitBusy = isSubmitting || form.formState.isSubmitting;
+  const [isSubmitLocked, setIsSubmitLocked] = useState(false);
+  const submitIntentLockRef = useRef(false);
+  const submitBusy = isSubmitting || form.formState.isSubmitting || isSubmitLocked;
 
   const buildSnapshot = useCallback(
     (): QuoteSavedSnapshot => ({
@@ -165,6 +167,13 @@ export function QuoteForm({
   useEffect(() => {
     onDirtyChange?.(form.formState.isDirty);
   }, [form.formState.isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!isSubmitting && !form.formState.isSubmitting) {
+      submitIntentLockRef.current = false;
+      setIsSubmitLocked(false);
+    }
+  }, [form.formState.isSubmitting, isSubmitting]);
 
   useEffect(() => {
     setValidationState(sectionValidation);
@@ -366,13 +375,36 @@ export function QuoteForm({
     commitSection(activeSection, nextIndex);
   };
 
-  const onFormError = (errors: Record<string, unknown>) => {
+  const onFormError = useCallback((errors: Record<string, unknown>) => {
+    submitIntentLockRef.current = false;
+    setIsSubmitLocked(false);
     if (Object.keys(errors).length > 0) {
       console.warn("Form validation errors:", errors);
       setCurrentStep(unlockedSection);
       scrollToSection(unlockedSection);
     }
-  };
+  }, [setCurrentStep, unlockedSection]);
+
+  const handleSubmitEvent = useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      if (submitIntentLockRef.current) {
+        event.preventDefault();
+        return;
+      }
+
+      submitIntentLockRef.current = true;
+      setIsSubmitLocked(true);
+
+      try {
+        await form.handleSubmit(handleFormSubmit, onFormError)(event);
+      } catch (error) {
+        submitIntentLockRef.current = false;
+        setIsSubmitLocked(false);
+        throw error;
+      }
+    },
+    [form, handleFormSubmit, onFormError],
+  );
 
   const getSectionStatus = (index: QuoteSectionIndex): QuoteSectionStatus => {
     if (index === activeSection) return "active";
@@ -405,7 +437,7 @@ export function QuoteForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(handleFormSubmit, onFormError)} className="space-y-6">
+      <form onSubmit={handleSubmitEvent} className="space-y-6">
         <div className={cn("space-y-6", submitBusy && "pointer-events-none opacity-70")}>
           {(internalError || serverError) && (
             <div className="flex items-center gap-2 rounded-md bg-destructive/15 px-4 py-3 text-destructive">

@@ -31,7 +31,7 @@ export function SmartMoneyInput({
                         name={currencyName}
                         render={({ field }) => (
                             <FormItem>
-                                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <Select onValueChange={field.onChange} value={field.value ?? ""}>
                                     <FormControl>
                                         <SelectTrigger className="h-9 px-2">
                                             <SelectValue />

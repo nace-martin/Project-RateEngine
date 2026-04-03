@@ -20,6 +20,8 @@ from core.dataclasses import (
 from core.models import Currency, Country, Location
 from core.tests.helpers import create_location
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
+from pricing_v4.models import Agent, ProductCode, LocalCOGSRate, LocalSellRate
+from services.models import ServiceComponent
 from quotes.completeness import (
     evaluate_from_lines,
     COMPONENT_DESTINATION_LOCAL,
@@ -41,7 +43,7 @@ from quotes.spot_models import (
     SPEChargeLineDB,
     SPEAcknowledgementDB,
 )
-from quotes.spot_services import ReplyAnalysisService, SpotTriggerReason
+from quotes.spot_services import ReplyAnalysisService, SpotTriggerReason, StandardChargeService
 
 
 pytestmark = pytest.mark.django_db
@@ -663,6 +665,267 @@ def test_conditional_charge_does_not_satisfy_completeness():
 
     coverage = evaluate_from_lines(lines, "EXPORT", "D2A")
     assert COMPONENT_ORIGIN_LOCAL in coverage.missing_required
+
+
+def test_import_d2d_collect_spot_freight_keeps_origin_local_missing_when_only_destination_side_local_cogs_exist():
+    user = get_user_model().objects.create_user(username="spotimportfallback", password="testpass")
+    spe = _create_spe(
+        user=user,
+        origin_code="CAN",
+        dest_code="POM",
+        origin_country="CN",
+        dest_country="PG",
+        service_scope="D2D",
+        status="ready",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL],
+    )
+    _acknowledge_spe(user, spe)
+
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code="FREIGHT",
+        description="Airfreight",
+        amount=Decimal("6.80"),
+        currency="USD",
+        unit="per_kg",
+        bucket="airfreight",
+        is_primary_cost=True,
+        entered_at=timezone.now(),
+        source_reference="Agent reply",
+    )
+
+    agent = Agent.objects.create(
+        code="CAN-AGENT",
+        name="CAN Agent",
+        country_code="CN",
+        agent_type="ORIGIN",
+    )
+    pc_origin = ProductCode.objects.create(
+        id=2010,
+        code="IMP-DOC-ORIGIN",
+        description="Import Documentation Origin",
+        domain="IMPORT",
+        category="DOCUMENTATION",
+        is_gst_applicable=True,
+        gl_revenue_code="4200",
+        gl_cost_code="5200",
+        default_unit="SHIPMENT",
+    )
+    pc_dest = ProductCode.objects.create(
+        id=3020,
+        code="IMP-CLEAR-SPOTTEST",
+        description="Import Customs Clearance Spot Test",
+        domain="IMPORT",
+        category="CLEARANCE",
+        is_gst_applicable=True,
+        gl_revenue_code="4201",
+        gl_cost_code="5201",
+        default_unit="SHIPMENT",
+    )
+    ServiceComponent.objects.create(
+        code="IMP-DOC-ORIGIN",
+        description="Import Documentation Origin Component",
+        mode="AIR",
+        leg="ORIGIN",
+        category="DOCUMENTATION",
+    )
+    ServiceComponent.objects.create(
+        code="IMP-CLEAR-SPOTTEST",
+        description="Import Customs Clearance Spot Test Component",
+        mode="AIR",
+        leg="DESTINATION",
+        category="CUSTOMS",
+    )
+
+    # Destination-side import local row that previously leaked into ORIGIN_LOCAL.
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location="POM",
+        direction="IMPORT",
+        agent=agent,
+        currency="AUD",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=date.today() - timedelta(days=1),
+        valid_until=date.today() + timedelta(days=30),
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_dest,
+        location="POM",
+        direction="IMPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("350.00"),
+        valid_from=date.today() - timedelta(days=1),
+        valid_until=date.today() + timedelta(days=30),
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_dest,
+        location="POM",
+        direction="IMPORT",
+        payment_term="COLLECT",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("500.00"),
+        valid_from=date.today() - timedelta(days=1),
+        valid_until=date.today() + timedelta(days=30),
+    )
+
+    origin_ref = LocationRef(
+        id=uuid.uuid4(),
+        code="CAN",
+        name="CAN Airport",
+        country_code="CN",
+        currency_code="CNY",
+    )
+    dest_ref = LocationRef(
+        id=uuid.uuid4(),
+        code="POM",
+        name="POM Airport",
+        country_code="PG",
+        currency_code="PGK",
+    )
+    shipment = ShipmentDetails(
+        mode="AIR",
+        shipment_type="IMPORT",
+        incoterm="DAP",
+        payment_term="COLLECT",
+        is_dangerous_goods=False,
+        pieces=[
+            Piece(
+                pieces=1,
+                length_cm=Decimal("10"),
+                width_cm=Decimal("10"),
+                height_cm=Decimal("10"),
+                gross_weight_kg=Decimal("100"),
+            )
+        ],
+        service_scope="D2D",
+        origin_location=origin_ref,
+        destination_location=dest_ref,
+    )
+    quote_input = QuoteInput(
+        customer_id=uuid.uuid4(),
+        contact_id=uuid.uuid4(),
+        output_currency="PGK",
+        quote_date=date.today(),
+        shipment=shipment,
+    )
+
+    charges = PricingServiceV4Adapter(quote_input, spot_envelope_id=spe.id).calculate_charges()
+    coverage = evaluate_from_lines(charges.lines, "IMPORT", "D2D")
+
+    origin_lines = [line for line in charges.lines if line.bucket == "origin_charges"]
+    destination_lines = [line for line in charges.lines if line.bucket == "destination_charges"]
+    freight_lines = [line for line in charges.lines if line.bucket == "airfreight"]
+
+    assert freight_lines, "Expected SPE freight line to remain present"
+    assert any(line.service_component_code == "IMP-CLEAR-SPOTTEST" and not line.is_rate_missing for line in destination_lines)
+    assert any(line.service_component_code == "IMP-DOC-ORIGIN" and line.is_rate_missing for line in origin_lines)
+    assert COMPONENT_ORIGIN_LOCAL in coverage.missing_required
+    assert COMPONENT_DESTINATION_LOCAL not in coverage.missing_required
+    assert COMPONENT_FREIGHT not in coverage.missing_required
+    assert charges.totals.has_missing_rates is True
+    assert charges.totals.notes == "Missing required components: ORIGIN_LOCAL"
+
+
+def test_standard_charge_preload_does_not_emit_origin_local_when_only_destination_import_locals_exist():
+    currency = Currency.objects.create(code="PGK", name="Papua New Guinea Kina")
+    pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=currency)
+    cn = Country.objects.create(code="CN", name="China", currency=currency)
+    origin = _create_location("CAN", cn)
+    destination = _create_location("POM", pg)
+
+    agent = Agent.objects.create(
+        code="SPOTIMPSTD",
+        name="Spot Import Standard Agent",
+        country_code="CN",
+        agent_type="ORIGIN",
+    )
+    pc_origin = ProductCode.objects.create(
+        id=2954,
+        code="IMP-DOC-ORIGIN-STDPRELOAD",
+        description="Import Origin Documentation Standard Preload",
+        domain="IMPORT",
+        category="DOCUMENTATION",
+        is_gst_applicable=False,
+        gl_revenue_code="4200",
+        gl_cost_code="5200",
+        default_unit="SHIPMENT",
+    )
+    pc_dest = ProductCode.objects.create(
+        id=2955,
+        code="IMP-CLEAR-DEST-STDPRELOAD",
+        description="Import Destination Clearance Standard Preload",
+        domain="IMPORT",
+        category="CLEARANCE",
+        is_gst_applicable=False,
+        gl_revenue_code="4201",
+        gl_cost_code="5201",
+        default_unit="SHIPMENT",
+    )
+    ServiceComponent.objects.create(
+        code="IMP-DOC-ORIGIN-STDPRELOAD",
+        description="Import Origin Documentation Standard Preload",
+        mode="AIR",
+        leg="ORIGIN",
+        category="DOCUMENTATION",
+    )
+    ServiceComponent.objects.create(
+        code="IMP-CLEAR-DEST-STDPRELOAD",
+        description="Import Destination Clearance Standard Preload",
+        mode="AIR",
+        leg="DESTINATION",
+        category="CUSTOMS",
+    )
+
+    LocalCOGSRate.objects.create(
+        product_code=pc_origin,
+        location=destination.code,
+        direction="IMPORT",
+        agent=agent,
+        currency="AUD",
+        rate_type="FIXED",
+        amount=Decimal("80.00"),
+        valid_from=date.today() - timedelta(days=1),
+        valid_until=date.today() + timedelta(days=30),
+    )
+    LocalCOGSRate.objects.create(
+        product_code=pc_dest,
+        location=destination.code,
+        direction="IMPORT",
+        agent=agent,
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("350.00"),
+        valid_from=date.today() - timedelta(days=1),
+        valid_until=date.today() + timedelta(days=30),
+    )
+    LocalSellRate.objects.create(
+        product_code=pc_dest,
+        location=destination.code,
+        direction="IMPORT",
+        payment_term="COLLECT",
+        currency="PGK",
+        rate_type="FIXED",
+        amount=Decimal("500.00"),
+        valid_from=date.today() - timedelta(days=1),
+        valid_until=date.today() + timedelta(days=30),
+    )
+
+    charges = StandardChargeService.get_standard_charges(
+        origin_code=origin.code,
+        destination_code=destination.code,
+        direction="IMPORT",
+        service_scope="D2D",
+        weight_kg=100,
+        payment_term="COLLECT",
+    )
+
+    assert charges
+    assert {charge["bucket"] for charge in charges} == {"destination_charges"}
+    assert {charge["code"] for charge in charges} == {"IMP-CLEAR-DEST-STDPRELOAD"}
 
 
 def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):

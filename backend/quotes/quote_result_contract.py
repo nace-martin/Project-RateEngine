@@ -689,7 +689,7 @@ def line_item_from_quote_line(
     return {
         "line_id": str(getattr(line, "id", "") or ""),
         "product_code": getattr(line, "product_code", None) or getattr(service_component, "code", None) or "",
-        "description": getattr(service_component, "description", None) or getattr(line, "cost_source_description", None) or "Charge",
+        "description": getattr(line, "cost_source_description", None) or getattr(service_component, "description", None) or "Charge",
         "component": component,
         "basis": getattr(line, "basis", None) or basis_for_unit(unit_type),
         "rule_family": persisted_rule_family,

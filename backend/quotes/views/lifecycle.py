@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import viewsets, status, serializers
@@ -16,6 +16,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.decorators import action
 
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
+from quotes.spot_models import SpotPricingEnvelopeDB
 from quotes.serializers import (
     CanonicalQuoteResultSerializer,
     QuoteListSerializerV3,
@@ -243,10 +244,18 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        spot_envelope_prefetch = Prefetch(
+            'spot_envelopes',
+            queryset=SpotPricingEnvelopeDB.objects.only(
+                'id',
+                'quote_id',
+                'created_at',
+            ).order_by('-created_at', '-id'),
+        )
         # Prefetch related data to optimize query
         qs = Quote.objects.all().select_related(
             'customer', 'contact', 'origin_location', 'destination_location'
-        ).prefetch_related('spot_envelopes').order_by('-created_at')
+        ).prefetch_related(spot_envelope_prefetch).order_by('-created_at')
 
         # 1. Role-Based Visibility
         if user.is_authenticated:

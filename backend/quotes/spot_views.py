@@ -52,6 +52,7 @@ from quotes.spot_models import (
     SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
+    _normalize_spot_missing_components,
 )
 from quotes.intake_safety import (
     build_source_analysis_summary_payload,
@@ -330,6 +331,16 @@ def _resolve_missing_components_for_context(ctx: dict) -> Optional[list[str]]:
     return _derive_missing_components_from_context(ctx)
 
 
+def _current_resolved_missing_components(spe_db: SpotPricingEnvelopeDB, ctx: dict) -> list[str]:
+    cached = _normalize_spot_missing_components(
+        getattr(spe_db, "resolved_missing_components", None)
+    )
+    if cached is not None:
+        return cached
+    resolved = _resolve_missing_components_for_context(ctx)
+    return list(resolved or [])
+
+
 def _infer_shipment_type(origin_country: str, destination_country: str) -> str:
     if origin_country == "PG" and destination_country == "PG":
         return "DOMESTIC"
@@ -396,7 +407,7 @@ def _build_spe_from_db(
     ctx = _normalize_shipment_context(spe_db.shipment_context_json)
     if not ctx.get("payment_term") and getattr(spe_db, "quote", None) and getattr(spe_db.quote, "payment_term", None):
         ctx["payment_term"] = str(spe_db.quote.payment_term).upper()
-    resolved_missing_components = _resolve_missing_components_for_context(ctx)
+    resolved_missing_components = _current_resolved_missing_components(spe_db, ctx)
     status_value = status_override or spe_db.status
 
     return SpotPricingEnvelope(
@@ -750,6 +761,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     entered_by=request.user,
                     entered_at=now,
                 )
+            spe_db.refresh_resolved_missing_components(save=True)
             
             # Validate via Pydantic (will raise if invalid)
             try:
@@ -780,7 +792,7 @@ class SpotEnvelopeListCreateAPIView(APIView):
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
         if not ctx.get("payment_term") and getattr(spe_db, "quote", None) and getattr(spe_db.quote, "payment_term", None):
             ctx["payment_term"] = str(spe_db.quote.payment_term).upper()
-        resolved_missing_components = _resolve_missing_components_for_context(ctx)
+        resolved_missing_components = _current_resolved_missing_components(spe_db, ctx)
         charges = [
             SPEChargeLine(
                 code=cl.code,
@@ -934,6 +946,7 @@ class SpotEnvelopeDetailAPIView(APIView):
                         entered_by=request.user,
                         entered_at=now,
                     )
+                spe_db.refresh_resolved_missing_components(save=True)
 
             spe_db.save()
             SpotEnvelopeListCreateAPIView()._validate_spe(spe_db)
@@ -1479,6 +1492,7 @@ class SpotReplyAnalysisAPIView(APIView):
                             entered_by=request.user,
                             entered_at=now,
                         )
+                spe_db.refresh_resolved_missing_components(save=True)
 
                 # Update conditional flag in SPE conditions
                 if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():

@@ -27,6 +27,7 @@ interface SpotRateEntryFormProps {
     serviceScope?: string;
     missingComponents?: string[];
     submitLabel?: string;
+    submitLoadingText?: string;
     submitDisabled?: boolean;
     submitDisabledReason?: string | null;
     onSaveDraft?: (charges: Omit<SPEChargeLine, 'id'>[]) => Promise<void>;
@@ -99,6 +100,7 @@ export function SpotRateEntryForm({
     serviceScope = "D2D",
     missingComponents = [],
     submitLabel,
+    submitLoadingText,
     submitDisabled = false,
     submitDisabledReason = null,
     onSaveDraft,
@@ -444,7 +446,7 @@ export function SpotRateEntryForm({
                         disabled={!canSubmit}
                         size="lg"
                         loading={Boolean(isLoading || form.formState.isSubmitting)}
-                        loadingText="Saving changes..."
+                        loadingText={submitLoadingText || "Saving changes..."}
                     >
                         {submitLabel || "Save & Proceed"}
                     </Button>

@@ -658,12 +658,11 @@ class RateAvailabilityService:
                 availability[classify_import_component(code, category)] = True
 
             # Import local rates can include both ORIGIN and DESTINATION components.
-            # Classify rows by ProductCode, then map by station. Keep a compatibility
-            # fallback so legacy migrated ORIGIN rows stored at destination station
-            # still satisfy ORIGIN_LOCAL coverage checks.
+            # Coverage must stay aligned to the shipment side:
+            # origin-local rows only count at the shipment origin, and
+            # destination-local rows only count at the shipment destination.
             origin_code = (origin_airport or "").upper()
             destination_code = (destination_airport or "").upper()
-            origin_local_fallback_at_destination = False
             local_location_candidates = [loc for loc in [origin_airport, destination_airport] if loc]
 
             import_local_rows = LocalCOGSRate.objects.filter(
@@ -680,16 +679,8 @@ class RateAvailabilityService:
                 if component == COMPONENT_ORIGIN_LOCAL:
                     if location_code == origin_code:
                         availability[COMPONENT_ORIGIN_LOCAL] = True
-                    elif location_code == destination_code:
-                        origin_local_fallback_at_destination = True
                 elif component == COMPONENT_DESTINATION_LOCAL and location_code == destination_code:
                     availability[COMPONENT_DESTINATION_LOCAL] = True
-
-            if not availability[COMPONENT_ORIGIN_LOCAL] and origin_local_fallback_at_destination:
-                availability[COMPONENT_ORIGIN_LOCAL] = True
-
-            if surcharge_exists('IMPORT_ORIGIN', origin=origin_airport):
-                availability[COMPONENT_ORIGIN_LOCAL] = True
 
             if surcharge_exists('IMPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True
@@ -962,10 +953,7 @@ class CommodityRateRuleService:
         if shipment_type == "EXPORT":
             return [origin_airport] if leg != "DESTINATION" else [destination_airport]
         if shipment_type == "IMPORT":
-            if leg == "ORIGIN":
-                # Keep the legacy compatibility fallback used in standard scope availability.
-                return [origin_airport, destination_airport]
-            return [destination_airport]
+            return [origin_airport] if leg == "ORIGIN" else [destination_airport]
         return [origin_airport, destination_airport]
 
     @staticmethod
