@@ -262,35 +262,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
 AUTH_USER_MODEL = 'accounts.CustomUser'
 
 # SECURITY: CORS configured from environment (no allow-all in production)
-_cors_origins = _env_list('CORS_ALLOWED_ORIGINS')
-if _cors_origins:
-    CORS_ALLOWED_ORIGINS = _cors_origins
-    CORS_ALLOW_ALL_ORIGINS = False
-elif DEBUG:
-    # Allow localhost origins in development
-    CORS_ALLOWED_ORIGINS = [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'http://localhost:3001',
-        'http://127.0.0.1:3001',
-    ]
-    CORS_ALLOW_ALL_ORIGINS = False
-else:
-    CORS_ALLOWED_ORIGINS = []
-    CORS_ALLOW_ALL_ORIGINS = False
+# Development origins (like localhost) must be explicitly added to CORS_ALLOWED_ORIGINS in .env
+CORS_ALLOWED_ORIGINS = _env_list('CORS_ALLOWED_ORIGINS')
+CORS_ALLOW_ALL_ORIGINS = False
 
-_csrf_trusted_origins = _env_list('CSRF_TRUSTED_ORIGINS')
-if _csrf_trusted_origins:
-    CSRF_TRUSTED_ORIGINS = _csrf_trusted_origins
-elif DEBUG:
-    CSRF_TRUSTED_ORIGINS = [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'http://localhost:3001',
-        'http://127.0.0.1:3001',
-    ]
-else:
-    CSRF_TRUSTED_ORIGINS = []
+# SECURITY: CSRF trusted origins must be explicitly configured from environment
+# Development origins must be explicitly added to CSRF_TRUSTED_ORIGINS in .env
+CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS')
 
 REST_FRAMEWORK = {
     # Secure-by-default: endpoints must explicitly opt out (e.g. public quote links).
