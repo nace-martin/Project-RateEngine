@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from django.db.models import Q
 
 from django.shortcuts import get_object_or_404
 
@@ -64,7 +65,7 @@ from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
 )
-from quotes.selectors import get_quote_for_user
+from quotes.selectors import get_quote_for_user, get_spes_for_user
 from quotes.currency_rules import determine_quote_currency
 
 
@@ -79,19 +80,20 @@ def _user_is_manager_or_admin(user) -> bool:
     return getattr(user, "role", None) in ("manager", "admin")
 
 
-def _user_can_access_spe(user, spe_db: SpotPricingEnvelopeDB) -> bool:
-    if not user or not user.is_authenticated:
-        return False
-    if _user_is_manager_or_admin(user):
-        return True
-    return spe_db.created_by_id == user.id
-
-
 def _get_spe_or_404(user, envelope_id, queryset=None):
-    spe_db = get_object_or_404(queryset or SpotPricingEnvelopeDB, id=envelope_id)
-    if not _user_can_access_spe(user, spe_db):
-        raise PermissionDenied("You do not have access to this SPOT envelope.")
-    return spe_db
+    if queryset is None:
+        queryset = SpotPricingEnvelopeDB.objects.all()
+
+    # Use the shared filter logic for IDOR/RBAC protection
+    accessible_qs = get_spes_for_user(user, queryset)
+
+    try:
+        return accessible_qs.get(id=envelope_id)
+    except SpotPricingEnvelopeDB.DoesNotExist:
+        # To avoid leaking existence, we raise 403 or 404.
+        # For consistency with get_quote_for_user, let's use 404.
+        from django.http import Http404
+        raise Http404("No SpotPricingEnvelopeDB matches the given query.")
 
 
 def _spe_queryset():
@@ -652,9 +654,11 @@ class SpotEnvelopeListCreateAPIView(APIView):
     
     def get(self, request):
         """List SPEs created by user."""
-        spe_qs = _spe_queryset()
-        if not _user_is_manager_or_admin(request.user):
-            spe_qs = spe_qs.filter(created_by=request.user)
+        user = request.user
+        base_qs = _spe_queryset()
+
+        # SECURITY FIX: Enforce IDOR/RBAC protection on SPE listing
+        spe_qs = get_spes_for_user(user, base_qs)
 
         # Filter by status if provided
         status_param = request.query_params.get('status')

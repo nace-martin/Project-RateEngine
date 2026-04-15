@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from .models import Quote, QuoteTotal, QuoteVersion, QuoteEvent
+from .selectors import get_quotes_for_user
 from parties.models import Company
 from accounts.permissions import IsManagerOrAdmin, IsFinanceOrAdmin
 
@@ -78,9 +79,9 @@ class ReportsViewSet(viewsets.ViewSet):
             return timeframe, today.replace(month=1, day=1), today
         return 'monthly', today.replace(day=1), today
 
-    def _build_activity_series(self, timeframe, start_date, end_date):
+    def _build_activity_series(self, timeframe, start_date, end_date, user):
         quote_dates = (
-            Quote.objects.exclude(is_archived=True)
+            get_quotes_for_user(user, Quote.objects.exclude(is_archived=True))
             .filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
             .values_list('created_at__date', flat=True)
         )
@@ -140,14 +141,15 @@ class ReportsViewSet(viewsets.ViewSet):
                 buckets[quote_date.month]['count'] += 1
         return list(buckets.values()), 'Year to date'
 
-    def _quotes_with_financials(self, start_date=None, end_date=None, user_id=None, mode=None):
+    def _quotes_with_financials(self, user, start_date=None, end_date=None, user_id=None, mode=None):
         """
         Get quotes annotated with their latest version's financial totals.
         Optionally filter by date range, user, and mode.
         """
         latest_total = self._get_latest_total_subquery()
 
-        qs = Quote.objects.annotate(
+        # SECURITY FIX: Enforce IDOR/RBAC protection on reporting data
+        qs = get_quotes_for_user(user, Quote.objects.all()).annotate(
             latest_total_sell_pgk=Subquery(latest_total.values('total_sell_pgk')[:1]),
             latest_total_cost_pgk=Subquery(latest_total.values('total_cost_pgk')[:1]),
         ).exclude(is_archived=True)
@@ -179,7 +181,7 @@ class ReportsViewSet(viewsets.ViewSet):
         user_id = request.query_params.get('user_id')
         mode = request.query_params.get('mode')
 
-        qs = self._quotes_with_financials(start_date, end_date, user_id, mode)
+        qs = self._quotes_with_financials(request.user, start_date, end_date, user_id, mode)
 
         # Count by status
         counts = qs.aggregate(
@@ -202,7 +204,8 @@ class ReportsViewSet(viewsets.ViewSet):
             from django.db.models.functions import Extract
 
             # Get quotes with both events in the date range
-            quotes_with_events = Quote.objects.filter(
+            # SECURITY FIX: Enforce IDOR/RBAC protection
+            quotes_with_events = get_quotes_for_user(request.user, Quote.objects.all()).filter(
                 created_at__date__gte=start_date,
                 created_at__date__lte=end_date,
                 events__event_type=QuoteEvent.EventType.CREATED
@@ -264,7 +267,7 @@ class ReportsViewSet(viewsets.ViewSet):
         user_id = request.query_params.get('user_id')
         mode = request.query_params.get('mode')
 
-        qs = self._quotes_with_financials(start_date, end_date, user_id, mode)
+        qs = self._quotes_with_financials(request.user, start_date, end_date, user_id, mode)
 
         # Only include finalized/sent/accepted quotes in financials
         financial_statuses = [Quote.Status.FINALIZED, Quote.Status.SENT, Quote.Status.ACCEPTED]
@@ -333,7 +336,7 @@ class ReportsViewSet(viewsets.ViewSet):
         start_date, end_date = self._parse_date_params(request)
         mode = request.query_params.get('mode')
 
-        qs = self._quotes_with_financials(start_date, end_date, mode=mode)
+        qs = self._quotes_with_financials(request.user, start_date, end_date, mode=mode)
 
         # Group by user
         performance = qs.values(
@@ -404,7 +407,7 @@ class ReportsViewSet(viewsets.ViewSet):
         user_id = request.query_params.get('user_id')
         mode = request.query_params.get('mode')
 
-        qs = self._quotes_with_financials(start_date, end_date, user_id, mode)
+        qs = self._quotes_with_financials(request.user, start_date, end_date, user_id, mode)
 
         # Include all statuses except DRAFT
         qs = qs.exclude(status=Quote.Status.DRAFT).select_related(
@@ -472,7 +475,7 @@ class ReportsViewSet(viewsets.ViewSet):
         timeframe, start_date, end_date = self._get_dashboard_timeframe_range(timeframe)
 
         latest_total = self._get_latest_total_subquery()
-        financial_quotes = Quote.objects.annotate(
+        financial_quotes = get_quotes_for_user(request.user, Quote.objects.all()).annotate(
             latest_total_sell_pgk=Subquery(latest_total.values('total_sell_pgk')[:1]),
             latest_total_sell_pgk_incl_gst=Subquery(latest_total.values('total_sell_pgk_incl_gst')[:1]),
             latest_total_cost_pgk=Subquery(latest_total.values('total_cost_pgk')[:1]),
@@ -526,7 +529,7 @@ class ReportsViewSet(viewsets.ViewSet):
             value=Sum('latest_total_sell_pgk_incl_gst')
         )
 
-        activity_series, activity_label = self._build_activity_series(timeframe, start_date, end_date)
+        activity_series, activity_label = self._build_activity_series(timeframe, start_date, end_date, request.user)
         
         return Response({
             'timeframe': timeframe,
@@ -557,7 +560,8 @@ class ReportsViewSet(viewsets.ViewSet):
         target_user_id = self._get_user_scope(request)
         
         # Base QuerySet for the selected period
-        qs_period = Quote.objects.filter(
+        # SECURITY FIX: Enforce IDOR/RBAC protection
+        qs_period = get_quotes_for_user(request.user, Quote.objects.all()).filter(
             created_at__date__gte=start_date,
             created_at__date__lte=end_date
         ).exclude(is_archived=True)
@@ -586,7 +590,8 @@ class ReportsViewSet(viewsets.ViewSet):
 
         revenue_statuses = [Quote.Status.FINALIZED, Quote.Status.ACCEPTED]
 
-        qs_top_customers = Quote.objects.filter(
+        # SECURITY FIX: Enforce IDOR/RBAC protection
+        qs_top_customers = get_quotes_for_user(request.user, Quote.objects.all()).filter(
             status__in=revenue_statuses
         ).exclude(is_archived=True)
 
@@ -630,7 +635,8 @@ class ReportsViewSet(viewsets.ViewSet):
             quote_version__quote_id=OuterRef('pk')
         ).order_by('-quote_version__version_number').values('total_sell_pgk')[:1]
 
-        quotes_with_latest_total = Quote.objects.annotate(
+        # SECURITY FIX: Enforce IDOR/RBAC protection
+        quotes_with_latest_total = get_quotes_for_user(request.user, Quote.objects.all()).annotate(
             latest_total_sell_pgk=Subquery(latest_total_subquery)
         )
 
@@ -673,7 +679,8 @@ class ReportsViewSet(viewsets.ViewSet):
             quote_version__quote_id=OuterRef('pk')
         ).order_by('-quote_version__version_number').values('total_sell_pgk')[:1]
 
-        quotes_with_latest_total = Quote.objects.annotate(
+        # SECURITY FIX: Enforce IDOR/RBAC protection
+        quotes_with_latest_total = get_quotes_for_user(request.user, Quote.objects.all()).annotate(
             latest_total_sell_pgk=Subquery(latest_total_subquery)
         )
 
