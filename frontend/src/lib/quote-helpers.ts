@@ -40,9 +40,7 @@ export const calculateSpotTotal = (draft: SpotPricingEnvelope): string => {
                 lineTotal = rate;
                 break;
             case 'percentage':
-                // Percentage is complex to sum without context (e.g. % of what?)
-                // For dashboard, we might skip or assume 0, or if it's a known basis?
-                // Let's assume 0 for now to avoid incorrect large numbers
+                // Percentage charges are excluded from the summary total as they are context-dependent and require a base amount to calculate correctly.
                 lineTotal = 0;
                 break;
             default:
