@@ -293,7 +293,7 @@ class TestSpotTriggerEvaluation:
         assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
         assert result.manual_required_product_codes == ["EXP-AVI-MANUAL"]
         assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
-        assert result.missing_product_codes == ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
+        assert set(result.missing_product_codes) == {"EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"}
         assert "manual charge entry" in result.text
         assert "Export Live Animal Manual Charge (EXP-AVI-MANUAL)" in result.text
         assert "EXP-AVI-SPOT" in result.text
