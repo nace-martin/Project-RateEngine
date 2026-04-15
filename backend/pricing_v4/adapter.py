@@ -957,17 +957,8 @@ class PricingServiceV4Adapter:
         standard_lines: List[CalculatedChargeLine], 
         spot_lines: List[CalculatedChargeLine]
     ) -> List[CalculatedChargeLine]:
-        """
-        [FIX P2] Domestic Logic: Append strategy for Domestic to preserve origin/freight.
-        """
-        is_domestic = (self.quote_input.shipment.shipment_type == 'DOMESTIC')
         if not spot_lines:
             return standard_lines
-            
-        if is_domestic:
-            final_lines = list(standard_lines)
-            final_lines.extend(spot_lines)
-            return final_lines
 
         spot_buckets = {l.bucket for l in spot_lines}
         final_lines = [l for l in standard_lines if l.bucket not in spot_buckets]
