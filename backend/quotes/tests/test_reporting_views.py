@@ -36,7 +36,7 @@ def manager_user(db):
         password='password',
         role='manager',
         organization=org,
-        department='AIR',
+        department='AIR_FREIGHT',
     )
     return user
 
@@ -59,7 +59,7 @@ def sales_user(db):
         password='password',
         role='sales',
         organization=org,
-        department='AIR',
+        department='AIR_FREIGHT',
     )
     return user
 

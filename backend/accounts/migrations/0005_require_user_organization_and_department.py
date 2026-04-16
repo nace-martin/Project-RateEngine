@@ -4,6 +4,18 @@ import django.db.models.deletion
 
 
 GENERAL_DEPARTMENT = "GENERAL"
+DEPARTMENT_REMAP = {
+    "AIR": "AIR_FREIGHT",
+    "SEA": "SEA_FREIGHT",
+    "LAND": "LAND_FREIGHT",
+}
+VALID_DEPARTMENTS = {
+    "AIR_FREIGHT",
+    "SEA_FREIGHT",
+    "LAND_FREIGHT",
+    "CUSTOMS",
+    GENERAL_DEPARTMENT,
+}
 
 
 def _get_default_organization(Organization):
@@ -41,9 +53,11 @@ def backfill_user_hierarchy(apps, schema_editor):
     default_organization = _get_default_organization(Organization)
 
     CustomUser.objects.filter(organization__isnull=True).update(organization=default_organization)
-    CustomUser.objects.filter(Q(department__isnull=True) | Q(department="")).update(
-        department=GENERAL_DEPARTMENT
-    )
+    for old_value, new_value in DEPARTMENT_REMAP.items():
+        CustomUser.objects.filter(department=old_value).update(department=new_value)
+    CustomUser.objects.filter(
+        Q(department__isnull=True) | Q(department="") | ~Q(department__in=VALID_DEPARTMENTS)
+    ).update(department=GENERAL_DEPARTMENT)
 
 
 def revert_user_hierarchy_backfill(apps, schema_editor):
@@ -64,21 +78,24 @@ class Migration(migrations.Migration):
             name="department",
             field=models.CharField(
                 choices=[
+                    ("AIR_FREIGHT", "Air Freight"),
+                    ("SEA_FREIGHT", "Sea Freight"),
+                    ("LAND_FREIGHT", "Land Freight"),
+                    ("CUSTOMS", "Customs"),
                     ("GENERAL", "General"),
-                    ("AIR", "Air Freight"),
-                    ("SEA", "Sea Freight"),
-                    ("LAND", "Land Freight"),
                 ],
                 default="GENERAL",
                 help_text="Department assignment for visibility restrictions (e.g., Air vs Sea).",
-                max_length=10,
+                max_length=20,
             ),
         ),
         migrations.AlterField(
             model_name="customuser",
             name="organization",
             field=models.ForeignKey(
+                blank=False,
                 help_text="Tenant/account workspace this user belongs to.",
+                null=False,
                 on_delete=django.db.models.deletion.PROTECT,
                 related_name="users",
                 to="parties.organization",

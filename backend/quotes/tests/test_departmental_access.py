@@ -66,28 +66,28 @@ class DepartmentalVisibilityTestCase(TestCase):
             username='air_manager',
             password='testpass123',
             role=CustomUser.ROLE_MANAGER,
-            department='AIR',
+            department=CustomUser.DEPARTMENT_AIR_FREIGHT,
             organization=cls.organization,
         )
         cls.sea_manager = CustomUser.objects.create_user(
             username='sea_manager',
             password='testpass123',
             role=CustomUser.ROLE_MANAGER,
-            department='SEA',
+            department=CustomUser.DEPARTMENT_SEA_FREIGHT,
             organization=cls.organization,
         )
         cls.air_sales = CustomUser.objects.create_user(
             username='air_sales',
             password='testpass123',
             role=CustomUser.ROLE_SALES,
-            department='AIR',
+            department=CustomUser.DEPARTMENT_AIR_FREIGHT,
             organization=cls.organization,
         )
         cls.sea_sales = CustomUser.objects.create_user(
             username='sea_sales',
             password='testpass123',
             role=CustomUser.ROLE_SALES,
-            department='SEA',
+            department=CustomUser.DEPARTMENT_SEA_FREIGHT,
             organization=cls.organization,
         )
         

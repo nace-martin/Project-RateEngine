@@ -30,6 +30,20 @@ class UserSerializer(serializers.ModelSerializer):
             'password'
         ]
         read_only_fields = ['id', 'date_joined', 'last_login']
+
+    def validate(self, attrs):
+        organization = attrs.get('organization', getattr(self.instance, 'organization', None))
+        department = attrs.get('department', getattr(self.instance, 'department', None))
+
+        errors = {}
+        if organization is None:
+            errors['organization'] = ['This field is required.']
+        if not department:
+            errors['department'] = ['This field is required.']
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return attrs
     
     def create(self, validated_data):
         password = validated_data.pop('password', None)

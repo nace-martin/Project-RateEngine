@@ -324,7 +324,7 @@ class UserManagementOrganizationTests(TestCase):
             password='test12345',
             role=CustomUser.ROLE_MANAGER,
             organization=self.org_a,
-            department='AIR',
+            department=CustomUser.DEPARTMENT_AIR_FREIGHT,
         )
 
     def test_manager_can_list_organizations(self):
@@ -346,7 +346,7 @@ class UserManagementOrganizationTests(TestCase):
                 'username': 'new-sales-user',
                 'email': 'new-sales@example.com',
                 'role': 'sales',
-                'department': 'AIR',
+                'department': CustomUser.DEPARTMENT_AIR_FREIGHT,
                 'password': 'password123',
             },
             format='json',
@@ -364,7 +364,7 @@ class UserManagementOrganizationTests(TestCase):
                 'username': 'lae-sales-user',
                 'email': 'lae-sales@example.com',
                 'role': 'sales',
-                'department': 'AIR',
+                'department': CustomUser.DEPARTMENT_AIR_FREIGHT,
                 'password': 'password123',
                 'organization': str(self.org_b.id),
             },

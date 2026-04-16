@@ -46,24 +46,33 @@ class CustomUser(AbstractUser):
         related_query_name='customuser',
     )
     
+    DEPARTMENT_AIR_FREIGHT = 'AIR_FREIGHT'
+    DEPARTMENT_SEA_FREIGHT = 'SEA_FREIGHT'
+    DEPARTMENT_LAND_FREIGHT = 'LAND_FREIGHT'
+    DEPARTMENT_CUSTOMS = 'CUSTOMS'
     DEPARTMENT_GENERAL = 'GENERAL'
 
     DEPARTMENT_CHOICES = [
+        (DEPARTMENT_AIR_FREIGHT, 'Air Freight'),
+        (DEPARTMENT_SEA_FREIGHT, 'Sea Freight'),
+        (DEPARTMENT_LAND_FREIGHT, 'Land Freight'),
+        (DEPARTMENT_CUSTOMS, 'Customs'),
         (DEPARTMENT_GENERAL, 'General'),
-        ('AIR', 'Air Freight'),
-        ('SEA', 'Sea Freight'),
-        ('LAND', 'Land Freight'),
     ]
     department = models.CharField(
-        max_length=10, 
-        choices=DEPARTMENT_CHOICES, 
+        max_length=20,
+        choices=DEPARTMENT_CHOICES,
         default=DEPARTMENT_GENERAL,
+        blank=False,
+        null=False,
         help_text="Department assignment for visibility restrictions (e.g., Air vs Sea)."
     )
     organization = models.ForeignKey(
         'parties.Organization',
         on_delete=models.PROTECT,
         related_name='users',
+        blank=False,
+        null=False,
         help_text="Tenant/account workspace this user belongs to.",
     )
 
