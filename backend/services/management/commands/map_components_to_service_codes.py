@@ -47,6 +47,12 @@ class Command(BaseCommand):
         unmapped_count = 0
         unmapped_components = []
         
+        # Pre-fetch all required service codes to avoid N+1 queries
+        required_service_codes = set(COMPONENT_TO_SERVICE_CODE.values())
+        service_codes_map = {
+            sc.code: sc for sc in ServiceCode.objects.filter(code__in=required_service_codes)
+        }
+
         # Get all service components
         components = ServiceComponent.objects.all()
         
@@ -54,13 +60,13 @@ class Command(BaseCommand):
             service_code_str = COMPONENT_TO_SERVICE_CODE.get(component.code)
             
             if service_code_str:
-                try:
-                    service_code = ServiceCode.objects.get(code=service_code_str)
+                service_code = service_codes_map.get(service_code_str)
+                if service_code:
                     component.service_code = service_code
                     component.save(update_fields=['service_code'])
                     mapped_count += 1
                     self.stdout.write(self.style.SUCCESS(f'✓ Mapped {component.code} → {service_code_str}'))
-                except ServiceCode.DoesNotExist:
+                else:
                     self.stdout.write(self.style.WARNING(f'! Service code {service_code_str} not found for {component.code}'))
                     unmapped_count += 1
                     unmapped_components.append(component.code)
