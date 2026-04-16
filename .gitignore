@@ -132,3 +132,6 @@ frontend/eslint-report.json
 backend/out*.txt
 backend/last_error.traceback
 backend/shipments/efm/
+
+# Codex temporary workspace snapshots
+.codex-temp-*/
