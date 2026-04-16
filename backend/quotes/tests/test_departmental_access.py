@@ -14,7 +14,24 @@ from rest_framework import status as http_status
 
 from accounts.models import CustomUser
 from quotes.models import Quote
-from parties.models import Company
+from parties.models import Company, Organization
+from core.models import Currency
+
+
+def _ensure_default_organization():
+    pgk = Currency.objects.filter(code='PGK').first() or Currency.objects.create(
+        code='PGK',
+        name='Papua New Guinean Kina',
+    )
+    organization, _ = Organization.objects.get_or_create(
+        slug='efm-express-air-cargo',
+        defaults={
+            'name': 'EFM Express Air Cargo',
+            'default_currency': pgk,
+            'is_active': True,
+        },
+    )
+    return organization
 
 
 class DepartmentalVisibilityTestCase(TestCase):
@@ -24,6 +41,7 @@ class DepartmentalVisibilityTestCase(TestCase):
     def setUpTestData(cls):
         """Create test users and quotes."""
         # Create customer company
+        cls.organization = _ensure_default_organization()
         cls.customer = Company.objects.create(
             name='Test Customer',
             is_customer=True
@@ -34,37 +52,43 @@ class DepartmentalVisibilityTestCase(TestCase):
             username='admin_user',
             password='testpass123',
             role=CustomUser.ROLE_ADMIN,
-            department=None  # Admin has no department, sees all
+            department=CustomUser.DEPARTMENT_GENERAL,
+            organization=cls.organization,
         )
         cls.finance_user = CustomUser.objects.create_user(
             username='finance_user',
             password='testpass123',
             role=CustomUser.ROLE_FINANCE,
-            department=None  # Finance sees all
+            department=CustomUser.DEPARTMENT_GENERAL,
+            organization=cls.organization,
         )
         cls.air_manager = CustomUser.objects.create_user(
             username='air_manager',
             password='testpass123',
             role=CustomUser.ROLE_MANAGER,
-            department='AIR'
+            department='AIR',
+            organization=cls.organization,
         )
         cls.sea_manager = CustomUser.objects.create_user(
             username='sea_manager',
             password='testpass123',
             role=CustomUser.ROLE_MANAGER,
-            department='SEA'
+            department='SEA',
+            organization=cls.organization,
         )
         cls.air_sales = CustomUser.objects.create_user(
             username='air_sales',
             password='testpass123',
             role=CustomUser.ROLE_SALES,
-            department='AIR'
+            department='AIR',
+            organization=cls.organization,
         )
         cls.sea_sales = CustomUser.objects.create_user(
             username='sea_sales',
             password='testpass123',
             role=CustomUser.ROLE_SALES,
-            department='SEA'
+            department='SEA',
+            organization=cls.organization,
         )
         
         # Create quotes by different users
@@ -202,16 +226,19 @@ class SalesVisibilityTest(DepartmentalVisibilityTestCase):
 
 
 class ManagerWithNoDepartmentTest(DepartmentalVisibilityTestCase):
-    """Test Manager with no department assigned."""
+    """Test manager fallback when the department value is misconfigured."""
     
     def test_manager_no_dept_sees_only_own_quotes(self):
-        """Manager without department should see only own quotes (fallback)."""
+        """Manager without a valid department should see only own quotes (fallback)."""
         no_dept_manager = CustomUser.objects.create_user(
             username='no_dept_manager',
             password='testpass123',
             role=CustomUser.ROLE_MANAGER,
-            department=None
+            department=CustomUser.DEPARTMENT_GENERAL,
+            organization=self.organization,
         )
+        CustomUser.objects.filter(pk=no_dept_manager.pk).update(department='')
+        no_dept_manager.refresh_from_db()
         own_quote = Quote.objects.create(
             customer=self.customer,
             mode='AIR',

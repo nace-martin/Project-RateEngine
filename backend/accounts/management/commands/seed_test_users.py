@@ -7,13 +7,15 @@ class Command(BaseCommand):
     help = 'Seeds the database with test users for E2E testing'
 
     def handle(self, *args, **options):
+        default_organization = User._default_organization()
         users_data = [
             {
                 'username': 'admin',
                 'email': 'admin@example.com',
                 'password': 'admin123',
                 'role': 'admin',
-                'department': None,
+                'department': User.DEPARTMENT_GENERAL,
+                'organization': default_organization,
                 'is_active': True,
                 'is_staff': True,
                 'is_superuser': True
@@ -24,6 +26,7 @@ class Command(BaseCommand):
                 'password': 'manager123',
                 'role': 'manager',
                 'department': 'AIR',
+                'organization': default_organization,
                 'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
@@ -34,6 +37,7 @@ class Command(BaseCommand):
                 'password': 'sales123',
                 'role': 'sales',
                 'department': 'AIR',
+                'organization': default_organization,
                 'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
@@ -43,7 +47,8 @@ class Command(BaseCommand):
                 'email': 'finance@example.com',
                 'password': 'finance123',
                 'role': 'finance',
-                'department': None,
+                'department': User.DEPARTMENT_GENERAL,
+                'organization': default_organization,
                 'is_active': True,
                 'is_staff': False,
                 'is_superuser': False
@@ -55,6 +60,7 @@ class Command(BaseCommand):
                 'password': 'sales123',
                 'role': 'sales',
                 'department': 'SEA',
+                'organization': default_organization,
                 'is_active': True,
                 'is_staff': False,
                 'is_superuser': False

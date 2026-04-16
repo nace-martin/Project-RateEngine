@@ -21,6 +21,22 @@ from parties.models import Organization, OrganizationBranding
 from .models import CustomUser
 
 
+def _ensure_default_organization():
+    pgk = Currency.objects.filter(code='PGK').first() or Currency.objects.create(
+        code='PGK',
+        name='Papua New Guinean Kina',
+    )
+    organization, _ = Organization.objects.get_or_create(
+        slug='efm-express-air-cargo',
+        defaults={
+            'name': 'EFM Express Air Cargo',
+            'default_currency': pgk,
+            'is_active': True,
+        },
+    )
+    return organization
+
+
 class LoginTests(TestCase):
     """Tests for the login endpoint."""
     
@@ -36,21 +52,11 @@ class LoginTests(TestCase):
             password='testpass123',
             role=CustomUser.ROLE_SALES,
             organization=self.organization,
+            department=CustomUser.DEPARTMENT_GENERAL,
         )
 
     def _create_default_organization(self):
-        pgk = Currency.objects.filter(code='PGK').first() or Currency.objects.create(
-            code='PGK',
-            name='Papua New Guinean Kina',
-        )
-        organization, _ = Organization.objects.get_or_create(
-            slug='efm-express-air-cargo',
-            defaults={
-                'name': 'EFM Express Air Cargo',
-                'default_currency': pgk,
-                'is_active': True,
-            },
-        )
+        organization = _ensure_default_organization()
         OrganizationBranding.objects.update_or_create(
             organization=organization,
             defaults={
@@ -225,27 +231,36 @@ class RBACPermissionTests(TestCase):
     
     def setUp(self):
         self.client = APIClient()
+        self.organization = _ensure_default_organization()
         
         # Create users with different roles
         self.sales_user = CustomUser.objects.create_user(
             username='sales',
             password='test123',
-            role=CustomUser.ROLE_SALES
+            role=CustomUser.ROLE_SALES,
+            organization=self.organization,
+            department=CustomUser.DEPARTMENT_GENERAL,
         )
         self.manager_user = CustomUser.objects.create_user(
             username='manager',
             password='test123',
-            role=CustomUser.ROLE_MANAGER
+            role=CustomUser.ROLE_MANAGER,
+            organization=self.organization,
+            department=CustomUser.DEPARTMENT_GENERAL,
         )
         self.finance_user = CustomUser.objects.create_user(
             username='finance',
             password='test123',
-            role=CustomUser.ROLE_FINANCE
+            role=CustomUser.ROLE_FINANCE,
+            organization=self.organization,
+            department=CustomUser.DEPARTMENT_GENERAL,
         )
         self.admin_user = CustomUser.objects.create_user(
             username='admin',
             password='test123',
-            role=CustomUser.ROLE_ADMIN
+            role=CustomUser.ROLE_ADMIN,
+            organization=self.organization,
+            department=CustomUser.DEPARTMENT_GENERAL,
         )
     
     def test_sales_can_view_cogs_false(self):
@@ -309,6 +324,7 @@ class UserManagementOrganizationTests(TestCase):
             password='test12345',
             role=CustomUser.ROLE_MANAGER,
             organization=self.org_a,
+            department='AIR',
         )
 
     def test_manager_can_list_organizations(self):
@@ -321,7 +337,7 @@ class UserManagementOrganizationTests(TestCase):
         self.assertIn('efm-express-air-cargo', slugs)
         self.assertIn('lae-branch-workspace', slugs)
 
-    def test_user_create_defaults_to_request_users_organization(self):
+    def test_user_create_requires_explicit_organization(self):
         self.client.force_authenticate(user=self.manager)
 
         response = self.client.post(
@@ -336,9 +352,8 @@ class UserManagementOrganizationTests(TestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        created = CustomUser.objects.get(username='new-sales-user')
-        self.assertEqual(created.organization, self.org_a)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('organization', response.json())
 
     def test_user_create_can_assign_explicit_organization(self):
         self.client.force_authenticate(user=self.manager)
@@ -359,3 +374,21 @@ class UserManagementOrganizationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         created = CustomUser.objects.get(username='lae-sales-user')
         self.assertEqual(created.organization, self.org_b)
+
+    def test_user_create_requires_explicit_department(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post(
+            '/api/auth/users/',
+            {
+                'username': 'missing-department-user',
+                'email': 'missing-department@example.com',
+                'role': 'sales',
+                'password': 'password123',
+                'organization': str(self.org_a.id),
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('department', response.json())
