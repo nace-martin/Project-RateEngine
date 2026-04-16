@@ -1863,7 +1863,7 @@ class ReplyAnalysisService:
         if ai_unavailable:
             warnings.append(
                 "AI analysis unavailable: Gemini client not configured. "
-                "Install google-generativeai and set GEMINI_API_KEY."
+                "Install google-genai and set GEMINI_API_KEY."
             )
         
         # Add AI warnings to our warnings list
