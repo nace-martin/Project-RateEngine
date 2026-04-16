@@ -6,7 +6,6 @@ Serializers for FX Rate Management API.
 from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
-from datetime import timedelta
 
 
 class CurrencyRateInputSerializer(serializers.Serializer):
