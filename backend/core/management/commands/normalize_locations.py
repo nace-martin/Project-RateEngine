@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from core.models import Location, Airport
+from core.models import Location
 from quotes.models import Quote
 
 class Command(BaseCommand):
@@ -29,13 +29,26 @@ class Command(BaseCommand):
         orphan_dedupes = 0
         
         with transaction.atomic():
+            # Pre-fetch all needed locations to avoid N+1 queries
+            city_codes = list(mappings.keys())
+            airport_codes = list(mappings.values())
+
+            cities_by_code = {
+                loc.code: loc
+                for loc in Location.objects.filter(code__in=city_codes, kind='CITY')
+            }
+            airports_by_code = {
+                loc.code: loc
+                for loc in Location.objects.filter(code__in=airport_codes, kind='AIRPORT')
+            }
+
             for city_code, airport_code in mappings.items():
                 # Get the city and airport locations
-                try:
-                    city_loc = Location.objects.get(code=city_code, kind='CITY')
-                    airport_loc = Location.objects.get(code=airport_code, kind='AIRPORT')
-                except Location.DoesNotExist as e:
-                    self.stdout.write(self.style.ERROR(f"Location not found: {e}"))
+                city_loc = cities_by_code.get(city_code)
+                airport_loc = airports_by_code.get(airport_code)
+
+                if not city_loc or not airport_loc:
+                    self.stdout.write(self.style.ERROR("Location not found: Location matching query does not exist."))
                     continue
                 
                 # Update quotes using this city location
