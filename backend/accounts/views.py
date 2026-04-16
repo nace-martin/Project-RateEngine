@@ -80,7 +80,22 @@ def _serialize_user(user: CustomUser, request=None):
 def _default_organization():
     from parties.models import Organization
 
-    organization = Organization.objects.filter(is_active=True).order_by('name').first()
+    organization = (
+        Organization.objects
+        .filter(is_active=True)
+        .exclude(slug='default-organization')
+        .order_by('name')
+        .first()
+    )
+    if organization is None:
+        organization = Organization.objects.filter(is_active=True).order_by('name').first()
+    if organization is None:
+        organization = (
+            Organization.objects
+            .exclude(slug='default-organization')
+            .order_by('name')
+            .first()
+        )
     if organization is None:
         organization = Organization.objects.order_by('name').first()
     return organization
@@ -185,6 +200,7 @@ def register_view(request):
         password=make_password(password),
         role=CustomUser.ROLE_SALES,  # Always sales - no role self-assignment
         organization=_default_organization(),
+        department=CustomUser.DEPARTMENT_GENERAL,
     )
     
     # Create token for the user

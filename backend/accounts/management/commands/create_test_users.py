@@ -5,24 +5,31 @@ class Command(BaseCommand):
     help = 'Create test users with different roles'
 
     def handle(self, *args, **options):
+        default_organization = CustomUser._default_organization()
         # Create test users with different roles
         users_data = [
             {
                 'username': 'sales_user',
                 'password': 'sales_password',
                 'role': 'sales',
+                'department': CustomUser.DEPARTMENT_GENERAL,
+                'organization': default_organization,
                 'is_active': True,
             },
             {
                 'username': 'manager_user',
                 'password': 'manager_password',
                 'role': 'manager',
+                'department': CustomUser.DEPARTMENT_GENERAL,
+                'organization': default_organization,
                 'is_active': True,
             },
             {
                 'username': 'finance_user',
                 'password': 'finance_password',
                 'role': 'finance',
+                'department': CustomUser.DEPARTMENT_GENERAL,
+                'organization': default_organization,
                 'is_active': True,
             }
         ]
@@ -32,6 +39,8 @@ class Command(BaseCommand):
             password = user_data['password']
             defaults = {
                 'role': user_data['role'],
+                'department': user_data['department'],
+                'organization': user_data['organization'],
                 'is_active': True,
             }
             user, created = CustomUser.objects.update_or_create(
@@ -53,6 +62,8 @@ class Command(BaseCommand):
         admin_defaults = {
             'email': 'admin@example.com',
             'role': 'admin',
+            'department': CustomUser.DEPARTMENT_GENERAL,
+            'organization': default_organization,
             'is_active': True,
             'is_staff': True,
             'is_superuser': True,

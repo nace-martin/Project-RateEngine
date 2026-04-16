@@ -5,7 +5,6 @@ from dataclasses import replace
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import viewsets, status, serializers
@@ -35,7 +34,7 @@ from accounts.permissions import (
     CanFinalizeQuotes,
     CanEditQuotes,
 )
-from quotes.selectors import get_quote_for_user
+from quotes.selectors import get_quote_for_user, get_quotes_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -244,41 +243,11 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         # Prefetch related data to optimize query
-        qs = Quote.objects.all().select_related(
+        base_qs = Quote.objects.all().select_related(
             'customer', 'contact', 'origin_location', 'destination_location'
         ).prefetch_related('spot_envelopes').order_by('-created_at')
 
-        # 1. Role-Based Visibility
-        if user.is_authenticated:
-            role = getattr(user, 'role', '')
-            
-            # Global View: Admin & Finance
-            is_global = (
-                getattr(user, 'is_admin', False) or 
-                getattr(user, 'is_finance', False) or 
-                role in ('admin', 'finance')
-            )
-            
-            if is_global:
-                pass # See all
-                
-            # Manager View: Restricted by Department
-            elif getattr(user, 'is_manager', False) or role == 'manager':
-                dept = getattr(user, 'department', None)
-                if dept:
-                    # See quotes from same department users OR own quotes
-                    qs = qs.filter(
-                        Q(created_by__department=dept) | 
-                        Q(created_by=user)
-                    )
-                else:
-                    # No department assigned -> Fallback to own quotes only?
-                    # Or see "unassigned"? Strict interpretation suggests restricted.
-                    qs = qs.filter(created_by=user)
-
-            # Sales / Standard View: Own quotes only
-            else:
-                qs = qs.filter(created_by=user)
+        qs = get_quotes_for_user(user, base_qs)
 
         # 2. Filtering (Manual implementation since django-filter is not installed)
         mode = self.request.query_params.get('mode')
