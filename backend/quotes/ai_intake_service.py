@@ -573,7 +573,14 @@ Rules:
 - Preserve raw_label and raw_amount_string verbatim.
 - Do NOT normalize labels, map codes, infer buckets, or infer unit basis.
 - Set is_conditional=true only when the text indicates optional/conditional wording (e.g., if applicable, subject to, optional).
+- Descriptive qualifiers like "for small cargo" or "dangerous goods" are NOT conditional — they are notes about applicability.
 - currency_hint is optional and should only be included if directly visible in the same charge text.
+
+Freight rate notation guide (preserve these verbatim in raw_amount_string):
+- "USD6.8/kg(+45kgs)" → raw_amount_string="USD6.8/kg(+45kgs)", currency_hint="USD"
+- "USD 3.50/kg +100kg" → raw_amount_string="USD 3.50/kg +100kg", currency_hint="USD"
+- "AUD 2.80 per kg min 50kg" → raw_amount_string="AUD 2.80 per kg min 50kg", currency_hint="AUD"
+- The primary numeric value before /kg is the RATE. Do NOT split or recalculate it.
 
 Shipment context (reference only; do not infer values from it):
 {context_json}
@@ -607,14 +614,34 @@ Critical confidence rule:
 - If you are not at least 90% confident in the v4 product mapping, set v4_product_code to UNMAPPED and confidence to LOW.
 - Prefer UNMAPPED over guessing.
 
+Freight rate parsing (CRITICAL — read carefully):
+- Expressions like "USD6.8/kg", "USD 3.50/kg", "AUD2.80 per kg" are PER_KG rates.
+  The numeric value BEFORE /kg IS the rate. Example: "USD6.8/kg" → amount=6.80, rate_per_unit=6.80, unit_basis=PER_KG.
+- Weight-break annotations like "(+45kgs)", "+100kg", "min 50kg" after a /kg rate indicate the
+  minimum chargeable weight threshold or rating break (e.g., "for shipments over 50kg"), NOT a minimum charge amount.
+  They should be IGNORED for amount/rate parsing — they are operational notes, not pricing values.
+- Do NOT confuse weight-break thresholds with minimum charge amounts.
+  "USD6.8/kg(+45kgs)" means rate=6.80 per kg with a 45kg weight break. It does NOT mean min_amount=6.80.
+- Only use MIN_OR_PER_KG when the text explicitly states BOTH a flat minimum charge AND a per-kg rate
+  (e.g., "min USD 50 or 2.10/kg"). If only one number is present (e.g., "6.8/kg"), it is ALWAYS PER_KG.
+- NEVER invent or hallucinate rate values from these examples. Only use numbers found in the source text.
+
 Additional rules:
-- EXACTLY categorise dual pricing (e.g. "min X or Y/kg", "35 min / 0.25 pkg") as MIN_OR_PER_KG.
 - EXACTLY categorise percentage fees (e.g. "10% of freight") as PERCENTAGE.
 - currency must be a 3-letter code. Use quote_currency_hint only when the charge text lacks an explicit currency.
 - amount must be numeric and non-negative.
 - For PERCENTAGE, set unit_basis to PERCENTAGE, populate `percentage` and `percent_applies_to` (and set `amount` to the same numeric percentage value).
 - For MIN_OR_PER_KG, set unit_basis to MIN_OR_PER_KG, populate both `rate_per_unit` and `minimum_amount` (and set `amount` equal to `rate_per_unit`).
 - confidence must be HIGH or LOW only.
+- friendly_description: Create a clean, professional display name for the charge. Map common abbreviations to full names:
+  * A/F, FRT, FREIGHT -> Air Freight
+  * CUS, CLEARANCE, CLEANING -> Customs Clearance
+  * DOC, DOCUMENTATION -> Documentation Fee
+  * THC, TERMINAL -> Terminal Handling Charge
+  * HANDLE, HANDLING -> Handling Fee
+  * PICKUP, PICK UP, TRUCKING -> Pickup Charge
+  * GATE IN -> Gate In Fee
+  If the raw label is already professional, preserve it.
 - CONTEXTUAL MAPPING: If `missing_components` is provided in the Context, you MUST prefer mapping charges to those buckets (e.g. DESTINATION_LOCAL -> DESTINATION, ORIGIN_LOCAL -> ORIGIN, FREIGHT -> FREIGHT). If only one component is present in `missing_components` (e.g. just DESTINATION_LOCAL), you MUST map ALL charges in the email to that single bucket, because we know the agent is strictly pricing that leg.
 
 Shipment context:
@@ -669,7 +696,7 @@ def _build_final_spot_charge_lines(
 
         payload = {
             "bucket": normalized.v4_bucket,
-            "description": normalized.original_raw_label,
+            "description": normalized.friendly_description or normalized.original_raw_label,
             "original_raw_label": normalized.original_raw_label,
             "v4_product_code": normalized.v4_product_code,
             "v4_bucket": normalized.v4_bucket,

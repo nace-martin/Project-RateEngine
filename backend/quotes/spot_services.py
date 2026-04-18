@@ -657,13 +657,11 @@ class RateAvailabilityService:
             for code, category in import_codes:
                 availability[classify_import_component(code, category)] = True
 
-            # Import local rates can include both ORIGIN and DESTINATION components.
-            # Classify rows by ProductCode, then map by station. Keep a compatibility
-            # fallback so legacy migrated ORIGIN rows stored at destination station
-            # still satisfy ORIGIN_LOCAL coverage checks.
+            # Import local rates: classify by ProductCode and match by station.
+            # Origin charges must be stored at the origin location; destination
+            # charges at the destination location.  No cross-station fallback.
             origin_code = (origin_airport or "").upper()
             destination_code = (destination_airport or "").upper()
-            origin_local_fallback_at_destination = False
             local_location_candidates = [loc for loc in [origin_airport, destination_airport] if loc]
 
             import_local_rows = LocalCOGSRate.objects.filter(
@@ -677,19 +675,10 @@ class RateAvailabilityService:
                 component = classify_import_component(code, category)
                 location_code = (location or "").upper()
 
-                if component == COMPONENT_ORIGIN_LOCAL:
-                    if location_code == origin_code:
-                        availability[COMPONENT_ORIGIN_LOCAL] = True
-                    elif location_code == destination_code:
-                        origin_local_fallback_at_destination = True
+                if component == COMPONENT_ORIGIN_LOCAL and location_code == origin_code:
+                    availability[COMPONENT_ORIGIN_LOCAL] = True
                 elif component == COMPONENT_DESTINATION_LOCAL and location_code == destination_code:
                     availability[COMPONENT_DESTINATION_LOCAL] = True
-
-            if not availability[COMPONENT_ORIGIN_LOCAL] and origin_local_fallback_at_destination:
-                availability[COMPONENT_ORIGIN_LOCAL] = True
-
-            if surcharge_exists('IMPORT_ORIGIN', origin=origin_airport):
-                availability[COMPONENT_ORIGIN_LOCAL] = True
 
             if surcharge_exists('IMPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True
@@ -1745,7 +1734,7 @@ class ReplyAnalysisService:
             ai_result = parse_rate_quote_text(raw_text, context=shipment_context)
             audit_result = getattr(ai_result, "extraction_audit", None)
             quote_input = getattr(ai_result, "quote_input", None)
-            lines = getattr(quote_input, "charge_lines", []) or []
+            lines = getattr(quote_input, "charge_lines", []) if quote_input else []
             unmapped_line_count = sum(
                 1
                 for line in lines
@@ -1782,9 +1771,9 @@ class ReplyAnalysisService:
                 getattr(audit_result, "is_safe_to_proceed", None),
                 unmapped_line_count,
             )
-            if ai_result.success:
+            if getattr(ai_result, "success", False) or lines:
                 # Add global currency assertion if present
-                if ai_result.quote_currency:
+                if getattr(ai_result, "quote_currency", None):
                     ai_assertions.append(ExtractedAssertion(
                         text=f"Quote Currency: {ai_result.quote_currency}",
                         category=AssertionCategory.CURRENCY,
@@ -1808,10 +1797,10 @@ class ReplyAnalysisService:
                     final_currency = line.currency or ai_result.quote_currency
                     
                     # For MIN_OR_PER_KG, use minimum as the display amount
-                    display_amount = line.min_amount if line.min_amount is not None else line.amount
+                    display_amount = getattr(line, "min_amount", None) if getattr(line, "min_amount", None) is not None else line.amount
                     # For PERCENTAGE, use percentage value as the display amount
-                    if line.unit_basis == "PERCENTAGE" and line.percent is not None:
-                        display_amount = line.percent
+                    if line.unit_basis == "PERCENTAGE" and getattr(line, "percentage", None) is not None:
+                        display_amount = line.percentage
                         
                     basis = getattr(line, 'percent_basis', None) or getattr(line, 'percent_applies_to', None)
 
@@ -1883,7 +1872,7 @@ class ReplyAnalysisService:
 
             unmapped_labels = [
                 line.description
-                for line in (getattr(getattr(ai_result, "quote_input", None), "charge_lines", []) or [])
+                for line in (getattr(ai_result.quote_input, "charge_lines", []) if ai_result.quote_input else [])
                 if getattr(line, "v4_product_code", None) == "UNMAPPED"
             ]
             if unmapped_labels:
@@ -1892,9 +1881,9 @@ class ReplyAnalysisService:
                     + ", ".join(unmapped_labels)
                 )
 
-            if not ai_result.success:
-                warnings.append(f"⚠️ Import analysis failed: {ai_result.error}. Falling back to standard rates.")
-            elif ai_result.warnings:
+            if not getattr(ai_result, "success", False):
+                warnings.append(f"⚠️ Import analysis failed: {getattr(ai_result, 'error', 'Unknown error')}. Falling back to standard rates.")
+            elif getattr(ai_result, "warnings", None):
                 for w in ai_result.warnings:
                     warnings.append(f"⚠️ {w}")
 

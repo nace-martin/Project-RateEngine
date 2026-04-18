@@ -1762,6 +1762,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             QuoteLine.objects.create(
                 quote_version=version,
                 service_component=sc,
+                description=line_data.service_component_desc,
                 cost_pgk=line_data.cost_pgk,
                 cost_fcy=line_data.cost_fcy,
                 cost_fcy_currency=line_data.cost_fcy_currency,

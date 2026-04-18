@@ -127,7 +127,10 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
     service_component = V3ServiceComponentSerializer()
     # Alias for frontend compatibility (some components look for 'component' code)
     component = serializers.CharField(source='service_component.code', read_only=True)
-    description = serializers.CharField(source='service_component.description', read_only=True)
+    description = serializers.SerializerMethodField()
+    
+    def get_description(self, obj):
+        return obj.description or (obj.service_component.description if obj.service_component else 'Manual Line')
     
     class Meta:
         model = QuoteLine

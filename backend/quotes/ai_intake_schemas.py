@@ -432,6 +432,11 @@ class NormalizedCharge(BaseModel):
         max_length=64,
         description="Mapped v4 product code, or 'UNMAPPED'"
     )
+    friendly_description: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="A clean, professional name for the charge (e.g. 'Air Freight' instead of 'A/F')."
+    )
     v4_bucket: SpotChargeBucket = Field(
         ...,
         description="Mapped v4 charge bucket"

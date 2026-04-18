@@ -375,6 +375,12 @@ class QuoteLine(models.Model):
     exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
 
     # --- V3 Categorization Fields ---
+    description = models.CharField(
+        max_length=500, 
+        null=True, 
+        blank=True,
+        help_text="Custom display name for this line (e.g. from AI extraction). Falls back to component description if null."
+    )
     leg = models.CharField(max_length=20, null=True, blank=True, help_text="ORIGIN, MAIN, or DESTINATION")
     bucket = models.CharField(max_length=50, null=True, blank=True, help_text="e.g., origin_charges, airfreight, destination_charges")
 

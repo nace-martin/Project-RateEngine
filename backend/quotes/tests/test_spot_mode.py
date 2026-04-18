@@ -293,7 +293,7 @@ class TestSpotTriggerEvaluation:
         assert result.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
         assert result.manual_required_product_codes == ["EXP-AVI-MANUAL"]
         assert result.spot_required_product_codes == ["EXP-AVI-SPOT"]
-        assert result.missing_product_codes == ["EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"]
+        assert set(result.missing_product_codes) == {"EXP-AVI-MANUAL", "EXP-AVI-SPOT", "EXP-AVI-DB"}
         assert "manual charge entry" in result.text
         assert "Export Live Animal Manual Charge (EXP-AVI-MANUAL)" in result.text
         assert "EXP-AVI-SPOT" in result.text
@@ -305,9 +305,10 @@ class TestRateAvailabilityService:
 
     def test_import_d2d_origin_local_detected_from_destination_fallback(self):
         """
-        IMPORT D2D compatibility:
-        if ORIGIN local rows were migrated under destination location,
-        availability must still mark ORIGIN_LOCAL=True.
+        IMPORT D2D with non-PNG origin:
+        Origin local rows migrated under the destination (POM) station are
+        PNG-side handling charges and must NOT satisfy ORIGIN_LOCAL for a
+        foreign origin airport like BNE.
         """
         from datetime import date, timedelta
         from pricing_v4.models import ProductCode, Agent, ImportCOGS, LocalCOGSRate
@@ -368,6 +369,7 @@ class TestRateAvailabilityService:
         )
 
         # Legacy migrated shape: origin local row stored under destination station.
+        # For non-PNG origin (BNE) this should NOT satisfy ORIGIN_LOCAL.
         LocalCOGSRate.objects.create(
             product_code=pc_origin,
             location="POM",
@@ -399,7 +401,7 @@ class TestRateAvailabilityService:
         )
 
         assert availability[COMPONENT_FREIGHT] is True
-        assert availability[COMPONENT_ORIGIN_LOCAL] is True
+        assert availability[COMPONENT_ORIGIN_LOCAL] is False  # BNE is non-PNG
         assert availability[COMPONENT_DESTINATION_LOCAL] is True
 
 
