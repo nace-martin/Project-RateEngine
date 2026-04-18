@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch, Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api";
 import { getContactsForCompany } from "@/lib/api/parties";
-import { validateSpotScope, evaluateSpotTrigger, createSpotEnvelope } from "@/lib/api/spot";
 import {
     calculateCargoMetrics,
 } from "@/components/forms/quote-sections/quote-section-types";

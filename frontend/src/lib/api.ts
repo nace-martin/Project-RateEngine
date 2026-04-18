@@ -1123,7 +1123,7 @@ export async function downloadQuotePDF(
 }
 
 // =============================================================================
-// SPOT MODE APIs
+// SPOT MODE APIs (consolidated; replaces src/lib/api/spot.ts)
 // =============================================================================
 
 import type {

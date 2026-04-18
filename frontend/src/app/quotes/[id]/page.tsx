@@ -8,8 +8,9 @@ import {
   getQuoteCompute,
   downloadQuotePDF,
   transitionQuoteStatus,
+  createSpotEnvelope,
+  evaluateSpotTrigger,
 } from "@/lib/api";
-import { createSpotEnvelope, evaluateSpotTrigger } from "@/lib/api/spot";
 import {
   V3QuoteComputeResponse,
   QuoteComputeResult,

@@ -14,8 +14,6 @@ export { SpotAcknowledgementModal } from './SpotAcknowledgementModal';
 
 export { SpotRateEntryForm } from './SpotRateEntryForm';
 
-export * from "./archive/SpotEmailDraftCard";
-
 // Reply Analysis components
 export { ReplyPasteCard } from './ReplyPasteCard';
 

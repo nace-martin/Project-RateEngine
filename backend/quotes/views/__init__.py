@@ -6,7 +6,6 @@ from .lifecycle import (
     QuoteVersionCreateAPIView
 )
 from .services import (
-    AIRateIntakeAPIView,
     QuotePDFAPIView,
     RatecardListAPIView,
     RatecardUploadAPIView,
@@ -22,7 +21,6 @@ __all__ = [
     'QuoteTransitionAPIView',
     'QuoteCloneAPIView',
     'QuoteVersionCreateAPIView',
-    'AIRateIntakeAPIView',
     'QuotePDFAPIView',
     'RatecardListAPIView',
     'RatecardUploadAPIView',

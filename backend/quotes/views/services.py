@@ -12,17 +12,16 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 
 from parties.models import Address, Company, Contact, CustomerCommercialProfile
 from core.models import Airport, City, Country, Currency
-from core.security import validate_csv_upload, validate_pdf_upload
+from core.security import validate_csv_upload
 from ratecards.models import PartnerRateCard
-from quotes.models import Quote
 
 # RBAC permissions
-from accounts.permissions import CanUseAIIntake, QuoteAccessPermission
+from accounts.permissions import QuoteAccessPermission
 from accounts.permissions import IsAdmin
 from quotes.selectors import get_quote_for_user
 
@@ -400,112 +399,6 @@ class StationListAPIView(APIView):
                 'city_country': city_country,
             })
         return Response(data)
-
-class AIRateIntakeAPIView(APIView):
-    """
-    POST: Parse unstructured rate quote text/PDF into structured quote input payload.
-    
-    Accepts:
-    - JSON body with 'text' field for plain text input
-    - Multipart form with 'file' for PDF upload
-    
-    Returns:
-    - Structured quote_input payload with warnings
-    - Human review required before accepting
-    """
-    permission_classes = [CanUseAIIntake]  # Sales/Manager/Admin only; Finance excluded
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-    
-    def post(self, request, quote_id):
-        # Local import to avoid circular dependency loop if service uses models that use views (unlikely but safe)
-        from quotes.ai_intake_service import parse_rate_quote_text, parse_pdf_rate_quote
-        
-        quote = get_quote_for_user(request.user, quote_id)
-        
-        # Build context for AI analysis
-        context = {
-            'origin': str(quote.origin_location),
-            'destination': str(quote.destination_location),
-            'weight': float(quote.chargeable_weight_kg or quote.gross_weight_kg or 0),
-            'shipment_type': quote.shipment_type,
-            'incoterm': quote.incoterm,
-            'payment_term': quote.payment_term,
-        }
-        
-        # Check for PDF upload
-        pdf_file = request.FILES.get('file')
-        if pdf_file:
-            try:
-                validate_pdf_upload(pdf_file)
-            except DjangoValidationError as exc:
-                return Response({'detail': '; '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
-            # Read PDF content
-            pdf_content = pdf_file.read()
-            result = parse_pdf_rate_quote(pdf_content, context=context)
-            return self._format_response(result)
-        
-        # Check for text input
-        text = request.data.get('text', '')
-        if not text:
-            return Response(
-                {'detail': 'Either "text" or "file" is required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        result = parse_rate_quote_text(text, source_type="TEXT", context=context)
-        return self._format_response(result)
-    
-    def _format_response(self, result):
-        """Format AIRateIntakeResponse for API response."""
-        if not result.success:
-            return Response(
-                {
-                    'success': False,
-                    'error': result.error,
-                    'warnings': result.warnings,
-                },
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
-        
-        quote_input = result.quote_input or None
-        charge_lines = []
-        for line in (quote_input.charge_lines if quote_input else []):
-            line_dict = {
-                'id': line.id,
-                'bucket': line.bucket,
-                'description': line.description,
-                'amount': str(line.amount) if line.amount else None,
-                'currency': line.currency,
-                'unit_basis': line.unit_basis,
-                'calculation_type': line.calculation_type,
-                'unit_type': line.unit_type,
-                'rate': str(line.rate) if line.rate else None,
-                'min_amount': str(line.min_amount) if line.min_amount else None,
-                'max_amount': str(line.max_amount) if line.max_amount else None,
-                'percentage': str(line.percentage) if line.percentage else None,
-                'minimum': str(line.minimum) if line.minimum else None,
-                'maximum': str(line.maximum) if line.maximum else None,
-                'percent_applies_to': line.percent_applies_to,
-                'percent_basis': line.percent_basis,
-                'rule_meta': line.rule_meta,
-                'notes': line.notes,
-                'confidence': line.confidence,
-            }
-            charge_lines.append(line_dict)
-        
-        return Response({
-            'success': True,
-            'quote_input': {
-                'quote_currency': quote_input.quote_currency if quote_input else None,
-                'charge_lines': charge_lines,
-            },
-            'analysis_text': result.analysis_text,
-            'warnings': result.warnings,
-            'raw_text_length': result.raw_text_length,
-            'source_type': result.source_type,
-            'model_used': result.model_used,
-        })
-
 
 class QuotePDFAPIView(APIView):
     """

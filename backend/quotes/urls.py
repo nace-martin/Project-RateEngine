@@ -11,7 +11,6 @@ from .views import (
     RatecardUploadAPIView,
     StationListAPIView,
     QuoteVersionCreateAPIView,
-    AIRateIntakeAPIView,
     QuoteTransitionAPIView,
     QuoteCloneAPIView,
     QuotePDFAPIView,
@@ -42,7 +41,6 @@ router_v3.register(r'reports', ReportsViewSet, basename='reports')
 urlpatterns = [
     path('v3/quotes/compute/', QuoteComputeV3APIView.as_view(), name='quote-compute-v3'),
     path('v3/quotes/<uuid:quote_id>/versions/', QuoteVersionCreateAPIView.as_view(), name='quote-version-create'),
-    path('v3/quotes/<uuid:quote_id>/ai-intake/', AIRateIntakeAPIView.as_view(), name='ai-rate-intake'),
     path('v3/quotes/<uuid:quote_id>/transition/', QuoteTransitionAPIView.as_view(), name='quote-transition'),
     path('v3/quotes/<uuid:quote_id>/clone/', QuoteCloneAPIView.as_view(), name='quote-clone'),
     path('v3/quotes/<uuid:quote_id>/pdf/', QuotePDFAPIView.as_view(), name='quote-pdf'),
