@@ -336,7 +336,11 @@ class PricingServiceV4Adapter:
         engine = None
         result = None
         
-        # Calculate weight
+        # Validate shipment type using the shared RoutingMap (single source of truth)
+        # Lazy import to avoid circular dependency (dispatcher.py imports adapter.py)
+        from pricing_v4.dispatcher import RoutingMap
+        RoutingMap.get_engine_class(shipment.shipment_type)
+        
         # Calculate chargeable weight (Max of Actual vs Volumetric)
         chargeable_weight = self._calculate_chargeable_weight()
         
@@ -434,6 +438,9 @@ class PricingServiceV4Adapter:
                 quote_date=self.quote_input.quote_date,
                 commodity_code=commodity_code,
             )
+        # Note: RoutingMap.get_engine_class() above already validated the
+        # shipment_type, so reaching here is impossible. Guard retained for
+        # defensive completeness.
         else:
             raise NotImplementedError(f"Unsupported shipment type: {shipment.shipment_type}")
             
@@ -958,16 +965,14 @@ class PricingServiceV4Adapter:
         spot_lines: List[CalculatedChargeLine]
     ) -> List[CalculatedChargeLine]:
         """
-        [FIX P2] Domestic Logic: Append strategy for Domestic to preserve origin/freight.
+        Unified merge: SPOT lines replace standard lines in matching buckets.
+        
+        This applies to ALL shipment types (Export, Import, Domestic).
+        Per AGENTS.md: "Spot freight charges MUST replace standard freight
+        charges for the same leg/route, never append."
         """
-        is_domestic = (self.quote_input.shipment.shipment_type == 'DOMESTIC')
         if not spot_lines:
             return standard_lines
-            
-        if is_domestic:
-            final_lines = list(standard_lines)
-            final_lines.extend(spot_lines)
-            return final_lines
 
         spot_buckets = {l.bucket for l in spot_lines}
         final_lines = [l for l in standard_lines if l.bucket not in spot_buckets]

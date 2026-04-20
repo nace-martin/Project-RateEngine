@@ -68,6 +68,11 @@ This is a full-stack web application designed to streamline and automate the air
     *   The API is versioned.
 *   **Documentation:**
     *   The `docs` directory contains important project documentation, including the product roadmap and architecture plans.
+*   **Pricing & Commodity Conventions:**
+    *   **`DOC` (Documents):** No commercial value, POM-LAE flat rates. These are low-risk, flat-fee shipments that do not require full audit.
+    *   **`CRG` (Cargo):** Full audit required. All standard COGS/Sell lookups, margin, FX, and GST calculations apply.
+    *   All pricing engines must filter by `commodity_code` (passed via `QuoteInput`) when it is a non-default value. The `CommodityChargeRule` table gates which `ProductCode` IDs are enabled per commodity.
+    *   Rate lookups must be deterministic: always use `.order_by('-valid_from', '-updated_at', '-id').first()` to select the latest effective rate.
 
 ## Maintenance
 

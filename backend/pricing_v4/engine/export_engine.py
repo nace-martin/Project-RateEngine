@@ -409,7 +409,7 @@ class ExportPricingEngine:
                 location=local_location,
                 direction='EXPORT',
                 valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
-            ).first()
+            ).order_by('-valid_from', '-updated_at', '-id').first()
             if local:
                 return local
             return None

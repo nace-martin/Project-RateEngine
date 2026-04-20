@@ -155,8 +155,8 @@ class DomesticFreightTest(DomesticEngineTestCase):
         self.assertEqual(result.cogs_breakdown[0].amount, Decimal('100.00'))
         self.assertEqual(result.sell_breakdown[0].amount, Decimal('120.00'))
     
-    def test_no_rates_returns_empty(self):
-        """Test that missing routes return empty breakdowns."""
+    def test_no_rates_emits_missing_placeholder(self):
+        """Test that missing routes emit is_rate_missing=True placeholder instead of empty breakdowns."""
         engine = DomesticPricingEngine(
             cogs_origin='POM',
             destination='WEW',  # No rates seeded
@@ -165,9 +165,18 @@ class DomesticFreightTest(DomesticEngineTestCase):
         )
         result = engine.calculate_quote()
         
-        # No freight rates found
-        self.assertEqual(len(result.cogs_breakdown), 0)
-        self.assertEqual(len(result.sell_breakdown), 0)
+        # [FIX 🔴] Missing freight should emit a placeholder, not be silently dropped.
+        # cogs_breakdown and sell_breakdown now include is_rate_missing items.
+        self.assertEqual(len(result.cogs_breakdown), 1)
+        self.assertEqual(len(result.sell_breakdown), 1)
+        self.assertEqual(result.cogs_breakdown[0].amount, Decimal('0'))
+        self.assertEqual(result.cogs_breakdown[0].product_code, 'DOM-FRT-AIR')
+        
+        # The placeholder line item should be excluded from totals
+        freight_line = next((li for li in result.line_items if li.product_code == 'DOM-FRT-AIR'), None)
+        self.assertIsNotNone(freight_line)
+        self.assertTrue(freight_line.is_rate_missing)
+        self.assertFalse(freight_line.included_in_total)
         self.assertEqual(result.tax_breakdown, {'service_in_PNG': Decimal('0.00')})
 
 

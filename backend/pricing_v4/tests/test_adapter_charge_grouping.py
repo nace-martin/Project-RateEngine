@@ -24,23 +24,23 @@ class AdapterChargeGroupingTest(TestCase):
         adapter = PricingServiceV4Adapter(self.quote_input)
         
         # Mock the result from the engine
-        mock_line = MagicMock()
-        mock_line.product_code = 'EXP-CLEAR'
-        mock_line.description = 'Export Customs Clearance'
-        mock_line.category = 'CLEARANCE'
-        mock_line.leg = 'MAIN' # Engines often don't set this explicitly for some charges, defaulting to MAIN
-        mock_line.cost_amount = Decimal('100.00')
-        mock_line.sell_amount = Decimal('300.00')
-        mock_line.sell_incl_gst = Decimal('300.00')
-        mock_line.gst_amount = Decimal('0')
-        mock_line.gst_category = None
-        mock_line.gst_rate = Decimal('0')
-        mock_line.sell_currency = 'PGK'
-        mock_line.cost_currency = 'PGK'
-        mock_line.is_rate_missing = False
+        mock_line = SimpleNamespace(
+            product_code='EXP-CLEAR',
+            description='Export Customs Clearance',
+            category='CLEARANCE',
+            leg='MAIN', # Engines often don't set this explicitly for some charges, defaulting to MAIN
+            cost_amount=Decimal('100.00'),
+            sell_amount=Decimal('300.00'),
+            sell_incl_gst=Decimal('300.00'),
+            gst_amount=Decimal('0'),
+            gst_category=None,
+            gst_rate=Decimal('0'),
+            sell_currency='PGK',
+            cost_currency='PGK',
+            is_rate_missing=False
+        )
         
-        mock_result = MagicMock()
-        mock_result.lines = [mock_line]
+        mock_result = SimpleNamespace(lines=[mock_line])
         
         # Mock internal helpers
         adapter._get_fx_rates_dict = MagicMock(return_value={})
@@ -88,24 +88,23 @@ class AdapterChargeGroupingTest(TestCase):
         """
         adapter = PricingServiceV4Adapter(self.quote_input)
         
-        mock_line = MagicMock()
-        mock_line.product_code = 'IMP-CLEAR'
-        mock_line.description = 'Import Customs Clearance'
-        mock_line.category = 'CLEARANCE'
-        mock_line.leg = 'DESTINATION' # Import engine DOES set this explicitly
+        mock_line = SimpleNamespace(
+            product_code='IMP-CLEAR',
+            description='Import Customs Clearance',
+            category='CLEARANCE',
+            leg='DESTINATION', # Import engine DOES set this explicitly
+            cost_amount=Decimal('100.00'),
+            sell_amount=Decimal('300.00'),
+            sell_incl_gst=Decimal('330.00'),
+            gst_amount=Decimal('30.00'),
+            gst_category=None,
+            gst_rate=Decimal('0.10'),
+            sell_currency='PGK',
+            cost_currency='PGK',
+            is_rate_missing=False
+        )
         
-        mock_line.cost_amount = Decimal('100.00')
-        mock_line.sell_amount = Decimal('300.00')
-        mock_line.sell_incl_gst = Decimal('330.00')
-        mock_line.gst_amount = Decimal('30.00')
-        mock_line.gst_category = None
-        mock_line.gst_rate = Decimal('0.10')
-        mock_line.sell_currency = 'PGK'
-        mock_line.cost_currency = 'PGK'
-        mock_line.is_rate_missing = False
-        
-        mock_result = MagicMock()
-        mock_result.lines = [mock_line] # Or origin_lines/etc depending on struct, but _convert handles unified list
+        mock_result = SimpleNamespace(lines=[mock_line])
         
         # Mock internal helpers
         adapter._get_fx_rates_dict = MagicMock(return_value={})
@@ -134,23 +133,23 @@ class AdapterChargeGroupingTest(TestCase):
         """
         adapter = PricingServiceV4Adapter(self.quote_input)
 
-        mock_line = MagicMock()
-        mock_line.product_code = 'EXP-FSC-AIR'
-        mock_line.description = 'Airline Export Fuel Surcharge'
-        mock_line.category = 'FREIGHT'
-        mock_line.leg = 'MAIN'
-        mock_line.cost_amount = Decimal('10.00')
-        mock_line.sell_amount = Decimal('25.00')
-        mock_line.sell_incl_gst = Decimal('25.00')
-        mock_line.gst_amount = Decimal('0')
-        mock_line.gst_category = None
-        mock_line.gst_rate = Decimal('0')
-        mock_line.sell_currency = 'PGK'
-        mock_line.cost_currency = 'PGK'
-        mock_line.is_rate_missing = False
+        mock_line = SimpleNamespace(
+            product_code='EXP-FSC-AIR',
+            description='Airline Export Fuel Surcharge',
+            category='FREIGHT',
+            leg='MAIN',
+            cost_amount=Decimal('10.00'),
+            sell_amount=Decimal('25.00'),
+            sell_incl_gst=Decimal('25.00'),
+            gst_amount=Decimal('0'),
+            gst_category=None,
+            gst_rate=Decimal('0'),
+            sell_currency='PGK',
+            cost_currency='PGK',
+            is_rate_missing=False
+        )
 
-        mock_result = MagicMock()
-        mock_result.lines = [mock_line]
+        mock_result = SimpleNamespace(lines=[mock_line])
 
         adapter._get_fx_rates_dict = MagicMock(return_value={})
 

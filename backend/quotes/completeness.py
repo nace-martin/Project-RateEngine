@@ -23,7 +23,6 @@ ALL_COMPONENTS = {
     COMPONENT_DESTINATION_LOCAL,
 }
 
-
 def _normalize_scope(scope: Optional[str]) -> str:
     if not scope:
         return "A2A"
@@ -71,6 +70,7 @@ def _line_is_covered(line: CalculatedChargeLine) -> bool:
         return False
     if getattr(line, "is_informational", False):
         return False
+
     return True
 
 

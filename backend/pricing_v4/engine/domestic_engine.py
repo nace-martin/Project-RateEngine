@@ -28,8 +28,9 @@ class BillableCharge:
     amount: Decimal
     product_code: str = ''
     is_gst_applicable: bool = True
-    agent_name: Optional[str] = None  # NEW
+    agent_name: Optional[str] = None
     rule_family: str = CALCULATION_LOOKUP_RATE
+    is_rate_missing: bool = False
 
 class DomesticPricingEngine:
     """
@@ -132,7 +133,7 @@ class DomesticPricingEngine:
         )
 
     def _calculate_freight(self, cogs_breakdown: List[BillableCharge], sell_breakdown: List[BillableCharge]):
-        # COGS
+        # COGS – deterministic: latest valid_from wins
         cogs = (
             DomesticCOGS.objects.filter(
                 origin_zone=self.origin,
@@ -142,7 +143,7 @@ class DomesticPricingEngine:
                 valid_until__gte=self.quote_date,
             )
             .select_related('agent')
-            .order_by('-valid_from')
+            .order_by('-valid_from', '-updated_at', '-id')
             .first()
         )
         if cogs:
@@ -170,7 +171,7 @@ class DomesticPricingEngine:
                     )
                 )
             
-        # SELL
+        # SELL – deterministic: latest valid_from wins
         sell = (
             DomesticSellRate.objects.filter(
                 origin_zone=self.origin,
@@ -179,7 +180,7 @@ class DomesticPricingEngine:
                 valid_from__lte=self.quote_date,
                 valid_until__gte=self.quote_date,
             )
-            .order_by('-valid_from')
+            .order_by('-valid_from', '-updated_at', '-id')
             .first()
         )
         if sell:
@@ -204,6 +205,19 @@ class DomesticPricingEngine:
                         rule_family=sell_eval.rule_family,
                     )
                 )
+
+        # [FIX 🔴] Emit missing-rate placeholder if no COGS AND no Sell found
+        has_cogs = any(c.product_code == 'DOM-FRT-AIR' for c in cogs_breakdown)
+        has_sell = any(c.product_code == 'DOM-FRT-AIR' for c in sell_breakdown)
+        if not has_cogs and not has_sell:
+            placeholder = BillableCharge(
+                description="Air Freight",
+                amount=Decimal('0'),
+                product_code='DOM-FRT-AIR',
+                is_rate_missing=True,
+            )
+            cogs_breakdown.append(placeholder)
+            sell_breakdown.append(placeholder)
 
     def _calculate_surcharges(self, cogs_breakdown: List[BillableCharge], sell_breakdown: List[BillableCharge]):
         cogs_freight_basis = sum(
@@ -296,14 +310,19 @@ class DomesticPricingEngine:
                     currency='PGK',
                     category='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'SURCHARGE',
                     leg='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'ORIGIN',
+                    is_rate_missing=charge.is_rate_missing,
                 ),
             )
             item.cost_amount += charge.amount
             item.cost_currency = 'PGK'
-            item.cost_source = QuoteCostSource.DB_TARIFF
-            item.rate_source = QuoteRateSource.DB_TARIFF
+            item.cost_source = QuoteCostSource.DB_TARIFF if not charge.is_rate_missing else 'N/A'
+            item.rate_source = QuoteRateSource.DB_TARIFF if not charge.is_rate_missing else 'N/A'
             item.agent_name = charge.agent_name
             item.rule_family = charge.rule_family
+            if charge.is_rate_missing:
+                item.is_rate_missing = True
+                item.included_in_total = False
+                item.notes = f"Rate missing for DOM-FRT-AIR {self.origin}→{self.destination}"
 
         for charge in sell_breakdown:
             item = indexed.setdefault(
@@ -319,6 +338,7 @@ class DomesticPricingEngine:
                     currency='PGK',
                     category='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'SURCHARGE',
                     leg='FREIGHT' if charge.product_code == 'DOM-FRT-AIR' else 'ORIGIN',
+                    is_rate_missing=charge.is_rate_missing,
                 ),
             )
             item.sell_amount += charge.amount

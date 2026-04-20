@@ -140,7 +140,7 @@ class QuoteResult:
                 agent_name=line.agent_name,
             )
             for line in self.line_items
-            if line.cost_amount > 0
+            if line.cost_amount > 0 or line.is_rate_missing
         ]
 
     @property

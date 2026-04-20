@@ -369,7 +369,7 @@ class ImportPricingEngine:
                 destination_airport=self.destination,
                 valid_from__lte=self.quote_date,
                 valid_until__gte=self.quote_date
-            ).first()
+            ).order_by('-valid_from', '-updated_at', '-id').first()
             
             if cogs:
                 cost_eval = self._calculate_cogs_amount(cogs, pc)
@@ -760,7 +760,7 @@ class ImportPricingEngine:
             destination_airport=self.destination,
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
-        ).select_related('agent').first()
+        ).select_related('agent').order_by('-valid_from', '-updated_at', '-id').first()
 
         if lane_cogs:
             return lane_cogs
@@ -783,7 +783,7 @@ class ImportPricingEngine:
             currency=self.quote_currency,
             valid_from__lte=self.quote_date,
             valid_until__gte=self.quote_date
-        ).first()
+        ).order_by('-valid_from', '-updated_at', '-id').first()
     
     def _get_local_cogs(self, pc: ProductCode, leg: str):
         """
@@ -806,7 +806,7 @@ class ImportPricingEngine:
                 direction='IMPORT',
                 valid_from__lte=self.quote_date,
                 valid_until__gte=self.quote_date
-            ).first()
+            ).order_by('-valid_from', '-updated_at', '-id').first()
             if local_rate:
                 return local_rate
 

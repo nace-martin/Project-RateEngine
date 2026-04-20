@@ -658,11 +658,13 @@ class RateAvailabilityService:
                 availability[classify_import_component(code, category)] = True
 
             # Import local rates: classify by ProductCode and match by station.
-            # Origin charges must be stored at the origin location; destination
-            # charges at the destination location.  No cross-station fallback.
+            # Origin charges should resolve at the foreign origin station first,
+            # but we retain the same destination-station fallback used by the
+            # import engine for legacy migrated datasets.
             origin_code = (origin_airport or "").upper()
             destination_code = (destination_airport or "").upper()
             local_location_candidates = [loc for loc in [origin_airport, destination_airport] if loc]
+            origin_local_fallback_at_destination = False
 
             import_local_rows = LocalCOGSRate.objects.filter(
                 location__in=local_location_candidates,
@@ -677,8 +679,13 @@ class RateAvailabilityService:
 
                 if component == COMPONENT_ORIGIN_LOCAL and location_code == origin_code:
                     availability[COMPONENT_ORIGIN_LOCAL] = True
+                elif component == COMPONENT_ORIGIN_LOCAL and location_code == destination_code:
+                    origin_local_fallback_at_destination = True
                 elif component == COMPONENT_DESTINATION_LOCAL and location_code == destination_code:
                     availability[COMPONENT_DESTINATION_LOCAL] = True
+
+            if not availability[COMPONENT_ORIGIN_LOCAL] and origin_local_fallback_at_destination:
+                availability[COMPONENT_ORIGIN_LOCAL] = True
 
             if surcharge_exists('IMPORT_DEST', destination=destination_airport):
                 availability[COMPONENT_DESTINATION_LOCAL] = True

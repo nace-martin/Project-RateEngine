@@ -68,12 +68,11 @@ def _evaluate(direction: str, scope: str, availability: dict[str, bool]):
 
 
 def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
-    """For international imports (non-PNG origin), origin charges stored at the
-    PNG destination do NOT satisfy ORIGIN_LOCAL.  Only direct matches at the
-    foreign origin airport (or explicit surcharges) would cover it.
+    """Import availability should mirror the import engine's legacy fallback.
 
-    BNE is an Australian airport, so origin charges at POM are irrelevant
-    for BNE origin-station coverage.  SPOT should trigger for ORIGIN_LOCAL.
+    Origin charges resolve against the foreign origin station first, but when
+    migrated import rows still live on the PNG destination station they should
+    not force an incorrect SPOT trigger.
     """
     valid_from, valid_until = _today_window()
     agent = _agent()
@@ -119,15 +118,13 @@ def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
     availability = RateAvailabilityService.get_availability("BNE", "POM", "IMPORT", "D2D")
     assert availability == {
         COMPONENT_FREIGHT: True,
-        COMPONENT_ORIGIN_LOCAL: False,  # BNE is non-PNG; POM-stored origin rows don't count
+        COMPONENT_ORIGIN_LOCAL: True,
         COMPONENT_DESTINATION_LOCAL: True,
     }
 
     is_spot, trigger = _evaluate("IMPORT", "D2D", availability)
-    assert is_spot is True
-    assert trigger is not None
-    assert trigger.code == SpotTriggerReason.MISSING_SCOPE_RATES
-    assert COMPONENT_ORIGIN_LOCAL in trigger.missing_components
+    assert is_spot is False
+    assert trigger is None
 
 
 def test_import_d2d_missing_origin_component_still_triggers_spot():

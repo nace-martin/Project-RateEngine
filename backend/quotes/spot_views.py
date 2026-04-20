@@ -549,6 +549,24 @@ class SpotTriggerEvaluateAPIView(APIView):
             commodity_code=commodity,
             commodity_coverage=commodity_coverage,
         )
+
+        logger.info(
+            "SPOT trigger evaluation lane=%s->%s direction=%s scope=%s payment_term=%s commodity=%s "
+            "rate_coverage_map=%s missing_components=%s missing_product_codes=%s "
+            "spot_required_product_codes=%s manual_required_product_codes=%s is_spot_required=%s",
+            origin_airport,
+            destination_airport,
+            direction,
+            service_scope,
+            payment_term,
+            commodity,
+            component_availability,
+            trigger.missing_components if trigger else [],
+            trigger.missing_product_codes if trigger else [],
+            trigger.spot_required_product_codes if trigger else [],
+            trigger.manual_required_product_codes if trigger else [],
+            is_spot,
+        )
         
         return Response({
             'is_spot_required': is_spot,

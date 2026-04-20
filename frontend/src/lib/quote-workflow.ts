@@ -4,7 +4,7 @@ import type {
 } from "@/lib/types";
 import type { QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 
-type QuoteSpotRateOverrides = {
+export type SPEOverrides = {
   carrierSpotRatePgk: string;
   agentDestChargesFcy: string;
   agentCurrency: string;
@@ -50,7 +50,7 @@ export const getCargoTypeForCommodityCode = (
 
 export const buildQuoteComputePayload = (
   data: QuoteFormSchemaV3,
-  spotRates?: QuoteSpotRateOverrides,
+  speOverrides?: SPEOverrides,
   existingQuoteId?: string | null,
 ): V3QuoteComputeRequest => {
   const commodityCode = CARGO_TYPE_TO_COMMODITY_CODE[data.cargo_type] || "GCR";
@@ -84,24 +84,24 @@ export const buildQuoteComputePayload = (
     output_currency: data.output_currency || undefined,
   };
 
-  if (!spotRates) {
+  if (!speOverrides) {
     return payload;
   }
 
   const spots: Record<string, unknown> = {};
 
-  if (spotRates.carrierSpotRatePgk) {
+  if (speOverrides.carrierSpotRatePgk) {
     spots.FRT_AIR_EXP = {
-      amount: spotRates.carrierSpotRatePgk,
+      amount: speOverrides.carrierSpotRatePgk,
       currency: "PGK",
-      is_all_in: spotRates.isAllIn,
+      is_all_in: speOverrides.isAllIn,
     };
   }
 
-  if (spotRates.agentDestChargesFcy) {
+  if (speOverrides.agentDestChargesFcy) {
     spots.DST_CHARGES = {
-      amount: spotRates.agentDestChargesFcy,
-      currency: spotRates.agentCurrency || "USD",
+      amount: speOverrides.agentDestChargesFcy,
+      currency: speOverrides.agentCurrency || "USD",
     };
   }
 
