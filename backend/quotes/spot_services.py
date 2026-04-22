@@ -2474,6 +2474,11 @@ class ReplyAnalysisService:
                 "percent_basis": percent_basis,
                 "rule_meta": rule_meta,
                 "source_reference": final_source_ref,
+                "source_line_identity": (
+                    f"assertion-line:{a.source_line}"
+                    if a.source_line is not None
+                    else None
+                ),
             })
 
         return charges

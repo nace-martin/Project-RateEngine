@@ -9,6 +9,7 @@ import { Control, UseFieldArrayRemove, FieldArrayWithId, useWatch } from "react-
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
 import type { SPEChargeBucket } from "@/lib/spot-types";
 import { SmartMoneyInput } from "./SmartMoneyInput";
+import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
 import { useConfirm } from "@/hooks/useConfirm";
 import { useToast } from "@/context/toast-context";
 
@@ -18,6 +19,7 @@ interface ChargeBucketSectionProps {
     fields: { field: FieldArrayWithId<SpotFormValues, "charges", "id">; index: number }[];
     onAdd: () => void;
     onRemove: UseFieldArrayRemove;
+    onOpenManualReview?: (chargeLine: SpotFormValues["charges"][number]) => void;
 }
 
 const CHARGE_UNITS = [
@@ -50,7 +52,8 @@ export function ChargeBucketSection({
     control,
     fields,
     onAdd,
-    onRemove
+    onRemove,
+    onOpenManualReview,
 }: ChargeBucketSectionProps) {
     const confirm = useConfirm();
     const { toast } = useToast();
@@ -205,6 +208,30 @@ export function ChargeBucketSection({
                                         />
                                     </TableCell>
                                     <TableCell className="align-top py-4 space-y-2">
+                                        <ChargeNormalizationAudit
+                                            normalizationStatus={watchedCharges?.[index]?.normalization_status}
+                                            normalizationMethod={watchedCharges?.[index]?.normalization_method}
+                                            sourceLabel={watchedCharges?.[index]?.source_label}
+                                            normalizedLabel={watchedCharges?.[index]?.normalized_label}
+                                            resolvedProductCode={watchedCharges?.[index]?.resolved_product_code}
+                                            manualResolutionStatus={watchedCharges?.[index]?.manual_resolution_status}
+                                            manualResolvedProductCode={watchedCharges?.[index]?.manual_resolved_product_code}
+                                            manualResolutionByUsername={watchedCharges?.[index]?.manual_resolution_by_username}
+                                            manualResolutionAt={watchedCharges?.[index]?.manual_resolution_at}
+                                            canOpenManualReview={
+                                                Boolean(
+                                                    watchedCharges?.[index]?.charge_line_id &&
+                                                    (watchedCharges?.[index]?.normalization_status === "UNMAPPED" ||
+                                                        watchedCharges?.[index]?.normalization_status === "AMBIGUOUS")
+                                                )
+                                            }
+                                            onOpenManualReview={() => {
+                                                const chargeLine = watchedCharges?.[index];
+                                                if (chargeLine) {
+                                                    onOpenManualReview?.(chargeLine);
+                                                }
+                                            }}
+                                        />
                                         <FormField
                                             control={control}
                                             name={`charges.${index}.source_reference`}

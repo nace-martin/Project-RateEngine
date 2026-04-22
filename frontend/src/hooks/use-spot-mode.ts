@@ -20,6 +20,7 @@ import {
     validateSpotScope,
     evaluateSpotTrigger,
     createSpotEnvelope,
+    manuallyResolveSpotChargeLine,
     updateSpotEnvelope,
     getSpotEnvelope,
     acknowledgeSpotEnvelope,
@@ -178,7 +179,10 @@ export function useSpotMode() {
     // ==========================================================================
     const updateSPE = useCallback(async (
         id: string,
-        data: { charges?: Omit<import('@/lib/spot-types').SPEChargeLine, 'id'>[]; conditions?: Partial<import('@/lib/spot-types').SPEConditions> }
+        data: {
+            charges?: Array<Omit<import('@/lib/spot-types').SPEChargeLine, 'id'> & { charge_line_id?: string }>;
+            conditions?: Partial<import('@/lib/spot-types').SPEConditions>;
+        }
     ): Promise<SpotPricingEnvelope | null> => {
         updateState({ isLoading: true, error: null });
 
@@ -198,6 +202,40 @@ export function useSpotMode() {
             return null;
         }
     }, [updateState]);
+
+    const manuallyResolveChargeLine = useCallback(async (
+        chargeLineId: string,
+        request: { product_code_id: number | string }
+    ): Promise<import('@/lib/spot-types').SPEChargeLine | null> => {
+        if (!state.spe) {
+            updateState({ error: 'No SPE loaded' });
+            return null;
+        }
+
+        updateState({ isLoading: true, error: null });
+
+        try {
+            const updatedChargeLine = await manuallyResolveSpotChargeLine(state.spe.id, chargeLineId, request);
+            updateState({
+                isLoading: false,
+                spe: state.spe
+                    ? {
+                        ...state.spe,
+                        charges: state.spe.charges.map((charge) =>
+                            charge.id === updatedChargeLine.id ? updatedChargeLine : charge
+                        ),
+                    }
+                    : null,
+            });
+            return updatedChargeLine;
+        } catch (err) {
+            updateState({
+                error: err instanceof Error ? err.message : 'Manual charge review failed',
+                isLoading: false,
+            });
+            return null;
+        }
+    }, [state.spe, updateState]);
 
     // ==========================================================================
     // Load SPE by ID
@@ -389,6 +427,7 @@ export function useSpotMode() {
         createSPE,
         updateSPE,
         loadSPE,
+        manuallyResolveChargeLine,
         submitAcknowledgement,
         reviewSourceBatch,
         computeQuote,
@@ -400,6 +439,7 @@ export function useSpotMode() {
         createSPE,
         updateSPE,
         loadSPE,
+        manuallyResolveChargeLine,
         submitAcknowledgement,
         reviewSourceBatch,
         computeQuote,

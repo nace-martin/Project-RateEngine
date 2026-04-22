@@ -3,6 +3,7 @@ import { SPOT_SUPPORTED_CURRENCIES } from "@/lib/spot-types";
 
 export const chargeLineSchema = z.object({
     id: z.string().optional(),
+    charge_line_id: z.string().optional(),
     code: z.string().optional(),
     description: z.string().min(1, "Description is required"),
     amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
@@ -21,6 +22,31 @@ export const chargeLineSchema = z.object({
     percentage_basis: z.string().optional().nullable(),
     note: z.string().optional(),
     exclude_from_totals: z.boolean().optional(),
+    source_label: z.string().optional(),
+    normalized_label: z.string().optional(),
+    normalization_status: z.enum(["MATCHED", "UNMAPPED", "AMBIGUOUS"]).optional().nullable(),
+    normalization_method: z.string().optional().nullable(),
+    matched_alias_id: z.number().int().optional().nullable(),
+    resolved_product_code: z
+        .object({
+            id: z.number().int(),
+            code: z.string(),
+            description: z.string(),
+        })
+        .optional()
+        .nullable(),
+    manual_resolution_status: z.enum(["RESOLVED"]).optional().nullable(),
+    manual_resolved_product_code: z
+        .object({
+            id: z.number().int(),
+            code: z.string(),
+            description: z.string(),
+        })
+        .optional()
+        .nullable(),
+    manual_resolution_by_user_id: z.string().optional().nullable(),
+    manual_resolution_by_username: z.string().optional().nullable(),
+    manual_resolution_at: z.string().optional().nullable(),
 });
 
 export const spotFormSchema = z.object({

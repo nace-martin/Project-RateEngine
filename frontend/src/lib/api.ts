@@ -1140,7 +1140,7 @@ export async function createSpotEnvelope(
  */
 export async function updateSpotEnvelope(
   id: string,
-  data: { charges?: Omit<SPEChargeLine, 'id'>[]; conditions?: Partial<SPEConditions> }
+  data: { charges?: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>; conditions?: Partial<SPEConditions> }
 ): Promise<SpotPricingEnvelope> {
   const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/`;
   const response = await fetch(url, {
@@ -1985,6 +1985,29 @@ export async function listPricingAgents(params?: {
     headers: { Authorization: `Token ${resolveAuthToken()}` },
   });
   if (!response.ok) throw new Error('Failed to fetch pricing agents');
+  return response.json();
+}
+
+export async function manuallyResolveSpotChargeLine(
+  envelopeId: string,
+  chargeLineId: string,
+  request: { product_code_id: number | string }
+): Promise<SPEChargeLine> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/charges/${chargeLineId}/manual-resolution/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Manual charge review failed: ${detail}`);
+  }
+
   return response.json();
 }
 

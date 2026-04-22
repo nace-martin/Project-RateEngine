@@ -213,6 +213,19 @@ class SPEChargeLineDB(models.Model):
         MAN = 'man', _('Man')
         CBM = 'cbm', _('CBM')
         RT = 'rt', _('Revenue Ton')
+
+    class NormalizationStatus(models.TextChoices):
+        MATCHED = 'MATCHED', _('Matched')
+        AMBIGUOUS = 'AMBIGUOUS', _('Ambiguous')
+        UNMAPPED = 'UNMAPPED', _('Unmapped')
+
+    class NormalizationMethod(models.TextChoices):
+        EXACT_ALIAS = 'EXACT_ALIAS', _('Exact Alias')
+        PATTERN_ALIAS = 'PATTERN_ALIAS', _('Pattern Alias')
+        NONE = 'NONE', _('None')
+
+    class ManualResolutionStatus(models.TextChoices):
+        RESOLVED = 'RESOLVED', _('Resolved')
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -331,6 +344,88 @@ class SPEChargeLineDB(models.Model):
         blank=True,
         help_text="Extensible rule params (e.g., cap thresholds)"
     )
+
+    # === Charge normalization audit metadata ===
+    source_label = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Original raw charge label from the source content, if captured.',
+    )
+    source_line_identity = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Stable reconciliation key for imported source lines, using extractor identity or a structural fallback fingerprint.',
+    )
+    normalized_label = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='Deterministically normalized label derived from source_label.',
+    )
+    normalization_status = models.CharField(
+        max_length=20,
+        choices=NormalizationStatus.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Deterministic charge-normalization outcome for this line.',
+    )
+    normalization_method = models.CharField(
+        max_length=20,
+        choices=NormalizationMethod.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Resolution method used for deterministic charge normalization.',
+    )
+    matched_alias = models.ForeignKey(
+        'pricing_v4.ChargeAlias',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='spe_charge_lines',
+        help_text='Matched ChargeAlias when deterministic normalization resolves to a specific alias.',
+    )
+    resolved_product_code = models.ForeignKey(
+        'pricing_v4.ProductCode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='spe_resolved_charge_lines',
+        help_text='Resolved canonical ProductCode from deterministic normalization.',
+    )
+    manual_resolution_status = models.CharField(
+        max_length=20,
+        choices=ManualResolutionStatus.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Manual review outcome recorded without altering deterministic normalization audit fields.',
+    )
+    manual_resolved_product_code = models.ForeignKey(
+        'pricing_v4.ProductCode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='spe_manual_resolved_charge_lines',
+        help_text='Canonical ProductCode selected during manual SPOT charge review.',
+    )
+    manual_resolution_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+        help_text='User who manually reviewed or resolved this charge line.',
+    )
+    manual_resolution_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Timestamp when manual SPOT charge review was saved.',
+    )
     
     # === Original fields ===
     
@@ -352,6 +447,47 @@ class SPEChargeLineDB(models.Model):
         ordering = ['bucket', 'entered_at']
         verbose_name = 'SPE Charge Line'
         verbose_name_plural = 'SPE Charge Lines'
+
+    @property
+    def effective_resolved_product_code(self):
+        return self.manual_resolved_product_code or self.resolved_product_code
+
+    @property
+    def effective_resolved_product_code_id(self):
+        return self.manual_resolved_product_code_id or self.resolved_product_code_id
+
+    @property
+    def effective_resolution_status(self):
+        if (
+            self.manual_resolution_status == self.ManualResolutionStatus.RESOLVED
+            and self.manual_resolved_product_code_id
+        ):
+            return self.ManualResolutionStatus.RESOLVED
+        return self.normalization_status
+
+    @property
+    def requires_review(self) -> bool:
+        if (
+            self.manual_resolution_status == self.ManualResolutionStatus.RESOLVED
+            and self.manual_resolved_product_code_id
+        ):
+            return False
+        return self.normalization_status in {
+            self.NormalizationStatus.UNMAPPED,
+            self.NormalizationStatus.AMBIGUOUS,
+        }
+
+    @property
+    def normalization_source_label(self) -> str:
+        return str(self.source_label or self.description or "")
+
+    def logical_identity_signature(self) -> tuple[str, str, str, str]:
+        return (
+            str(self.bucket or "").strip().lower(),
+            str(self.code or "").strip().upper(),
+            str(self.description or "").strip().upper(),
+            str(self.source_reference or "").strip().upper(),
+        )
     
     def __str__(self):
         return f"{self.bucket}: {self.description} ({self.amount} {self.currency})"

@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from core.models import Location
 from core.tests.helpers import create_location
-from pricing_v4.models import CommodityChargeRule, ProductCode
+from pricing_v4.models import ChargeAlias, CommodityChargeRule, ProductCode
 from services.models import ServiceComponent
 from quotes.completeness import (
     COMPONENT_FREIGHT,
@@ -146,6 +146,420 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         payload = response.json()
         self.assertTrue(payload["is_valid"])
         self.assertIsNone(payload["error"])
+
+    def test_create_spe_persists_normalization_metadata_without_breaking_manual_write_path(self):
+        product_code = ProductCode.objects.create(
+            id=1095,
+            code="EXP-FREIGHT-SPOT",
+            description="Export Freight Spot",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_FREIGHT,
+            is_gst_applicable=False,
+            gst_rate="0.00",
+            gst_treatment=ProductCode.GST_TREATMENT_ZERO_RATED,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit=ProductCode.UNIT_KG,
+        )
+        alias = ChargeAlias.objects.create(
+            alias_text="Airfreight",
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.EXPORT,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=product_code,
+            priority=10,
+        )
+
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Airfreight",
+                    "amount": 5,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {
+                "rate_validity_hours": 72,
+            },
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        payload_line = create_response.json()["charges"][0]
+        self.assertEqual(payload_line["description"], "Airfreight")
+        self.assertEqual(payload_line["source_reference"], "Agent email")
+        self.assertEqual(payload_line["source_label"], "Airfreight")
+        self.assertEqual(payload_line["normalized_label"], "airfreight")
+        self.assertEqual(payload_line["normalization_status"], "MATCHED")
+        self.assertEqual(payload_line["normalization_method"], "EXACT_ALIAS")
+        self.assertEqual(payload_line["matched_alias_id"], alias.id)
+        self.assertEqual(
+            payload_line["resolved_product_code"],
+            {
+                "id": product_code.id,
+                "code": product_code.code,
+                "description": product_code.description,
+            },
+        )
+        self.assertEqual(
+            payload_line["effective_resolved_product_code"],
+            {
+                "id": product_code.id,
+                "code": product_code.code,
+                "description": product_code.description,
+            },
+        )
+
+        spe = SpotPricingEnvelopeDB.objects.get(id=create_response.json()["id"])
+        line = spe.charge_lines.get()
+        self.assertEqual(line.source_label, "Airfreight")
+        self.assertEqual(line.normalized_label, "airfreight")
+        self.assertEqual(line.normalization_status, SPEChargeLineDB.NormalizationStatus.MATCHED)
+        self.assertEqual(line.normalization_method, SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS)
+        self.assertEqual(line.matched_alias_id, alias.id)
+        self.assertEqual(line.resolved_product_code_id, product_code.id)
+
+    def test_manual_resolution_endpoint_persists_review_metadata_and_returns_updated_charge_line(self):
+        manual_product_code = ProductCode.objects.create(
+            id=2095,
+            code="EXP-MANUAL-TERM",
+            description="Export Manual Terminal",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_HANDLING,
+            is_gst_applicable=False,
+            gst_rate="0.00",
+            gst_treatment=ProductCode.GST_TREATMENT_ZERO_RATED,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Unknown freight fee",
+                    "amount": 25,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][0]["id"]
+
+        manual_review_url = reverse(
+            "quotes:spot-charge-line-manual-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+        review_response = self.client.patch(
+            manual_review_url,
+            {"product_code_id": manual_product_code.id},
+            format="json",
+        )
+        self.assertEqual(review_response.status_code, status.HTTP_200_OK)
+        payload = review_response.json()
+        self.assertEqual(payload["normalization_status"], "UNMAPPED")
+        self.assertEqual(payload["manual_resolution_status"], "RESOLVED")
+        self.assertEqual(
+            payload["manual_resolved_product_code"],
+            {
+                "id": manual_product_code.id,
+                "code": manual_product_code.code,
+                "description": manual_product_code.description,
+            },
+        )
+        self.assertEqual(
+            payload["effective_resolved_product_code"],
+            {
+                "id": manual_product_code.id,
+                "code": manual_product_code.code,
+                "description": manual_product_code.description,
+            },
+        )
+        self.assertEqual(payload["effective_resolution_status"], "RESOLVED")
+        self.assertFalse(payload["requires_review"])
+        self.assertEqual(payload["manual_resolution_by_user_id"], str(self.user.id))
+        self.assertEqual(payload["manual_resolution_by_username"], self.user.username)
+        self.assertIsNotNone(payload["manual_resolution_at"])
+
+        line = SPEChargeLineDB.objects.get(id=charge_line_id)
+        self.assertEqual(line.manual_resolution_status, SPEChargeLineDB.ManualResolutionStatus.RESOLVED)
+        self.assertEqual(line.manual_resolved_product_code_id, manual_product_code.id)
+        self.assertEqual(line.manual_resolution_by_id, self.user.id)
+        self.assertIsNotNone(line.manual_resolution_at)
+
+        detail_url = reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": spe_id})
+        detail_response = self.client.get(detail_url, format="json")
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        detail_line = detail_response.json()["charges"][0]
+        self.assertEqual(detail_line["effective_resolution_status"], "RESOLVED")
+        self.assertFalse(detail_line["requires_review"])
+        self.assertEqual(detail_line["manual_resolution_status"], "RESOLVED")
+        self.assertEqual(detail_line["manual_resolved_product_code"]["code"], manual_product_code.code)
+        self.assertEqual(detail_line["effective_resolved_product_code"]["code"], manual_product_code.code)
+
+    def test_manual_resolution_endpoint_rejects_matched_lines(self):
+        product_code = ProductCode.objects.create(
+            id=3095,
+            code="EXP-FREIGHT-MATCHED",
+            description="Export Freight Matched",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_FREIGHT,
+            is_gst_applicable=False,
+            gst_rate="0.00",
+            gst_treatment=ProductCode.GST_TREATMENT_ZERO_RATED,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit=ProductCode.UNIT_KG,
+        )
+        ChargeAlias.objects.create(
+            alias_text="Airfreight",
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.EXPORT,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=product_code,
+            priority=10,
+        )
+
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Airfreight",
+                    "amount": 5,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][0]["id"]
+
+        manual_review_url = reverse(
+            "quotes:spot-charge-line-manual-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+        review_response = self.client.patch(
+            manual_review_url,
+            {"product_code_id": product_code.id},
+            format="json",
+        )
+        self.assertEqual(review_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("UNMAPPED or AMBIGUOUS", review_response.json()["error"])
+
+    def test_patch_preserves_manual_resolution_metadata_for_existing_charge_lines(self):
+        manual_product_code = ProductCode.objects.create(
+            id=4095,
+            code="EXP-MANUAL-PATCH",
+            description="Export Manual Patch Preserve",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_HANDLING,
+            is_gst_applicable=False,
+            gst_rate="0.00",
+            gst_treatment=ProductCode.GST_TREATMENT_ZERO_RATED,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Unknown patch freight",
+                    "amount": 25,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        initial_line = create_response.json()["charges"][0]
+
+        manual_review_url = reverse(
+            "quotes:spot-charge-line-manual-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": initial_line["id"]},
+        )
+        review_response = self.client.patch(
+            manual_review_url,
+            {"product_code_id": manual_product_code.id},
+            format="json",
+        )
+        self.assertEqual(review_response.status_code, status.HTTP_200_OK)
+
+        patch_url = reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": spe_id})
+        patch_response = self.client.patch(
+            patch_url,
+            {
+                "charges": [
+                    {
+                        "charge_line_id": initial_line["id"],
+                        "code": initial_line["code"],
+                        "description": initial_line["description"],
+                        "amount": 30,
+                        "currency": initial_line["currency"],
+                        "unit": initial_line["unit"],
+                        "bucket": initial_line["bucket"],
+                        "is_primary_cost": initial_line["is_primary_cost"],
+                        "conditional": initial_line["conditional"],
+                        "source_reference": initial_line["source_reference"],
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(patch_response.status_code, status.HTTP_200_OK)
+        payload_line = patch_response.json()["charges"][0]
+        self.assertEqual(payload_line["id"], initial_line["id"])
+        self.assertEqual(payload_line["amount"], "30.00")
+        self.assertEqual(payload_line["normalization_status"], "UNMAPPED")
+        self.assertEqual(payload_line["manual_resolution_status"], "RESOLVED")
+        self.assertEqual(payload_line["manual_resolved_product_code"]["id"], manual_product_code.id)
+        self.assertEqual(payload_line["effective_resolved_product_code"]["id"], manual_product_code.id)
+
+        line = SpotPricingEnvelopeDB.objects.get(id=spe_id).charge_lines.get()
+        self.assertEqual(line.amount, 30)
+        self.assertEqual(str(line.id), initial_line["id"])
+        self.assertEqual(line.manual_resolution_status, SPEChargeLineDB.ManualResolutionStatus.RESOLVED)
+        self.assertEqual(line.manual_resolved_product_code_id, manual_product_code.id)
+
+    def test_patch_matches_existing_charge_line_by_signature_when_charge_line_id_missing(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Fallback Signature Freight",
+                    "amount": 25,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        initial_line = create_response.json()["charges"][0]
+
+        patch_url = reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": spe_id})
+        patch_response = self.client.patch(
+            patch_url,
+            {
+                "charges": [
+                    {
+                        "code": initial_line["code"],
+                        "description": initial_line["description"],
+                        "amount": 40,
+                        "currency": initial_line["currency"],
+                        "unit": initial_line["unit"],
+                        "bucket": initial_line["bucket"],
+                        "is_primary_cost": initial_line["is_primary_cost"],
+                        "conditional": initial_line["conditional"],
+                        "source_reference": initial_line["source_reference"],
+                    }
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(patch_response.status_code, status.HTTP_200_OK)
+        payload_line = patch_response.json()["charges"][0]
+        self.assertEqual(payload_line["id"], initial_line["id"])
+        self.assertEqual(payload_line["amount"], "40.00")
+
+        line = SpotPricingEnvelopeDB.objects.get(id=spe_id).charge_lines.get()
+        self.assertEqual(str(line.id), initial_line["id"])
+        self.assertEqual(line.amount, 40)
 
     @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
     def test_evaluate_trigger_requires_payment_term(self, mock_outcomes):

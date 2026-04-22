@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import logging
+import hashlib
 import json
 import uuid
 from typing import Optional
@@ -31,6 +32,7 @@ from rest_framework.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 
 from core.security import validate_pdf_upload
+from pricing_v4.models import ChargeAlias, ProductCode
 from quotes.spot_services import (
     ScopeValidator,
     SpotTriggerEvaluator,
@@ -59,13 +61,14 @@ from quotes.intake_safety import (
     mark_source_analysis_review,
     normalize_source_analysis_summary,
 )
-from quotes.serializers import SpotPricingEnvelopeSerializer
+from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer
 from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
 )
 from quotes.selectors import get_quote_for_user
 from quotes.currency_rules import determine_quote_currency
+from quotes.services.charge_normalization import resolve_charge_alias
 
 
 logger = logging.getLogger(__name__)
@@ -97,6 +100,10 @@ def _get_spe_or_404(user, envelope_id, queryset=None):
 def _spe_queryset():
     return SpotPricingEnvelopeDB.objects.prefetch_related(
         'charge_lines__source_batch',
+        'charge_lines__matched_alias',
+        'charge_lines__resolved_product_code',
+        'charge_lines__manual_resolved_product_code',
+        'charge_lines__manual_resolution_by',
         'source_batches__charge_lines',
         'acknowledgement',
     )
@@ -172,6 +179,354 @@ def _default_source_label(source_kind: str, target_bucket: str) -> str:
         SPESourceBatchDB.SourceKind.OTHER: "Other",
     }
     return f"{kind_prefix.get(source_kind, 'Other')} {bucket_labels.get(target_bucket, 'Source')}"
+
+
+def _charge_direction_scope_for_bucket(bucket: Optional[str]) -> str:
+    bucket_value = str(bucket or "").strip().lower()
+    if bucket_value == SPEChargeLineDB.Bucket.ORIGIN_CHARGES:
+        return ChargeAlias.DirectionScope.ORIGIN
+    if bucket_value == SPEChargeLineDB.Bucket.AIRFREIGHT:
+        return ChargeAlias.DirectionScope.MAIN
+    if bucket_value == SPEChargeLineDB.Bucket.DESTINATION_CHARGES:
+        return ChargeAlias.DirectionScope.DESTINATION
+    return ChargeAlias.DirectionScope.ANY
+
+
+def _charge_mode_scope_for_context(shipment_context: Optional[dict]) -> str:
+    if not shipment_context:
+        return ChargeAlias.ModeScope.ANY
+
+    origin_country, destination_country = _resolve_country_pair(
+        shipment_context.get("origin_country"),
+        shipment_context.get("destination_country"),
+        origin_code=shipment_context.get("origin_code"),
+        destination_code=shipment_context.get("destination_code"),
+    )
+    return _infer_shipment_type(origin_country, destination_country)
+
+
+def _resolve_spe_charge_normalization_fields(
+    charge: dict,
+    *,
+    shipment_context: Optional[dict],
+    existing_line: Optional[SPEChargeLineDB] = None,
+    manual_resolution_source: Optional[SPEChargeLineDB] = None,
+) -> dict:
+    preserved_manual_resolution = {}
+    if manual_resolution_source is not None:
+        preserved_manual_resolution = {
+            "manual_resolution_status": manual_resolution_source.manual_resolution_status,
+            "manual_resolved_product_code": manual_resolution_source.manual_resolved_product_code,
+            "manual_resolution_by": manual_resolution_source.manual_resolution_by,
+            "manual_resolution_at": manual_resolution_source.manual_resolution_at,
+        }
+
+    if existing_line is not None:
+        return {
+            "source_label": existing_line.source_label,
+            "normalized_label": existing_line.normalized_label,
+            "normalization_status": existing_line.normalization_status,
+            "normalization_method": existing_line.normalization_method,
+            "matched_alias": existing_line.matched_alias,
+            "resolved_product_code": existing_line.resolved_product_code,
+            **preserved_manual_resolution,
+        }
+
+    raw_label = str(charge.get("source_label") or charge.get("description") or "")
+    normalization_result = resolve_charge_alias(
+        raw_label,
+        mode_scope=_charge_mode_scope_for_context(shipment_context),
+        direction_scope=_charge_direction_scope_for_bucket(charge.get("bucket")),
+    )
+    return {
+        "source_label": raw_label,
+        "normalized_label": normalization_result.normalized_label,
+        "normalization_status": normalization_result.normalization_status.value,
+        "normalization_method": normalization_result.normalization_method.value,
+        "matched_alias": normalization_result.resolved_charge_alias,
+        "resolved_product_code": normalization_result.resolved_product_code,
+        "manual_resolution_status": None,
+        "manual_resolved_product_code": None,
+        "manual_resolution_by": None,
+        "manual_resolution_at": None,
+        **preserved_manual_resolution,
+    }
+
+
+def _incoming_charge_source_label(charge: dict) -> str:
+    return str(charge.get("source_label") or charge.get("description") or "")
+
+
+def _normalize_reconciliation_value(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _source_line_fingerprint_payload(charge: dict) -> dict:
+    return {
+        "bucket": _normalize_reconciliation_value(charge.get("bucket")),
+        "code": str(charge.get("code") or "").strip().upper(),
+        "currency": str(charge.get("currency") or "").strip().upper(),
+        "unit": _normalize_reconciliation_value(charge.get("unit")),
+        "is_primary_cost": bool(charge.get("is_primary_cost", False)),
+        "conditional": bool(charge.get("conditional", False)),
+        "calculation_type": _normalize_reconciliation_value(charge.get("calculation_type")),
+        "unit_type": _normalize_reconciliation_value(charge.get("unit_type")),
+        "exclude_from_totals": bool(charge.get("exclude_from_totals", False)),
+        "percent_basis": _normalize_reconciliation_value(charge.get("percent_basis")),
+        "has_min_charge": charge.get("min_charge") not in (None, ""),
+        "has_min_amount": charge.get("min_amount") not in (None, ""),
+        "has_max_amount": charge.get("max_amount") not in (None, ""),
+        "has_percent": charge.get("percent") not in (None, ""),
+    }
+
+
+def _build_source_line_fingerprint(charge: dict) -> str:
+    payload = json.dumps(
+        _source_line_fingerprint_payload(charge),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _incoming_charge_source_line_identity(charge: dict) -> str:
+    explicit_identity = str(charge.get("source_line_identity") or "").strip()
+    if explicit_identity:
+        return explicit_identity[:255]
+    return f"fp:{_build_source_line_fingerprint(charge)}"
+
+
+def _existing_line_source_line_identity(line: SPEChargeLineDB) -> str:
+    explicit_identity = str(line.source_line_identity or "").strip()
+    if explicit_identity:
+        return explicit_identity
+    return _incoming_charge_source_line_identity(
+        {
+            "bucket": line.bucket,
+            "code": line.code,
+            "currency": line.currency,
+            "unit": line.unit,
+            "is_primary_cost": line.is_primary_cost,
+            "conditional": line.conditional,
+            "calculation_type": line.calculation_type,
+            "unit_type": line.unit_type,
+            "exclude_from_totals": line.exclude_from_totals,
+            "percent_basis": line.percent_basis,
+            "min_charge": line.min_charge,
+            "min_amount": line.min_amount,
+            "max_amount": line.max_amount,
+            "percent": line.percent,
+        }
+    )
+
+
+def _incoming_charge_logical_identity_signature(charge: dict) -> tuple[str, str, str, str]:
+    return (
+        str(charge.get("bucket") or "").strip().lower(),
+        str(charge.get("code") or "").strip().upper(),
+        str(charge.get("description") or "").strip().upper(),
+        str(charge.get("source_reference") or "").strip().upper(),
+    )
+
+
+def _should_preserve_existing_line_audit(existing_line: SPEChargeLineDB, charge: dict) -> bool:
+    incoming_source_label = _incoming_charge_source_label(charge)
+    incoming_bucket = str(charge.get("bucket") or "").strip().lower()
+    return (
+        existing_line.normalization_source_label == incoming_source_label
+        and str(existing_line.bucket or "").strip().lower() == incoming_bucket
+    )
+
+
+def _build_spe_charge_line_field_values(
+    *,
+    spe_db: SpotPricingEnvelopeDB,
+    charge: dict,
+    entered_by,
+    entered_at,
+    shipment_context: Optional[dict],
+    source_batch: Optional[SPESourceBatchDB] = None,
+    existing_line: Optional[SPEChargeLineDB] = None,
+):
+    audit_source_line = (
+        existing_line
+        if existing_line is not None and _should_preserve_existing_line_audit(existing_line, charge)
+        else None
+    )
+    return {
+        "envelope": spe_db,
+        "source_batch": source_batch,
+        "code": charge["code"],
+        "description": charge["description"],
+        "amount": charge["amount"],
+        "currency": charge["currency"],
+        "unit": charge["unit"],
+        "bucket": charge["bucket"],
+        "is_primary_cost": charge.get("is_primary_cost", False),
+        "conditional": charge.get("conditional", False),
+        "min_charge": charge.get("min_charge"),
+        "note": charge.get("note") or "",
+        "exclude_from_totals": charge.get("exclude_from_totals", False),
+        "percentage_basis": charge.get("percentage_basis"),
+        "calculation_type": charge.get("calculation_type"),
+        "unit_type": charge.get("unit_type"),
+        "rate": charge.get("rate"),
+        "min_amount": charge.get("min_amount"),
+        "max_amount": charge.get("max_amount"),
+        "percent": charge.get("percent"),
+        "percent_basis": charge.get("percent_basis"),
+        "rule_meta": charge.get("rule_meta") or {},
+        "source_reference": charge["source_reference"],
+        "source_line_identity": _incoming_charge_source_line_identity(charge),
+        "entered_by": entered_by,
+        "entered_at": entered_at,
+        **_resolve_spe_charge_normalization_fields(
+            charge,
+            shipment_context=shipment_context,
+            existing_line=audit_source_line,
+            manual_resolution_source=existing_line,
+        ),
+    }
+
+
+def _create_spe_charge_line(
+    *,
+    spe_db: SpotPricingEnvelopeDB,
+    charge: dict,
+    entered_by,
+    entered_at,
+    shipment_context: Optional[dict],
+    source_batch: Optional[SPESourceBatchDB] = None,
+    existing_line: Optional[SPEChargeLineDB] = None,
+):
+    return SPEChargeLineDB.objects.create(
+        **_build_spe_charge_line_field_values(
+            spe_db=spe_db,
+            charge=charge,
+            entered_by=entered_by,
+            entered_at=entered_at,
+            shipment_context=shipment_context,
+            source_batch=source_batch,
+            existing_line=existing_line,
+        )
+    )
+
+
+def _update_spe_charge_line(
+    *,
+    existing_line: SPEChargeLineDB,
+    spe_db: SpotPricingEnvelopeDB,
+    charge: dict,
+    entered_by,
+    entered_at,
+    shipment_context: Optional[dict],
+    source_batch: Optional[SPESourceBatchDB] = None,
+):
+    field_values = _build_spe_charge_line_field_values(
+        spe_db=spe_db,
+        charge=charge,
+        entered_by=entered_by,
+        entered_at=entered_at,
+        shipment_context=shipment_context,
+        source_batch=source_batch,
+        existing_line=existing_line,
+    )
+
+    for field_name, value in field_values.items():
+        setattr(existing_line, field_name, value)
+
+    existing_line.save(update_fields=list(field_values.keys()))
+    return existing_line
+
+
+def _reconcile_spe_charge_lines(
+    *,
+    spe_db: SpotPricingEnvelopeDB,
+    existing_lines: list[SPEChargeLineDB],
+    incoming_charges: list[dict],
+    entered_by,
+    entered_at,
+    shipment_context: Optional[dict],
+    source_batch: Optional[SPESourceBatchDB] = None,
+):
+    def _select_unique_unmatched_candidate(candidates):
+        unmatched_candidates = [
+            candidate
+            for candidate in candidates
+            if str(candidate.id) not in matched_existing_line_ids
+        ]
+        if len(unmatched_candidates) == 1:
+            return unmatched_candidates[0]
+        return None
+
+    existing_lines_by_id = {
+        str(line.id): line
+        for line in existing_lines
+    }
+    existing_lines_by_source_identity = {}
+    for line in existing_lines:
+        existing_lines_by_source_identity.setdefault(
+            _existing_line_source_line_identity(line),
+            [],
+        ).append(line)
+    existing_lines_by_signature = {}
+    for line in existing_lines:
+        existing_lines_by_signature.setdefault(line.logical_identity_signature(), []).append(line)
+
+    matched_existing_line_ids = set()
+
+    for charge in incoming_charges:
+        existing_line = existing_lines_by_id.get(
+            str(charge.get("charge_line_id") or "").strip()
+        )
+        if existing_line is None:
+            source_line_identity = _incoming_charge_source_line_identity(charge)
+            existing_line = _select_unique_unmatched_candidate(
+                existing_lines_by_source_identity.get(source_line_identity, [])
+            )
+        if existing_line is None:
+            signature = _incoming_charge_logical_identity_signature(charge)
+            existing_line = _select_unique_unmatched_candidate(
+                existing_lines_by_signature.get(signature, [])
+            )
+
+        if existing_line is not None:
+            matched_existing_line_ids.add(str(existing_line.id))
+            _update_spe_charge_line(
+                existing_line=existing_line,
+                spe_db=spe_db,
+                charge=charge,
+                entered_by=entered_by,
+                entered_at=entered_at,
+                shipment_context=shipment_context,
+                source_batch=source_batch,
+            )
+            continue
+
+        created_line = _create_spe_charge_line(
+            spe_db=spe_db,
+            charge=charge,
+            entered_by=entered_by,
+            entered_at=entered_at,
+            shipment_context=shipment_context,
+            source_batch=source_batch,
+        )
+        matched_existing_line_ids.add(str(created_line.id))
+
+    for line in existing_lines:
+        if str(line.id) not in matched_existing_line_ids:
+            line.delete()
+
+
+def _coerce_product_code_id(value) -> Optional[int]:
+    if value in (None, "", {}):
+        return None
+    if isinstance(value, dict):
+        value = value.get("id")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _get_or_create_source_batch(
@@ -753,31 +1108,18 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 min_amount_val = charge.get('min_amount') if charge.get('min_amount') not in ("", None) else None
                 max_amount_val = charge.get('max_amount') if charge.get('max_amount') not in ("", None) else None
                 percent_val = charge.get('percent') if charge.get('percent') not in ("", None) else None
-                SPEChargeLineDB.objects.create(
-                    envelope=spe_db,
-                    code=charge['code'],
-                    description=charge['description'],
-                    amount=charge['amount'],
-                    currency=charge['currency'],
-                    unit=charge['unit'],
-                    bucket=charge['bucket'],
-                    is_primary_cost=charge.get('is_primary_cost', False),
-                    conditional=charge.get('conditional', False),
-                    min_charge=charge.get('min_charge'),
-                    note=charge.get('note') or "",
-                    exclude_from_totals=charge.get('exclude_from_totals', False),
-                    percentage_basis=charge.get('percentage_basis'),
-                    calculation_type=charge.get('calculation_type'),
-                    unit_type=charge.get('unit_type'),
-                    rate=rate_val,
-                    min_amount=min_amount_val,
-                    max_amount=max_amount_val,
-                    percent=percent_val,
-                    percent_basis=charge.get('percent_basis'),
-                    rule_meta=charge.get('rule_meta') or {},
-                    source_reference=charge['source_reference'],
+                _create_spe_charge_line(
+                    spe_db=spe_db,
+                    charge={
+                        **charge,
+                        'rate': rate_val,
+                        'min_amount': min_amount_val,
+                        'max_amount': max_amount_val,
+                        'percent': percent_val,
+                    },
                     entered_by=request.user,
                     entered_at=now,
+                    shipment_context=ctx,
                 )
             
             # Validate via Pydantic (will raise if invalid)
@@ -912,7 +1254,8 @@ class SpotEnvelopeDetailAPIView(APIView):
                     except (InvalidOperation, ValueError):
                         return None
 
-                spe_db.charge_lines.all().delete()
+                existing_lines = list(spe_db.charge_lines.all())
+                normalized_charges = []
 
                 for charge in data['charges']:
                     amount_val = _to_decimal(charge.get('amount'))
@@ -937,32 +1280,26 @@ class SpotEnvelopeDetailAPIView(APIView):
                     elif unit_val == 'flat':
                         unit_val = 'flat'
 
-                    SPEChargeLineDB.objects.create(
-                        envelope=spe_db,
-                        code=charge['code'],
-                        description=charge['description'],
-                        amount=amount_val,
-                        currency=charge['currency'],
-                        unit=unit_val,
-                        bucket=charge['bucket'],
-                        is_primary_cost=charge.get('is_primary_cost', False),
-                        conditional=charge.get('conditional', False),
-                        min_charge=min_charge_val,
-                        note=charge.get('note') or "",
-                        exclude_from_totals=charge.get('exclude_from_totals', False),
-                        percentage_basis=charge.get('percentage_basis'),
-                        calculation_type=charge.get('calculation_type'),
-                        unit_type=charge.get('unit_type'),
-                        rate=rate_val,
-                        min_amount=min_amount_val,
-                        max_amount=max_amount_val,
-                        percent=percent_val,
-                        percent_basis=charge.get('percent_basis'),
-                        rule_meta=charge.get('rule_meta') or {},
-                        source_reference=charge['source_reference'],
-                        entered_by=request.user,
-                        entered_at=now,
-                    )
+                    normalized_charge = {
+                        **charge,
+                        'amount': amount_val,
+                        'unit': unit_val,
+                        'min_charge': min_charge_val,
+                        'rate': rate_val,
+                        'min_amount': min_amount_val,
+                        'max_amount': max_amount_val,
+                        'percent': percent_val,
+                    }
+                    normalized_charges.append(normalized_charge)
+
+                _reconcile_spe_charge_lines(
+                    spe_db=spe_db,
+                    existing_lines=existing_lines,
+                    incoming_charges=normalized_charges,
+                    entered_by=request.user,
+                    entered_at=now,
+                    shipment_context=spe_db.shipment_context_json,
+                )
 
             spe_db.save()
             SpotEnvelopeListCreateAPIView()._validate_spe(spe_db)
@@ -989,6 +1326,66 @@ class SpotEnvelopeDetailAPIView(APIView):
             
         spe_db.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SpotChargeLineManualResolutionAPIView(APIView):
+    """
+    PATCH /api/v3/spot/envelopes/<id>/charges/<charge_line_id>/manual-resolution/
+
+    Persist a manual ProductCode selection for unresolved deterministic charge lines.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, envelope_id, charge_line_id):
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
+            _spe_queryset(),
+        )
+
+        if spe_db.status != 'draft':
+            return Response(
+                {'error': f"Cannot manually review charges in status '{spe_db.status}'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        charge_line = get_object_or_404(spe_db.charge_lines, id=charge_line_id)
+
+        if charge_line.normalization_status not in {
+            SPEChargeLineDB.NormalizationStatus.UNMAPPED,
+            SPEChargeLineDB.NormalizationStatus.AMBIGUOUS,
+        }:
+            return Response(
+                {'error': 'Manual review is only available for UNMAPPED or AMBIGUOUS charge lines.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        product_code_id = _coerce_product_code_id(request.data.get("product_code_id"))
+        if product_code_id is None:
+            return Response(
+                {'error': 'product_code_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        manual_product_code = get_object_or_404(ProductCode, id=product_code_id)
+        charge_line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+        charge_line.manual_resolved_product_code = manual_product_code
+        charge_line.manual_resolution_by = request.user
+        charge_line.manual_resolution_at = timezone.now()
+        charge_line.save(
+            update_fields=[
+                "manual_resolution_status",
+                "manual_resolved_product_code",
+                "manual_resolution_by",
+                "manual_resolution_at",
+            ]
+        )
+
+        charge_line.refresh_from_db()
+        serializer = SPEChargeLineSerializer(charge_line)
+        return Response(serializer.data)
 
 
 class SpotEnvelopeAcknowledgeAPIView(APIView):
@@ -1475,8 +1872,8 @@ class SpotReplyAnalysisAPIView(APIView):
                 )
 
                 now = timezone.now()
-                # Replace only this batch's prior AI-imported lines.
-                batch.charge_lines.all().delete()
+                existing_batch_lines = list(batch.charge_lines.all())
+                normalized_auto_charges = []
 
                 if auto_charges:
                     for charge in auto_charges:
@@ -1485,34 +1882,27 @@ class SpotReplyAnalysisAPIView(APIView):
                             continue
 
                         min_charge_val = _to_decimal(charge.get("min_charge"))
-
-                        SPEChargeLineDB.objects.create(
-                            envelope=spe_db,
-                            source_batch=batch,
-                            code=charge["code"],
-                            description=charge["description"],
-                            amount=amount_val,
-                            currency=charge["currency"],
-                            unit=charge["unit"],
-                            bucket=charge["bucket"],
-                            is_primary_cost=charge.get("is_primary_cost", False),
-                            conditional=charge.get("conditional", False),
-                            min_charge=min_charge_val,
-                            note=charge.get("note") or "",
-                            exclude_from_totals=charge.get("exclude_from_totals", False),
-                            percentage_basis=charge.get("percentage_basis"),
-                            calculation_type=charge.get("calculation_type"),
-                            unit_type=charge.get("unit_type"),
-                            rate=_to_decimal(charge.get("rate")),
-                            min_amount=_to_decimal(charge.get("min_amount")),
-                            max_amount=_to_decimal(charge.get("max_amount")),
-                            percent=_to_decimal(charge.get("percent")),
-                            percent_basis=charge.get("percent_basis"),
-                            rule_meta=charge.get("rule_meta") or {},
-                            source_reference=charge["source_reference"],
-                            entered_by=request.user,
-                            entered_at=now,
+                        normalized_auto_charges.append(
+                            {
+                                **charge,
+                                "amount": amount_val,
+                                "min_charge": min_charge_val,
+                                "rate": _to_decimal(charge.get("rate")),
+                                "min_amount": _to_decimal(charge.get("min_amount")),
+                                "max_amount": _to_decimal(charge.get("max_amount")),
+                                "percent": _to_decimal(charge.get("percent")),
+                            }
                         )
+
+                _reconcile_spe_charge_lines(
+                    spe_db=spe_db,
+                    existing_lines=existing_batch_lines,
+                    incoming_charges=normalized_auto_charges,
+                    entered_by=request.user,
+                    entered_at=now,
+                    shipment_context=shipment_context,
+                    source_batch=batch,
+                )
 
                 # Update conditional flag in SPE conditions
                 if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():

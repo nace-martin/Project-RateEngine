@@ -578,6 +578,24 @@ class SPESourceBatchSerializer(serializers.ModelSerializer):
         return self._summary(obj)["requires_review_note"]
 
 
+class SPEProductCodeSummarySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    code = serializers.CharField()
+    description = serializers.CharField()
+
+
+def _serialize_spe_product_code_summary(product_code):
+    if not product_code:
+        return None
+    return SPEProductCodeSummarySerializer(
+        {
+            'id': product_code.id,
+            'code': product_code.code,
+            'description': product_code.description,
+        }
+    ).data
+
+
 class SPEChargeLineSerializer(serializers.ModelSerializer):
     source_batch_id = serializers.SerializerMethodField()
     source_batch_label = serializers.SerializerMethodField()
@@ -588,6 +606,14 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
     max_amount = serializers.SerializerMethodField()
     percent = serializers.SerializerMethodField()
     rule_display = serializers.SerializerMethodField()
+    matched_alias_id = serializers.SerializerMethodField()
+    resolved_product_code = serializers.SerializerMethodField()
+    effective_resolved_product_code = serializers.SerializerMethodField()
+    effective_resolution_status = serializers.SerializerMethodField()
+    requires_review = serializers.SerializerMethodField()
+    manual_resolved_product_code = serializers.SerializerMethodField()
+    manual_resolution_by_user_id = serializers.SerializerMethodField()
+    manual_resolution_by_username = serializers.SerializerMethodField()
     
     class Meta:
         model = SPEChargeLineDB
@@ -595,6 +621,13 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
             'id', 'code', 'description', 'amount', 'currency', 'unit',
             'bucket', 'is_primary_cost', 'conditional', 'min_charge',
             'note', 'exclude_from_totals', 'percentage_basis', 'source_reference',
+            'source_label', 'normalized_label', 'normalization_status',
+            'normalization_method', 'matched_alias_id', 'resolved_product_code',
+            'effective_resolved_product_code', 'effective_resolution_status',
+            'requires_review',
+            'manual_resolution_status', 'manual_resolved_product_code',
+            'manual_resolution_by_user_id', 'manual_resolution_by_username',
+            'manual_resolution_at',
             'source_batch_id', 'source_batch_label',
             'calculation_type', 'unit_type', 'rate', 'min_amount', 'max_amount',
             'percent', 'percent_basis', 'rule_meta', 'rule_display'
@@ -605,6 +638,32 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
 
     def get_source_batch_label(self, obj):
         return obj.source_batch.label if obj.source_batch_id else None
+
+    def get_matched_alias_id(self, obj):
+        return obj.matched_alias_id
+
+    def get_resolved_product_code(self, obj):
+        return _serialize_spe_product_code_summary(obj.resolved_product_code)
+
+    def get_effective_resolved_product_code(self, obj):
+        return _serialize_spe_product_code_summary(obj.effective_resolved_product_code)
+
+    def get_effective_resolution_status(self, obj):
+        return obj.effective_resolution_status
+
+    def get_requires_review(self, obj):
+        return obj.requires_review
+
+    def get_manual_resolved_product_code(self, obj):
+        return _serialize_spe_product_code_summary(obj.manual_resolved_product_code)
+
+    def get_manual_resolution_by_user_id(self, obj):
+        return str(obj.manual_resolution_by_id) if obj.manual_resolution_by_id else None
+
+    def get_manual_resolution_by_username(self, obj):
+        if not obj.manual_resolution_by_id:
+            return None
+        return getattr(obj.manual_resolution_by, 'username', None)
 
     def get_amount(self, obj):
         # Return as string to match original serialization

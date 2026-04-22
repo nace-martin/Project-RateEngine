@@ -464,7 +464,9 @@ export default function SpotRateEntryPage() {
     }, [editableBuckets, sourceReviewSummaries]);
 
     // Handle saving charges, acknowledging, and creating the final quote in one flow
-    const handleSaveAndCreateQuote = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
+    const handleSaveAndCreateQuote = async (
+        charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>
+    ) => {
         if (state.spe) {
             if (quoteCreationBlocked) {
                 return;
@@ -505,7 +507,9 @@ export default function SpotRateEntryPage() {
     };
 
     // Handle saving draft without creating quote
-    const handleSaveDraft = async (charges: Omit<SPEChargeLine, 'id'>[]) => {
+    const handleSaveDraft = async (
+        charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>
+    ) => {
         if (state.spe) {
             await actions.updateSPE(state.spe.id, {
                 charges,
@@ -943,6 +947,8 @@ export default function SpotRateEntryPage() {
                         submitDisabled={quoteCreationBlocked}
                         submitDisabledReason={quoteCreationBlocked ? "Quote creation is temporarily unavailable." : null}
                         onSaveDraft={handleSaveDraft}
+                        onManualResolveChargeLine={actions.manuallyResolveChargeLine}
+                        productCodeDomain={resolvedShipmentType}
                     />
 
                     {/* Static disclaimer (acknowledgement is recorded on submit in backend flow) */}

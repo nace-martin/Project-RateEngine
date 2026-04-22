@@ -51,6 +51,14 @@ export const SPOT_SUPPORTED_CURRENCIES = [
 
 export type SpotCurrency = typeof SPOT_SUPPORTED_CURRENCIES[number];
 
+export type ChargeNormalizationStatus = 'MATCHED' | 'UNMAPPED' | 'AMBIGUOUS';
+
+export interface SPEProductCodeSummary {
+    id: number;
+    code: string;
+    description: string;
+}
+
 // =============================================================================
 // API REQUEST/RESPONSE TYPES
 // =============================================================================
@@ -140,6 +148,17 @@ export interface SPEChargeLine {
     note?: string;
     exclude_from_totals?: boolean;
     percentage_basis?: string;
+    source_label?: string;
+    normalized_label?: string;
+    normalization_status?: ChargeNormalizationStatus | null;
+    normalization_method?: string | null;
+    matched_alias_id?: number | null;
+    resolved_product_code?: SPEProductCodeSummary | null;
+    manual_resolution_status?: 'RESOLVED' | null;
+    manual_resolved_product_code?: SPEProductCodeSummary | null;
+    manual_resolution_by_user_id?: string | null;
+    manual_resolution_by_username?: string | null;
+    manual_resolution_at?: string | null;
 }
 
 /** SPE conditions */
@@ -415,8 +434,18 @@ export interface SpotModeActions {
     checkScope: (origin: string, destination: string) => Promise<boolean>;
     evaluateTrigger: (request: TriggerEvaluateRequest) => Promise<boolean>;
     createSPE: (request: CreateSPERequest) => Promise<SpotPricingEnvelope | null>;
-    updateSPE: (id: string, data: { charges?: Omit<SPEChargeLine, 'id'>[]; conditions?: Partial<SPEConditions> }) => Promise<SpotPricingEnvelope | null>;
+    updateSPE: (
+        id: string,
+        data: {
+            charges?: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>;
+            conditions?: Partial<SPEConditions>;
+        }
+    ) => Promise<SpotPricingEnvelope | null>;
     loadSPE: (id: string) => Promise<SpotPricingEnvelope | null>;
+    manuallyResolveChargeLine: (
+        chargeLineId: string,
+        request: { product_code_id: number | string }
+    ) => Promise<SPEChargeLine | null>;
     submitAcknowledgement: () => Promise<boolean>;
     reviewSourceBatch: (sourceBatchId: string, request: { reviewed_safe_to_quote: boolean; review_note?: string }) => Promise<SpotPricingEnvelope | null>;
     computeQuote: (request: SPEComputeRequest) => Promise<SPEComputeResponse | null>;

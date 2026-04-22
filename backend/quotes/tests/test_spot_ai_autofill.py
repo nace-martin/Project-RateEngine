@@ -20,6 +20,7 @@ from core.dataclasses import (
 from core.models import Currency, Country, Location
 from core.tests.helpers import create_location
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
+from pricing_v4.models import ChargeAlias, ProductCode
 from quotes.completeness import (
     evaluate_from_lines,
     COMPONENT_DESTINATION_LOCAL,
@@ -98,6 +99,26 @@ def _create_spe(
         spot_trigger_reason_text="Missing required rate components",
         created_by=user,
         expires_at=timezone.now() + timedelta(hours=72),
+    )
+
+
+def _create_product_code(*, id_: int, code: str, description: str, domain: str, category: str) -> ProductCode:
+    return ProductCode.objects.create(
+        id=id_,
+        code=code,
+        description=description,
+        domain=domain,
+        category=category,
+        is_gst_applicable=(domain != ProductCode.DOMAIN_EXPORT),
+        gst_rate='0.10' if domain != ProductCode.DOMAIN_EXPORT else '0.00',
+        gst_treatment=(
+            ProductCode.GST_TREATMENT_STANDARD
+            if domain != ProductCode.DOMAIN_EXPORT
+            else ProductCode.GST_TREATMENT_ZERO_RATED
+        ),
+        gl_revenue_code='4100',
+        gl_cost_code='5100',
+        default_unit=ProductCode.UNIT_SHIPMENT,
     )
 
 
@@ -199,6 +220,31 @@ def _analysis_result_with_components():
     )
 
 
+def _single_destination_analysis_result(
+    label: str = "Destination handling",
+    amount: str = "75.00",
+    source_line: int | None = None,
+    rate_unit: str = "flat",
+):
+    return ReplyAnalysisResult(
+        raw_text=f"{label} {amount}",
+        assertions=[
+            ExtractedAssertion(
+                text=label,
+                category=AssertionCategory.DEST_CHARGES,
+                status=AssertionStatus.CONFIRMED,
+                confidence=0.95,
+                source_line=source_line,
+                rate_amount=Decimal(amount),
+                rate_currency="USD",
+                rate_unit=rate_unit,
+            )
+        ],
+        summary=AnalysisSummary(has_rate=False, has_currency=True),
+        warnings=[],
+    )
+
+
 def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_spe(
@@ -242,6 +288,205 @@ def test_ai_reply_analysis_autopopulates_spe_charges(monkeypatch):
     assert COMPONENT_ORIGIN_LOCAL in {c.code for c in charges}
     assert COMPONENT_DESTINATION_LOCAL in {c.code for c in charges}
     assert any(c.is_primary_cost for c in charges if c.bucket == "airfreight")
+
+
+def test_ai_reply_analysis_persists_matched_charge_alias_metadata(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        status="draft",
+        missing_components=[COMPONENT_DESTINATION_LOCAL],
+    )
+    product_code = _create_product_code(
+        id_=2094,
+        code="IMP-DEST-HANDLING",
+        description="Import Destination Handling",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+    )
+    alias = ChargeAlias.objects.create(
+        alias_text="Destination handling",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+        product_code=product_code,
+        priority=10,
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {"text": "Destination handling 75", "spe_id": str(spe.id), "use_ai": True},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    line = spe.charge_lines.get()
+    assert line.source_label == "Destination handling"
+    assert line.normalized_label == "destination handling"
+    assert line.normalization_status == SPEChargeLineDB.NormalizationStatus.MATCHED
+    assert line.normalization_method == SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS
+    assert line.matched_alias_id == alias.id
+    assert line.resolved_product_code_id == product_code.id
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    payload_line = detail_response.json()["charges"][0]
+    assert payload_line["source_label"] == "Destination handling"
+    assert payload_line["normalized_label"] == "destination handling"
+    assert payload_line["normalization_status"] == "MATCHED"
+    assert payload_line["normalization_method"] == "EXACT_ALIAS"
+    assert payload_line["matched_alias_id"] == alias.id
+    assert payload_line["effective_resolution_status"] == "MATCHED"
+    assert payload_line["requires_review"] is False
+    assert payload_line["resolved_product_code"] == {
+        "id": product_code.id,
+        "code": product_code.code,
+        "description": product_code.description,
+    }
+
+
+def test_ai_reply_analysis_persists_unmapped_charge_metadata_non_fatally(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        status="draft",
+        missing_components=[COMPONENT_DESTINATION_LOCAL],
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(label="Destination fee"),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {"text": "Destination fee 75", "spe_id": str(spe.id), "use_ai": True},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    line = spe.charge_lines.get()
+    assert line.source_label == "Destination fee"
+    assert line.normalized_label == "destination fee"
+    assert line.normalization_status == SPEChargeLineDB.NormalizationStatus.UNMAPPED
+    assert line.normalization_method == SPEChargeLineDB.NormalizationMethod.NONE
+    assert line.matched_alias_id is None
+    assert line.resolved_product_code_id is None
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    payload_line = detail_response.json()["charges"][0]
+    assert payload_line["source_label"] == "Destination fee"
+    assert payload_line["normalized_label"] == "destination fee"
+    assert payload_line["normalization_status"] == "UNMAPPED"
+    assert payload_line["normalization_method"] == "NONE"
+    assert payload_line["matched_alias_id"] is None
+    assert payload_line["effective_resolution_status"] == "UNMAPPED"
+    assert payload_line["requires_review"] is True
+    assert payload_line["resolved_product_code"] is None
+
+
+def test_ai_reply_analysis_persists_ambiguous_charge_metadata_non_fatally(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        status="draft",
+        missing_components=[COMPONENT_DESTINATION_LOCAL],
+    )
+    product_code_a = _create_product_code(
+        id_=2095,
+        code="IMP-DEST-HANDLING-A",
+        description="Import Destination Handling A",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+    )
+    product_code_b = _create_product_code(
+        id_=2096,
+        code="IMP-DEST-HANDLING-B",
+        description="Import Destination Handling B",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+    )
+    ChargeAlias.objects.create(
+        alias_text="Destination handling",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+        product_code=product_code_a,
+        priority=10,
+    )
+    ChargeAlias.objects.create(
+        alias_text="Destination handling",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+        product_code=product_code_b,
+        priority=10,
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {"text": "Destination handling 75", "spe_id": str(spe.id), "use_ai": True},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    line = spe.charge_lines.get()
+    assert line.source_label == "Destination handling"
+    assert line.normalized_label == "destination handling"
+    assert line.normalization_status == SPEChargeLineDB.NormalizationStatus.AMBIGUOUS
+    assert line.normalization_method == SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS
+    assert line.matched_alias_id is None
+    assert line.resolved_product_code_id is None
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    payload_line = detail_response.json()["charges"][0]
+    assert payload_line["source_label"] == "Destination handling"
+    assert payload_line["normalized_label"] == "destination handling"
+    assert payload_line["normalization_status"] == "AMBIGUOUS"
+    assert payload_line["normalization_method"] == "EXACT_ALIAS"
+    assert payload_line["matched_alias_id"] is None
+    assert payload_line["effective_resolution_status"] == "AMBIGUOUS"
+    assert payload_line["requires_review"] is True
+    assert payload_line["resolved_product_code"] is None
 
 
 def test_ai_reply_analysis_creates_source_batch_and_links_lines(monkeypatch):
@@ -345,6 +590,9 @@ def test_ai_reply_analysis_reuses_matching_batch_and_preserves_other_batches(mon
     )
     assert first_response.status_code == 200
     first_batch_id = first_response.json()["source_batch_id"]
+    first_batch_line_ids = set(
+        SPESourceBatchDB.objects.get(id=first_batch_id).charge_lines.values_list("id", flat=True)
+    )
 
     second_response = client.post(
         "/api/v3/spot/analyze-reply/",
@@ -379,10 +627,265 @@ def test_ai_reply_analysis_reuses_matching_batch_and_preserves_other_batches(mon
 
     first_batch = SPESourceBatchDB.objects.get(id=first_batch_id)
     second_batch = SPESourceBatchDB.objects.get(id=second_batch_id)
+    assert set(first_batch.charge_lines.values_list("id", flat=True)) == first_batch_line_ids
     assert first_batch.charge_lines.count() == 3
     assert second_batch.charge_lines.count() == 3
     assert spe.source_batches.count() == 2
     assert spe.charge_lines.count() == 6
+
+
+def test_ai_reply_analysis_reimport_preserves_manual_review_metadata_when_line_reconciles(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        status="draft",
+        missing_components=[COMPONENT_DESTINATION_LOCAL],
+    )
+    manual_product_code = _create_product_code(
+        id_=2097,
+        code="IMP-DEST-MANUAL",
+        description="Import Destination Manual",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Destination fee",
+            amount="75.00",
+            source_line=8,
+        ),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    first_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Destination fee 75",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "Destination Agent",
+        },
+        format="json",
+    )
+    assert first_response.status_code == 200
+
+    line = spe.charge_lines.get()
+    original_line_id = line.id
+    original_entered_at = line.entered_at
+    line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+    line.manual_resolved_product_code = manual_product_code
+    line.manual_resolution_by = user
+    line.manual_resolution_at = timezone.now()
+    line.save(
+        update_fields=[
+            "manual_resolution_status",
+            "manual_resolved_product_code",
+            "manual_resolution_by",
+            "manual_resolution_at",
+        ]
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Destination handling fee",
+            amount="80.00",
+            source_line=8,
+        ),
+    )
+    second_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Destination fee 80",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "Destination Agent",
+        },
+        format="json",
+    )
+    assert second_response.status_code == 200
+
+    refreshed_line = SPEChargeLineDB.objects.get(id=original_line_id)
+    assert spe.charge_lines.count() == 1
+    assert refreshed_line.id == original_line_id
+    assert refreshed_line.amount == Decimal("80.00")
+    assert refreshed_line.entered_at >= original_entered_at
+    assert refreshed_line.source_label == "Destination handling fee"
+    assert refreshed_line.source_line_identity == "assertion-line:8"
+    assert refreshed_line.manual_resolution_status == SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+    assert refreshed_line.manual_resolved_product_code_id == manual_product_code.id
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    payload_line = detail_response.json()["charges"][0]
+    assert payload_line["source_label"] == "Destination handling fee"
+    assert payload_line["effective_resolution_status"] == "RESOLVED"
+    assert payload_line["requires_review"] is False
+    assert payload_line["manual_resolved_product_code"]["id"] == manual_product_code.id
+
+
+def test_ai_reply_analysis_reimport_preserves_identity_when_wording_drifts_via_fingerprint(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        status="draft",
+        missing_components=[COMPONENT_DESTINATION_LOCAL],
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Destination fee",
+            amount="75.00",
+        ),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    first_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Destination fee 75",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "Destination Agent",
+        },
+        format="json",
+    )
+    assert first_response.status_code == 200
+
+    original_line = spe.charge_lines.get()
+    original_line_id = original_line.id
+    original_identity = original_line.source_line_identity
+    assert original_identity.startswith("fp:")
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Destination handling fee",
+            amount="80.00",
+        ),
+    )
+    second_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Destination handling fee 80",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "Destination Agent",
+        },
+        format="json",
+    )
+    assert second_response.status_code == 200
+
+    refreshed_line = SPEChargeLineDB.objects.get(id=original_line_id)
+    assert spe.charge_lines.count() == 1
+    assert refreshed_line.id == original_line_id
+    assert refreshed_line.amount == Decimal("80.00")
+    assert refreshed_line.source_label == "Destination handling fee"
+    assert refreshed_line.source_line_identity == original_identity
+
+
+def test_ai_reply_analysis_reimport_replaces_line_when_stable_identity_cannot_be_inferred(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+        status="draft",
+        missing_components=[COMPONENT_DESTINATION_LOCAL],
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Destination fee",
+            amount="75.00",
+            rate_unit="flat",
+        ),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    first_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Destination fee 75",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "Destination Agent",
+        },
+        format="json",
+    )
+    assert first_response.status_code == 200
+
+    original_line = spe.charge_lines.get()
+    original_line_id = original_line.id
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Destination fee per AWB",
+            amount="80.00",
+            rate_unit="per_awb",
+        ),
+    )
+    second_response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Destination fee per AWB 80",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "destination_charges",
+            "label": "Destination Agent",
+        },
+        format="json",
+    )
+    assert second_response.status_code == 200
+
+    replacement_line = spe.charge_lines.get()
+    assert spe.charge_lines.count() == 1
+    assert replacement_line.id != original_line_id
+    assert replacement_line.unit == SPEChargeLineDB.Unit.PER_AWB
 
 
 def test_ai_reply_analysis_accepts_pdf_upload(monkeypatch):
@@ -1035,3 +1538,36 @@ def test_builder_maps_min_or_per_unit_fields_without_collapsing():
     assert charge["unit_type"] == "kg"
     assert charge["rate"] == "0.25"
     assert charge["min_amount"] == "35.00"
+
+
+def test_builder_threads_source_line_identity_from_analysis():
+    analysis = ReplyAnalysisResult(
+        raw_text="Destination fee 75",
+        assertions=[
+            ExtractedAssertion(
+                text="Destination fee",
+                category=AssertionCategory.DEST_CHARGES,
+                status=AssertionStatus.CONFIRMED,
+                confidence=0.9,
+                source_line=14,
+                rate_amount=Decimal("75.00"),
+                rate_currency="USD",
+                rate_unit="flat",
+            )
+        ],
+        summary=AnalysisSummary(has_rate=True, has_currency=True),
+        warnings=[],
+    )
+
+    charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+        analysis=analysis,
+        source_reference="AI",
+        shipment_context={
+            "origin_country": "AU",
+            "destination_country": "PG",
+            "service_scope": "A2D",
+        },
+    )
+
+    assert len(charges) == 1
+    assert charges[0]["source_line_identity"] == "assertion-line:14"

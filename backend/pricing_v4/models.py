@@ -230,6 +230,128 @@ class ProductCode(models.Model):
 
 
 # =============================================================================
+# CHARGE NORMALIZATION REGISTRY
+# =============================================================================
+
+class ChargeAlias(models.Model):
+    """
+    Canonical alias mapping for external/raw charge labels.
+
+    This is intentionally scoped as a neutral lookup registry first. Future
+    provider/agent-specific scoping can be layered on without having to unwind
+    strict uniqueness assumptions introduced here.
+    """
+
+    class MatchType(models.TextChoices):
+        EXACT = 'EXACT', 'Exact Match'
+        CONTAINS = 'CONTAINS', 'Contains'
+        STARTS_WITH = 'STARTS_WITH', 'Starts With'
+        ENDS_WITH = 'ENDS_WITH', 'Ends With'
+
+    class ModeScope(models.TextChoices):
+        ANY = 'ANY', 'Any Shipment Type'
+        EXPORT = ProductCode.DOMAIN_EXPORT, 'Export'
+        IMPORT = ProductCode.DOMAIN_IMPORT, 'Import'
+        DOMESTIC = ProductCode.DOMAIN_DOMESTIC, 'Domestic'
+
+    class DirectionScope(models.TextChoices):
+        ANY = 'ANY', 'Any Leg'
+        ORIGIN = 'ORIGIN', 'Origin'
+        MAIN = 'MAIN', 'Main Freight'
+        DESTINATION = 'DESTINATION', 'Destination'
+
+    alias_text = models.CharField(
+        max_length=255,
+        help_text='Human-entered/raw charge label to normalize.',
+    )
+    normalized_alias_text = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text='Deterministically normalized alias text for case-insensitive matching.',
+    )
+    match_type = models.CharField(
+        max_length=11,
+        choices=MatchType.choices,
+        default=MatchType.EXACT,
+        db_index=True,
+    )
+    mode_scope = models.CharField(
+        max_length=10,
+        choices=ModeScope.choices,
+        default=ModeScope.ANY,
+        db_index=True,
+        help_text='Shipment type scope. ANY applies across export/import/domestic.',
+    )
+    direction_scope = models.CharField(
+        max_length=11,
+        choices=DirectionScope.choices,
+        default=DirectionScope.ANY,
+        db_index=True,
+        help_text='Leg scope. ANY applies across origin/main/destination.',
+    )
+    product_code = models.ForeignKey(
+        ProductCode,
+        on_delete=models.PROTECT,
+        related_name='charge_aliases',
+    )
+    priority = models.PositiveIntegerField(
+        default=100,
+        db_index=True,
+        help_text='Lower values win when multiple aliases match the same input.',
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'charge_aliases'
+        ordering = ['priority', 'normalized_alias_text', 'id']
+        verbose_name = 'Charge Alias'
+        verbose_name_plural = 'Charge Aliases'
+        indexes = [
+            models.Index(
+                fields=['normalized_alias_text', 'match_type', 'is_active', 'mode_scope', 'direction_scope'],
+                name='charge_alias_lookup_idx',
+            ),
+            models.Index(
+                fields=['product_code', 'is_active', 'priority'],
+                name='charge_alias_prod_idx',
+            ),
+        ]
+
+    @staticmethod
+    def normalize_alias_text_value(value: str) -> str:
+        return str(value or '').strip().casefold()
+
+    def clean(self):
+        self.normalized_alias_text = self.normalize_alias_text_value(
+            self.normalized_alias_text or self.alias_text
+        )
+
+        if not self.normalized_alias_text:
+            raise ValidationError(
+                {'normalized_alias_text': 'normalized_alias_text cannot be blank after normalization.'}
+            )
+
+        if (
+            self.product_code
+            and self.mode_scope != self.ModeScope.ANY
+            and self.product_code.domain != self.mode_scope
+        ):
+            raise ValidationError(
+                {'product_code': 'mode_scope must match product_code.domain unless mode_scope is ANY.'}
+            )
+
+    def save(self, *args, **kwargs):
+        self.normalized_alias_text = self.normalize_alias_text_value(
+            self.normalized_alias_text or self.alias_text
+        )
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.alias_text} -> {self.product_code.code}"
+
+
+# =============================================================================
 # EXPORT RATE TABLES
 # =============================================================================
 
