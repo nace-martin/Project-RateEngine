@@ -301,13 +301,17 @@ def _derive_missing_components_from_context(ctx: dict) -> Optional[list[str]]:
         from quotes.spot_services import RateAvailabilityService
         from quotes.completeness import evaluate_from_availability
 
-        availability = RateAvailabilityService.get_availability(
+        component_outcomes = RateAvailabilityService.get_component_outcomes(
             origin_airport=origin_code,
             destination_airport=destination_code,
             direction=direction,
             service_scope=service_scope,
             payment_term=payment_term,
         )
+        availability = {
+            component: outcome.get("status") in {"covered_exact", "covered_fallback"}
+            for component, outcome in component_outcomes.items()
+        }
         coverage = evaluate_from_availability(
             component_availability=availability,
             shipment_type=direction,
@@ -523,13 +527,17 @@ class SpotTriggerEvaluateAPIView(APIView):
             )
         
         from quotes.spot_services import CommodityRateRuleService, RateAvailabilityService
-        component_availability = RateAvailabilityService.get_availability(
+        component_outcomes = RateAvailabilityService.get_component_outcomes(
             origin_airport=origin_airport,
             destination_airport=destination_airport,
             direction=direction,
             service_scope=service_scope,
             payment_term=payment_term,
         )
+        component_availability = {
+            component: outcome.get('status') in {'covered_exact', 'covered_fallback'}
+            for component, outcome in component_outcomes.items()
+        }
         commodity = str(request.data.get('commodity') or 'GCR').upper()
         commodity_coverage = CommodityRateRuleService.evaluate_coverage(
             origin_airport=origin_airport,
@@ -553,6 +561,7 @@ class SpotTriggerEvaluateAPIView(APIView):
         logger.info(
             "SPOT trigger evaluation lane=%s->%s direction=%s scope=%s payment_term=%s commodity=%s "
             "rate_coverage_map=%s missing_components=%s missing_product_codes=%s "
+            "component_outcomes=%s "
             "spot_required_product_codes=%s manual_required_product_codes=%s is_spot_required=%s",
             origin_airport,
             destination_airport,
@@ -563,6 +572,7 @@ class SpotTriggerEvaluateAPIView(APIView):
             component_availability,
             trigger.missing_components if trigger else [],
             trigger.missing_product_codes if trigger else [],
+            component_outcomes,
             trigger.spot_required_product_codes if trigger else [],
             trigger.manual_required_product_codes if trigger else [],
             is_spot,
@@ -578,6 +588,7 @@ class SpotTriggerEvaluateAPIView(APIView):
                 'spot_required_product_codes': trigger.spot_required_product_codes,
                 'manual_required_product_codes': trigger.manual_required_product_codes,
             } if trigger else None,
+            'component_outcomes': component_outcomes,
         })
 
 
@@ -1348,17 +1359,22 @@ class SpotReplyAnalysisAPIView(APIView):
             direction = _infer_shipment_type(origin_country, destination_country)
             
             from quotes.spot_services import RateAvailabilityService
-            availability = RateAvailabilityService.get_availability(
+            component_outcomes = RateAvailabilityService.get_component_outcomes(
                 origin_airport=shipment_context.get('origin_code', ''),
                 destination_airport=shipment_context.get('destination_code', ''),
                 direction=direction,
                 service_scope=shipment_context.get('service_scope', 'P2P'),
                 payment_term=shipment_context.get('payment_term'),
             )
+            availability = {
+                component: outcome.get('status') in {'covered_exact', 'covered_fallback'}
+                for component, outcome in component_outcomes.items()
+            }
             
             # Enrich context with missing status to guide AI
             if availability:
                 shipment_context['missing_components'] = [k for k, v in availability.items() if not v]
+                shipment_context['component_outcomes'] = component_outcomes
 
         if use_ai and not manual_assertions:
             # If AI is requested and no manual edits provided, do full AI analysis

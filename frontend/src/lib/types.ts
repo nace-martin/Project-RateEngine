@@ -206,6 +206,10 @@ export interface V3QuoteComputeRequest {
   destination_location_id: string;
   dimensions: V3DimensionInput[];
   payment_term: string;
+  // Internal/admin override inputs only. Standard quote UI does not send these.
+  agent_id?: number | null;
+  carrier_id?: number | null;
+  buy_currency?: string;
   commodity_code?: string;
   is_dangerous_goods?: boolean;
   overrides?: V3ManualOverride[];

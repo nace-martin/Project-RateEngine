@@ -37,6 +37,22 @@ const resolveAuthToken = (tokenOverride?: string | null): string => {
   return token;
 };
 
+const flattenErrorDetail = (value: unknown, prefix = ''): string[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenErrorDetail(item, prefix));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => {
+      const childPrefix = prefix ? `${prefix}.${key}` : key;
+      return flattenErrorDetail(child, childPrefix);
+    });
+  }
+
+  const message = value == null ? 'Unknown error' : String(value);
+  return prefix ? [`${prefix}: ${message}`] : [message];
+};
+
 const parseErrorResponse = async (response: Response): Promise<string> => {
   try {
     const data = await response.json();
@@ -47,7 +63,7 @@ const parseErrorResponse = async (response: Response): Promise<string> => {
       if ('detail' in data && typeof data.detail === 'string') {
         return data.detail;
       }
-      return JSON.stringify(data);
+      return flattenErrorDetail(data).join(' | ');
     }
   } catch {
     // ignore parse errors
@@ -358,15 +374,35 @@ export async function computeQuoteV3(
     } catch {
       // ignore parse errors so we can still surface a useful message
     }
-    console.error('Quote compute error:', errorData || response.statusText);
+    console.warn('Quote compute validation:', errorData || response.statusText);
 
     let message = response.statusText || 'Unknown error';
     if (typeof errorData === 'string') {
       message = errorData;
     } else if (errorData && typeof errorData === 'object') {
       const payload = errorData as Record<string, unknown>;
-      if ('detail' in payload && typeof payload.detail === 'string') {
-        message = payload.detail;
+      const detail = typeof payload.detail === 'string' ? payload.detail : null;
+      const remediation =
+        typeof payload.suggested_remediation === 'string'
+          ? payload.suggested_remediation
+          : null;
+      const errorCode =
+        typeof payload.error_code === 'string' ? payload.error_code : null;
+      const resolutionReason =
+        typeof payload.resolution_reason === 'string'
+          ? payload.resolution_reason
+          : null;
+      const component = typeof payload.component === 'string' ? payload.component : null;
+
+      if (detail) {
+        const contextBits: string[] = [];
+        if (errorCode) contextBits.push(errorCode);
+        if (resolutionReason) contextBits.push(resolutionReason);
+        if (component) contextBits.push(`component ${component}`);
+        message = contextBits.length > 0 ? `${detail} [${contextBits.join(' | ')}]` : detail;
+        if (remediation) {
+          message = `${message} Suggested action: ${remediation}`;
+        }
       } else if (Object.keys(payload).length > 0) {
         message = JSON.stringify(payload);
       }
@@ -718,77 +754,9 @@ export async function createZone(data: Partial<Zone>): Promise<Zone> {
   return response.json();
 }
 
-// --- Pricing V3 Rate Cards ---
-export interface RateBreak {
-  id: string;
-  from_value: number;
-  to_value: number | null;
-  rate: number;
-}
-
-export interface RateLine {
-  id: string;
-  component: string;
-  component_code?: string;
-  method: string;
-  unit: string | null;
-  min_charge: number;
-  percent_value: number | null;
-  percent_of_component: string | null;
-  description: string;
-  breaks: RateBreak[];
-}
-
-export interface RateCard {
-  id: string;
-  name: string;
-  supplier: string;
-  supplier_name?: string;
-  mode: string;
-  origin_zone: string;
-  origin_zone_name?: string;
-  destination_zone: string;
-  destination_zone_name?: string;
-  currency: string;
-  scope: string;
-  valid_from: string;
-  valid_until: string | null;
-  priority: number;
-  lines?: RateLine[];
-}
-
-export async function getRateCardsV3(): Promise<RateCard[]> {
-  const url = API_BASE_URL + '/api/v3/ratecards/';
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to fetch rate cards: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function createRateCardV3(data: Partial<RateCard>): Promise<RateCard> {
-  const url = API_BASE_URL + '/api/v3/ratecards/';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to create rate card: ${detail}`);
-  }
-  return response.json();
-}
-
+// --- Legacy Rate Card CSV Bridge ---
 export async function importRateCardCSV(id: string, file: File): Promise<{ message: string; errors: string[] }> {
-  // Deprecated V3 helper kept for compatibility with legacy dialogs.
-  // Internally routes to the V4 bulk uploader endpoint.
+  // Legacy UI bridge only. New admin management must use V4 rate endpoints.
   void id;
   try {
     const result = await uploadV4RateCardCSV(file);
@@ -940,49 +908,6 @@ export async function deleteSpotCharge(id: string): Promise<void> {
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to delete spot charge: ${detail}`);
   }
-}
-
-export async function getRateCardV3(id: string): Promise<RateCard> {
-  const url = API_BASE_URL + `/api/v3/ratecards/${id}/`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch rate card details');
-  return response.json();
-}
-
-export async function createRateLine(data: Partial<RateLine>): Promise<RateLine> {
-  const url = API_BASE_URL + '/api/v3/rate-lines/';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to create rate line: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function updateRateLine(id: string, data: Partial<RateLine>): Promise<RateLine> {
-  const url = API_BASE_URL + `/api/v3/rate-lines/${id}/`;
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to update rate line: ${detail}`);
-  }
-  return response.json();
 }
 
 // --- Services ---
@@ -1876,69 +1801,593 @@ export async function getProductCodes(params?: {
 // V4 SELL RATES API
 // =============================================================================
 
-export interface V4SellRate {
+export interface PricingReferenceOption {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface PricingAgentOption extends PricingReferenceOption {
+  country_code: string;
+  agent_type: string;
+}
+
+export interface PricingCarrierOption extends PricingReferenceOption {
+  carrier_type: string;
+}
+
+export interface QuoteCounterpartyHints {
+  direction: 'IMPORT' | 'EXPORT' | 'DOMESTIC';
+  service_scope: 'A2A' | 'D2A' | 'A2D' | 'D2D';
+  origin_airport: string;
+  destination_airport: string;
+  buy_currency: string | null;
+  quote_date: string;
+  required_components: string[];
+  available_counterparty_types: Array<'agent' | 'carrier'>;
+  recommended_counterparty_type: 'agent' | 'carrier' | null;
+  component_counterparty_types: Record<string, Array<'agent' | 'carrier'>>;
+  agents: PricingAgentOption[];
+  carriers: PricingCarrierOption[];
+  advisory: string;
+}
+
+export interface RateWeightBreak {
+  min_kg: number | string;
+  rate: string;
+}
+
+export interface EffectiveDatedRateRecord {
   id: number;
   product_code: number;
   product_code_code: string;
   product_code_description: string;
-  origin_airport?: string;
-  destination_airport?: string;
-  origin_zone?: string;
-  destination_zone?: string;
   currency: string;
-  rate_per_kg: string | null;
-  rate_per_shipment: string | null;
-  min_charge: string | null;
-  max_charge: string | null;
-  percent_rate: string | null;
-  weight_breaks: { min_kg: number; rate: string }[] | null;
-  is_additive: boolean;
   valid_from: string;
   valid_until: string;
   created_at: string;
   updated_at: string;
+  created_by?: number | null;
+  created_by_username?: string | null;
+  updated_by?: number | null;
+  updated_by_username?: string | null;
+  lineage_id?: string | null;
+  supersedes_rate?: number | null;
+  is_active: boolean;
 }
 
-export async function getExportSellRates(params?: {
+export type RateChangeAction = 'CREATE' | 'UPDATE' | 'RETIRE' | 'DELETE' | 'REVISE';
+
+export interface RateChangeLogEntry {
+  id: number;
+  table_name: string;
+  object_pk: string;
+  actor: number | null;
+  actor_username: string | null;
+  action: RateChangeAction;
+  lineage_id: string | null;
+  before_snapshot: Record<string, unknown> | null;
+  after_snapshot: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface CounterpartyRateRecord {
+  agent: number | null;
+  agent_name: string | null;
+  carrier: number | null;
+  carrier_name: string | null;
+}
+
+export interface LaneRateRecord extends EffectiveDatedRateRecord {
+  origin_airport?: string | null;
+  destination_airport?: string | null;
+  origin_zone?: string | null;
+  destination_zone?: string | null;
+  rate_per_kg: string | null;
+  rate_per_shipment: string | null;
+  min_charge: string | null;
+  max_charge: string | null;
+  is_additive: boolean;
+  percent_rate?: string | null;
+  weight_breaks: RateWeightBreak[] | null;
+}
+
+export interface LaneCOGSRateRecord extends LaneRateRecord, CounterpartyRateRecord {
+}
+
+export interface LocalRateRecord extends EffectiveDatedRateRecord {
+  location: string;
+  direction: 'EXPORT' | 'IMPORT';
+  payment_term?: 'PREPAID' | 'COLLECT' | 'ANY';
+  rate_type: 'FIXED' | 'PER_KG' | 'PERCENT';
+  amount: string;
+  is_additive: boolean;
+  additive_flat_amount: string | null;
+  min_charge: string | null;
+  max_charge: string | null;
+  weight_breaks: RateWeightBreak[] | null;
+  percent_of_product_code: number | null;
+  percent_of_product_code_code: string | null;
+  percent_of_product_code_description: string | null;
+}
+
+export interface LocalCOGSRateRecord extends LocalRateRecord, CounterpartyRateRecord {}
+
+export type V4SellRate = LaneRateRecord;
+export type ImportCOGSRate = LaneCOGSRateRecord;
+export type ImportCOGSUpsertPayload = LaneRateUpsertPayload;
+
+export interface LaneRateUpsertPayload {
+  product_code: number;
+  origin_airport?: string;
+  destination_airport?: string;
+  origin_zone?: string;
+  destination_zone?: string;
+  agent?: number | null;
+  carrier?: number | null;
+  currency: string;
+  rate_per_kg?: string | null;
+  rate_per_shipment?: string | null;
+  min_charge?: string | null;
+  max_charge?: string | null;
+  is_additive?: boolean;
+  percent_rate?: string | null;
+  weight_breaks?: RateWeightBreak[] | null;
+  valid_from: string;
+  valid_until: string;
+}
+
+export interface LocalRateUpsertPayload {
+  product_code: number;
+  location: string;
+  direction: 'EXPORT' | 'IMPORT';
+  payment_term?: 'PREPAID' | 'COLLECT' | 'ANY';
+  agent?: number | null;
+  carrier?: number | null;
+  currency: string;
+  rate_type: 'FIXED' | 'PER_KG' | 'PERCENT';
+  amount: string;
+  is_additive?: boolean;
+  additive_flat_amount?: string | null;
+  min_charge?: string | null;
+  max_charge?: string | null;
+  weight_breaks?: RateWeightBreak[] | null;
+  percent_of_product_code?: number | null;
+  valid_from: string;
+  valid_until: string;
+}
+
+export interface RateRevisionOptions {
+  retire_previous?: boolean;
+}
+
+export interface V4RateListParams {
+  search?: string;
   origin?: string;
   destination?: string;
-}): Promise<V4SellRate[]> {
-  const url = new URL(API_BASE_URL + '/api/v4/rates/export/');
-  if (params?.origin) url.searchParams.append('origin_airport', params.origin);
-  if (params?.destination) url.searchParams.append('destination_airport', params.destination);
+  location?: string;
+  direction?: string;
+  paymentTerm?: string;
+  productCode?: string | number;
+  currency?: string;
+  agent?: string | number;
+  carrier?: string | number;
+  status?: 'active' | 'expired' | 'scheduled';
+  validOn?: string;
+}
+
+export async function listPricingAgents(params?: {
+  search?: string;
+}): Promise<PricingAgentOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/agents/');
+  if (params?.search) url.searchParams.append('search', params.search);
   const response = await fetch(url.toString(), {
     headers: { Authorization: `Token ${resolveAuthToken()}` },
   });
-  if (!response.ok) throw new Error('Failed to fetch export sell rates');
+  if (!response.ok) throw new Error('Failed to fetch pricing agents');
   return response.json();
 }
 
-export async function getImportSellRates(params?: {
-  origin?: string;
-  destination?: string;
-}): Promise<V4SellRate[]> {
-  const url = new URL(API_BASE_URL + '/api/v4/rates/import/');
-  if (params?.origin) url.searchParams.append('origin_airport', params.origin);
-  if (params?.destination) url.searchParams.append('destination_airport', params.destination);
+export async function listPricingCarriers(params?: {
+  search?: string;
+}): Promise<PricingCarrierOption[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/carriers/');
+  if (params?.search) url.searchParams.append('search', params.search);
   const response = await fetch(url.toString(), {
     headers: { Authorization: `Token ${resolveAuthToken()}` },
   });
-  if (!response.ok) throw new Error('Failed to fetch import sell rates');
+  if (!response.ok) throw new Error('Failed to fetch pricing carriers');
   return response.json();
 }
 
-export async function getDomesticSellRates(params?: {
-  origin?: string;
-  destination?: string;
-}): Promise<V4SellRate[]> {
-  const url = new URL(API_BASE_URL + '/api/v4/rates/domestic/');
-  if (params?.origin) url.searchParams.append('origin_zone', params.origin);
-  if (params?.destination) url.searchParams.append('destination_zone', params.destination);
+export async function getQuoteCounterpartyHints(params: {
+  direction: 'IMPORT' | 'EXPORT' | 'DOMESTIC';
+  serviceScope: 'A2A' | 'D2A' | 'A2D' | 'D2D';
+  originAirport: string;
+  destinationAirport: string;
+  buyCurrency?: string | null;
+  quoteDate?: string;
+}): Promise<QuoteCounterpartyHints> {
+  const url = new URL(API_BASE_URL + '/api/v4/quote/counterparty-hints/');
+  url.searchParams.append('direction', params.direction);
+  url.searchParams.append('service_scope', params.serviceScope);
+  url.searchParams.append('origin_airport', params.originAirport);
+  url.searchParams.append('destination_airport', params.destinationAirport);
+  if (params.buyCurrency) url.searchParams.append('buy_currency', params.buyCurrency);
+  if (params.quoteDate) url.searchParams.append('quote_date', params.quoteDate);
+
   const response = await fetch(url.toString(), {
     headers: { Authorization: `Token ${resolveAuthToken()}` },
+    cache: 'no-store',
   });
-  if (!response.ok) throw new Error('Failed to fetch domestic sell rates');
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch quote counterparty hints: ${detail}`);
+  }
   return response.json();
+}
+
+function appendRateListParams(
+  url: URL,
+  params: V4RateListParams | undefined,
+  routeParamNames?: { origin?: string; destination?: string },
+) {
+  if (!params) return;
+  if (params.search) url.searchParams.append('search', params.search);
+  if (params.origin && routeParamNames?.origin) url.searchParams.append(routeParamNames.origin, params.origin);
+  if (params.destination && routeParamNames?.destination) url.searchParams.append(routeParamNames.destination, params.destination);
+  if (params.location) url.searchParams.append('location', params.location);
+  if (params.direction) url.searchParams.append('direction', params.direction);
+  if (params.paymentTerm) url.searchParams.append('payment_term', params.paymentTerm);
+  if (params.productCode !== undefined) url.searchParams.append('product_code', String(params.productCode));
+  if (params.currency) url.searchParams.append('currency', params.currency);
+  if (params.agent !== undefined) url.searchParams.append('agent', String(params.agent));
+  if (params.carrier !== undefined) url.searchParams.append('carrier', String(params.carrier));
+  if (params.status) url.searchParams.append('status', params.status);
+  if (params.validOn) url.searchParams.append('valid_on', params.validOn);
+}
+
+async function listRateRows<T>(
+  path: string,
+  params?: V4RateListParams,
+  routeParamNames?: { origin?: string; destination?: string },
+): Promise<T[]> {
+  const url = new URL(API_BASE_URL + path);
+  appendRateListParams(url, params, routeParamNames);
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Token ${resolveAuthToken()}` },
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch rates: ${detail}`);
+  }
+  return response.json();
+}
+
+async function createRateRow<TResponse, TPayload>(path: string, data: TPayload): Promise<TResponse> {
+  const response = await fetch(API_BASE_URL + path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create rate: ${detail}`);
+  }
+  return response.json();
+}
+
+async function updateRateRow<TResponse, TPayload>(path: string, data: Partial<TPayload>): Promise<TResponse> {
+  const response = await fetch(API_BASE_URL + path, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update rate: ${detail}`);
+  }
+  return response.json();
+}
+
+async function retireRateRow<TResponse>(path: string): Promise<TResponse> {
+  const response = await fetch(API_BASE_URL + path, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to retire rate: ${detail}`);
+  }
+  return response.json();
+}
+
+async function reviseRateRow<TResponse, TPayload>(
+  path: string,
+  data: TPayload & RateRevisionOptions,
+): Promise<TResponse> {
+  const response = await fetch(API_BASE_URL + path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to revise rate: ${detail}`);
+  }
+  return response.json();
+}
+
+async function listRateHistory(path: string): Promise<RateChangeLogEntry[]> {
+  const response = await fetch(API_BASE_URL + path, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch rate history: ${detail}`);
+  }
+  return response.json();
+}
+
+export async function listExportSellRates(params?: V4RateListParams): Promise<LaneRateRecord[]> {
+  return listRateRows<LaneRateRecord>('/api/v4/rates/export/', params, {
+    origin: 'origin_airport',
+    destination: 'destination_airport',
+  });
+}
+
+export async function createExportSellRate(data: LaneRateUpsertPayload): Promise<LaneRateRecord> {
+  return createRateRow<LaneRateRecord, LaneRateUpsertPayload>('/api/v4/rates/export/', data);
+}
+
+export async function updateExportSellRate(id: number | string, data: Partial<LaneRateUpsertPayload>): Promise<LaneRateRecord> {
+  return updateRateRow<LaneRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/export/${id}/`, data);
+}
+
+export async function retireExportSellRate(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LaneRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LaneRateRecord>(`/api/v4/rates/export/${id}/retire/`);
+}
+
+export async function reviseExportSellRate(
+  id: number | string,
+  data: LaneRateUpsertPayload & RateRevisionOptions,
+): Promise<LaneRateRecord> {
+  return reviseRateRow<LaneRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/export/${id}/revise/`, data);
+}
+
+export async function getExportSellRateHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/export/${id}/history/`);
+}
+
+export async function listImportSellRates(params?: V4RateListParams): Promise<LaneRateRecord[]> {
+  return listRateRows<LaneRateRecord>('/api/v4/rates/import/', params, {
+    origin: 'origin_airport',
+    destination: 'destination_airport',
+  });
+}
+
+export async function createImportSellRate(data: LaneRateUpsertPayload): Promise<LaneRateRecord> {
+  return createRateRow<LaneRateRecord, LaneRateUpsertPayload>('/api/v4/rates/import/', data);
+}
+
+export async function updateImportSellRate(id: number | string, data: Partial<LaneRateUpsertPayload>): Promise<LaneRateRecord> {
+  return updateRateRow<LaneRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/import/${id}/`, data);
+}
+
+export async function retireImportSellRate(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LaneRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LaneRateRecord>(`/api/v4/rates/import/${id}/retire/`);
+}
+
+export async function reviseImportSellRate(
+  id: number | string,
+  data: LaneRateUpsertPayload & RateRevisionOptions,
+): Promise<LaneRateRecord> {
+  return reviseRateRow<LaneRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/import/${id}/revise/`, data);
+}
+
+export async function getImportSellRateHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/import/${id}/history/`);
+}
+
+export async function listExportCOGS(params?: V4RateListParams): Promise<LaneCOGSRateRecord[]> {
+  return listRateRows<LaneCOGSRateRecord>('/api/v4/rates/export-cogs/', params, {
+    origin: 'origin_airport',
+    destination: 'destination_airport',
+  });
+}
+
+export async function createExportCOGS(data: LaneRateUpsertPayload): Promise<LaneCOGSRateRecord> {
+  return createRateRow<LaneCOGSRateRecord, LaneRateUpsertPayload>('/api/v4/rates/export-cogs/', data);
+}
+
+export async function updateExportCOGS(id: number | string, data: Partial<LaneRateUpsertPayload>): Promise<LaneCOGSRateRecord> {
+  return updateRateRow<LaneCOGSRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/export-cogs/${id}/`, data);
+}
+
+export async function retireExportCOGS(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LaneCOGSRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LaneCOGSRateRecord>(`/api/v4/rates/export-cogs/${id}/retire/`);
+}
+
+export async function reviseExportCOGS(
+  id: number | string,
+  data: LaneRateUpsertPayload & RateRevisionOptions,
+): Promise<LaneCOGSRateRecord> {
+  return reviseRateRow<LaneCOGSRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/export-cogs/${id}/revise/`, data);
+}
+
+export async function getExportCOGSHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/export-cogs/${id}/history/`);
+}
+
+export async function listImportCOGS(params?: V4RateListParams): Promise<ImportCOGSRate[]> {
+  return listRateRows<ImportCOGSRate>('/api/v4/rates/import-cogs/', params, {
+    origin: 'origin_airport',
+    destination: 'destination_airport',
+  });
+}
+
+export async function createImportCOGS(data: ImportCOGSUpsertPayload): Promise<ImportCOGSRate> {
+  return createRateRow<ImportCOGSRate, ImportCOGSUpsertPayload>('/api/v4/rates/import-cogs/', data);
+}
+
+export async function updateImportCOGS(id: number | string, data: Partial<ImportCOGSUpsertPayload>): Promise<ImportCOGSRate> {
+  return updateRateRow<ImportCOGSRate, ImportCOGSUpsertPayload>(`/api/v4/rates/import-cogs/${id}/`, data);
+}
+
+export async function retireImportCOGS(id: number | string): Promise<{ deleted?: boolean; detail?: string } | ImportCOGSRate> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | ImportCOGSRate>(`/api/v4/rates/import-cogs/${id}/retire/`);
+}
+
+export async function reviseImportCOGS(
+  id: number | string,
+  data: ImportCOGSUpsertPayload & RateRevisionOptions,
+): Promise<ImportCOGSRate> {
+  return reviseRateRow<ImportCOGSRate, ImportCOGSUpsertPayload>(`/api/v4/rates/import-cogs/${id}/revise/`, data);
+}
+
+export async function getImportCOGSHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/import-cogs/${id}/history/`);
+}
+
+export async function listDomesticSellRates(params?: V4RateListParams): Promise<LaneRateRecord[]> {
+  return listRateRows<LaneRateRecord>('/api/v4/rates/domestic/', params, {
+    origin: 'origin_zone',
+    destination: 'destination_zone',
+  });
+}
+
+export async function createDomesticSellRate(data: LaneRateUpsertPayload): Promise<LaneRateRecord> {
+  return createRateRow<LaneRateRecord, LaneRateUpsertPayload>('/api/v4/rates/domestic/', data);
+}
+
+export async function updateDomesticSellRate(id: number | string, data: Partial<LaneRateUpsertPayload>): Promise<LaneRateRecord> {
+  return updateRateRow<LaneRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/domestic/${id}/`, data);
+}
+
+export async function retireDomesticSellRate(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LaneRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LaneRateRecord>(`/api/v4/rates/domestic/${id}/retire/`);
+}
+
+export async function reviseDomesticSellRate(
+  id: number | string,
+  data: LaneRateUpsertPayload & RateRevisionOptions,
+): Promise<LaneRateRecord> {
+  return reviseRateRow<LaneRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/domestic/${id}/revise/`, data);
+}
+
+export async function getDomesticSellRateHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/domestic/${id}/history/`);
+}
+
+export async function listDomesticCOGS(params?: V4RateListParams): Promise<LaneCOGSRateRecord[]> {
+  return listRateRows<LaneCOGSRateRecord>('/api/v4/rates/domestic-cogs/', params, {
+    origin: 'origin_zone',
+    destination: 'destination_zone',
+  });
+}
+
+export async function createDomesticCOGS(data: LaneRateUpsertPayload): Promise<LaneCOGSRateRecord> {
+  return createRateRow<LaneCOGSRateRecord, LaneRateUpsertPayload>('/api/v4/rates/domestic-cogs/', data);
+}
+
+export async function updateDomesticCOGS(id: number | string, data: Partial<LaneRateUpsertPayload>): Promise<LaneCOGSRateRecord> {
+  return updateRateRow<LaneCOGSRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/domestic-cogs/${id}/`, data);
+}
+
+export async function retireDomesticCOGS(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LaneCOGSRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LaneCOGSRateRecord>(`/api/v4/rates/domestic-cogs/${id}/retire/`);
+}
+
+export async function reviseDomesticCOGS(
+  id: number | string,
+  data: LaneRateUpsertPayload & RateRevisionOptions,
+): Promise<LaneCOGSRateRecord> {
+  return reviseRateRow<LaneCOGSRateRecord, LaneRateUpsertPayload>(`/api/v4/rates/domestic-cogs/${id}/revise/`, data);
+}
+
+export async function getDomesticCOGSHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/domestic-cogs/${id}/history/`);
+}
+
+export async function listLocalSellRates(params?: V4RateListParams): Promise<LocalRateRecord[]> {
+  return listRateRows<LocalRateRecord>('/api/v4/rates/local-sell/', params);
+}
+
+export async function createLocalSellRate(data: LocalRateUpsertPayload): Promise<LocalRateRecord> {
+  return createRateRow<LocalRateRecord, LocalRateUpsertPayload>('/api/v4/rates/local-sell/', data);
+}
+
+export async function updateLocalSellRate(id: number | string, data: Partial<LocalRateUpsertPayload>): Promise<LocalRateRecord> {
+  return updateRateRow<LocalRateRecord, LocalRateUpsertPayload>(`/api/v4/rates/local-sell/${id}/`, data);
+}
+
+export async function retireLocalSellRate(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LocalRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LocalRateRecord>(`/api/v4/rates/local-sell/${id}/retire/`);
+}
+
+export async function reviseLocalSellRate(
+  id: number | string,
+  data: LocalRateUpsertPayload & RateRevisionOptions,
+): Promise<LocalRateRecord> {
+  return reviseRateRow<LocalRateRecord, LocalRateUpsertPayload>(`/api/v4/rates/local-sell/${id}/revise/`, data);
+}
+
+export async function getLocalSellRateHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/local-sell/${id}/history/`);
+}
+
+export async function listLocalCOGSRates(params?: V4RateListParams): Promise<LocalCOGSRateRecord[]> {
+  return listRateRows<LocalCOGSRateRecord>('/api/v4/rates/local-cogs/', params);
+}
+
+export async function createLocalCOGSRate(data: LocalRateUpsertPayload): Promise<LocalCOGSRateRecord> {
+  return createRateRow<LocalCOGSRateRecord, LocalRateUpsertPayload>('/api/v4/rates/local-cogs/', data);
+}
+
+export async function updateLocalCOGSRate(id: number | string, data: Partial<LocalRateUpsertPayload>): Promise<LocalCOGSRateRecord> {
+  return updateRateRow<LocalCOGSRateRecord, LocalRateUpsertPayload>(`/api/v4/rates/local-cogs/${id}/`, data);
+}
+
+export async function retireLocalCOGSRate(id: number | string): Promise<{ deleted?: boolean; detail?: string } | LocalCOGSRateRecord> {
+  return retireRateRow<{ deleted?: boolean; detail?: string } | LocalCOGSRateRecord>(`/api/v4/rates/local-cogs/${id}/retire/`);
+}
+
+export async function reviseLocalCOGSRate(
+  id: number | string,
+  data: LocalRateUpsertPayload & RateRevisionOptions,
+): Promise<LocalCOGSRateRecord> {
+  return reviseRateRow<LocalCOGSRateRecord, LocalRateUpsertPayload>(`/api/v4/rates/local-cogs/${id}/revise/`, data);
+}
+
+export async function getLocalCOGSRateHistory(id: number | string): Promise<RateChangeLogEntry[]> {
+  return listRateHistory(`/api/v4/rates/local-cogs/${id}/history/`);
+}
+
+export async function getExportSellRates(params?: { origin?: string; destination?: string }): Promise<V4SellRate[]> {
+  return listExportSellRates(params);
+}
+
+export async function getImportSellRates(params?: { origin?: string; destination?: string }): Promise<V4SellRate[]> {
+  return listImportSellRates(params);
+}
+
+export async function getDomesticSellRates(params?: { origin?: string; destination?: string }): Promise<V4SellRate[]> {
+  return listDomesticSellRates(params);
 }
 
 
@@ -1992,10 +2441,32 @@ export interface LogicalRateCardLine {
 
 export interface V4RateCardUploadSuccessResponse {
   success: true;
+  dry_run?: false;
   message: string;
   processed_rows: number;
   created_rows: number;
   updated_rows: number;
+}
+
+export interface V4RateCardUploadPreviewRow {
+  row_number: number;
+  table_name: string;
+  action: 'CREATE' | 'UPDATE';
+  product_code: string;
+  coverage: string;
+  currency: string;
+  valid_from: string;
+  valid_until: string;
+}
+
+export interface V4RateCardUploadPreviewResponse {
+  success: true;
+  dry_run: true;
+  message: string;
+  processed_rows: number;
+  created_rows: number;
+  updated_rows: number;
+  preview_rows: V4RateCardUploadPreviewRow[];
 }
 
 export interface V4RateCardUploadErrorResponse {
@@ -2016,10 +2487,16 @@ export class V4RateCardUploadValidationError extends Error {
   }
 }
 
-export async function uploadV4RateCardCSV(file: File): Promise<V4RateCardUploadSuccessResponse> {
+export async function uploadV4RateCardCSV(
+  file: File,
+  options?: { dryRun?: boolean },
+): Promise<V4RateCardUploadSuccessResponse | V4RateCardUploadPreviewResponse> {
   const url = API_BASE_URL + '/api/v4/rates/upload/';
   const formData = new FormData();
   formData.append('file', file);
+  if (options?.dryRun) {
+    formData.append('dry_run', 'true');
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -2037,7 +2514,7 @@ export async function uploadV4RateCardCSV(file: File): Promise<V4RateCardUploadS
   }
 
   if (response.ok) {
-    return payload as V4RateCardUploadSuccessResponse;
+    return payload as V4RateCardUploadSuccessResponse | V4RateCardUploadPreviewResponse;
   }
 
   if (response.status === 400 && payload && typeof payload === 'object') {

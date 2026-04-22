@@ -9,6 +9,12 @@ from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from pricing_v4.models import ProductCode
 from pricing_v4.models import DomesticCOGS, DomesticSellRate, Surcharge
+from pricing_v4.services.rate_selector import (
+    RateNotFoundError,
+    RateSelectionContext,
+    select_domestic_cogs_rate,
+    select_domestic_sell_rate,
+)
 from core.charge_rules import (
     CALCULATION_LOOKUP_RATE,
     RuleEvaluation,
@@ -51,6 +57,9 @@ class DomesticPricingEngine:
         service_scope='A2A',
         quote_date: Optional[date] = None,
         commodity_code: str = DEFAULT_COMMODITY_CODE,
+        preferred_agent_id: Optional[int] = None,
+        preferred_carrier_id: Optional[int] = None,
+        buy_currency: Optional[str] = None,
     ):
         self.origin = cogs_origin  # e.g., 'POM'
         self.destination = destination  # e.g., 'LAE'
@@ -59,6 +68,9 @@ class DomesticPricingEngine:
         self.service_type = 'DOMESTIC_AIR'
         self.quote_date = quote_date or date.today()
         self.commodity_code = commodity_code
+        self.preferred_agent_id = preferred_agent_id
+        self.preferred_carrier_id = preferred_carrier_id
+        self.buy_currency = (buy_currency or "").strip().upper() or None
         
         # Validation: Door service only available in specific ports
         self.DOOR_PORTS = ['POM', 'LAE']
@@ -134,18 +146,23 @@ class DomesticPricingEngine:
 
     def _calculate_freight(self, cogs_breakdown: List[BillableCharge], sell_breakdown: List[BillableCharge]):
         # COGS – deterministic: latest valid_from wins
-        cogs = (
-            DomesticCOGS.objects.filter(
-                origin_zone=self.origin,
-                destination_zone=self.destination,
-                product_code__code='DOM-FRT-AIR',
-                valid_from__lte=self.quote_date,
-                valid_until__gte=self.quote_date,
-            )
-            .select_related('agent')
-            .order_by('-valid_from', '-updated_at', '-id')
-            .first()
-        )
+        freight_pc = ProductCode.objects.filter(code='DOM-FRT-AIR').values_list('id', flat=True).first()
+        cogs = None
+        if freight_pc:
+            try:
+                cogs = select_domestic_cogs_rate(
+                    RateSelectionContext(
+                        product_code_id=freight_pc,
+                        quote_date=self.quote_date,
+                        origin_zone=self.origin,
+                        destination_zone=self.destination,
+                        currency=self.buy_currency or 'PGK',
+                        agent_id=self.preferred_agent_id,
+                        carrier_id=self.preferred_carrier_id,
+                    )
+                ).record
+            except RateNotFoundError:
+                cogs = None
         if cogs:
             if not is_product_code_enabled(
                 shipment_type='DOMESTIC',
@@ -172,17 +189,20 @@ class DomesticPricingEngine:
                 )
             
         # SELL – deterministic: latest valid_from wins
-        sell = (
-            DomesticSellRate.objects.filter(
-                origin_zone=self.origin,
-                destination_zone=self.destination,
-                product_code__code='DOM-FRT-AIR',
-                valid_from__lte=self.quote_date,
-                valid_until__gte=self.quote_date,
-            )
-            .order_by('-valid_from', '-updated_at', '-id')
-            .first()
-        )
+        sell = None
+        if freight_pc:
+            try:
+                sell = select_domestic_sell_rate(
+                    RateSelectionContext(
+                        product_code_id=freight_pc,
+                        quote_date=self.quote_date,
+                        origin_zone=self.origin,
+                        destination_zone=self.destination,
+                        currency='PGK',
+                    )
+                ).record
+            except RateNotFoundError:
+                sell = None
         if sell:
             if not is_product_code_enabled(
                 shipment_type='DOMESTIC',

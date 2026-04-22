@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { formatServiceScope } from '@/lib/display';
+import { getRateManagementLink } from '@/lib/pricing-management';
 
 export default function RateCardsPage() {
   const [rateCards, setRateCards] = useState<LogicalRateCard[]>([]);
@@ -48,12 +49,17 @@ export default function RateCardsPage() {
             Read-only logical views of the live V4 pricing architecture.
           </p>
         </div>
-        <Link
-          href="/pricing/rate-cards/upload"
-          className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
-        >
-          Upload V4 CSV
-        </Link>
+        <div className="flex gap-3">
+          <Button variant="outline" asChild>
+            <Link href="/pricing/manage">Manage V4 Rates</Link>
+          </Button>
+          <Link
+            href="/pricing/rate-cards/upload"
+            className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-800 hover:bg-blue-100"
+          >
+            Upload V4 CSV
+          </Link>
+        </div>
       </div>
 
       <Card>
@@ -103,9 +109,19 @@ export default function RateCardsPage() {
                     </TableCell>
                     <TableCell className="text-right">{card.line_count}</TableCell>
                     <TableCell>
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/pricing/rate-cards/${card.id}`}>View</Link>
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/pricing/rate-cards/${card.id}`}>View</Link>
+                        </Button>
+                        {card.source_tables
+                          .map((tableName) => getRateManagementLink(tableName))
+                          .filter((link): link is NonNullable<ReturnType<typeof getRateManagementLink>> => Boolean(link))
+                          .map((link) => (
+                            <Button key={`${card.id}-${link.table}`} variant="ghost" size="sm" asChild>
+                              <Link href={link.href}>{link.label.replace('Manage ', '')}</Link>
+                            </Button>
+                          ))}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

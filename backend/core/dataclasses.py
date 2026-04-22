@@ -73,6 +73,9 @@ class QuoteInput(BaseModel):
     customer_id: uuid.UUID
     contact_id: uuid.UUID
     output_currency: str
+    buy_currency: Optional[str] = None
+    agent_id: Optional[int] = None
+    carrier_id: Optional[int] = None
     quote_date: Any = Field(default=None) # Use Any/None to avoid circular imports or strict validation issues for now
     shipment: ShipmentDetails
     overrides: List[ManualOverride] = Field(default_factory=list)

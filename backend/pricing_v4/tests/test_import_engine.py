@@ -374,10 +374,10 @@ class ImportFullQuoteTest(ImportEngineTestCase):
         self.assertEqual(result.line_items[0].rule_family, CALCULATION_LOOKUP_RATE)
 
 
-class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
+class ImportD2DOriginLocalMissingRateTest(ImportEngineTestCase):
     """
     Regression guard:
-    Import ORIGIN local charges must be resolvable from LocalCOGSRate.
+    Import ORIGIN local charges must not silently fall back to the destination station.
     """
 
     def setUp(self):
@@ -406,8 +406,7 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
             valid_until=self.valid_until
         )
 
-        # Import ORIGIN local charge stored in LocalCOGSRate using destination location
-        # (legacy migration compatibility shape).
+        # Destination-station local rows must not satisfy IMPORT origin-local coverage.
         LocalCOGSRate.objects.create(
             product_code=self.pc_doc_origin,
             location='POM',
@@ -420,7 +419,7 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
             valid_until=self.valid_until
         )
 
-    def test_d2d_collect_does_not_mark_origin_local_as_missing(self):
+    def test_d2d_collect_marks_origin_local_missing_when_only_destination_local_exists(self):
         engine = ImportPricingEngine(
             quote_date=date.today(),
             origin='BNE',
@@ -434,7 +433,7 @@ class ImportD2DOriginLocalFallbackTest(ImportEngineTestCase):
         doc_origin_lines = [l for l in result.origin_lines if l.product_code == 'IMP-DOC-ORIGIN']
         self.assertEqual(len(doc_origin_lines), 1)
         line = doc_origin_lines[0]
-        self.assertFalse(getattr(line, 'is_rate_missing', False))
+        self.assertTrue(getattr(line, 'is_rate_missing', False))
 
 
 class ImportD2DOriginLaneCogsTest(ImportEngineTestCase):

@@ -18,6 +18,12 @@ from pricing_v4.models import (
     LocalSellRate,
     ProductCode,
 )
+from pricing_v4.serializers import (
+    DomesticSellRateSerializer,
+    ExportSellRateSerializer,
+    ImportSellRateSerializer,
+    LocalSellRateSerializer,
+)
 
 
 REQUIRED_COLUMNS = {
@@ -62,16 +68,28 @@ class PreparedRateRow:
     model_cls: type
     lookup: dict[str, Any]
     defaults: dict[str, Any]
+    action: str
+    preview: dict[str, Any]
 
 
 @dataclass
 class V4RateCSVImportResult:
+    dry_run: bool
     processed_rows: int
     created_rows: int
     updated_rows: int
+    preview_rows: list[dict[str, Any]]
 
 
-def import_v4_rate_cards_csv(uploaded_file) -> V4RateCSVImportResult:
+MODEL_SERIALIZER_MAP = {
+    ExportSellRate: ExportSellRateSerializer,
+    ImportSellRate: ImportSellRateSerializer,
+    DomesticSellRate: DomesticSellRateSerializer,
+    LocalSellRate: LocalSellRateSerializer,
+}
+
+
+def import_v4_rate_cards_csv(uploaded_file, dry_run: bool = False) -> V4RateCSVImportResult:
     """
     Parse, validate, and bulk import V4 SELL rate rows from CSV.
 
@@ -84,22 +102,30 @@ def import_v4_rate_cards_csv(uploaded_file) -> V4RateCSVImportResult:
         rows = _read_csv_rows(uploaded_file)
         prepared_rows = _validate_and_prepare_rows(rows)
 
-        created_rows = 0
-        updated_rows = 0
+        created_rows = sum(1 for prepared in prepared_rows if prepared.action == 'CREATE')
+        updated_rows = sum(1 for prepared in prepared_rows if prepared.action == 'UPDATE')
+
+        if dry_run:
+            return V4RateCSVImportResult(
+                dry_run=True,
+                processed_rows=len(prepared_rows),
+                created_rows=created_rows,
+                updated_rows=updated_rows,
+                preview_rows=[prepared.preview for prepared in prepared_rows],
+            )
+
         for prepared in prepared_rows:
-            obj, created = prepared.model_cls.objects.update_or_create(
+            prepared.model_cls.objects.update_or_create(
                 **prepared.lookup,
                 defaults=prepared.defaults,
             )
-            if created:
-                created_rows += 1
-            else:
-                updated_rows += 1
 
         return V4RateCSVImportResult(
+            dry_run=False,
             processed_rows=len(prepared_rows),
             created_rows=created_rows,
             updated_rows=updated_rows,
+            preview_rows=[],
         )
 
 
@@ -353,6 +379,14 @@ def _validate_and_prepare_rows(rows: list[tuple[int, dict[str, str]]]) -> list[P
             continue
         seen_keys.add(dedupe_key)
 
+        existing_instance = model_cls.objects.filter(**lookup).order_by('-updated_at', '-id').first()
+        serializer_data = _to_serializer_payload({**lookup, **defaults})
+        serializer_cls = MODEL_SERIALIZER_MAP[model_cls]
+        serializer = serializer_cls(instance=existing_instance, data=serializer_data)
+        if not serializer.is_valid():
+            errors[row_key] = _flatten_serializer_errors(serializer.errors)
+            continue
+
         model_instance = model_cls(**lookup, **defaults)
         try:
             model_instance.full_clean(validate_unique=False)
@@ -375,6 +409,15 @@ def _validate_and_prepare_rows(rows: list[tuple[int, dict[str, str]]]) -> list[P
                 model_cls=model_cls,
                 lookup=lookup,
                 defaults=defaults,
+                action='UPDATE' if existing_instance else 'CREATE',
+                preview=_build_preview_row(
+                    row_number=row_number,
+                    model_cls=model_cls,
+                    product=product,
+                    lookup=lookup,
+                    defaults=defaults,
+                    action='UPDATE' if existing_instance else 'CREATE',
+                ),
             )
         )
 
@@ -475,6 +518,61 @@ def _build_model_payload(
         }
 
     return lookup, defaults
+
+
+def _to_serializer_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    serialized: dict[str, Any] = {}
+    for key, value in payload.items():
+        if hasattr(value, 'pk'):
+            serialized[key] = value.pk
+        else:
+            serialized[key] = value
+    return serialized
+
+
+def _flatten_serializer_errors(detail: Any, prefix: str = "") -> list[str]:
+    messages: list[str] = []
+    if isinstance(detail, dict):
+        for key, value in detail.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            messages.extend(_flatten_serializer_errors(value, child_prefix))
+        return messages
+    if isinstance(detail, list):
+        for item in detail:
+            messages.extend(_flatten_serializer_errors(item, prefix))
+        return messages
+
+    if prefix:
+        return [f"{prefix}: {detail}"]
+    return [str(detail)]
+
+
+def _build_preview_row(
+    *,
+    row_number: int,
+    model_cls: type,
+    product: ProductCode,
+    lookup: dict[str, Any],
+    defaults: dict[str, Any],
+    action: str,
+) -> dict[str, Any]:
+    if model_cls is LocalSellRate:
+        coverage = f"{lookup['location']} / {lookup['direction']} / {lookup['payment_term']}"
+    elif model_cls is DomesticSellRate:
+        coverage = f"{lookup['origin_zone']} -> {lookup['destination_zone']}"
+    else:
+        coverage = f"{lookup['origin_airport']} -> {lookup['destination_airport']}"
+
+    return {
+        'row_number': row_number,
+        'table_name': model_cls._meta.db_table,
+        'action': action,
+        'product_code': product.code,
+        'coverage': coverage,
+        'currency': defaults.get('currency', lookup.get('currency')),
+        'valid_from': lookup['valid_from'].isoformat(),
+        'valid_until': defaults['valid_until'].isoformat(),
+    }
 
 
 def _resolve_product_code(

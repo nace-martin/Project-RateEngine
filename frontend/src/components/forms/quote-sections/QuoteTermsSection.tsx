@@ -18,13 +18,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatPaymentTerm } from "@/lib/display";
 import {
   getValidIncoterms,
   type QuoteFormSchemaV3,
   V3_INCOTERMS,
   V3_PAYMENT_TERMS,
 } from "@/lib/schemas/quoteSchema";
-import { formatPaymentTerm } from "@/lib/display";
 import { useQuoteStore } from "@/store/useQuoteStore";
 
 export default function QuoteTermsSection() {
@@ -33,6 +33,7 @@ export default function QuoteTermsSection() {
   const serviceScope = useWatch({ control: form.control, name: "service_scope" });
   const paymentTerm = useWatch({ control: form.control, name: "payment_term" });
   const isImport = destinationLocation?.country_code === "PG";
+
   const validIncoterms = useMemo(
     () => getValidIncoterms(isImport, serviceScope, paymentTerm),
     [isImport, paymentTerm, serviceScope],
@@ -60,6 +61,9 @@ export default function QuoteTermsSection() {
                 ))}
               </SelectContent>
             </Select>
+            <FormDescription>
+              Buy-side currency and counterparties are resolved automatically from active V4 pricing data.
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

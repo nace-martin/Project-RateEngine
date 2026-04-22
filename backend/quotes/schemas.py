@@ -42,6 +42,9 @@ class QuoteComputeRequest(BaseModel):
     destination_location_id: UUID
     incoterm: str
     payment_term: str
+    agent_id: Optional[int] = None
+    carrier_id: Optional[int] = None
+    buy_currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
     commodity_code: str = DEFAULT_COMMODITY_CODE
     is_dangerous_goods: bool = False
     dimensions: List[DimensionInput]
@@ -57,12 +60,16 @@ class QuoteComputeRequest(BaseModel):
     def validate_rules(self):
         if self.mode == 'AIR' and not self.dimensions:
              raise ValueError("Dimensions are required for AIR mode")
+        if self.agent_id is not None and self.carrier_id is not None:
+            raise ValueError("Provide either agent_id or carrier_id, not both.")
         if self.is_dangerous_goods and self.commodity_code == DEFAULT_COMMODITY_CODE:
             self.commodity_code = COMMODITY_CODE_DG
         elif self.commodity_code == COMMODITY_CODE_DG:
             self.is_dangerous_goods = True
         elif self.is_dangerous_goods:
             raise ValueError("is_dangerous_goods can only be true when commodity_code is DG.")
+        if self.buy_currency:
+            self.buy_currency = self.buy_currency.strip().upper()
         return self
 
 # --- RESPONSE SCHEMAS (API Layer) ---

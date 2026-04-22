@@ -69,6 +69,9 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
     
     incoterm = serializers.CharField(max_length=3)
     payment_term = serializers.ChoiceField(choices=Quote.PaymentTerm.choices)
+    agent_id = serializers.IntegerField(required=False, allow_null=True)
+    carrier_id = serializers.IntegerField(required=False, allow_null=True)
+    buy_currency = serializers.CharField(max_length=3, required=False, allow_null=True)
     commodity_code = serializers.CharField(max_length=10, required=False, default=DEFAULT_COMMODITY_CODE)
     is_dangerous_goods = serializers.BooleanField(default=False)
     dimensions = V3DimensionInputSerializer(many=True, required=True)
@@ -107,7 +110,13 @@ class QuoteComputeRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'is_dangerous_goods': ["is_dangerous_goods can only be true when commodity_code is DG."]
             })
+        if attrs.get('agent_id') is not None and attrs.get('carrier_id') is not None:
+            raise serializers.ValidationError({
+                'non_field_errors': ["Provide either agent_id or carrier_id, not both."]
+            })
         attrs['commodity_code'] = commodity_code
+        if attrs.get('buy_currency'):
+            attrs['buy_currency'] = str(attrs['buy_currency']).strip().upper()
 
         return attrs
 

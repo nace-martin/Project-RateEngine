@@ -25,6 +25,14 @@ from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
 )
+from quotes.services.rate_resolution import (
+    RateResolutionError,
+    RateResolutionContext,
+    ResolvedRateDimensions,
+    build_rate_resolution_error_payload,
+    resolve_quote_rate_dimensions,
+    serialize_resolved_rate_dimensions,
+)
 
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
@@ -136,7 +144,50 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        customer = get_object_or_404(Company, id=payload.customer_id)
+        derived_output_currency = self._derive_output_currency(
+            shipment_type,
+            payload.payment_term,
+            origin_location,
+            destination_location,
+        )
+
+        try:
+            resolved_dimensions = resolve_quote_rate_dimensions(
+                RateResolutionContext(
+                    customer_id=payload.customer_id,
+                    shipment_type=shipment_type,
+                    service_scope=payload.service_scope,
+                    payment_term=payload.payment_term,
+                    origin_airport=origin_location.code,
+                    destination_airport=destination_location.code,
+                    quote_date=date.today(),
+                    override_buy_currency=payload.buy_currency,
+                    override_agent_id=payload.agent_id,
+                    override_carrier_id=payload.carrier_id,
+                )
+            )
+        except RateResolutionError as exc:
+            resolution_issue = build_rate_resolution_error_payload(exc)
+            logger.warning("Quote compute rate resolution failed: %s", resolution_issue)
+            return Response(resolution_issue, status=exc.status_code)
+
+        selector_issue = self._validate_selector_dimensions(
+            shipment_type=shipment_type,
+            origin_location=origin_location,
+            destination_location=destination_location,
+            payment_term=payload.payment_term,
+            service_scope=payload.service_scope,
+            resolved_dimensions=resolved_dimensions,
+            quote_currency=derived_output_currency,
+        )
+        if selector_issue is not None:
+            status_code = (
+                status.HTTP_409_CONFLICT
+                if selector_issue.get('error_code') == 'RATE_SELECTION_AMBIGUOUS'
+                else status.HTTP_400_BAD_REQUEST
+            )
+            logger.warning("Quote compute selector validation failed: %s", selector_issue)
+            return Response(selector_issue, status=status_code)
 
         if payload.commodity_code != DEFAULT_COMMODITY_CODE:
             from quotes.spot_services import CommodityRateRuleService, SpotTriggerEvaluator
@@ -181,6 +232,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 shipment_type,
                 origin_location,
                 destination_location,
+                resolved_dimensions,
             )
             
             # 3. Call the pricing dispatcher (single entry point)
@@ -211,6 +263,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 quote_status,
                 existing_quote,
                 engine_version,  # Pass engine version from dispatcher
+                resolved_dimensions=resolved_dimensions,
             )
             
             # 4. Serialize and return the created quote
@@ -243,7 +296,14 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Re-raise so Django's exception handler can do its job (or return generic 500)
             raise
 
-    def _build_quote_input(self, data: QuoteComputeRequest, shipment_type, origin_location: Location, destination_location: Location):
+    def _build_quote_input(
+        self,
+        data: QuoteComputeRequest,
+        shipment_type,
+        origin_location: Location,
+        destination_location: Location,
+        resolved_dimensions: ResolvedRateDimensions,
+    ):
         """Helper to convert Pydantic model to PricingService dataclasses."""
 
         origin_ref = self._location_to_ref(origin_location)
@@ -276,6 +336,9 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             customer_id=data.customer_id,
             contact_id=data.contact_id,
             output_currency=output_currency,
+            buy_currency=resolved_dimensions.buy_currency,
+            agent_id=resolved_dimensions.agent_id,
+            carrier_id=resolved_dimensions.carrier_id,
             quote_date=date.today(),
             shipment=shipment_details,
             overrides=overrides,
@@ -307,14 +370,83 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             destination_country_code=destination_country_code,
         )
 
+    def _validate_selector_dimensions(
+        self,
+        *,
+        shipment_type: str,
+        origin_location: Location,
+        destination_location: Location,
+        payment_term: str,
+        service_scope: str,
+        resolved_dimensions: ResolvedRateDimensions,
+        quote_currency: str,
+    ) -> dict | None:
+        from quotes.completeness import required_components
+        from quotes.spot_services import RateAvailabilityService
+
+        outcomes = RateAvailabilityService.get_component_outcomes(
+            origin_airport=origin_location.code,
+            destination_airport=destination_location.code,
+            direction=shipment_type,
+            service_scope=service_scope,
+            payment_term=payment_term,
+            agent_id=resolved_dimensions.agent_id,
+            carrier_id=resolved_dimensions.carrier_id,
+            buy_currency=resolved_dimensions.buy_currency,
+            quote_currency=quote_currency,
+        )
+
+        for component in required_components(shipment_type, service_scope):
+            outcome = outcomes.get(component) or {}
+            if outcome.get('status') not in {
+                RateAvailabilityService.STATUS_MISSING_DIMENSION,
+                RateAvailabilityService.STATUS_AMBIGUOUS,
+            }:
+                continue
+
+            return {
+                'detail': outcome.get('detail') or 'Rate selection could not be resolved deterministically.',
+                'error_code': (
+                    'RATE_SELECTION_AMBIGUOUS'
+                    if outcome.get('status') == RateAvailabilityService.STATUS_AMBIGUOUS
+                    else 'RATE_SELECTION_MISSING_DIMENSION'
+                ),
+                'component': component,
+                'selector_context': outcome.get('selector_context', {}),
+                'missing_dimensions': outcome.get('missing_dimensions', []),
+                'conflicting_rows': outcome.get('conflicting_rows', []),
+                'suggested_remediation': self._selector_remediation_message(outcome.get('missing_dimensions', [])),
+                'component_outcomes': outcomes,
+                'resolved_dimensions': serialize_resolved_rate_dimensions(resolved_dimensions),
+            }
+
+        return None
+
+    @staticmethod
+    def _selector_remediation_message(missing_dimensions: list[str]) -> str:
+        messages = {
+            'carrier_id': 'Carrier could not be resolved automatically. Retire conflicting rows or define one deterministic carrier path.',
+            'agent_id': 'Agent could not be resolved automatically. Retire conflicting rows or define one deterministic agent path.',
+            'buy_currency': 'Buy currency could not be resolved automatically. Retire conflicting rows or define one deterministic currency path.',
+        }
+        if not missing_dimensions:
+            return 'Conflicting active rows found. Retire or revise the overlapping rows.'
+        labels = [messages.get(item, item.replace('_', ' ')) for item in missing_dimensions]
+        if len(labels) == 1:
+            return labels[0]
+        return ', '.join(labels)
+
     @transaction.atomic
-    def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None, engine_version: str = 'V4'):
+    def _save_quote_v3(self, request, validated_data: QuoteComputeRequest, shipment_type, charges: QuoteCharges, snapshot: FxSnapshot, policy: Policy, output_currency: str, initial_status: str, quote: Quote = None, engine_version: str = 'V4', resolved_dimensions: ResolvedRateDimensions | None = None):
         """
         Helper to save the quote, version, lines, and totals to the database.
         When an existing quote is provided, we append a new version instead of creating a duplicate quote.
         """
         customer = get_object_or_404(Company, id=validated_data.customer_id)
         contact = get_object_or_404(Contact, id=validated_data.contact_id)
+        request_payload = validated_data.model_dump(mode='json')
+        if resolved_dimensions is not None:
+            request_payload['resolved_dimensions'] = serialize_resolved_rate_dimensions(resolved_dimensions)
 
         is_new_quote = quote is None
         if is_new_quote:
@@ -335,7 +467,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 fx_snapshot=snapshot,
                 is_dangerous_goods=validated_data.is_dangerous_goods,
                 status=initial_status,
-                request_details_json=validated_data.model_dump(mode='json'),
+                request_details_json=request_payload,
                 created_by=request.user,
                 organization=getattr(request.user, 'organization', None),
             )
@@ -357,7 +489,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.fx_snapshot = snapshot
             quote.is_dangerous_goods = validated_data.is_dangerous_goods
             quote.status = initial_status
-            quote.request_details_json = validated_data.model_dump(mode='json')
+            quote.request_details_json = request_payload
             if quote.organization_id is None and getattr(request.user, 'organization_id', None):
                 quote.organization = request.user.organization
             quote.save(update_fields=[
@@ -387,7 +519,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         version = QuoteVersion.objects.create(
             quote=quote,
             version_number=version_number,
-            payload_json=validated_data.model_dump(mode='json'),
+            payload_json=request_payload,
             policy=policy,
             fx_snapshot=snapshot,
             status=initial_status,

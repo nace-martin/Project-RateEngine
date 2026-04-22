@@ -303,12 +303,10 @@ class TestSpotTriggerEvaluation:
 class TestRateAvailabilityService:
     """Rate availability detection against V4 rate tables."""
 
-    def test_import_d2d_origin_local_detected_from_destination_fallback(self):
+    def test_import_d2d_origin_local_is_missing_when_only_destination_local_exists(self):
         """
         IMPORT D2D with non-PNG origin:
-        Origin local rows migrated under the destination (POM) station should
-        still satisfy ORIGIN_LOCAL so the SPOT pre-check matches the import
-        engine's legacy fallback behavior.
+        Destination-station local rows must not satisfy ORIGIN_LOCAL.
         """
         from datetime import date, timedelta
         from pricing_v4.models import ProductCode, Agent, ImportCOGS, LocalCOGSRate
@@ -368,7 +366,7 @@ class TestRateAvailabilityService:
             valid_until=valid_until,
         )
 
-        # Legacy migrated shape: origin local row stored under destination station.
+        # Destination-station local row must not satisfy ORIGIN_LOCAL.
         LocalCOGSRate.objects.create(
             product_code=pc_origin,
             location="POM",
@@ -400,7 +398,7 @@ class TestRateAvailabilityService:
         )
 
         assert availability[COMPONENT_FREIGHT] is True
-        assert availability[COMPONENT_ORIGIN_LOCAL] is True
+        assert availability[COMPONENT_ORIGIN_LOCAL] is False
         assert availability[COMPONENT_DESTINATION_LOCAL] is True
 
 

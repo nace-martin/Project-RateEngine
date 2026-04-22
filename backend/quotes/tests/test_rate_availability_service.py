@@ -67,13 +67,8 @@ def _evaluate(direction: str, scope: str, availability: dict[str, bool]):
     )
 
 
-def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
-    """Import availability should mirror the import engine's legacy fallback.
-
-    Origin charges resolve against the foreign origin station first, but when
-    migrated import rows still live on the PNG destination station they should
-    not force an incorrect SPOT trigger.
-    """
+def test_import_d2d_collect_reports_missing_origin_when_only_destination_local_exists():
+    """Destination-local import rows must not satisfy origin-local coverage."""
     valid_from, valid_until = _today_window()
     agent = _agent()
     pc_freight = _pc(2951, "IMP-FRT-AIR-MATRIX", "IMPORT", "FREIGHT", unit="KG")
@@ -90,8 +85,7 @@ def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
         valid_from=valid_from,
         valid_until=valid_until,
     )
-    # Legacy migrated shape: origin local row stored at destination.
-    # For non-PNG origin airports this should NOT satisfy ORIGIN_LOCAL.
+    # Destination-station local rows must not satisfy ORIGIN_LOCAL.
     LocalCOGSRate.objects.create(
         product_code=pc_origin,
         location="POM",
@@ -118,13 +112,84 @@ def test_import_d2d_collect_uses_origin_fallback_and_does_not_trigger_spot():
     availability = RateAvailabilityService.get_availability("BNE", "POM", "IMPORT", "D2D")
     assert availability == {
         COMPONENT_FREIGHT: True,
-        COMPONENT_ORIGIN_LOCAL: True,
+        COMPONENT_ORIGIN_LOCAL: False,
         COMPONENT_DESTINATION_LOCAL: True,
     }
 
     is_spot, trigger = _evaluate("IMPORT", "D2D", availability)
-    assert is_spot is False
-    assert trigger is None
+    assert is_spot is True
+    assert trigger is not None
+    assert trigger.missing_components == [COMPONENT_ORIGIN_LOCAL]
+
+
+def test_import_component_outcomes_report_missing_buy_currency_when_cogs_are_multicurrency():
+    valid_from, valid_until = _today_window()
+    agent = _agent()
+    pc_freight = _pc(2954, "IMP-FRT-AIR-MULTI-CURRENCY", "IMPORT", "FREIGHT", unit="KG")
+
+    for currency, amount in [("AUD", "5.00"), ("USD", "5.20")]:
+        ImportCOGS.objects.create(
+            product_code=pc_freight,
+            origin_airport="SYD",
+            destination_airport="POM",
+            agent=agent,
+            currency=currency,
+            rate_per_kg=Decimal(amount),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+
+    outcomes = RateAvailabilityService.get_component_outcomes(
+        "SYD",
+        "POM",
+        "IMPORT",
+        "A2A",
+    )
+
+    freight = outcomes[COMPONENT_FREIGHT]
+    assert freight["status"] == RateAvailabilityService.STATUS_MISSING_DIMENSION
+    assert freight["missing_dimensions"] == ["buy_currency"]
+
+
+def test_import_component_outcomes_report_missing_agent_when_counterparty_is_required():
+    valid_from, valid_until = _today_window()
+    pc_freight = _pc(2955, "IMP-FRT-AIR-MULTI-AGENT", "IMPORT", "FREIGHT", unit="KG")
+    agent_a = Agent.objects.create(
+        code="SPOT-AG-A",
+        name="Spot Agent A",
+        country_code="AU",
+        agent_type="ORIGIN",
+    )
+    agent_b = Agent.objects.create(
+        code="SPOT-AG-B",
+        name="Spot Agent B",
+        country_code="AU",
+        agent_type="ORIGIN",
+    )
+
+    for agent in [agent_a, agent_b]:
+        ImportCOGS.objects.create(
+            product_code=pc_freight,
+            origin_airport="SYD",
+            destination_airport="POM",
+            agent=agent,
+            currency="AUD",
+            rate_per_kg=Decimal("4.90"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+
+    outcomes = RateAvailabilityService.get_component_outcomes(
+        "SYD",
+        "POM",
+        "IMPORT",
+        "A2A",
+        buy_currency="AUD",
+    )
+
+    freight = outcomes[COMPONENT_FREIGHT]
+    assert freight["status"] == RateAvailabilityService.STATUS_MISSING_DIMENSION
+    assert freight["missing_dimensions"] == ["agent_id"]
 
 
 def test_import_d2d_missing_origin_component_still_triggers_spot():

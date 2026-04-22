@@ -386,6 +386,9 @@ class PricingServiceV4Adapter:
                 caf_rate=caf_rate,
                 margin_rate=margin_rate,
                 destination_currency=destination_currency,
+                preferred_agent_id=self.quote_input.agent_id,
+                preferred_carrier_id=self.quote_input.carrier_id,
+                buy_currency=self.quote_input.buy_currency,
             )
         elif shipment.shipment_type == 'IMPORT':
             # Import Engine
@@ -427,6 +430,9 @@ class PricingServiceV4Adapter:
                 margin_rate=margin_rate,
                 fx_rates=fx_rates,
                 quote_currency=quote_currency,
+                preferred_agent_id=self.quote_input.agent_id,
+                preferred_carrier_id=self.quote_input.carrier_id,
+                buy_currency=self.quote_input.buy_currency,
             )
         elif shipment.shipment_type == 'DOMESTIC':
             # Domestic Engine
@@ -437,6 +443,9 @@ class PricingServiceV4Adapter:
                 service_scope=shipment.service_scope,
                 quote_date=self.quote_input.quote_date,
                 commodity_code=commodity_code,
+                preferred_agent_id=self.quote_input.agent_id,
+                preferred_carrier_id=self.quote_input.carrier_id,
+                buy_currency=self.quote_input.buy_currency,
             )
         # Note: RoutingMap.get_engine_class() above already validated the
         # shipment_type, so reaching here is impossible. Guard retained for

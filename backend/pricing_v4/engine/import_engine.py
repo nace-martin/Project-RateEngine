@@ -27,6 +27,14 @@ from pricing_v4.models import (
 )
 from pricing_v4.category_rules import is_local_rate_category
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
+from pricing_v4.services.rate_selector import (
+    RateNotFoundError,
+    RateSelectionContext,
+    select_import_cogs_rate,
+    select_import_sell_rate,
+    select_local_cogs_rate,
+    select_local_sell_rate,
+)
 from core.charge_rules import (
     CALCULATION_FLAT,
     CALCULATION_LOOKUP_RATE,
@@ -126,6 +134,9 @@ class ImportPricingEngine:
         margin_rate: Optional[Decimal] = None,
         fx_rates: Optional[Dict] = None,
         quote_currency: Optional[str] = None,
+        preferred_agent_id: Optional[int] = None,
+        preferred_carrier_id: Optional[int] = None,
+        buy_currency: Optional[str] = None,
     ):
         self.quote_date = quote_date
         self.origin = origin
@@ -144,6 +155,9 @@ class ImportPricingEngine:
         
         # Determine quote currency (prefer explicit override, else derive)
         self.quote_currency = quote_currency or self._determine_quote_currency()
+        self.preferred_agent_id = preferred_agent_id
+        self.preferred_carrier_id = preferred_carrier_id
+        self.buy_currency = (buy_currency or "").strip().upper() or None
         
         # Cache for FSC calculations
         self._cost_cache: Dict[str, Decimal] = {}
@@ -363,14 +377,21 @@ class ImportPricingEngine:
             if pc.default_unit == 'PERCENT':
                 continue
             
-            cogs = ImportCOGS.objects.filter(
-                product_code=pc,
-                origin_airport=self.origin,
-                destination_airport=self.destination,
-                valid_from__lte=self.quote_date,
-                valid_until__gte=self.quote_date
-            ).order_by('-valid_from', '-updated_at', '-id').first()
-            
+            try:
+                cogs = select_import_cogs_rate(
+                    RateSelectionContext(
+                        product_code_id=pc.id,
+                        quote_date=self.quote_date,
+                        origin_airport=self.origin,
+                        destination_airport=self.destination,
+                        currency=self.buy_currency,
+                        agent_id=self.preferred_agent_id,
+                        carrier_id=self.preferred_carrier_id,
+                    )
+                ).record
+            except RateNotFoundError:
+                cogs = None
+
             if cogs:
                 cost_eval = self._calculate_cogs_amount(cogs, pc)
                 self._cost_cache[pc.code] = cost_eval.amount
@@ -722,68 +743,67 @@ class ImportPricingEngine:
         if is_local_rate_category(pc.category):
             return self._get_local_sell_rate(pc)
         
-        # Lane-based lookup for FREIGHT
-        base_qs = ImportSellRate.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).order_by('id')
-
-        sell_rate = base_qs.filter(currency=self.quote_currency).first()
-        if sell_rate:
-            return sell_rate
-        if self.payment_term == PaymentTerm.PREPAID:
-            pgk = base_qs.filter(currency='PGK').first()
-            if pgk: return pgk
-        if self.payment_term == PaymentTerm.COLLECT:
-            fcy = base_qs.exclude(currency='PGK').first()
-            if fcy: return fcy
-            
-        # Final fallback: Anything we can find (e.g. USD when quote is AUD)
-        return base_qs.first()
+        try:
+            return select_import_sell_rate(
+                RateSelectionContext(
+                    product_code_id=pc.id,
+                    quote_date=self.quote_date,
+                    origin_airport=self.origin,
+                    destination_airport=self.destination,
+                    currency=self.quote_currency,
+                ),
+                allow_pgk_fallback=self.payment_term == PaymentTerm.PREPAID and self.quote_currency != 'PGK',
+            ).record
+        except RateNotFoundError:
+            return None
     
     def _get_cogs(self, pc: ProductCode, leg: Optional[str] = None):
         """
         Get COGS for a product code.
         Destination-local import charges live in LocalCOGSRate.
-        Origin-local and freight import charges remain lane-based in ImportCOGS,
-        with a LocalCOGSRate fallback for legacy migrated datasets.
+        Origin-local and freight import charges remain lane-based in ImportCOGS.
         """
         if leg == 'DESTINATION' and is_local_rate_category(pc.category):
             return self._get_local_cogs(pc, leg)
 
-        lane_cogs = ImportCOGS.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).select_related('agent').order_by('-valid_from', '-updated_at', '-id').first()
-
-        if lane_cogs:
-            return lane_cogs
+        try:
+            return select_import_cogs_rate(
+                RateSelectionContext(
+                    product_code_id=pc.id,
+                    quote_date=self.quote_date,
+                    origin_airport=self.origin,
+                    destination_airport=self.destination,
+                    currency=self.buy_currency,
+                    agent_id=self.preferred_agent_id,
+                    carrier_id=self.preferred_carrier_id,
+                )
+            ).record
+        except RateNotFoundError:
+            lane_cogs = None
 
         if leg == 'ORIGIN' and is_local_rate_category(pc.category):
             return self._get_local_cogs(pc, leg)
 
-        return None
+        return lane_cogs
     
     def _get_sell_rate(self, pc: ProductCode, leg: str):
         """
         Get sell rate for non-destination legs.
         Uses lane-based ImportSellRate (origin/freight sell is cost-plus).
         """
-        # Lane-based lookup
-        return ImportSellRate.objects.filter(
-            product_code=pc,
-            origin_airport=self.origin,
-            destination_airport=self.destination,
-            currency=self.quote_currency,
-            valid_from__lte=self.quote_date,
-            valid_until__gte=self.quote_date
-        ).order_by('-valid_from', '-updated_at', '-id').first()
+        try:
+            return select_import_sell_rate(
+                RateSelectionContext(
+                    product_code_id=pc.id,
+                    quote_date=self.quote_date,
+                    origin_airport=self.origin,
+                    destination_airport=self.destination,
+                    currency=self.quote_currency,
+                ),
+                allow_pgk_fallback=False,
+            ).record
+        except RateNotFoundError:
+            return None
     
     def _get_local_cogs(self, pc: ProductCode, leg: str):
         """
@@ -792,23 +812,24 @@ class ImportPricingEngine:
         Lookup order:
         - DESTINATION leg: destination station first.
         - ORIGIN leg: origin station first.
-        - Compatibility fallback for legacy migrated datasets: destination station.
         """
-        if leg == 'ORIGIN':
-            location_candidates = [self.origin, self.destination]
-        else:
-            location_candidates = [self.destination]
+        location_candidates = [self.origin] if leg == 'ORIGIN' else [self.destination]
 
         for location in location_candidates:
-            local_rate = LocalCOGSRate.objects.filter(
-                product_code=pc,
-                location=location,
-                direction='IMPORT',
-                valid_from__lte=self.quote_date,
-                valid_until__gte=self.quote_date
-            ).order_by('-valid_from', '-updated_at', '-id').first()
-            if local_rate:
-                return local_rate
+            try:
+                return select_local_cogs_rate(
+                    RateSelectionContext(
+                        product_code_id=pc.id,
+                        quote_date=self.quote_date,
+                        location=location,
+                        direction='IMPORT',
+                        currency=self.buy_currency,
+                        agent_id=self.preferred_agent_id,
+                        carrier_id=self.preferred_carrier_id,
+                    )
+                ).record
+            except RateNotFoundError:
+                continue
 
         return None
     
@@ -825,7 +846,6 @@ class ImportPricingEngine:
         """
         payment_term_value = self.payment_term.value if hasattr(self.payment_term, 'value') else str(self.payment_term)
         
-        # Try new LocalSellRate table first
         base_qs = LocalSellRate.objects.filter(
             product_code=pc,
             location=self.destination,
@@ -843,25 +863,18 @@ class ImportPricingEngine:
         else:
             base_qs = base_qs.exclude(rate_type='PERCENT')
 
-        # Priority 1: Match quote currency + exact payment term
-        rates = base_qs.filter(currency=self.quote_currency)
-        exact = rates.filter(payment_term=payment_term_value).first()
-        if exact:
-            return exact
-
-        # Priority 2: Match quote currency + ANY term
-        any_term = rates.filter(payment_term='ANY').first()
-        if any_term:
-            return any_term
-
-        # Priority 3: Any currency + exact payment term
-        exact_any_currency = base_qs.filter(payment_term=payment_term_value).first()
-        if exact_any_currency:
-            return exact_any_currency
-
-        # Priority 4: Any currency + ANY term
-        any_any = base_qs.filter(payment_term='ANY').first()
-        if any_any:
-            return any_any
-
-        return None
+        try:
+            return select_local_sell_rate(
+                RateSelectionContext(
+                    product_code_id=pc.id,
+                    quote_date=self.quote_date,
+                    location=self.destination,
+                    direction='IMPORT',
+                    payment_term=payment_term_value,
+                    currency=self.quote_currency,
+                ),
+                queryset_override=base_qs,
+                allow_pgk_fallback=self.payment_term == PaymentTerm.PREPAID and self.quote_currency != 'PGK',
+            ).record
+        except RateNotFoundError:
+            return None

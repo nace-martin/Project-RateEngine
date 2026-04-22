@@ -44,6 +44,26 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.scope_url = reverse("quotes:spot-validate-scope")
         self.evaluate_url = reverse("quotes:spot-evaluate-trigger")
 
+    def _component_outcomes(self, freight: bool, origin: bool, destination: bool):
+        def outcome(component: str, covered: bool):
+            return {
+                "component": component,
+                "status": "covered_exact" if covered else "missing_rate",
+                "detail": "",
+                "match_type": "exact" if covered else None,
+                "selector_model": None,
+                "selector_context": {},
+                "missing_dimensions": [],
+                "conflicting_rows": [],
+                "fallback_applied": False,
+            }
+
+        return {
+            COMPONENT_FREIGHT: outcome(COMPONENT_FREIGHT, freight),
+            COMPONENT_ORIGIN_LOCAL: outcome(COMPONENT_ORIGIN_LOCAL, origin),
+            COMPONENT_DESTINATION_LOCAL: outcome(COMPONENT_DESTINATION_LOCAL, destination),
+        }
+
     def test_spot_envelope_flow_acknowledge_compute(self):
         create_payload = {
             "shipment_context": {
@@ -127,8 +147,8 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertTrue(payload["is_valid"])
         self.assertIsNone(payload["error"])
 
-    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
-    def test_evaluate_trigger_requires_payment_term(self, mock_availability):
+    @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
+    def test_evaluate_trigger_requires_payment_term(self, mock_outcomes):
         response = self.client.post(
             self.evaluate_url,
             {
@@ -142,15 +162,15 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("payment_term", response.json().get("error", ""))
-        mock_availability.assert_not_called()
+        mock_outcomes.assert_not_called()
 
-    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
-    def test_evaluate_trigger_passes_payment_term_to_availability(self, mock_availability):
-        mock_availability.return_value = {
-            COMPONENT_FREIGHT: False,
-            COMPONENT_ORIGIN_LOCAL: False,
-            COMPONENT_DESTINATION_LOCAL: True,
-        }
+    @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
+    def test_evaluate_trigger_passes_payment_term_to_availability(self, mock_outcomes):
+        mock_outcomes.return_value = self._component_outcomes(
+            freight=False,
+            origin=False,
+            destination=True,
+        )
         response = self.client.post(
             self.evaluate_url,
             {
@@ -165,11 +185,11 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(response.json()["is_spot_required"])
-        kwargs = mock_availability.call_args.kwargs
+        kwargs = mock_outcomes.call_args.kwargs
         self.assertEqual(kwargs["payment_term"], "COLLECT")
 
-    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
-    def test_evaluate_trigger_returns_missing_commodity_rates(self, mock_availability):
+    @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
+    def test_evaluate_trigger_returns_missing_commodity_rates(self, mock_outcomes):
         valid_from = date.today() - timedelta(days=1)
         valid_until = date.today() + timedelta(days=30)
         product_code = ProductCode.objects.create(
@@ -194,11 +214,11 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             effective_to=valid_until,
         )
 
-        mock_availability.return_value = {
-            COMPONENT_FREIGHT: True,
-            COMPONENT_ORIGIN_LOCAL: True,
-            COMPONENT_DESTINATION_LOCAL: False,
-        }
+        mock_outcomes.return_value = self._component_outcomes(
+            freight=True,
+            origin=True,
+            destination=False,
+        )
         response = self.client.post(
             self.evaluate_url,
             {
@@ -219,8 +239,8 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(payload["trigger"]["missing_product_codes"], ["EXP-DG-API"])
         self.assertIn("Export DG API Test (EXP-DG-API)", payload["trigger"]["text"])
 
-    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
-    def test_evaluate_trigger_returns_manual_commodity_requirement(self, mock_availability):
+    @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
+    def test_evaluate_trigger_returns_manual_commodity_requirement(self, mock_outcomes):
         valid_from = date.today() - timedelta(days=1)
         valid_until = date.today() + timedelta(days=30)
         product_code = ProductCode.objects.create(
@@ -245,11 +265,11 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             effective_to=valid_until,
         )
 
-        mock_availability.return_value = {
-            COMPONENT_FREIGHT: True,
-            COMPONENT_ORIGIN_LOCAL: True,
-            COMPONENT_DESTINATION_LOCAL: False,
-        }
+        mock_outcomes.return_value = self._component_outcomes(
+            freight=True,
+            origin=True,
+            destination=False,
+        )
         response = self.client.post(
             self.evaluate_url,
             {
@@ -314,13 +334,13 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(acknowledge_response.status_code, status.HTTP_200_OK)
         self.assertEqual(acknowledge_response.json()["status"], "ready")
 
-    @patch("quotes.spot_services.RateAvailabilityService.get_availability")
-    def test_acknowledge_allows_d2d_without_context_missing_components_when_freight_available(self, mock_availability):
-        mock_availability.return_value = {
-            COMPONENT_FREIGHT: True,
-            COMPONENT_ORIGIN_LOCAL: False,
-            COMPONENT_DESTINATION_LOCAL: False,
-        }
+    @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
+    def test_acknowledge_allows_d2d_without_context_missing_components_when_freight_available(self, mock_outcomes):
+        mock_outcomes.return_value = self._component_outcomes(
+            freight=True,
+            origin=False,
+            destination=False,
+        )
 
         create_payload = {
             "shipment_context": {

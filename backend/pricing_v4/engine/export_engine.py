@@ -38,6 +38,14 @@ from pricing_v4.category_rules import (
     is_local_rate_category,
     resolve_export_local_location,
 )
+from pricing_v4.services.rate_selector import (
+    RateNotFoundError,
+    RateSelectionContext,
+    select_export_cogs_rate,
+    select_export_sell_rate,
+    select_local_cogs_rate,
+    select_local_sell_rate,
+)
 from core.charge_rules import (
     CALCULATION_FLAT,
     CALCULATION_PERCENT_OF_BASE,
@@ -132,6 +140,9 @@ class ExportPricingEngine:
         caf_rate: Optional[Decimal] = None,
         margin_rate: Optional[Decimal] = None,
         destination_currency: str = 'AUD',
+        preferred_agent_id: Optional[int] = None,
+        preferred_carrier_id: Optional[int] = None,
+        buy_currency: Optional[str] = None,
     ):
         self.quote_date = quote_date
         self.origin = origin
@@ -147,6 +158,9 @@ class ExportPricingEngine:
         
         # Destination currency for PREPAID quotes
         self.destination_currency = destination_currency
+        self.preferred_agent_id = preferred_agent_id
+        self.preferred_carrier_id = preferred_carrier_id
+        self.buy_currency = (buy_currency or "").strip().upper() or None
         
         # Determine quote currency based on payment term
         self.quote_currency = self._determine_quote_currency()
@@ -340,22 +354,37 @@ class ExportPricingEngine:
         self._surcharge_cache = {}
         pcs = ProductCode.objects.filter(id__in=product_code_ids)
         for pc in pcs: self._pc_cache[pc.id] = pc
-        cogs_qs = ExportCOGS.objects.filter(
-            product_code_id__in=product_code_ids, origin_airport=self.origin, destination_airport=self.destination,
-            valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
-        ).select_related('agent')
-        for rate in cogs_qs: self._cogs_rate_cache[rate.product_code_id] = rate
-        sell_qs = ExportSellRate.objects.filter(
-            product_code_id__in=product_code_ids, origin_airport=self.origin, destination_airport=self.destination,
-            valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
-        ).order_by('product_code_id', '-valid_from', '-updated_at', '-id')
-        sell_candidates: Dict[int, List[ExportSellRate]] = {}
-        for rate in sell_qs:
-            sell_candidates.setdefault(rate.product_code_id, []).append(rate)
-        for pc_id, candidates in sell_candidates.items():
-            selected_rate = self._select_export_sell_rate(candidates)
-            if selected_rate:
-                self._sell_rate_cache[pc_id] = selected_rate
+        for pc in pcs:
+            if is_local_rate_category(pc.category):
+                continue
+            try:
+                self._cogs_rate_cache[pc.id] = select_export_cogs_rate(
+                    RateSelectionContext(
+                        product_code_id=pc.id,
+                        quote_date=self.quote_date,
+                        origin_airport=self.origin,
+                        destination_airport=self.destination,
+                        currency=self.buy_currency,
+                        agent_id=self.preferred_agent_id,
+                        carrier_id=self.preferred_carrier_id,
+                    )
+                ).record
+            except RateNotFoundError:
+                pass
+
+            try:
+                self._sell_rate_cache[pc.id] = select_export_sell_rate(
+                    RateSelectionContext(
+                        product_code_id=pc.id,
+                        quote_date=self.quote_date,
+                        origin_airport=self.origin,
+                        destination_airport=self.destination,
+                        currency=self.quote_currency,
+                    ),
+                    allow_pgk_fallback=self.payment_term == PaymentTerm.PREPAID and self.quote_currency != 'PGK',
+                ).record
+            except RateNotFoundError:
+                pass
         surcharges = Surcharge.objects.filter(
             product_code_id__in=product_code_ids, service_type__in=['EXPORT_AIR', 'EXPORT_ORIGIN', 'ALL'],
             is_active=True, valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
@@ -364,33 +393,6 @@ class ExportPricingEngine:
             if s.origin_filter and s.origin_filter != self.origin: continue
             if s.destination_filter and s.destination_filter != self.destination: continue
             self._surcharge_cache[(s.product_code_id, s.rate_side)] = s
-
-    def _select_export_sell_rate(self, candidates: List[ExportSellRate]) -> Optional[ExportSellRate]:
-        """
-        Pick one active export sell row deterministically.
-
-        Safe fallbacks matter here because the engine only knows how to convert a
-        PGK sell row into another quote currency. It must not treat an arbitrary
-        foreign-currency row as a PGK base and then apply margin/FX again.
-        """
-        if not candidates:
-            return None
-
-        if self.payment_term == PaymentTerm.COLLECT:
-            for rate in candidates:
-                if rate.currency == 'PGK':
-                    return rate
-            return None
-
-        for rate in candidates:
-            if rate.currency == self.quote_currency:
-                return rate
-
-        for rate in candidates:
-            if rate.currency == 'PGK':
-                return rate
-
-        return None
 
     def _get_product_code(self, product_code_id: int) -> Optional[ProductCode]:
         return self._pc_cache.get(product_code_id) if hasattr(self, '_pc_cache') else ProductCode.objects.filter(id=product_code_id).first()
@@ -404,15 +406,20 @@ class ExportPricingEngine:
                 origin_airport=self.origin,
                 destination_airport=self.destination,
             )
-            local = LocalCOGSRate.objects.filter(
-                product_code_id=product_code_id,
-                location=local_location,
-                direction='EXPORT',
-                valid_from__lte=self.quote_date, valid_until__gte=self.quote_date
-            ).order_by('-valid_from', '-updated_at', '-id').first()
-            if local:
-                return local
-            return None
+            try:
+                return select_local_cogs_rate(
+                    RateSelectionContext(
+                        product_code_id=product_code_id,
+                        quote_date=self.quote_date,
+                        location=local_location,
+                        direction='EXPORT',
+                        currency=self.buy_currency,
+                        agent_id=self.preferred_agent_id,
+                        carrier_id=self.preferred_carrier_id,
+                    )
+                ).record
+            except RateNotFoundError:
+                return None
         if hasattr(self, '_cogs_rate_cache') and product_code_id in self._cogs_rate_cache: return self._cogs_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'COGS'))
         return None
@@ -449,26 +456,24 @@ class ExportPricingEngine:
             elif self.payment_term == PaymentTerm.COLLECT:
                 preferred_currency = self.quote_currency or 'PGK'
 
-            if preferred_currency:
-                rates = local_rates.filter(currency=preferred_currency)
-                local = rates.filter(payment_term=payment_term_value).first() or rates.filter(payment_term='ANY').first()
-                if local:
-                    return local
-                if self.payment_term == PaymentTerm.COLLECT:
-                    # COLLECT export must not silently fall back to non-PGK rows.
-                    return None
-                if preferred_currency == 'PGK':
-                    # PREPAID export in PGK must not misinterpret a foreign-currency
-                    # sell row as a PGK base amount.
-                    return None
-
-                pgk_rates = local_rates.filter(currency='PGK')
-                local = pgk_rates.filter(payment_term=payment_term_value).first() or pgk_rates.filter(payment_term='ANY').first()
-                if local:
-                    return local
+            if not preferred_currency:
                 return None
 
-            return None
+            try:
+                return select_local_sell_rate(
+                    RateSelectionContext(
+                        product_code_id=product_code_id,
+                        quote_date=self.quote_date,
+                        location=local_location,
+                        direction='EXPORT',
+                        payment_term=payment_term_value,
+                        currency=preferred_currency,
+                    ),
+                    queryset_override=local_rates,
+                    allow_pgk_fallback=self.payment_term == PaymentTerm.PREPAID and preferred_currency != 'PGK',
+                ).record
+            except RateNotFoundError:
+                return None
         if hasattr(self, '_sell_rate_cache') and product_code_id in self._sell_rate_cache: return self._sell_rate_cache[product_code_id]
         if hasattr(self, '_surcharge_cache'): return self._surcharge_cache.get((product_code_id, 'SELL'))
         return None

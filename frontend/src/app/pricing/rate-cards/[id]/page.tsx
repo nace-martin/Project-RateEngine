@@ -7,6 +7,7 @@ import { getLogicalRateCards, type LogicalRateCard, type LogicalRateCardLine } f
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatPaymentTerm, formatServiceScope } from '@/lib/display';
+import { getRateManagementLink } from '@/lib/pricing-management';
 import {
   Table,
   TableBody,
@@ -146,6 +147,16 @@ export default function LogicalRateCardDetailPage() {
               {tableName}
             </Badge>
           ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {card.source_tables
+            .map((tableName) => getRateManagementLink(tableName))
+            .filter((link): link is NonNullable<ReturnType<typeof getRateManagementLink>> => Boolean(link))
+            .map((link) => (
+              <Button key={`${card.id}-${link.table}`} variant="outline" size="sm" asChild>
+                <Link href={link.href}>{link.label}</Link>
+              </Button>
+            ))}
         </div>
       </div>
 

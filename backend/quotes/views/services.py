@@ -22,7 +22,7 @@ from ratecards.models import PartnerRateCard
 
 # RBAC permissions
 from accounts.permissions import QuoteAccessPermission
-from accounts.permissions import IsAdmin
+from accounts.permissions import IsAdmin, IsManagerOrAdmin
 from quotes.selectors import get_quote_for_user
 
 logger = logging.getLogger(__name__)
@@ -302,7 +302,7 @@ class CustomerDetailAPIView(APIView):
 
 
 class RatecardListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
 
     def get(self, request):
         cards = (
@@ -334,7 +334,7 @@ class RatecardListAPIView(APIView):
 
 
 class RatecardUploadAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):

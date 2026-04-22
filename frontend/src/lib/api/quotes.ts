@@ -4,6 +4,56 @@ import type {
 } from "../types";
 import { API_BASE_URL, resolveAuthToken } from "./shared";
 
+function formatQuoteComputeError(
+  errorData: unknown,
+  statusText: string,
+): string {
+  let message = statusText || "Unknown error";
+
+  if (typeof errorData === "string") {
+    return errorData;
+  }
+
+  if (!errorData || typeof errorData !== "object") {
+    return message;
+  }
+
+  const payload = errorData as Record<string, unknown>;
+  const detail = typeof payload.detail === "string" ? payload.detail : null;
+  const remediation =
+    typeof payload.suggested_remediation === "string"
+      ? payload.suggested_remediation
+      : null;
+  const errorCode =
+    typeof payload.error_code === "string" ? payload.error_code : null;
+  const resolutionReason =
+    typeof payload.resolution_reason === "string"
+      ? payload.resolution_reason
+      : null;
+  const component = typeof payload.component === "string" ? payload.component : null;
+
+  if (!detail) {
+    return Object.keys(payload).length > 0 ? JSON.stringify(payload) : message;
+  }
+
+  const contextBits: string[] = [];
+  if (errorCode) contextBits.push(errorCode);
+  if (resolutionReason) contextBits.push(resolutionReason);
+  if (component) contextBits.push(`component ${component}`);
+
+  if (contextBits.length > 0) {
+    message = `${detail} [${contextBits.join(" | ")}]`;
+  } else {
+    message = detail;
+  }
+
+  if (remediation) {
+    message = `${message} Suggested action: ${remediation}`;
+  }
+
+  return message;
+}
+
 export async function computeQuoteV3(
   data: V3QuoteComputeRequest,
 ): Promise<V3QuoteComputeResponse> {
@@ -24,19 +74,8 @@ export async function computeQuoteV3(
     } catch {
       // ignore parse errors so we can still surface a useful message
     }
-    console.error("Quote compute error:", errorData || response.statusText);
-
-    let message = response.statusText || "Unknown error";
-    if (typeof errorData === "string") {
-      message = errorData;
-    } else if (errorData && typeof errorData === "object") {
-      const payload = errorData as Record<string, unknown>;
-      if ("detail" in payload && typeof payload.detail === "string") {
-        message = payload.detail;
-      } else if (Object.keys(payload).length > 0) {
-        message = JSON.stringify(payload);
-      }
-    }
+    console.warn("Quote compute validation:", errorData || response.statusText);
+    const message = formatQuoteComputeError(errorData, response.statusText);
 
     throw new Error(`Failed to create quote: ${message}`);
   }
