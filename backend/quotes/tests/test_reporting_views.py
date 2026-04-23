@@ -10,6 +10,8 @@ from decimal import Decimal
 from itertools import count
 
 from core.tests.helpers import create_location
+from parties.models import Organization
+from core.models import Currency
 
 @pytest.fixture
 def api_client():
@@ -17,19 +19,47 @@ def api_client():
 
 @pytest.fixture
 def manager_user(db):
+    org = Organization.objects.filter(is_active=True).order_by("name").first()
+    if org is None:
+        pgk = Currency.objects.filter(code="PGK").first() or Currency.objects.create(
+            code="PGK",
+            name="Papua New Guinean Kina",
+        )
+        org = Organization.objects.create(
+            name="EFM Express Air Cargo",
+            slug="efm-express-air-cargo",
+            default_currency=pgk,
+            is_active=True,
+        )
     user = get_user_model().objects.create_user(
         username='manager',
         password='password',
-        role='manager'
+        role='manager',
+        organization=org,
+        department='AIR_FREIGHT',
     )
     return user
 
 @pytest.fixture
 def sales_user(db):
+    org = Organization.objects.filter(is_active=True).order_by("name").first()
+    if org is None:
+        pgk = Currency.objects.filter(code="PGK").first() or Currency.objects.create(
+            code="PGK",
+            name="Papua New Guinean Kina",
+        )
+        org = Organization.objects.create(
+            name="EFM Express Air Cargo",
+            slug="efm-express-air-cargo",
+            default_currency=pgk,
+            is_active=True,
+        )
     user = get_user_model().objects.create_user(
         username='sales',
         password='password',
-        role='sales'
+        role='sales',
+        organization=org,
+        department='AIR_FREIGHT',
     )
     return user
 

@@ -46,26 +46,85 @@ class CustomUser(AbstractUser):
         related_query_name='customuser',
     )
     
+    DEPARTMENT_AIR_FREIGHT = 'AIR_FREIGHT'
+    DEPARTMENT_SEA_FREIGHT = 'SEA_FREIGHT'
+    DEPARTMENT_LAND_FREIGHT = 'LAND_FREIGHT'
+    DEPARTMENT_CUSTOMS = 'CUSTOMS'
+    DEPARTMENT_GENERAL = 'GENERAL'
+
     DEPARTMENT_CHOICES = [
-        ('AIR', 'Air Freight'),
-        ('SEA', 'Sea Freight'),
-        ('LAND', 'Land Freight'),
+        (DEPARTMENT_AIR_FREIGHT, 'Air Freight'),
+        (DEPARTMENT_SEA_FREIGHT, 'Sea Freight'),
+        (DEPARTMENT_LAND_FREIGHT, 'Land Freight'),
+        (DEPARTMENT_CUSTOMS, 'Customs'),
+        (DEPARTMENT_GENERAL, 'General'),
     ]
     department = models.CharField(
-        max_length=10, 
-        choices=DEPARTMENT_CHOICES, 
-        null=True, 
-        blank=True,
+        max_length=20,
+        choices=DEPARTMENT_CHOICES,
+        default=DEPARTMENT_GENERAL,
+        blank=False,
+        null=False,
         help_text="Department assignment for visibility restrictions (e.g., Air vs Sea)."
     )
     organization = models.ForeignKey(
         'parties.Organization',
         on_delete=models.PROTECT,
-        null=True,
-        blank=True,
         related_name='users',
+        blank=False,
+        null=False,
         help_text="Tenant/account workspace this user belongs to.",
     )
+
+    @classmethod
+    def valid_departments(cls) -> set[str]:
+        return {choice for choice, _label in cls.DEPARTMENT_CHOICES}
+
+    @staticmethod
+    def _default_organization():
+        from parties.models import Organization
+
+        organization = (
+            Organization.objects
+            .filter(is_active=True)
+            .exclude(slug='default-organization')
+            .order_by('name')
+            .first()
+        )
+        if organization is None:
+            organization = Organization.objects.filter(is_active=True).order_by('name').first()
+        if organization is None:
+            organization = (
+                Organization.objects
+                .exclude(slug='default-organization')
+                .order_by('name')
+                .first()
+            )
+        if organization is None:
+            organization = Organization.objects.order_by('name').first()
+        if organization is None:
+            organization = Organization.objects.create(name="Default Organization")
+        return organization
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get('update_fields')
+
+        if not self.organization_id:
+            self.organization = self._default_organization()
+            if update_fields is not None:
+                update_fields = set(update_fields)
+                update_fields.add('organization')
+
+        if not self.department or self.department not in self.valid_departments():
+            self.department = self.DEPARTMENT_GENERAL
+            if update_fields is not None:
+                update_fields = set(update_fields)
+                update_fields.add('department')
+
+        if update_fields is not None:
+            kwargs['update_fields'] = list(update_fields)
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

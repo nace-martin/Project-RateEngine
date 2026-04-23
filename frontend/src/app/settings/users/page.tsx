@@ -70,11 +70,16 @@ const ROLE_OPTIONS = [
 ];
 
 const DEPARTMENT_OPTIONS = [
-    { value: 'none', label: 'None' },
-    { value: 'AIR', label: 'Air Freight' },
-    { value: 'SEA', label: 'Sea Freight' },
-    { value: 'LAND', label: 'Land Freight' },
+    { value: 'AIR_FREIGHT', label: 'Air Freight' },
+    { value: 'SEA_FREIGHT', label: 'Sea Freight' },
+    { value: 'LAND_FREIGHT', label: 'Land Freight' },
+    { value: 'CUSTOMS', label: 'Customs' },
+    { value: 'GENERAL', label: 'General' },
 ];
+
+const DEPARTMENT_LABELS: Record<string, string> = Object.fromEntries(
+    DEPARTMENT_OPTIONS.map((option) => [option.value, option.label]),
+);
 
 const getRoleBadgeVariant = (role: string) => {
     switch (role) {
@@ -103,8 +108,8 @@ export default function UsersPage() {
         first_name: '',
         last_name: '',
         role: 'sales',
-        department: 'none',
-        organization: 'none',
+        department: 'GENERAL',
+        organization: currentUser?.organization?.id?.toString() || '',
         password: '',
     });
     const [formLoading, setFormLoading] = useState(false);
@@ -184,8 +189,8 @@ export default function UsersPage() {
             first_name: '',
             last_name: '',
             role: 'sales',
-            department: 'none',
-            organization: currentUser?.organization?.id?.toString() || 'none',
+            department: 'GENERAL',
+            organization: currentUser?.organization?.id?.toString() || organizations[0]?.id?.toString() || '',
             password: '',
         });
         setIsModalOpen(true);
@@ -199,8 +204,8 @@ export default function UsersPage() {
             first_name: user.first_name || '',
             last_name: user.last_name || '',
             role: user.role,
-            department: user.department || 'none',
-            organization: (user.organization || 'none').toString(),
+            department: user.department || 'GENERAL',
+            organization: (user.organization || currentUser?.organization?.id || organizations[0]?.id || '').toString(),
             password: '', // Don't show password
         });
         setIsModalOpen(true);
@@ -223,12 +228,8 @@ export default function UsersPage() {
             if (editingUser && !payload.password) {
                 delete (payload as Record<string, unknown>).password;
             }
-            // Convert 'none' selection to null
-            if (!payload.department || payload.department === 'none') {
-                (payload as Record<string, unknown>).department = null;
-            }
-            if (!payload.organization || payload.organization === 'none') {
-                (payload as Record<string, unknown>).organization = null;
+            if (!payload.organization) {
+                throw new Error('Organization is required.');
             }
 
             const res = await fetch(url, {
@@ -386,7 +387,7 @@ export default function UsersPage() {
                                             {user.department ? (
                                                 <span className="flex items-center gap-1">
                                                     <Building2 className="h-3 w-3" />
-                                                    {user.department}
+                                                    {DEPARTMENT_LABELS[user.department] || user.department}
                                                 </span>
                                             ) : (
                                                 <span className="text-muted-foreground">—</span>
@@ -514,7 +515,7 @@ export default function UsersPage() {
                                 </Select>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="department">Department</Label>
+                                <Label htmlFor="department">Department *</Label>
                                 <Select
                                     value={formData.department}
                                     onValueChange={(value) => setFormData({ ...formData, department: value })}
@@ -534,7 +535,7 @@ export default function UsersPage() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="organization">Organization</Label>
+                            <Label htmlFor="organization">Organization *</Label>
                             <Select
                                 value={formData.organization}
                                 onValueChange={(value) => setFormData({ ...formData, organization: value })}
@@ -543,7 +544,6 @@ export default function UsersPage() {
                                     <SelectValue placeholder="Select organization" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="none">None</SelectItem>
                                     {organizations.map((org) => (
                                         <SelectItem key={org.id} value={org.id.toString()}>
                                             {org.name}{!org.is_active ? ' (Inactive)' : ''}
