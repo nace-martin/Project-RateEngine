@@ -463,8 +463,8 @@ function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComp
           : (parseFloat(line.sell_pgk_incl_gst || '0') - parseFloat(line.sell_pgk || '0'));
       return {
         line_type: 'COMPONENT',
-        component: line.service_component?.code ?? null,
-        description: line.cost_source_description || line.service_component?.description || 'Charge',
+        component: line.product_code || line.component || line.service_component?.code || null,
+        description: line.description || line.cost_source_description || line.service_component?.description || 'Charge',
         leg: line.service_component?.leg || undefined,
         cost_pgk: line.cost_pgk,
         sell_pgk: line.sell_pgk,
@@ -1991,7 +1991,7 @@ export async function listPricingAgents(params?: {
 export async function manuallyResolveSpotChargeLine(
   envelopeId: string,
   chargeLineId: string,
-  request: { product_code_id: number | string }
+  request: { manual_resolved_product_code_id: number | string }
 ): Promise<SPEChargeLine> {
   const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/charges/${chargeLineId}/manual-resolution/`;
   const response = await fetch(url, {

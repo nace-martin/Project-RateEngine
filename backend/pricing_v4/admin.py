@@ -8,6 +8,7 @@ from .models import (
     Carrier,
     Agent,
     ProductCode,
+    ChargeAlias,
     ExportCOGS,
     ExportSellRate,
     ImportCOGS,
@@ -54,6 +55,63 @@ class ProductCodeAdmin(admin.ModelAdmin):
         }),
         ('Defaults', {
             'fields': ('default_unit', 'percent_of_product_code')
+        }),
+    )
+
+
+@admin.register(ChargeAlias)
+class ChargeAliasAdmin(admin.ModelAdmin):
+    list_display = [
+        'alias_text',
+        'normalized_alias_text',
+        'match_type',
+        'mode_scope',
+        'direction_scope',
+        'product_code',
+        'priority',
+        'is_active',
+        'review_status',
+        'alias_source',
+    ]
+    list_filter = [
+        'is_active',
+        'match_type',
+        'mode_scope',
+        'direction_scope',
+        'product_code',
+        'review_status',
+        'alias_source',
+    ]
+    search_fields = [
+        'alias_text',
+        'normalized_alias_text',
+        'product_code__code',
+        'product_code__description',
+        'notes',
+    ]
+    ordering = ['priority', 'normalized_alias_text', 'id']
+    autocomplete_fields = ['product_code']
+    list_select_related = ['product_code']
+
+    fieldsets = (
+        ('Alias Matching', {
+            'fields': (
+                'alias_text',
+                'normalized_alias_text',
+                'match_type',
+                'mode_scope',
+                'direction_scope',
+                'product_code',
+                'priority',
+            )
+        }),
+        ('Operational Review', {
+            'fields': ('is_active', 'review_status', 'alias_source'),
+            'description': 'Keep risky aliases inactive until they are explicitly reviewed and approved.',
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+            'classes': ('collapse',),
         }),
     )
 

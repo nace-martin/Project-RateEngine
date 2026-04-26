@@ -16,6 +16,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { SPEChargeLine } from "@/lib/spot-types";
 import { getProductCodes, type ProductCodeOption } from "@/lib/api";
+import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 
 interface SpotChargeLineManualReviewSheetProps {
     open: boolean;
@@ -23,6 +24,7 @@ interface SpotChargeLineManualReviewSheetProps {
     chargeLine: SPEChargeLine | null;
     productDomain?: string;
     isSaving?: boolean;
+    saveError?: string | null;
     onSave: (productCodeId: string) => Promise<void>;
 }
 
@@ -49,6 +51,7 @@ export function SpotChargeLineManualReviewSheet({
     chargeLine,
     productDomain,
     isSaving = false,
+    saveError = null,
     onSave,
 }: SpotChargeLineManualReviewSheetProps) {
     const [productCodes, setProductCodes] = useState<ProductCodeOption[]>([]);
@@ -128,7 +131,9 @@ export function SpotChargeLineManualReviewSheet({
                             <div className="grid gap-3">
                                 <div>
                                     <div className="text-xs font-semibold text-slate-600">Source label</div>
-                                    <div className="mt-1 text-sm text-slate-900">{chargeLine.source_label || chargeLine.description}</div>
+                                    <div className="mt-1 text-sm text-slate-900">
+                                        {getSpotChargeDisplayLabel(chargeLine, { includeProductCode: true })}
+                                    </div>
                                 </div>
                                 <div>
                                     <div className="text-xs font-semibold text-slate-600">Normalized label</div>
@@ -172,6 +177,13 @@ export function SpotChargeLineManualReviewSheet({
                             <Alert variant="destructive">
                                 <AlertCircle className="h-4 w-4" />
                                 <AlertDescription>{loadError}</AlertDescription>
+                            </Alert>
+                        ) : null}
+
+                        {saveError ? (
+                            <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertDescription>{saveError}</AlertDescription>
                             </Alert>
                         ) : null}
 

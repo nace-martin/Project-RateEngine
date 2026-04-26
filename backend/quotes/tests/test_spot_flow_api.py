@@ -290,7 +290,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         review_response = self.client.patch(
             manual_review_url,
-            {"product_code_id": manual_product_code.id},
+            {"manual_resolved_product_code_id": manual_product_code.id},
             format="json",
         )
         self.assertEqual(review_response.status_code, status.HTTP_200_OK)
@@ -334,6 +334,96 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(detail_line["manual_resolution_status"], "RESOLVED")
         self.assertEqual(detail_line["manual_resolved_product_code"]["code"], manual_product_code.code)
         self.assertEqual(detail_line["effective_resolved_product_code"]["code"], manual_product_code.code)
+
+    def test_manual_resolution_endpoint_requires_manual_resolved_product_code_id(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Unknown freight fee",
+                    "amount": 25,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][0]["id"]
+
+        manual_review_url = reverse(
+            "quotes:spot-charge-line-manual-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+        review_response = self.client.patch(manual_review_url, {}, format="json")
+        self.assertEqual(review_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            review_response.json()["error"],
+            "manual_resolved_product_code_id is required.",
+        )
+
+    def test_manual_resolution_endpoint_rejects_unknown_product_code_id(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 1,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Unknown freight fee",
+                    "amount": 25,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": False,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][0]["id"]
+
+        manual_review_url = reverse(
+            "quotes:spot-charge-line-manual-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+        review_response = self.client.patch(
+            manual_review_url,
+            {"manual_resolved_product_code_id": 999999},
+            format="json",
+        )
+        self.assertEqual(review_response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_manual_resolution_endpoint_rejects_matched_lines(self):
         product_code = ProductCode.objects.create(
@@ -397,7 +487,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         review_response = self.client.patch(
             manual_review_url,
-            {"product_code_id": product_code.id},
+            {"manual_resolved_product_code_id": product_code.id},
             format="json",
         )
         self.assertEqual(review_response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -457,7 +547,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         review_response = self.client.patch(
             manual_review_url,
-            {"product_code_id": manual_product_code.id},
+            {"manual_resolved_product_code_id": manual_product_code.id},
             format="json",
         )
         self.assertEqual(review_response.status_code, status.HTTP_200_OK)

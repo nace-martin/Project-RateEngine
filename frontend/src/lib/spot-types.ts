@@ -154,6 +154,9 @@ export interface SPEChargeLine {
     normalization_method?: string | null;
     matched_alias_id?: number | null;
     resolved_product_code?: SPEProductCodeSummary | null;
+    effective_resolved_product_code?: SPEProductCodeSummary | null;
+    effective_resolution_status?: ChargeNormalizationStatus | 'RESOLVED' | null;
+    requires_review?: boolean;
     manual_resolution_status?: 'RESOLVED' | null;
     manual_resolved_product_code?: SPEProductCodeSummary | null;
     manual_resolution_by_user_id?: string | null;
@@ -444,7 +447,7 @@ export interface SpotModeActions {
     loadSPE: (id: string) => Promise<SpotPricingEnvelope | null>;
     manuallyResolveChargeLine: (
         chargeLineId: string,
-        request: { product_code_id: number | string }
+        request: { manual_resolved_product_code_id: number | string }
     ) => Promise<SPEChargeLine | null>;
     submitAcknowledgement: () => Promise<boolean>;
     reviewSourceBatch: (sourceBatchId: string, request: { reviewed_safe_to_quote: boolean; review_note?: string }) => Promise<SpotPricingEnvelope | null>;

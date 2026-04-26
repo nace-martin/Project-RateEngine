@@ -7,6 +7,7 @@ from django.utils import timezone
 from types import SimpleNamespace
 
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
+from pricing_v4.models import ProductCode
 from core.dataclasses import CalculatedChargeLine, QuoteInput
 from quotes.models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
 from services.models import ServiceComponent
@@ -51,6 +52,21 @@ class HybridPricingTest(TestCase):
         ServiceComponent.objects.create(code='DST_SPOT', description='Spot Dest', mode='AIR', leg='DESTINATION', category='TRANSPORT')
         ServiceComponent.objects.create(code='FRT_SPOT', description='Spot Freight', mode='AIR', leg='MAIN', category='TRANSPORT')
         ServiceComponent.objects.create(code='ORG_FEE', description='Origin Fee', mode='AIR', leg='ORIGIN', category='HANDLING')
+
+    def _product_code(self, id_, code, description, domain=ProductCode.DOMAIN_IMPORT, category=ProductCode.CATEGORY_CLEARANCE):
+        return ProductCode.objects.create(
+            id=id_,
+            code=code,
+            description=description,
+            domain=domain,
+            category=category,
+            is_gst_applicable=False,
+            gst_rate=Decimal('0'),
+            gst_treatment=ProductCode.GST_TREATMENT_EXEMPT,
+            gl_revenue_code='REV',
+            gl_cost_code='COS',
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
 
     def test_merge_charge_lines_bucket_override(self):
         """
@@ -157,6 +173,169 @@ class HybridPricingTest(TestCase):
         self.assertEqual(result.totals.total_sell_pgk, Decimal('1150.00'))
         self.assertEqual(len(result.lines), 1)
         self.assertEqual(result.lines[0].service_component_code, 'FRT_SPOT')
+
+    def test_spot_lines_display_effective_product_code_description(self):
+        product_code = self._product_code(
+            2871,
+            code='IMP-CUS-CLR-ORIGIN-T',
+            description='Import Origin Customs Clearance',
+        )
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter._calculate_standard_lines = MagicMock(return_value=[])
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+        adapter._get_fx_sell_rate = MagicMock(return_value=Decimal('1.0'))
+
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='SPOT_ORIGIN',
+            description='Spot Origin Charge',
+            source_label='CUS',
+            amount=Decimal('85.00'),
+            currency='PGK',
+            unit='per_shipment',
+            bucket='origin_charges',
+            is_primary_cost=False,
+            entered_at=timezone.now(),
+            source_reference='Agent reply',
+            resolved_product_code=product_code,
+            normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+            normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        )
+
+        result = adapter.calculate_charges()
+
+        self.assertEqual(len(result.lines), 1)
+        self.assertEqual(result.lines[0].service_component_code, product_code.code)
+        self.assertEqual(result.lines[0].service_component_desc, product_code.description)
+        self.assertEqual(result.lines[0].product_code, product_code.code)
+        self.assertEqual(result.lines[0].cost_source_description, product_code.description)
+
+    def test_spot_freight_line_uses_product_code_description(self):
+        product_code = self._product_code(
+            2872,
+            code='IMP-FRT-AIR-SPOT-T',
+            description='Import Air Freight Spot',
+            category=ProductCode.CATEGORY_FREIGHT,
+        )
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter._calculate_standard_lines = MagicMock(return_value=[])
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+        adapter._get_fx_sell_rate = MagicMock(return_value=Decimal('1.0'))
+
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='SPOT_FREIGHT',
+            description='Spot Freight Charge',
+            source_label='A/F',
+            amount=Decimal('4.50'),
+            currency='PGK',
+            unit='per_kg',
+            bucket='airfreight',
+            is_primary_cost=True,
+            entered_at=timezone.now(),
+            source_reference='Agent reply',
+            resolved_product_code=product_code,
+            normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+            normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        )
+
+        result = adapter.calculate_charges()
+
+        self.assertEqual(result.lines[0].service_component_code, product_code.code)
+        self.assertEqual(result.lines[0].service_component_desc, product_code.description)
+
+    def test_spot_manual_resolved_line_uses_manual_product_code_description(self):
+        deterministic_product = self._product_code(
+            2873,
+            code='IMP-DOC-ORIGIN-T',
+            description='Import Origin Documentation',
+            category=ProductCode.CATEGORY_DOCUMENTATION,
+        )
+        manual_product = self._product_code(
+            2874,
+            code='IMP-PRM-ORIGIN-T',
+            description='Import Origin Permit / License',
+            category=ProductCode.CATEGORY_REGULATORY,
+        )
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter._calculate_standard_lines = MagicMock(return_value=[])
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+        adapter._get_fx_sell_rate = MagicMock(return_value=Decimal('1.0'))
+
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='SPOT_ORIGIN',
+            description='Spot Origin Charge',
+            source_label='EXPORT LICENSE',
+            amount=Decimal('125.00'),
+            currency='PGK',
+            unit='per_shipment',
+            bucket='origin_charges',
+            is_primary_cost=False,
+            entered_at=timezone.now(),
+            source_reference='Agent reply',
+            resolved_product_code=deterministic_product,
+            manual_resolution_status=SPEChargeLineDB.ManualResolutionStatus.RESOLVED,
+            manual_resolved_product_code=manual_product,
+            normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+            normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        )
+
+        result = adapter.calculate_charges()
+
+        self.assertEqual(result.lines[0].service_component_code, manual_product.code)
+        self.assertEqual(result.lines[0].service_component_desc, manual_product.description)
+
+    def test_spot_unresolved_line_uses_source_label_before_generic_fallback(self):
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter._calculate_standard_lines = MagicMock(return_value=[])
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+        adapter._get_fx_sell_rate = MagicMock(return_value=Decimal('1.0'))
+
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='SPOT_ORIGIN',
+            description='Spot Origin Charge',
+            source_label='Agent paperwork fee',
+            amount=Decimal('45.00'),
+            currency='PGK',
+            unit='per_shipment',
+            bucket='origin_charges',
+            is_primary_cost=False,
+            entered_at=timezone.now(),
+            source_reference='Agent reply',
+            normalization_status=SPEChargeLineDB.NormalizationStatus.UNMAPPED,
+            normalization_method=SPEChargeLineDB.NormalizationMethod.NONE,
+        )
+
+        result = adapter.calculate_charges()
+
+        self.assertEqual(result.lines[0].service_component_desc, 'Agent paperwork fee')
+
+    def test_spot_generic_label_is_last_resort_only(self):
+        adapter = PricingServiceV4Adapter(self.quote_input, spot_envelope_id=self.spe.id)
+        adapter._calculate_standard_lines = MagicMock(return_value=[])
+        adapter._get_fx_rates_dict = MagicMock(return_value={})
+        adapter._get_fx_sell_rate = MagicMock(return_value=Decimal('1.0'))
+
+        SPEChargeLineDB.objects.create(
+            envelope=self.spe,
+            code='SPOT_ORIGIN',
+            description='Spot Origin Charge',
+            amount=Decimal('45.00'),
+            currency='PGK',
+            unit='per_shipment',
+            bucket='origin_charges',
+            is_primary_cost=False,
+            entered_at=timezone.now(),
+            source_reference='Agent reply',
+            normalization_status=SPEChargeLineDB.NormalizationStatus.UNMAPPED,
+            normalization_method=SPEChargeLineDB.NormalizationMethod.NONE,
+        )
+
+        result = adapter.calculate_charges()
+
+        self.assertEqual(result.lines[0].service_component_desc, 'Spot Origin Charge')
 
     def test_mixed_currency_import_prepaid(self):
         """

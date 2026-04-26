@@ -160,6 +160,20 @@ class ImportActiveLegTest(ImportEngineTestCase):
         legs = engine._get_active_legs()
         self.assertEqual(legs, ['ORIGIN', 'FREIGHT', 'DESTINATION'])
 
+    def test_import_customs_product_leg_classification_is_explicit(self):
+        origin_customs = ProductCode.objects.get(code='IMP-CUS-CLR-ORIGIN')
+        engine = ImportPricingEngine(
+            quote_date=date.today(),
+            origin='SIN',
+            destination='POM',
+            chargeable_weight_kg=Decimal('50'),
+            payment_term=PaymentTerm.PREPAID,
+            service_scope=ServiceScope.D2D
+        )
+
+        self.assertEqual(engine._get_leg_for_product_code(origin_customs), 'ORIGIN')
+        self.assertEqual(engine._get_leg_for_product_code(self.pc_clearance), 'DESTINATION')
+
 
 class ImportFxConversionTest(ImportEngineTestCase):
     """Test FX conversion logic."""

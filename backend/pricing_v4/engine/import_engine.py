@@ -25,7 +25,11 @@ from pricing_v4.models import (
     ImportCOGS, ImportSellRate, ProductCode,
     LocalSellRate, LocalCOGSRate
 )
-from pricing_v4.category_rules import is_local_rate_category
+from pricing_v4.category_rules import (
+    is_import_destination_local_code,
+    is_import_origin_local_code,
+    is_local_rate_category,
+)
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from pricing_v4.services.rate_selector import (
     RateNotFoundError,
@@ -300,15 +304,16 @@ class ImportPricingEngine:
     def _get_leg_for_product_code(self, pc: ProductCode) -> str:
         """Determine which leg a ProductCode belongs to."""
         code = pc.code.upper()
+        description = pc.description.upper()
         
-        if 'ORIGIN' in code or code in ['IMP-PICKUP', 'IMP-FSC-PICKUP']:
+        if 'FRT' in code or 'FREIGHT' in code:
+            return 'FREIGHT'
+        elif is_import_origin_local_code(code, description):
             return 'ORIGIN'
-        elif 'DEST' in code or code in ['IMP-CLEAR', 'IMP-CARTAGE-DEST', 'IMP-FSC-CARTAGE-DEST']:
+        elif is_import_destination_local_code(code, description):
             return 'DESTINATION'
         elif pc.domain == 'IMPORT' and '-SPECIAL' in code:
             return 'DESTINATION'
-        elif 'FRT' in code or 'FREIGHT' in code:
-            return 'FREIGHT'
         else:
             # Default based on category
             if pc.category in ['CARTAGE', 'CLEARANCE']:

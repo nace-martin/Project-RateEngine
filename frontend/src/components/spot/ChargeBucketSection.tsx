@@ -1,17 +1,20 @@
+import { useState } from "react";
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Control, UseFieldArrayRemove, FieldArrayWithId, useWatch } from "react-hook-form";
+import { Control, FieldArrayWithId, UseFieldArrayRemove, useWatch } from "react-hook-form";
+
+import { useToast } from "@/context/toast-context";
+import { useConfirm } from "@/hooks/useConfirm";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
 import type { SPEChargeBucket } from "@/lib/spot-types";
-import { SmartMoneyInput } from "./SmartMoneyInput";
+
 import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
-import { useConfirm } from "@/hooks/useConfirm";
-import { useToast } from "@/context/toast-context";
+import { SmartMoneyInput } from "./SmartMoneyInput";
 
 interface ChargeBucketSectionProps {
     bucket: { id: SPEChargeBucket; label: string };
@@ -20,6 +23,7 @@ interface ChargeBucketSectionProps {
     onAdd: () => void;
     onRemove: UseFieldArrayRemove;
     onOpenManualReview?: (chargeLine: SpotFormValues["charges"][number]) => void;
+    activeChargeLineId?: string | null;
 }
 
 const CHARGE_UNITS = [
@@ -47,6 +51,15 @@ const isImportedChargeLine = (sourceReference?: string | null) => {
     return IMPORTED_SOURCE_MARKERS.some((marker) => normalized.includes(marker));
 };
 
+const statusCardClassName = (chargeLine?: SpotFormValues["charges"][number], isActiveRow = false) => {
+    if (isActiveRow) return "border-amber-300 bg-amber-50/70";
+    if (chargeLine?.manual_resolution_status === "RESOLVED") return "border-sky-200 bg-sky-50/40";
+    if (chargeLine?.normalization_status === "AMBIGUOUS") return "border-rose-200 bg-rose-50/50";
+    if (chargeLine?.normalization_status === "UNMAPPED") return "border-amber-200 bg-amber-50/50";
+    if (chargeLine?.conditional) return "border-slate-300 bg-slate-50/70";
+    return "border-slate-200 bg-white";
+};
+
 export function ChargeBucketSection({
     bucket,
     control,
@@ -54,13 +67,22 @@ export function ChargeBucketSection({
     onAdd,
     onRemove,
     onOpenManualReview,
+    activeChargeLineId,
 }: ChargeBucketSectionProps) {
     const confirm = useConfirm();
     const { toast } = useToast();
+    const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
     const watchedCharges = useWatch({
         control,
         name: "charges",
     });
+
+    const toggleDetails = (fieldId: string) => {
+        setExpandedRows((current) => ({
+            ...current,
+            [fieldId]: !current[fieldId],
+        }));
+    };
 
     const handleRemove = async (index: number) => {
         const currentLine = watchedCharges?.[index];
@@ -92,7 +114,7 @@ export function ChargeBucketSection({
 
     return (
         <Card className="border-border shadow-sm">
-            <CardHeader className="pb-4 border-b border-border bg-muted/20">
+            <CardHeader className="border-b border-border bg-muted/20 pb-4">
                 <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
                         <div className="flex items-center gap-3">
@@ -118,179 +140,218 @@ export function ChargeBucketSection({
                     </Button>
                 </div>
             </CardHeader>
-            <CardContent className="p-0">
+            <CardContent className="p-4">
                 {fields.length > 0 ? (
-                        <Table>
-                            <TableHeader className="bg-muted/10">
-                            <TableRow>
-                                <TableHead className="w-[72px]">Line</TableHead>
-                                <TableHead className="w-[30%]">Description</TableHead>
-                                <TableHead className="w-[25%]">Amount</TableHead>
-                                <TableHead className="w-[15%]">Unit</TableHead>
-                                <TableHead className="w-[20%]">Source/Flags</TableHead>
-                                <TableHead className="w-[5%]"></TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {fields.map(({ field, index }) => (
-                                <TableRow key={field.id} className="group align-top">
-                                    <TableCell className="align-top py-4">
-                                        <div className="inline-flex min-w-[44px] items-center justify-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
-                                            {index + 1}
+                    <div className="space-y-3">
+                        {fields.map(({ field, index }) => {
+                            const chargeLine = watchedCharges?.[index];
+                            const isDetailsOpen = Boolean(expandedRows[field.id]);
+                            const canOpenManualReview = Boolean(
+                                chargeLine?.charge_line_id &&
+                                chargeLine?.manual_resolution_status !== "RESOLVED" &&
+                                (chargeLine?.normalization_status === "UNMAPPED" ||
+                                    chargeLine?.normalization_status === "AMBIGUOUS")
+                            );
+                            const chargeLineRowId = chargeLine?.charge_line_id
+                                ? `charge-line-${chargeLine.charge_line_id}`
+                                : undefined;
+                            const isActiveRow =
+                                Boolean(activeChargeLineId) &&
+                                chargeLine?.charge_line_id === activeChargeLineId;
+
+                            return (
+                                <div
+                                    key={field.id}
+                                    id={chargeLineRowId}
+                                    className={`rounded-xl border p-4 shadow-sm transition-colors ${statusCardClassName(chargeLine, isActiveRow)}`}
+                                >
+                                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)_minmax(170px,0.55fr)_minmax(210px,0.75fr)] lg:items-start">
+                                        <div className="space-y-2">
+                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                Description
+                                            </div>
+                                            <FormField
+                                                control={control}
+                                                name={`charges.${index}.description`}
+                                                render={({ field }) => (
+                                                    <FormItem>
+                                                        <FormControl>
+                                                            <Input placeholder="Description" {...field} className="h-9 bg-white" />
+                                                        </FormControl>
+                                                        <FormMessage />
+                                                    </FormItem>
+                                                )}
+                                            />
+                                            <div className="text-xs text-slate-500">
+                                                {bucket.label}
+                                            </div>
                                         </div>
-                                    </TableCell>
-                                    <TableCell className="align-top py-4">
-                                        <FormField
-                                            control={control}
-                                            name={`charges.${index}.description`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormControl>
-                                                        <Input placeholder="Description" {...field} className="h-9" />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                    </TableCell>
-                                    <TableCell className="align-top py-4">
-                                        <FormField
-                                            control={control}
-                                            name={`charges.${index}.unit`} // Need to watch unit for conditional min charge
-                                            render={({ field: unitField }) => (
-                                                <SmartMoneyInput
-                                                    control={control}
-                                                    index={index}
-                                                    currencyName={`charges.${index}.currency`}
-                                                    amountName={`charges.${index}.amount`}
-                                                    unit={unitField.value}
-                                                    showMinCharge={unitField.value === 'min_or_per_kg'}
-                                                    minChargeName={`charges.${index}.min_charge`}
-                                                />
-                                            )}
-                                        />
-                                    </TableCell>
-                                    <TableCell className="align-top py-4">
-                                        <FormField
-                                            control={control}
-                                            name={`charges.${index}.unit`}
-                                            render={({ field }) => (
-                                                <div className="space-y-2">
+
+                                        <div className="space-y-2">
+                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                Amount
+                                            </div>
+                                            <FormField
+                                                control={control}
+                                                name={`charges.${index}.unit`}
+                                                render={({ field: unitField }) => (
+                                                    <SmartMoneyInput
+                                                        control={control}
+                                                        index={index}
+                                                        currencyName={`charges.${index}.currency`}
+                                                        amountName={`charges.${index}.amount`}
+                                                        unit={unitField.value}
+                                                        showMinCharge={unitField.value === "min_or_per_kg"}
+                                                        minChargeName={`charges.${index}.min_charge`}
+                                                    />
+                                                )}
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                Unit
+                                            </div>
+                                            <FormField
+                                                control={control}
+                                                name={`charges.${index}.unit`}
+                                                render={({ field }) => (
                                                     <FormItem>
                                                         <Select onValueChange={field.onChange} defaultValue={field.value}>
                                                             <FormControl>
-                                                                <SelectTrigger className="h-9">
+                                                                <SelectTrigger className="h-8">
                                                                     <SelectValue />
                                                                 </SelectTrigger>
                                                             </FormControl>
                                                             <SelectContent>
-                                                                {CHARGE_UNITS.map(u => (
-                                                                    <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>
+                                                                {CHARGE_UNITS.map((unit) => (
+                                                                    <SelectItem key={unit.value} value={unit.value}>
+                                                                        {unit.label}
+                                                                    </SelectItem>
                                                                 ))}
                                                             </SelectContent>
                                                         </Select>
-                                                    </FormItem>
-                                                    {field.value === "percentage" && (
-                                                        <FormField
-                                                            control={control}
-                                                            name={`charges.${index}.percentage_basis`}
-                                                            render={({ field: basisField }) => (
-                                                                <FormItem>
-                                                                    <FormControl>
-                                                                        <Input placeholder="Basis e.g. FREIGHT" {...basisField} value={basisField.value || ""} className="h-8 text-xs" />
-                                                                    </FormControl>
-                                                                </FormItem>
-                                                            )}
-                                                        />
-                                                    )}
-                                                </div>
-                                            )}
-                                        />
-                                    </TableCell>
-                                    <TableCell className="align-top py-4 space-y-2">
-                                        <ChargeNormalizationAudit
-                                            normalizationStatus={watchedCharges?.[index]?.normalization_status}
-                                            normalizationMethod={watchedCharges?.[index]?.normalization_method}
-                                            sourceLabel={watchedCharges?.[index]?.source_label}
-                                            normalizedLabel={watchedCharges?.[index]?.normalized_label}
-                                            resolvedProductCode={watchedCharges?.[index]?.resolved_product_code}
-                                            manualResolutionStatus={watchedCharges?.[index]?.manual_resolution_status}
-                                            manualResolvedProductCode={watchedCharges?.[index]?.manual_resolved_product_code}
-                                            manualResolutionByUsername={watchedCharges?.[index]?.manual_resolution_by_username}
-                                            manualResolutionAt={watchedCharges?.[index]?.manual_resolution_at}
-                                            canOpenManualReview={
-                                                Boolean(
-                                                    watchedCharges?.[index]?.charge_line_id &&
-                                                    (watchedCharges?.[index]?.normalization_status === "UNMAPPED" ||
-                                                        watchedCharges?.[index]?.normalization_status === "AMBIGUOUS")
-                                                )
-                                            }
-                                            onOpenManualReview={() => {
-                                                const chargeLine = watchedCharges?.[index];
-                                                if (chargeLine) {
-                                                    onOpenManualReview?.(chargeLine);
-                                                }
-                                            }}
-                                        />
-                                        <FormField
-                                            control={control}
-                                            name={`charges.${index}.source_reference`}
-                                            render={({ field }) => (
-                                                <FormItem>
-                                                    <FormControl>
-                                                        <Input placeholder="Source Ref" {...field} className="h-8 text-xs" />
-                                                    </FormControl>
-                                                    <FormMessage />
-                                                </FormItem>
-                                            )}
-                                        />
-                                        <div className="flex flex-col gap-1">
-                                            {bucket.id === "airfreight" && (
-                                                <FormField
-                                                    control={control}
-                                                    name={`charges.${index}.is_primary_cost`}
-                                                    render={({ field }) => (
-                                                        <FormItem className="flex items-center space-x-2 space-y-0">
-                                                            <FormControl>
-                                                                <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                                                            </FormControl>
-                                                            <FormLabel className="text-[10px] text-muted-foreground uppercase font-medium">Primary</FormLabel>
-                                                        </FormItem>
-                                                    )}
-                                                />
-                                            )}
-                                            <FormField
-                                                control={control}
-                                                name={`charges.${index}.conditional`}
-                                                render={({ field }) => (
-                                                    <FormItem className="flex items-center space-x-2 space-y-0">
-                                                        <FormControl>
-                                                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                                                        </FormControl>
-                                                        <FormLabel className="text-[10px] text-muted-foreground uppercase font-medium">Conditional</FormLabel>
+                                                        <FormMessage />
                                                     </FormItem>
                                                 )}
                                             />
                                         </div>
-                                    </TableCell>
-                                    <TableCell className="align-top py-4 text-right">
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => void handleRemove(index)}
-                                            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                                        >
-                                            <span className="sr-only">Remove</span>
-                                            <span className="text-xl leading-none">&times;</span>
-                                        </Button>
-                                    </TableCell>
-                                </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
+
+                                        <div>
+                                            <ChargeNormalizationAudit
+                                                normalizationStatus={chargeLine?.normalization_status}
+                                                normalizationMethod={chargeLine?.normalization_method}
+                                                sourceLabel={chargeLine?.source_label}
+                                                normalizedLabel={chargeLine?.normalized_label}
+                                                resolvedProductCode={chargeLine?.resolved_product_code}
+                                                manualResolutionStatus={chargeLine?.manual_resolution_status}
+                                                manualResolvedProductCode={chargeLine?.manual_resolved_product_code}
+                                                manualResolutionByUsername={chargeLine?.manual_resolution_by_username}
+                                                manualResolutionAt={chargeLine?.manual_resolution_at}
+                                                canOpenManualReview={canOpenManualReview}
+                                                onOpenManualReview={() => {
+                                                    if (chargeLine) {
+                                                        onOpenManualReview?.(chargeLine);
+                                                    }
+                                                }}
+                                                detailsOpen={isDetailsOpen}
+                                                onToggleDetails={() => toggleDetails(field.id)}
+                                            >
+                                                <div className="grid gap-3">
+                                                    <div className="grid gap-3 md:grid-cols-2">
+                                                        <FormField
+                                                            control={control}
+                                                            name={`charges.${index}.source_reference`}
+                                                            render={({ field }) => (
+                                                                <FormItem>
+                                                                    <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                        Source reference
+                                                                    </FormLabel>
+                                                                    <FormControl>
+                                                                        <Input placeholder="Source Ref" {...field} className="h-8 text-xs" />
+                                                                    </FormControl>
+                                                                    <FormMessage />
+                                                                </FormItem>
+                                                            )}
+                                                        />
+                                                        {chargeLine?.unit === "percentage" ? (
+                                                            <FormField
+                                                                control={control}
+                                                                name={`charges.${index}.percentage_basis`}
+                                                                render={({ field }) => (
+                                                                    <FormItem>
+                                                                        <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                            Percentage basis
+                                                                        </FormLabel>
+                                                                        <FormControl>
+                                                                            <Input
+                                                                                placeholder="Basis e.g. FREIGHT"
+                                                                                {...field}
+                                                                                value={field.value || ""}
+                                                                                className="h-8 text-xs"
+                                                                            />
+                                                                        </FormControl>
+                                                                        <FormMessage />
+                                                                    </FormItem>
+                                                                )}
+                                                            />
+                                                        ) : null}
+                                                    </div>
+
+                                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                                        <div className="flex flex-wrap items-center gap-4">
+                                                            {bucket.id === "airfreight" ? (
+                                                                <FormField
+                                                                    control={control}
+                                                                    name={`charges.${index}.is_primary_cost`}
+                                                                    render={({ field }) => (
+                                                                        <FormItem className="flex items-center space-x-2 space-y-0">
+                                                                            <FormControl>
+                                                                                <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                                                                            </FormControl>
+                                                                            <FormLabel className="text-[10px] font-medium uppercase text-muted-foreground">
+                                                                                Primary
+                                                                            </FormLabel>
+                                                                        </FormItem>
+                                                                    )}
+                                                                />
+                                                            ) : null}
+                                                            <FormField
+                                                                control={control}
+                                                                name={`charges.${index}.conditional`}
+                                                                render={({ field }) => (
+                                                                    <FormItem className="flex items-center space-x-2 space-y-0">
+                                                                        <FormControl>
+                                                                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                                                                        </FormControl>
+                                                                        <FormLabel className="text-[10px] font-medium uppercase text-muted-foreground">
+                                                                            Conditional
+                                                                        </FormLabel>
+                                                                    </FormItem>
+                                                                )}
+                                                            />
+                                                        </div>
+
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => void handleRemove(index)}
+                                                            className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                                                        >
+                                                            Remove line
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            </ChargeNormalizationAudit>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
                 ) : (
-                    <div className="p-8 text-center text-muted-foreground text-sm italic">
+                    <div className="p-8 text-center text-sm italic text-muted-foreground">
                         No charges in this section.
                     </div>
                 )}

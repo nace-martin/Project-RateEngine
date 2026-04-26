@@ -23,9 +23,9 @@ export function SmartMoneyInput({
     minChargeName
 }: SmartMoneyInputProps) {
     return (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
             <div className="flex gap-2">
-                <div className="w-[80px]">
+                <div className="w-[76px]">
                     <FormField
                         control={control}
                         name={currencyName}
@@ -33,7 +33,7 @@ export function SmartMoneyInput({
                             <FormItem>
                                 <Select onValueChange={field.onChange} defaultValue={field.value}>
                                     <FormControl>
-                                        <SelectTrigger className="h-9 px-2">
+                                        <SelectTrigger className="h-8 px-2">
                                             <SelectValue />
                                         </SelectTrigger>
                                     </FormControl>
@@ -60,7 +60,7 @@ export function SmartMoneyInput({
                                             step="0.01"
                                             placeholder="0.00"
                                             {...field}
-                                            className={`h-9 ${unit === 'percentage' ? 'pr-8' : ''}`}
+                                            className={`h-8 ${unit === 'percentage' ? 'pr-8' : ''}`}
                                         />
                                         {unit === 'percentage' && (
                                             <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
@@ -92,7 +92,7 @@ export function SmartMoneyInput({
                                         placeholder="0.00"
                                         {...field}
                                         value={field.value || ""}
-                                        className="h-8 text-xs bg-muted/20 pl-9"
+                                        className="h-7 bg-muted/20 pl-9 text-xs"
                                     />
                                 </div>
                             </FormControl>

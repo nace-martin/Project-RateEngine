@@ -205,7 +205,7 @@ export function useSpotMode() {
 
     const manuallyResolveChargeLine = useCallback(async (
         chargeLineId: string,
-        request: { product_code_id: number | string }
+        request: { manual_resolved_product_code_id: number | string }
     ): Promise<import('@/lib/spot-types').SPEChargeLine | null> => {
         if (!state.spe) {
             updateState({ error: 'No SPE loaded' });
@@ -233,7 +233,7 @@ export function useSpotMode() {
                 error: err instanceof Error ? err.message : 'Manual charge review failed',
                 isLoading: false,
             });
-            return null;
+            throw err;
         }
     }, [state.spe, updateState]);
 

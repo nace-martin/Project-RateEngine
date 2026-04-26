@@ -1,6 +1,11 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from pricing_v4.category_rules import (
+    is_export_destination_local_code,
+    is_import_destination_local_code,
+    is_import_origin_local_code,
+)
 from pricing_v4.models import ProductCode
 from services.models import ServiceComponent
 
@@ -56,6 +61,7 @@ class Command(BaseCommand):
                 cat_map = {
                     'FREIGHT': 'TRANSPORT',
                     'DOCUMENTATION': 'DOCUMENTATION',
+                    'REGULATORY': 'DOCUMENTATION',
                     'CUSTOMS': 'CUSTOMS',
                     'CARTAGE': 'LOCAL',
                     'SURCHARGE': 'ACCESSORIAL',
@@ -132,13 +138,13 @@ def infer_component_leg(product_code: ProductCode) -> str:
         return "MAIN"
 
     if product_code.domain == ProductCode.DOMAIN_IMPORT:
-        if any(token in code for token in ("ORIGIN", "PICKUP")):
+        if is_import_origin_local_code(code, description):
             return "ORIGIN"
-        if "(ORIGIN" in description or " ORIGIN" in description or "PICK-UP" in description or "PICK UP" in description:
-            return "ORIGIN"
+        if is_import_destination_local_code(code, description):
+            return "DESTINATION"
         return "DESTINATION"
 
-    if "DEST" in code:
+    if is_export_destination_local_code(code, description):
         return "DESTINATION"
 
     return "ORIGIN"

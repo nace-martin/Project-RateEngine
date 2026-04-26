@@ -233,6 +233,9 @@ export interface V3ServiceComponent {
 export interface V3QuoteLine {
   id: string; // UUID
   service_component: V3ServiceComponent;
+  component?: string | null;
+  product_code?: string | null;
+  description?: string | null;
   leg?: string;
   cost_pgk: string;
   cost_fcy?: string | null;

@@ -1362,10 +1362,14 @@ class SpotChargeLineManualResolutionAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        product_code_id = _coerce_product_code_id(request.data.get("product_code_id"))
+        product_code_id = _coerce_product_code_id(
+            request.data.get("manual_resolved_product_code_id")
+        )
+        if product_code_id is None:
+            product_code_id = _coerce_product_code_id(request.data.get("product_code_id"))
         if product_code_id is None:
             return Response(
-                {'error': 'product_code_id is required.'},
+                {'error': 'manual_resolved_product_code_id is required.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

@@ -51,6 +51,26 @@ class InferComponentLegTests(SimpleTestCase):
         )
         self.assertEqual(infer_component_leg(product_code), "DESTINATION")
 
+    def test_import_origin_customs_code_maps_to_origin_leg(self):
+        product_code = self.make_product_code(
+            id=2007,
+            code="IMP-CUS-CLR-ORIGIN",
+            description="Import Origin Customs Clearance",
+            category=ProductCode.CATEGORY_CLEARANCE,
+        )
+        self.assertEqual(infer_component_leg(product_code), "ORIGIN")
+
+    def test_export_origin_permit_maps_to_origin_leg(self):
+        product_code = self.make_product_code(
+            id=1007,
+            code="EXP-PRM-ORIGIN",
+            description="Export Origin Permit / License",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_REGULATORY,
+        )
+        self.assertEqual(product_code.category, ProductCode.CATEGORY_REGULATORY)
+        self.assertEqual(infer_component_leg(product_code), "ORIGIN")
+
     def test_freight_maps_to_main_leg(self):
         product_code = self.make_product_code(
             id=2000,

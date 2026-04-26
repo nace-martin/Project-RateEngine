@@ -18,6 +18,13 @@ import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion 
 import { spotFormSchema, type SpotFormInputValues, type SpotFormSubmitValues } from "@/lib/schemas/spotSchema";
 import { ChargeBucketSection } from "./ChargeBucketSection";
 import { SpotChargeLineManualReviewSheet } from "./SpotChargeLineManualReviewSheet";
+import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
+
+type ReviewRequest = {
+    chargeLineId: string;
+    openManualReview: boolean;
+    requestKey: number;
+};
 
 interface SpotRateEntryFormProps {
     onSubmit: (charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>) => Promise<void>;
@@ -33,9 +40,10 @@ interface SpotRateEntryFormProps {
     onSaveDraft?: (charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>) => Promise<void>;
     onManualResolveChargeLine?: (
         chargeLineId: string,
-        request: { product_code_id: number | string }
+        request: { manual_resolved_product_code_id: number | string }
     ) => Promise<SPEChargeLine | null>;
     productCodeDomain?: string;
+    reviewRequest?: ReviewRequest | null;
 }
 
 const normalizeSourceReference = (value?: string | null) => {
@@ -63,6 +71,11 @@ const getFormErrorMessage = (error: unknown) => {
         return typeof message === "string" ? message : undefined;
     }
     return undefined;
+};
+
+const getManualReviewErrorMessage = (error: unknown) => {
+    if (!(error instanceof Error)) return "Manual charge review failed.";
+    return error.message.replace(/^Manual charge review failed:\s*/i, "").trim() || "Manual charge review failed.";
 };
 
 const normalizeScope = (scope?: string) => {
@@ -110,12 +123,14 @@ export function SpotRateEntryForm({
     onSaveDraft,
     onManualResolveChargeLine,
     productCodeDomain,
+    reviewRequest,
 }: SpotRateEntryFormProps) {
     const submitLockRef = useRef(false);
     const draftLockRef = useRef(false);
     const [isSavingDraft, setIsSavingDraft] = useState(false);
     const [manualReviewCharge, setManualReviewCharge] = useState<SPEChargeLine | null>(null);
     const [isSavingManualReview, setIsSavingManualReview] = useState(false);
+    const [manualReviewError, setManualReviewError] = useState<string | null>(null);
 
     const mapAssertionToCharge = useCallback((assertion: ExtractedAssertion): SPEChargeLine | null => {
         let category = assertion.category;
@@ -256,7 +271,7 @@ export function SpotRateEntryForm({
             // Omit charge.id because react-hook-form useFieldArray conflicts with existing 'id' fields
             charge_line_id: charge.id,
             code: charge.code,
-            description: charge.description,
+            description: getSpotChargeDisplayLabel(charge, { includeProductCode: false }),
             amount: charge.amount ? String(charge.amount) : "",
             currency: charge.currency,
             unit: (charge.min_charge !== null && charge.min_charge !== undefined && charge.unit === 'per_kg') ? 'min_or_per_kg' : charge.unit,
@@ -274,6 +289,9 @@ export function SpotRateEntryForm({
             normalization_method: charge.normalization_method ?? null,
             matched_alias_id: charge.matched_alias_id ?? null,
             resolved_product_code: charge.resolved_product_code ?? null,
+            effective_resolved_product_code: charge.effective_resolved_product_code ?? null,
+            effective_resolution_status: charge.effective_resolution_status ?? null,
+            requires_review: charge.requires_review ?? undefined,
             manual_resolution_status: charge.manual_resolution_status ?? null,
             manual_resolved_product_code: charge.manual_resolved_product_code ?? null,
             manual_resolution_by_user_id: charge.manual_resolution_by_user_id ?? null,
@@ -412,7 +430,7 @@ export function SpotRateEntryForm({
             charge_line_id: undefined,
             is_primary_cost: bucket === "airfreight",
             conditional: false,
-            source_reference: "",
+            source_reference: "Manual entry",
             min_charge: null,
             exclude_from_totals: false,
             source_label: "",
@@ -421,6 +439,9 @@ export function SpotRateEntryForm({
             normalization_method: null,
             matched_alias_id: null,
             resolved_product_code: null,
+            effective_resolved_product_code: null,
+            effective_resolution_status: null,
+            requires_review: undefined,
             manual_resolution_status: null,
             manual_resolved_product_code: null,
             manual_resolution_by_user_id: null,
@@ -431,6 +452,7 @@ export function SpotRateEntryForm({
 
     const handleOpenManualReview = useCallback((line: SpotFormInputValues["charges"][number]) => {
         if (!line.charge_line_id) return;
+        setManualReviewError(null);
         setManualReviewCharge({
             id: line.charge_line_id,
             code: line.code || "",
@@ -452,6 +474,9 @@ export function SpotRateEntryForm({
             normalization_method: line.normalization_method ?? null,
             matched_alias_id: line.matched_alias_id ?? null,
             resolved_product_code: line.resolved_product_code ?? null,
+            effective_resolved_product_code: line.effective_resolved_product_code ?? null,
+            effective_resolution_status: line.effective_resolution_status ?? null,
+            requires_review: line.requires_review ?? undefined,
             manual_resolution_status: line.manual_resolution_status ?? null,
             manual_resolved_product_code: line.manual_resolved_product_code ?? null,
             manual_resolution_by_user_id: line.manual_resolution_by_user_id ?? null,
@@ -460,14 +485,42 @@ export function SpotRateEntryForm({
         });
     }, []);
 
+    useEffect(() => {
+        if (!reviewRequest?.chargeLineId) return;
+
+        const targetLine = form
+            .getValues("charges")
+            .find((line) => line.charge_line_id === reviewRequest.chargeLineId);
+
+        const targetRow = document.getElementById(`charge-line-${reviewRequest.chargeLineId}`);
+        if (targetRow) {
+            targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+
+        if (reviewRequest.openManualReview && targetLine) {
+            const canOpenManualReview =
+                targetLine.manual_resolution_status !== "RESOLVED" &&
+                (targetLine.normalization_status === "UNMAPPED" ||
+                    targetLine.normalization_status === "AMBIGUOUS");
+            if (canOpenManualReview) {
+                handleOpenManualReview(targetLine);
+            }
+        }
+    }, [form, handleOpenManualReview, reviewRequest]);
+
     const handleManualReviewSave = useCallback(async (productCodeId: string) => {
         if (!manualReviewCharge?.id || !onManualResolveChargeLine) return;
 
         setIsSavingManualReview(true);
+        setManualReviewError(null);
         try {
-            const updatedCharge = await onManualResolveChargeLine(manualReviewCharge.id, { product_code_id: productCodeId });
+            const updatedCharge = await onManualResolveChargeLine(manualReviewCharge.id, {
+                manual_resolved_product_code_id: productCodeId,
+            });
             if (!updatedCharge) return;
             setManualReviewCharge(null);
+        } catch (error) {
+            setManualReviewError(getManualReviewErrorMessage(error));
         } finally {
             setIsSavingManualReview(false);
         }
@@ -507,6 +560,7 @@ export function SpotRateEntryForm({
                             onAdd={() => addLine(bucket.id)}
                             onRemove={remove}
                             onOpenManualReview={handleOpenManualReview}
+                            activeChargeLineId={reviewRequest?.chargeLineId ?? null}
                         />
                     );
                 })}
@@ -539,11 +593,15 @@ export function SpotRateEntryForm({
             <SpotChargeLineManualReviewSheet
                 open={Boolean(manualReviewCharge)}
                 onOpenChange={(open) => {
-                    if (!open) setManualReviewCharge(null);
+                    if (!open) {
+                        setManualReviewCharge(null);
+                        setManualReviewError(null);
+                    }
                 }}
                 chargeLine={manualReviewCharge}
                 productDomain={productCodeDomain}
                 isSaving={isSavingManualReview}
+                saveError={manualReviewError}
                 onSave={handleManualReviewSave}
             />
         </Form>

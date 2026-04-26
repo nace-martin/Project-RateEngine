@@ -33,6 +33,41 @@ DOMESTIC_AIRFREIGHT_CODES = {
     'DOM-OVERSIZE',
 }
 
+GENERIC_SPOT_DESCRIPTIONS = {
+    "SPOT ORIGIN CHARGE",
+    "SPOT FREIGHT CHARGE",
+    "SPOT DESTINATION CHARGE",
+    "SPOT CHARGE",
+}
+
+
+def _is_generic_spot_description(value: Optional[str]) -> bool:
+    return str(value or "").strip().upper() in GENERIC_SPOT_DESCRIPTIONS
+
+
+def _spot_charge_display_description(charge_line) -> str:
+    product_code = getattr(charge_line, "effective_resolved_product_code", None)
+    if product_code:
+        return product_code.description or product_code.code
+
+    for candidate in (
+        getattr(charge_line, "source_label", None),
+        getattr(charge_line, "description", None),
+        getattr(charge_line, "normalized_label", None),
+    ):
+        value = str(candidate or "").strip()
+        if value and not _is_generic_spot_description(value):
+            return value
+
+    return str(getattr(charge_line, "description", "") or "").strip() or "Spot Charge"
+
+
+def _spot_charge_display_code(charge_line) -> str:
+    product_code = getattr(charge_line, "effective_resolved_product_code", None)
+    if product_code:
+        return product_code.code
+    return getattr(charge_line, "code", None) or "SPOT_CHARGE"
+
 
 class PricingMode:
     """Pricing mode constants."""
@@ -994,7 +1029,7 @@ class PricingServiceV4Adapter:
         Returns list of CalculatedChargeLine (no totals).
         """
         # from quotes.models import SpotPricingEnvelopeDB
-        from quotes.spot_models import SpotPricingEnvelopeDB
+        from quotes.spot_models import SPEChargeLineDB, SpotPricingEnvelopeDB
         from quotes.spot_services import SpotEnvelopeService
         from quotes.spot_schemas import (
             SpotPricingEnvelope,
@@ -1008,7 +1043,14 @@ class PricingServiceV4Adapter:
         # 1. Load SPE from database
         try:
             spe_db = SpotPricingEnvelopeDB.objects.prefetch_related(
-                'charge_lines', 'acknowledgement'
+                models.Prefetch(
+                    "charge_lines",
+                    queryset=SPEChargeLineDB.objects.select_related(
+                        "resolved_product_code",
+                        "manual_resolved_product_code",
+                    ),
+                ),
+                'acknowledgement'
             ).get(id=self.spot_envelope_id)
         except SpotPricingEnvelopeDB.DoesNotExist:
             raise ValueError(f"SPOT Pricing Envelope not found: {self.spot_envelope_id}")
@@ -1041,8 +1083,8 @@ class PricingServiceV4Adapter:
                 )
                 continue
             charges.append(SPEChargeLine(
-                code=cl.code,
-                description=cl.description,
+                code=_spot_charge_display_code(cl),
+                description=_spot_charge_display_description(cl),
                 amount=float(cl.amount),
                 currency=cl.currency,
                 unit=cl.unit,

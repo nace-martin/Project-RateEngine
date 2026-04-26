@@ -134,17 +134,21 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
     SALES role users cannot see cost/COGS fields.
     """
     service_component = V3ServiceComponentSerializer()
-    # Alias for frontend compatibility (some components look for 'component' code)
-    component = serializers.CharField(source='service_component.code', read_only=True)
+    # Alias for frontend compatibility. Prefer the persisted canonical product
+    # code so SPOT fallback ServiceComponents do not leak generic labels.
+    component = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     
     def get_description(self, obj):
         return obj.description or (obj.service_component.description if obj.service_component else 'Manual Line')
+
+    def get_component(self, obj):
+        return obj.product_code or obj.component or (obj.service_component.code if obj.service_component else None)
     
     class Meta:
         model = QuoteLine
         fields = (
-            'id', 'service_component', 'component', 'description', 
+            'id', 'service_component', 'component', 'description', 'product_code',
             'cost_pgk', 'cost_fcy', 'cost_fcy_currency',
             'sell_pgk', 'sell_pgk_incl_gst', 'sell_fcy', 'sell_fcy_incl_gst',
             'sell_fcy_currency', 'exchange_rate', 'cost_source',

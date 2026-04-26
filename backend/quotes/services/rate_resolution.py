@@ -6,6 +6,10 @@ from typing import Any, Iterable
 
 from django.db import models
 
+from pricing_v4.category_rules import (
+    is_import_destination_local_code,
+    is_import_origin_local_code,
+)
 from pricing_v4.models import (
     DomesticCOGS,
     ExportCOGS,
@@ -342,10 +346,10 @@ def _classify_import_lane_component(row: models.Model) -> str | None:
     code = _normalize_text(getattr(getattr(row, "product_code", None), "code", None)) or ""
     if category == ProductCode.CATEGORY_FREIGHT or "FRT" in code or "FREIGHT" in code:
         return COMPONENT_FREIGHT
-    if "DEST" in code or code in {"IMP-CLEAR", "IMP-CARTAGE-DEST", "IMP-FSC-CARTAGE-DEST"}:
-        return COMPONENT_DESTINATION_LOCAL
-    if "ORIGIN" in code or code in {"IMP-PICKUP", "IMP-FSC-PICKUP"}:
+    if is_import_origin_local_code(code):
         return COMPONENT_ORIGIN_LOCAL
+    if is_import_destination_local_code(code):
+        return COMPONENT_DESTINATION_LOCAL
     if category in {ProductCode.CATEGORY_CARTAGE, ProductCode.CATEGORY_CLEARANCE}:
         return COMPONENT_DESTINATION_LOCAL
     return COMPONENT_ORIGIN_LOCAL

@@ -43,6 +43,10 @@ from quotes.completeness import (
     COMPONENT_FREIGHT,
     COMPONENT_ORIGIN_LOCAL,
 )
+from pricing_v4.category_rules import (
+    is_import_destination_local_code,
+    is_import_origin_local_code,
+)
 
 
 # =============================================================================
@@ -377,7 +381,6 @@ class SpotTriggerEvaluator:
 
         try:
             from pricing_v4.models import ProductCode
-
             description_map = {
                 product.code.upper(): product.description
                 for product in ProductCode.objects.filter(code__in=ordered_codes)
@@ -516,10 +519,10 @@ class RateAvailabilityService:
             code = (code or "").upper()
             if category == ProductCode.CATEGORY_FREIGHT or "FRT" in code or "FREIGHT" in code:
                 return COMPONENT_FREIGHT
-            if "DEST" in code or code in {"IMP-CLEAR", "IMP-CARTAGE-DEST", "IMP-FSC-CARTAGE-DEST"}:
-                return COMPONENT_DESTINATION_LOCAL
-            if "ORIGIN" in code or code in {"IMP-PICKUP", "IMP-FSC-PICKUP"}:
+            if is_import_origin_local_code(code):
                 return COMPONENT_ORIGIN_LOCAL
+            if is_import_destination_local_code(code):
+                return COMPONENT_DESTINATION_LOCAL
             if category in {ProductCode.CATEGORY_CARTAGE, ProductCode.CATEGORY_CLEARANCE}:
                 return COMPONENT_DESTINATION_LOCAL
             return COMPONENT_ORIGIN_LOCAL

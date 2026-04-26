@@ -35,6 +35,16 @@ export const chargeLineSchema = z.object({
         })
         .optional()
         .nullable(),
+    effective_resolved_product_code: z
+        .object({
+            id: z.number().int(),
+            code: z.string(),
+            description: z.string(),
+        })
+        .optional()
+        .nullable(),
+    effective_resolution_status: z.enum(["MATCHED", "UNMAPPED", "AMBIGUOUS", "RESOLVED"]).optional().nullable(),
+    requires_review: z.boolean().optional(),
     manual_resolution_status: z.enum(["RESOLVED"]).optional().nullable(),
     manual_resolved_product_code: z
         .object({

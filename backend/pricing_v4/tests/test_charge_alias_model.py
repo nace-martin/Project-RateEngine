@@ -75,3 +75,69 @@ class ChargeAliasModelTests(TestCase):
         )
 
         self.assertEqual(alias.normalized_alias_text, 'fuel surcharge')
+
+    def test_active_alias_must_be_approved(self):
+        alias = ChargeAlias(
+            alias_text='Fuel Surcharge',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=self.export_product,
+            priority=5,
+            is_active=True,
+            review_status=ChargeAlias.ReviewStatus.CANDIDATE,
+        )
+
+        with self.assertRaises(ValidationError) as exc:
+            alias.full_clean()
+
+        self.assertIn('is_active', exc.exception.message_dict)
+
+    def test_duplicate_alias_for_same_scope_and_target_is_rejected(self):
+        ChargeAlias.objects.create(
+            alias_text='Fuel Surcharge',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=self.export_product,
+            priority=5,
+        )
+        duplicate = ChargeAlias(
+            alias_text='  fuel surcharge  ',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=self.export_product,
+            priority=10,
+        )
+
+        with self.assertRaises(ValidationError) as exc:
+            duplicate.full_clean()
+
+        self.assertIn('alias_text', exc.exception.message_dict)
+
+    def test_active_conflict_for_same_scope_is_rejected(self):
+        ChargeAlias.objects.create(
+            alias_text='Fuel Surcharge',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=self.export_product,
+            priority=5,
+            is_active=True,
+        )
+        conflicting = ChargeAlias(
+            alias_text='fuel surcharge',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            product_code=self.import_product,
+            priority=5,
+            is_active=True,
+            review_status=ChargeAlias.ReviewStatus.APPROVED,
+        )
+
+        with self.assertRaises(ValidationError) as exc:
+            conflicting.full_clean()
+
+        self.assertIn('product_code', exc.exception.message_dict)

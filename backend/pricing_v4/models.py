@@ -142,6 +142,7 @@ class ProductCode(models.Model):
     CATEGORY_HANDLING = 'HANDLING'
     CATEGORY_CLEARANCE = 'CLEARANCE'
     CATEGORY_DOCUMENTATION = 'DOCUMENTATION'
+    CATEGORY_REGULATORY = 'REGULATORY'
     CATEGORY_CARTAGE = 'CARTAGE'
     CATEGORY_AGENCY = 'AGENCY'
     CATEGORY_SCREENING = 'SCREENING'
@@ -151,6 +152,7 @@ class ProductCode(models.Model):
         (CATEGORY_HANDLING, 'Handling & Terminal'),
         (CATEGORY_CLEARANCE, 'Customs Clearance'),
         (CATEGORY_DOCUMENTATION, 'Documentation'),
+        (CATEGORY_REGULATORY, 'Regulatory / Permit'),
         (CATEGORY_CARTAGE, 'Pickup & Delivery'),
         (CATEGORY_AGENCY, 'Agency Fees'),
         (CATEGORY_SCREENING, 'Security & Screening'),
@@ -260,6 +262,16 @@ class ChargeAlias(models.Model):
         MAIN = 'MAIN', 'Main Freight'
         DESTINATION = 'DESTINATION', 'Destination'
 
+    class AliasSource(models.TextChoices):
+        SEED = 'SEED', 'Seed / Bootstrap'
+        ADMIN = 'ADMIN', 'Admin Managed'
+        MANUAL_REVIEW = 'MANUAL_REVIEW', 'Manual Review Candidate'
+
+    class ReviewStatus(models.TextChoices):
+        APPROVED = 'APPROVED', 'Approved'
+        CANDIDATE = 'CANDIDATE', 'Candidate'
+        REJECTED = 'REJECTED', 'Rejected'
+
     alias_text = models.CharField(
         max_length=255,
         help_text='Human-entered/raw charge label to normalize.',
@@ -300,6 +312,20 @@ class ChargeAlias(models.Model):
         help_text='Lower values win when multiple aliases match the same input.',
     )
     is_active = models.BooleanField(default=True, db_index=True)
+    alias_source = models.CharField(
+        max_length=20,
+        choices=AliasSource.choices,
+        default=AliasSource.ADMIN,
+        db_index=True,
+        help_text='Operational provenance for how this alias entered the registry.',
+    )
+    review_status = models.CharField(
+        max_length=20,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.APPROVED,
+        db_index=True,
+        help_text='Human review state. Only APPROVED aliases may be active.',
+    )
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -339,6 +365,48 @@ class ChargeAlias(models.Model):
         ):
             raise ValidationError(
                 {'product_code': 'mode_scope must match product_code.domain unless mode_scope is ANY.'}
+            )
+
+        if self.is_active and self.review_status != self.ReviewStatus.APPROVED:
+            raise ValidationError({'is_active': 'Only APPROVED aliases can be active.'})
+
+        duplicate_aliases = ChargeAlias.objects.filter(
+            normalized_alias_text=self.normalized_alias_text,
+            match_type=self.match_type,
+            mode_scope=self.mode_scope,
+            direction_scope=self.direction_scope,
+            product_code=self.product_code,
+        )
+        if self.pk:
+            duplicate_aliases = duplicate_aliases.exclude(pk=self.pk)
+        if duplicate_aliases.exists():
+            raise ValidationError(
+                {
+                    'alias_text': (
+                        'An alias with the same normalized label, scope, match type, '
+                        'and ProductCode already exists.'
+                    )
+                }
+            )
+
+        active_conflicts = ChargeAlias.objects.filter(
+            normalized_alias_text=self.normalized_alias_text,
+            match_type=self.match_type,
+            mode_scope=self.mode_scope,
+            direction_scope=self.direction_scope,
+            is_active=True,
+        ).exclude(product_code=self.product_code)
+        if self.pk:
+            active_conflicts = active_conflicts.exclude(pk=self.pk)
+        if self.is_active and active_conflicts.exists():
+            raise ValidationError(
+                {
+                    'product_code': (
+                        'An active alias with the same normalized label and scope already '
+                        'targets a different ProductCode. Keep risky alternatives inactive '
+                        'until explicitly reviewed.'
+                    )
+                }
             )
 
     def save(self, *args, **kwargs):
