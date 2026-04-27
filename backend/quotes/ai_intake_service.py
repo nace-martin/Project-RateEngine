@@ -8,7 +8,7 @@ Architecture Principles:
 - AI is input accelerator only — does NOT make pricing decisions
 - AI output MUST pass Pydantic validation
 - AI never writes directly to database
-- All output requires human acceptance
+- High-confidence deterministic matches can be auto-accepted; exceptions require review
 """
 
 import json
@@ -72,6 +72,20 @@ CURRENCY_SYMBOL_MAP = {
     "S$": "SGD",
     "HK$": "HKD",
 }
+
+PATTERN_CHARGE_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?"
+    r"(?P<label>[A-Za-z][A-Za-z0-9/&+().,\- ]{1,80}?)"
+    r"\s*[:：]\s*"
+    r"(?P<amount>"
+    r"(?P<currency>US\$|A\$|NZ\$|S\$|HK\$|[A-Z]{3}|\$)"
+    r"\s*[0-9][0-9,]*(?:\.[0-9]+)?"
+    r"(?:\s*(?:/[A-Za-z]+|per\s+[A-Za-z]+))?"
+    r")"
+    r"\s*(?P<note>\([^)\r\n]*\))?"
+)
+
+PATTERN_CHARGE_FALLBACK_REASON = "AI missed pattern-based extraction"
 
 
 class _RawExtractedChargesEnvelope(BaseModel):
@@ -227,6 +241,129 @@ def _infer_quote_currency_from_text(text: str) -> Optional[str]:
     return None
 
 
+def _normalize_fallback_label(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", value.upper())
+
+
+def _normalize_fallback_amount(value: str) -> str:
+    amount_without_notes = re.sub(r"\([^)]*\)", "", value.upper())
+    currency = _normalize_currency_value(amount_without_notes) or ""
+    number_match = re.search(r"[0-9][0-9,]*(?:\.[0-9]+)?", amount_without_notes)
+    number = number_match.group(0).replace(",", "") if number_match else ""
+    unit_match = re.search(r"(?:/[A-Z]+|PER\s+[A-Z]+)", amount_without_notes)
+    unit = re.sub(r"\s+", "", unit_match.group(0)) if unit_match else ""
+    if currency or number:
+        return f"{currency}:{number}:{unit}"
+    return re.sub(r"\s+", "", amount_without_notes)
+
+
+def _raw_charge_dedupe_key(charge: RawExtractedCharge) -> tuple[str, str]:
+    return (
+        _normalize_fallback_label(charge.raw_label),
+        _normalize_fallback_amount(charge.raw_amount_string),
+    )
+
+
+def _extract_pattern_charge_candidates(text: str) -> List[RawExtractedCharge]:
+    """Deterministically recover compact '<label>:<currency><amount>' charge lines."""
+    if not text:
+        return []
+
+    candidates: List[RawExtractedCharge] = []
+    seen: set[tuple[str, str]] = set()
+    line_starts: list[tuple[int, int]] = []
+    offset = 0
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        line_starts.append((offset, line_number))
+        offset += len(line)
+
+    def line_number_for_offset(position: int) -> int | None:
+        current_line = None
+        for start, line_number in line_starts:
+            if start > position:
+                break
+            current_line = line_number
+        return current_line
+
+    for match in PATTERN_CHARGE_LINE_RE.finditer(text):
+        label = match.group("label").strip(" \t-*:：")
+        amount = match.group("amount").strip()
+        note = (match.group("note") or "").strip()
+        raw_amount_string = f"{amount}{note}" if note else amount
+        currency_hint = _normalize_currency_value(match.group("currency"))
+
+        if not label or not amount:
+            continue
+
+        charge = RawExtractedCharge(
+            raw_label=label,
+            raw_amount_string=raw_amount_string,
+            currency_hint=currency_hint,
+            is_conditional=_text_indicates_conditional(note),
+            source_excerpt=match.group(0).strip(),
+            source_line_number=line_number_for_offset(match.start()),
+            source_line_identity=(
+                f"pattern-line:{line_number_for_offset(match.start())}:{_normalize_fallback_label(label)}"
+            ),
+        )
+        key = _raw_charge_dedupe_key(charge)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(charge)
+
+    return candidates
+
+
+def _text_indicates_conditional(value: str) -> bool:
+    conditional_terms = (
+        "if applicable",
+        "if any",
+        "subject to",
+        "optional",
+        "where applicable",
+        "as applicable",
+    )
+    lowered = value.lower()
+    return any(term in lowered for term in conditional_terms)
+
+
+def _extract_parenthetical_notes(value: str) -> Optional[str]:
+    notes = [
+        note.strip()
+        for note in re.findall(r"\(([^)\r\n]+)\)", value or "")
+        if note.strip()
+    ]
+    return "; ".join(notes)[:500] if notes else None
+
+
+def _merge_pattern_fallback_charges(
+    ai_charges: List[RawExtractedCharge],
+    fallback_charges: List[RawExtractedCharge],
+) -> List[RawExtractedCharge]:
+    """Append deterministic fallback charges without replacing AI output."""
+    if not fallback_charges:
+        return ai_charges
+
+    merged = list(ai_charges)
+    seen = {_raw_charge_dedupe_key(charge) for charge in ai_charges}
+
+    for charge in fallback_charges:
+        key = _raw_charge_dedupe_key(charge)
+        if key in seen:
+            continue
+        logger.info(
+            "Fallback extracted charge label=%s amount=%s reason=%s",
+            charge.raw_label,
+            charge.raw_amount_string,
+            PATTERN_CHARGE_FALLBACK_REASON,
+        )
+        merged.append(charge)
+        seen.add(key)
+
+    return merged
+
+
 def get_gemini_client():
     """Get configured Gemini client. Returns None if not configured."""
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -277,6 +414,10 @@ def parse_rate_quote_text(
         model = genai.GenerativeModel(GEMINI_MODEL)
 
         raw_charges = _extract_raw_charges(model, text, shipment_context=context)
+        raw_charges = _merge_pattern_fallback_charges(
+            raw_charges,
+            _extract_pattern_charge_candidates(text),
+        )
         normalized_charges = _normalize_charges(
             model,
             raw_charges,
@@ -571,7 +712,11 @@ def _build_extractor_prompt(text: str, shipment_context: Optional[dict] = None) 
 Rules:
 - ONLY extract data explicitly present in the email/text.
 - Preserve raw_label and raw_amount_string verbatim.
+- Preserve source evidence: source_excerpt should be the shortest exact source snippet supporting the charge; source_line_number is one-based when available; source_line_identity should be a stable visible row/key when available.
 - Do NOT normalize labels, map codes, infer buckets, or infer unit basis.
+- MUST extract every charge-like line matching "<label>:<currency><amount>", including short labels such as "DOC", "CUS", "A/F", and "Handle".
+- MUST extract colon-rated charges even when the unit is missing. Preserve the visible amount; the normalizer will default missing units to PER_SHIPMENT.
+- MUST NOT drop a charge because it contains parenthetical text, e.g. "(for small cargo)". Preserve that text in raw_amount_string.
 - Set is_conditional=true only when the text indicates optional/conditional wording (e.g., if applicable, subject to, optional).
 - Descriptive qualifiers like "for small cargo" or "dangerous goods" are NOT conditional — they are notes about applicability.
 - currency_hint is optional and should only be included if directly visible in the same charge text.
@@ -580,6 +725,9 @@ Freight rate notation guide (preserve these verbatim in raw_amount_string):
 - "USD6.8/kg(+45kgs)" → raw_amount_string="USD6.8/kg(+45kgs)", currency_hint="USD"
 - "USD 3.50/kg +100kg" → raw_amount_string="USD 3.50/kg +100kg", currency_hint="USD"
 - "AUD 2.80 per kg min 50kg" → raw_amount_string="AUD 2.80 per kg min 50kg", currency_hint="AUD"
+- "Handle:USD50(for small cargo)" → raw_label="Handle", raw_amount_string="USD50(for small cargo)", currency_hint="USD"
+- "DOC:USD30" → raw_label="DOC", raw_amount_string="USD30", currency_hint="USD"
+- "Pick Up+Gate In:USD200" → raw_label="Pick Up+Gate In", raw_amount_string="USD200", currency_hint="USD"
 - The primary numeric value before /kg is the RATE. Do NOT split or recalculate it.
 
 Shipment context (reference only; do not infer values from it):
@@ -630,6 +778,8 @@ Additional rules:
 - EXACTLY categorise percentage fees (e.g. "10% of freight") as PERCENTAGE.
 - currency must be a 3-letter code. Use quote_currency_hint only when the charge text lacks an explicit currency.
 - amount must be numeric and non-negative.
+- If raw_amount_string has a currency and amount but no explicit unit (e.g. "USD50"), set unit_basis to PER_SHIPMENT.
+- Parenthetical descriptive text in raw_amount_string is note/context, not a reason to drop the charge.
 - For PERCENTAGE, set unit_basis to PERCENTAGE, populate `percentage` and `percent_applies_to` (and set `amount` to the same numeric percentage value).
 - For MIN_OR_PER_KG, set unit_basis to MIN_OR_PER_KG, populate both `rate_per_unit` and `minimum_amount` (and set `amount` equal to `rate_per_unit`).
 - confidence must be HIGH or LOW only.
@@ -706,6 +856,15 @@ def _build_final_spot_charge_lines(
             "normalization_confidence": normalized.confidence,
             "confidence": 0.95 if normalized.confidence == "HIGH" else 0.35,
         }
+        if raw_match:
+            payload["source_excerpt"] = raw_match.source_excerpt or (
+                f"{raw_match.raw_label}: {raw_match.raw_amount_string}".strip()
+            )
+            payload["source_line_number"] = raw_match.source_line_number
+            payload["source_line_identity"] = raw_match.source_line_identity
+            raw_notes = _extract_parenthetical_notes(raw_match.raw_amount_string)
+            if raw_notes:
+                payload["notes"] = raw_notes
 
         if normalized.unit_basis == "PER_SHIPMENT":
             payload["amount"] = normalized.amount

@@ -2011,6 +2011,29 @@ export async function manuallyResolveSpotChargeLine(
   return response.json();
 }
 
+export async function resolveSpotConditionalChargeLine(
+  envelopeId: string,
+  chargeLineId: string,
+  request: { action: 'KEEP' | 'REMOVE' }
+): Promise<SpotPricingEnvelope> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/charges/${chargeLineId}/conditional-resolution/`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Conditional charge review failed: ${detail}`);
+  }
+
+  return response.json();
+}
+
 export async function listPricingCarriers(params?: {
   search?: string;
 }): Promise<PricingCarrierOption[]> {

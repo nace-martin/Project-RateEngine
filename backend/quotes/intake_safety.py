@@ -102,18 +102,15 @@ def normalize_source_analysis_summary(value: Any) -> dict[str, Any]:
     warnings = _string_list(raw.get("warnings"))
     detected_currencies = sorted({item.upper() for item in _string_list(raw.get("detected_currencies"))})
     ai_used = bool(raw.get("ai_used"))
-    review_required = False
-    reviewed_safe_to_quote = False
-    review_status = REVIEW_STATUS_NOT_REQUIRED
 
     summary = {
         "warnings": warnings,
         "assertion_count": _int_value(raw.get("assertion_count")),
         "can_proceed": bool(raw.get("can_proceed", False)),
         "ai_used": ai_used,
-        "review_required": review_required,
-        "review_status": review_status,
-        "reviewed_safe_to_quote": reviewed_safe_to_quote,
+        "review_required": False,
+        "review_status": REVIEW_STATUS_NOT_REQUIRED,
+        "reviewed_safe_to_quote": False,
         "reviewed_by_user_id": str(raw.get("reviewed_by_user_id") or "").strip() or None,
         "reviewed_at": raw.get("reviewed_at") or None,
         "review_note": str(raw.get("review_note") or "").strip() or None,
@@ -131,11 +128,26 @@ def normalize_source_analysis_summary(value: Any) -> dict[str, Any]:
         "critic_hallucinations": _string_list(raw.get("critic_hallucinations")),
         "pdf_fallback_used": bool(raw.get("pdf_fallback_used", False)),
     }
-    risk_flags, blocking_reasons, risk_level, _requires_review_note = _derive_blocking_reasons(summary)
+    risk_flags, blocking_reasons, risk_level, requires_review_note = _derive_blocking_reasons(summary)
+    review_required = bool(risk_flags)
+    reviewed_safe_to_quote = bool(raw.get("reviewed_safe_to_quote", False)) if review_required else False
+    raw_review_status = str(raw.get("review_status") or "").strip().upper()
+    if review_required:
+        review_status = REVIEW_STATUS_APPROVED if reviewed_safe_to_quote else REVIEW_STATUS_PENDING
+        if raw_review_status in {REVIEW_STATUS_PENDING, REVIEW_STATUS_APPROVED}:
+            review_status = raw_review_status
+            reviewed_safe_to_quote = raw_review_status == REVIEW_STATUS_APPROVED
+    else:
+        review_status = REVIEW_STATUS_NOT_REQUIRED
+        reviewed_safe_to_quote = False
+
+    summary["review_required"] = review_required
+    summary["review_status"] = review_status
+    summary["reviewed_safe_to_quote"] = reviewed_safe_to_quote
     summary["risk_flags"] = risk_flags
     summary["blocking_reasons"] = blocking_reasons
     summary["risk_level"] = risk_level
-    summary["requires_review_note"] = False
+    summary["requires_review_note"] = requires_review_note
     return summary
 
 
@@ -205,10 +217,32 @@ def mark_source_analysis_review(
 
 
 def evaluate_envelope_intake_safety(source_batches: Iterable[Any]) -> dict[str, Any]:
+    blocking_issues: list[str] = []
+    pending_source_batch_ids: list[str] = []
+    pending_source_labels: list[str] = []
+    review_note_required_batch_ids: list[str] = []
+
+    for batch in source_batches:
+        summary = normalize_source_analysis_summary(getattr(batch, "analysis_summary_json", None))
+        if not summary["review_required"] or summary["review_status"] == REVIEW_STATUS_APPROVED:
+            continue
+
+        batch_id = str(getattr(batch, "id", "") or "")
+        label = str(getattr(batch, "label", "") or getattr(batch, "source_reference", "") or "Imported source")
+        if batch_id:
+            pending_source_batch_ids.append(batch_id)
+        pending_source_labels.append(label)
+        if summary["requires_review_note"]:
+            review_note_required_batch_ids.append(batch_id)
+
+        reasons = summary["blocking_reasons"] or ["Imported source needs review before quote creation."]
+        for reason in reasons:
+            blocking_issues.append(f"{label}: {reason}")
+
     return {
-        "is_safe_to_quote": True,
-        "blocking_issues": [],
-        "pending_source_batch_ids": [],
-        "pending_source_labels": [],
-        "review_note_required_batch_ids": [],
+        "is_safe_to_quote": not blocking_issues,
+        "blocking_issues": blocking_issues,
+        "pending_source_batch_ids": pending_source_batch_ids,
+        "pending_source_labels": pending_source_labels,
+        "review_note_required_batch_ids": review_note_required_batch_ids,
     }

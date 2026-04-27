@@ -260,6 +260,23 @@ class SPEChargeLineDB(models.Model):
     )
     
     conditional = models.BooleanField(default=False)
+    conditional_acknowledged = models.BooleanField(
+        default=False,
+        help_text="True when a reviewer explicitly kept this conditional source charge in the quote.",
+    )
+    conditional_acknowledged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+        help_text="User who acknowledged keeping this conditional charge.",
+    )
+    conditional_acknowledged_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the conditional charge was acknowledged.",
+    )
     
     # === Extended fields for agent quote representation ===
     
@@ -351,6 +368,16 @@ class SPEChargeLineDB(models.Model):
         blank=True,
         default='',
         help_text='Original raw charge label from the source content, if captured.',
+    )
+    source_excerpt = models.TextField(
+        blank=True,
+        default='',
+        help_text='Verbatim source snippet supporting this extracted charge line.',
+    )
+    source_line_number = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='One-based source line number for the supporting source excerpt, when available.',
     )
     source_line_identity = models.CharField(
         max_length=255,
@@ -476,6 +503,10 @@ class SPEChargeLineDB(models.Model):
             self.NormalizationStatus.UNMAPPED,
             self.NormalizationStatus.AMBIGUOUS,
         }
+
+    @property
+    def requires_conditional_review(self) -> bool:
+        return bool(self.conditional and not self.conditional_acknowledged)
 
     @property
     def normalization_source_label(self) -> str:

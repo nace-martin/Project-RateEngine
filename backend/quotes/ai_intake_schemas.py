@@ -6,7 +6,7 @@ All AI output MUST pass these validations before being shown to users.
 
 Key Principles:
 - AI never writes directly to database
-- All output requires human acceptance
+- High-confidence deterministic matches can be auto-accepted; exceptions require review
 - Validation failures trigger retry or manual entry
 """
 
@@ -73,6 +73,21 @@ class SpotChargeLine(BaseModel):
         min_length=1,
         max_length=200,
         description="Original raw label from extraction stage (defaults to description)"
+    )
+    source_excerpt: Optional[str] = Field(
+        None,
+        max_length=1000,
+        description="Verbatim source snippet supporting this charge line"
+    )
+    source_line_number: Optional[int] = Field(
+        None,
+        ge=1,
+        description="One-based source line number when available"
+    )
+    source_line_identity: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Stable source-line identity from extractor or deterministic fallback"
     )
 
     # Normalized v4 product mapping
@@ -406,6 +421,21 @@ class RawExtractedCharge(BaseModel):
     is_conditional: bool = Field(
         default=False,
         description="True if raw text indicates the charge is conditional/optional"
+    )
+    source_excerpt: Optional[str] = Field(
+        None,
+        max_length=1000,
+        description="Verbatim source text supporting this raw charge"
+    )
+    source_line_number: Optional[int] = Field(
+        None,
+        ge=1,
+        description="One-based source line number when available"
+    )
+    source_line_identity: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Stable source-line identity from extractor when available"
     )
 
     @field_validator("currency_hint")

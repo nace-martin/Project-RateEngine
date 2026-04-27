@@ -524,7 +524,7 @@ class SPESourceBatchSerializer(serializers.ModelSerializer):
         model = SPESourceBatchDB
         fields = (
             'id', 'source_kind', 'source_type', 'target_bucket', 'label',
-            'source_reference', 'file_name', 'file_content_type',
+            'source_reference', 'raw_text', 'file_name', 'file_content_type',
             'analysis_summary_json', 'created_at', 'updated_at', 'charge_count',
             'warnings', 'assertion_count', 'ai_used',
             'review_required', 'review_status', 'reviewed_safe_to_quote',
@@ -624,7 +624,10 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'code', 'description', 'amount', 'currency', 'unit',
             'bucket', 'is_primary_cost', 'conditional', 'min_charge',
+            'conditional_acknowledged', 'conditional_acknowledged_by',
+            'conditional_acknowledged_at',
             'note', 'exclude_from_totals', 'percentage_basis', 'source_reference',
+            'source_excerpt', 'source_line_number', 'source_line_identity',
             'source_label', 'normalized_label', 'normalization_status',
             'normalization_method', 'matched_alias_id', 'resolved_product_code',
             'effective_resolved_product_code', 'effective_resolution_status',

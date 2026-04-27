@@ -120,6 +120,8 @@ class SeedChargeAliasesCommandTests(TestCase):
             ("HANDLING FEE", "ORIGIN", "IMP-CTO-ORIGIN"),
             ("CUS", "ORIGIN", "IMP-CUS-CLR-ORIGIN"),
             ("CUSTOMS CLEARANCE", "ORIGIN", "IMP-CUS-CLR-ORIGIN"),
+            ("IMPORT ORIGIN CUSTOMS CLEARANCE", "ORIGIN", "IMP-CUS-CLR-ORIGIN"),
+            ("IMPORT AGENCY FEE (ORIGIN)", "ORIGIN", "IMP-AGENCY-ORIGIN"),
             ("EXPORT LICENSE", "ORIGIN", "IMP-PRM-ORIGIN"),
             ("PICKUP CHARGE", "ORIGIN", "IMP-PICKUP"),
             ("PICK UP+GATE IN", "ORIGIN", "IMP-PICKUP"),
@@ -143,7 +145,7 @@ class SeedChargeAliasesCommandTests(TestCase):
         self._seed_pack_a_product_codes()
         call_command("seed_charge_aliases")
 
-        for label in ("HANDLING", "CLEARANCE", "SERVICE FEE"):
+        for label in ("HANDLING", "CLEARANCE", "SERVICE FEE", "AGENT FEE"):
             result = resolve_charge_alias(
                 label,
                 mode_scope=ChargeAlias.ModeScope.IMPORT,

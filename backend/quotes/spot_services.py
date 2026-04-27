@@ -2101,6 +2101,9 @@ class ReplyAnalysisService:
                         category=category,
                         status=assertion_status,
                         confidence=assertion_confidence,
+                        source_line=getattr(line, "source_line_number", None),
+                        source_excerpt=getattr(line, "source_excerpt", None),
+                        source_line_identity=getattr(line, "source_line_identity", None),
                         rate_amount=display_amount,
                         rate_per_unit=line.rate_per_unit,
                         rate_currency=final_currency,
@@ -2477,10 +2480,11 @@ class ReplyAnalysisService:
                 "percent_basis": percent_basis,
                 "rule_meta": rule_meta,
                 "source_reference": final_source_ref,
+                "source_excerpt": a.source_excerpt or a.text,
+                "source_line_number": a.source_line,
                 "source_line_identity": (
-                    f"assertion-line:{a.source_line}"
-                    if a.source_line is not None
-                    else None
+                    a.source_line_identity
+                    or (f"assertion-line:{a.source_line}" if a.source_line is not None else None)
                 ),
             })
 

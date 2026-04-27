@@ -205,6 +205,11 @@ export function SpotRateEntryForm({
             is_primary_cost: bucket === "airfreight",
             conditional: assertion.status === "conditional",
             source_reference: "Imported rates",
+            source_excerpt: assertion.source_excerpt || assertion.text,
+            source_line_number: assertion.source_line ?? null,
+            source_line_identity: assertion.source_line_identity || (
+                assertion.source_line != null ? `assertion-line:${assertion.source_line}` : undefined
+            ),
             min_charge,
             percentage_basis,
         };
@@ -216,13 +221,15 @@ export function SpotRateEntryForm({
             merged.map((c) => `${c.bucket}|${(c.code || "").toUpperCase()}|${(c.description || "").trim().toUpperCase()}`)
         );
 
-        for (const assertion of suggestedCharges) {
-            const mapped = mapAssertionToCharge(assertion);
-            if (!mapped) continue;
-            const key = `${mapped.bucket}|${mapped.code.toUpperCase()}|${mapped.description.trim().toUpperCase()}`;
-            if (seen.has(key)) continue;
-            merged.push(mapped);
-            seen.add(key);
+        if (initialCharges.length === 0) {
+            for (const assertion of suggestedCharges) {
+                const mapped = mapAssertionToCharge(assertion);
+                if (!mapped) continue;
+                const key = `${mapped.bucket}|${mapped.code.toUpperCase()}|${mapped.description.trim().toUpperCase()}`;
+                if (seen.has(key)) continue;
+                merged.push(mapped);
+                seen.add(key);
+            }
         }
         return merged;
     }, [initialCharges, suggestedCharges, mapAssertionToCharge]);
@@ -278,7 +285,13 @@ export function SpotRateEntryForm({
             bucket: charge.bucket,
             is_primary_cost: charge.is_primary_cost,
             conditional: charge.conditional,
+            conditional_acknowledged: charge.conditional_acknowledged,
+            conditional_acknowledged_by: charge.conditional_acknowledged_by,
+            conditional_acknowledged_at: charge.conditional_acknowledged_at,
             source_reference: normalizeSourceReference(charge.source_reference),
+            source_excerpt: charge.source_excerpt || "",
+            source_line_number: charge.source_line_number ?? null,
+            source_line_identity: charge.source_line_identity || "",
             min_charge: charge.min_charge ? String(charge.min_charge) : null,
             note: charge.note || "",
             exclude_from_totals: charge.exclude_from_totals,
@@ -343,7 +356,13 @@ export function SpotRateEntryForm({
             bucket: line.bucket,
             is_primary_cost: line.is_primary_cost,
             conditional: line.conditional,
+            conditional_acknowledged: line.conditional_acknowledged,
+            conditional_acknowledged_by: line.conditional_acknowledged_by,
+            conditional_acknowledged_at: line.conditional_acknowledged_at,
             source_reference: normalizeSourceReference(line.source_reference),
+            source_excerpt: line.source_excerpt,
+            source_line_number: line.source_line_number,
+            source_line_identity: line.source_line_identity,
             note: line.note,
             exclude_from_totals: line.exclude_from_totals,
             percentage_basis: line.percentage_basis || undefined,
@@ -360,7 +379,13 @@ export function SpotRateEntryForm({
         bucket: charge.bucket,
         is_primary_cost: charge.is_primary_cost,
         conditional: charge.conditional,
+        conditional_acknowledged: charge.conditional_acknowledged,
+        conditional_acknowledged_by: charge.conditional_acknowledged_by,
+        conditional_acknowledged_at: charge.conditional_acknowledged_at,
         source_reference: normalizeSourceReference(charge.source_reference),
+        source_excerpt: charge.source_excerpt,
+        source_line_number: charge.source_line_number,
+        source_line_identity: charge.source_line_identity,
         min_charge: charge.min_charge,
         note: charge.note,
         exclude_from_totals: charge.exclude_from_totals,
@@ -430,7 +455,13 @@ export function SpotRateEntryForm({
             charge_line_id: undefined,
             is_primary_cost: bucket === "airfreight",
             conditional: false,
+            conditional_acknowledged: false,
+            conditional_acknowledged_by: null,
+            conditional_acknowledged_at: null,
             source_reference: "Manual entry",
+            source_excerpt: "",
+            source_line_number: null,
+            source_line_identity: "",
             min_charge: null,
             exclude_from_totals: false,
             source_label: "",
@@ -463,7 +494,13 @@ export function SpotRateEntryForm({
             bucket: line.bucket,
             is_primary_cost: line.is_primary_cost,
             conditional: line.conditional,
+            conditional_acknowledged: line.conditional_acknowledged,
+            conditional_acknowledged_by: line.conditional_acknowledged_by,
+            conditional_acknowledged_at: line.conditional_acknowledged_at,
             source_reference: line.source_reference,
+            source_excerpt: line.source_excerpt,
+            source_line_number: line.source_line_number,
+            source_line_identity: line.source_line_identity,
             min_charge: line.min_charge || undefined,
             note: line.note || undefined,
             exclude_from_totals: line.exclude_from_totals,
@@ -501,7 +538,8 @@ export function SpotRateEntryForm({
             const canOpenManualReview =
                 targetLine.manual_resolution_status !== "RESOLVED" &&
                 (targetLine.normalization_status === "UNMAPPED" ||
-                    targetLine.normalization_status === "AMBIGUOUS");
+                    targetLine.normalization_status === "AMBIGUOUS" ||
+                    targetLine.normalization_status === "MATCHED");
             if (canOpenManualReview) {
                 handleOpenManualReview(targetLine);
             }

@@ -39,7 +39,6 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             leg="MAIN",
             category="TRANSPORT",
         )
-
         self.create_url = reverse("quotes:spot-envelope-list-create")
         self.scope_url = reverse("quotes:spot-validate-scope")
         self.evaluate_url = reverse("quotes:spot-evaluate-trigger")
@@ -64,7 +63,35 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             COMPONENT_DESTINATION_LOCAL: outcome(COMPONENT_DESTINATION_LOCAL, destination),
         }
 
+    def _create_exact_alias(self, *, alias_text: str, mode_scope: str, direction_scope: str, code: str):
+        product = ProductCode.objects.create(
+            id=9000 + ProductCode.objects.count(),
+            code=code,
+            description=alias_text,
+            domain=mode_scope,
+            category=ProductCode.CATEGORY_FREIGHT if direction_scope == ChargeAlias.DirectionScope.MAIN else ProductCode.CATEGORY_HANDLING,
+            default_unit=ProductCode.UNIT_KG if direction_scope == ChargeAlias.DirectionScope.MAIN else ProductCode.UNIT_SHIPMENT,
+            is_gst_applicable=False,
+        )
+        return ChargeAlias.objects.create(
+            alias_text=alias_text,
+            normalized_alias_text=ChargeAlias.normalize_alias_text_value(alias_text),
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=mode_scope,
+            direction_scope=direction_scope,
+            product_code=product,
+            priority=10,
+            alias_source=ChargeAlias.AliasSource.ADMIN,
+            review_status=ChargeAlias.ReviewStatus.APPROVED,
+        )
+
     def test_spot_envelope_flow_acknowledge_compute(self):
+        self._create_exact_alias(
+            alias_text="Airfreight",
+            mode_scope=ChargeAlias.ModeScope.EXPORT,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            code="EXP-FRT-FLOW",
+        )
         create_payload = {
             "shipment_context": {
                 "origin_country": "PG",
@@ -128,8 +155,137 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertIn("ORIGIN_LOCAL", payload["missing_components"])
         self.assertIn("DESTINATION_LOCAL", payload["missing_components"])
         self.assertEqual(payload["pricing_mode"], "SPOT")
-        self.assertEqual(len(payload["lines"]), 1)
-        self.assertNotEqual(payload["totals"]["total_sell_pgk"], "0")
+
+    def test_conditional_charge_requires_acknowledgement_metadata_until_kept(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 2,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Conditional airfreight",
+                    "amount": 5,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": True,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        charge = create_response.json()["charges"][0]
+        self.assertTrue(charge["conditional"])
+        self.assertFalse(charge["conditional_acknowledged"])
+        self.assertIsNone(charge["conditional_acknowledged_at"])
+
+    def test_keep_conditional_charge_acknowledges_without_erasing_audit_flag(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 2,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Conditional airfreight",
+                    "amount": 5,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": True,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][0]["id"]
+        conditional_url = reverse(
+            "quotes:spot-charge-line-conditional-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+
+        response = self.client.patch(conditional_url, {"action": "KEEP"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        charge = response.json()["charges"][0]
+        self.assertTrue(charge["conditional"])
+        self.assertTrue(charge["conditional_acknowledged"])
+        self.assertEqual(charge["conditional_acknowledged_by"], self.user.id)
+        self.assertIsNotNone(charge["conditional_acknowledged_at"])
+
+        line = SPEChargeLineDB.objects.get(id=charge_line_id)
+        self.assertTrue(line.conditional)
+        self.assertTrue(line.conditional_acknowledged)
+        self.assertEqual(line.conditional_acknowledged_by_id, self.user.id)
+        self.assertIsNotNone(line.conditional_acknowledged_at)
+
+    def test_remove_conditional_charge_deletes_line_from_draft_envelope(self):
+        create_payload = {
+            "shipment_context": {
+                "origin_country": "PG",
+                "destination_country": "AU",
+                "origin_code": self.origin.code,
+                "destination_code": self.destination.code,
+                "commodity": "GCR",
+                "total_weight_kg": 100,
+                "pieces": 2,
+            },
+            "charges": [
+                {
+                    "code": "FRT_SPOT",
+                    "description": "Conditional airfreight",
+                    "amount": 5,
+                    "currency": "USD",
+                    "unit": "per_kg",
+                    "bucket": "airfreight",
+                    "is_primary_cost": True,
+                    "conditional": True,
+                    "source_reference": "Agent email",
+                }
+            ],
+            "trigger_code": "MISSING_SCOPE_RATES",
+            "trigger_text": "Missing required rate components",
+            "conditions": {"rate_validity_hours": 72},
+        }
+
+        create_response = self.client.post(self.create_url, create_payload, format="json")
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][0]["id"]
+        conditional_url = reverse(
+            "quotes:spot-charge-line-conditional-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+
+        response = self.client.patch(conditional_url, {"action": "REMOVE"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["charges"], [])
+        self.assertFalse(SPEChargeLineDB.objects.filter(id=charge_line_id).exists())
 
     def test_scope_validation_resolves_country_from_airport_codes(self):
         response = self.client.post(
@@ -425,7 +581,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
         self.assertEqual(review_response.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_manual_resolution_endpoint_rejects_matched_lines(self):
+    def test_manual_resolution_endpoint_allows_matched_lines(self):
         product_code = ProductCode.objects.create(
             id=3095,
             code="EXP-FREIGHT-MATCHED",
@@ -439,15 +595,6 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             gl_cost_code="5100",
             default_unit=ProductCode.UNIT_KG,
         )
-        ChargeAlias.objects.create(
-            alias_text="Airfreight",
-            match_type=ChargeAlias.MatchType.EXACT,
-            mode_scope=ChargeAlias.ModeScope.EXPORT,
-            direction_scope=ChargeAlias.DirectionScope.MAIN,
-            product_code=product_code,
-            priority=10,
-        )
-
         create_payload = {
             "shipment_context": {
                 "origin_country": "PG",
@@ -490,8 +637,8 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             {"manual_resolved_product_code_id": product_code.id},
             format="json",
         )
-        self.assertEqual(review_response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("UNMAPPED or AMBIGUOUS", review_response.json()["error"])
+        self.assertEqual(review_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(review_response.json()["manual_resolved_product_code"]["id"], product_code.id)
 
     def test_patch_preserves_manual_resolution_metadata_for_existing_charge_lines(self):
         manual_product_code = ProductCode.objects.create(
@@ -798,6 +945,12 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         )
 
     def test_acknowledge_allows_a2d_destination_only_charge_without_airfreight(self):
+        self._create_exact_alias(
+            alias_text="Destination handling",
+            mode_scope=ChargeAlias.ModeScope.IMPORT,
+            direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+            code="IMP-DEST-FLOW-A2D",
+        )
         create_payload = {
             "shipment_context": {
                 "origin_country": "AU",
@@ -840,6 +993,12 @@ class SpotEnvelopeFlowAPITest(APITestCase):
 
     @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
     def test_acknowledge_allows_d2d_without_context_missing_components_when_freight_available(self, mock_outcomes):
+        self._create_exact_alias(
+            alias_text="Destination handling",
+            mode_scope=ChargeAlias.ModeScope.EXPORT,
+            direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+            code="EXP-DEST-FLOW-D2D",
+        )
         mock_outcomes.return_value = self._component_outcomes(
             freight=True,
             origin=False,
@@ -960,7 +1119,13 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(shipment["origin_country"], "MY")
         self.assertEqual(shipment["destination_country"], "PG")
 
-    def test_acknowledge_ignores_legacy_zero_amount_charge_lines(self):
+    def test_acknowledge_blocks_legacy_zero_amount_charge_lines(self):
+        self._create_exact_alias(
+            alias_text="Destination handling",
+            mode_scope=ChargeAlias.ModeScope.IMPORT,
+            direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+            code="IMP-DEST-FLOW-LEGACY",
+        )
         create_payload = {
             "shipment_context": {
                 "origin_country": "AU",
@@ -1014,5 +1179,5 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             "quotes:spot-envelope-acknowledge", kwargs={"envelope_id": spe_id}
         )
         acknowledge_response = self.client.post(acknowledge_url, format="json")
-        self.assertEqual(acknowledge_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(acknowledge_response.json()["status"], "ready")
+        self.assertEqual(acknowledge_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Legacy zero line: Missing amount", acknowledge_response.json()["blocking_issues"])

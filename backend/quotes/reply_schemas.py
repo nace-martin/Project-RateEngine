@@ -92,6 +92,14 @@ class ExtractedAssertion(BaseModel):
         None,
         description="Line number in original text"
     )
+    source_excerpt: Optional[str] = Field(
+        None,
+        description="Verbatim source snippet supporting this assertion"
+    )
+    source_line_identity: Optional[str] = Field(
+        None,
+        description="Stable source-line identity when available"
+    )
     
     # Parsed values for specific categories
     rate_amount: Optional[Decimal] = Field(None, description="Flat amount or minimum for MIN_OR_PER_KG")

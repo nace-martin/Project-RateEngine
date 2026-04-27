@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Control, FieldArrayWithId, UseFieldArrayRemove, useWatch } from "react-hook-form";
 
 import { useToast } from "@/context/toast-context";
 import { useConfirm } from "@/hooks/useConfirm";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
-import type { SPEChargeBucket } from "@/lib/spot-types";
+import type { SPEChargeBucket, SPEProductCodeSummary } from "@/lib/spot-types";
 
 import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
 import { SmartMoneyInput } from "./SmartMoneyInput";
@@ -58,6 +59,28 @@ const statusCardClassName = (chargeLine?: SpotFormValues["charges"][number], isA
     if (chargeLine?.normalization_status === "UNMAPPED") return "border-amber-200 bg-amber-50/50";
     if (chargeLine?.conditional) return "border-slate-300 bg-slate-50/70";
     return "border-slate-200 bg-white";
+};
+
+const getEffectiveProductCode = (
+    chargeLine?: SpotFormValues["charges"][number]
+): SPEProductCodeSummary | null => {
+    if (!chargeLine) return null;
+    if (chargeLine.manual_resolution_status === "RESOLVED") {
+        return (
+            chargeLine.manual_resolved_product_code ||
+            chargeLine.effective_resolved_product_code ||
+            chargeLine.resolved_product_code ||
+            null
+        );
+    }
+    return chargeLine.effective_resolved_product_code || chargeLine.resolved_product_code || null;
+};
+
+const getSourceEvidenceLabel = (chargeLine?: SpotFormValues["charges"][number]) => {
+    if (!chargeLine?.source_excerpt && !chargeLine?.source_reference) return null;
+    const lineNumber = chargeLine.source_line_number ? `Line ${chargeLine.source_line_number}` : null;
+    const reference = String(chargeLine.source_reference || "").trim();
+    return [lineNumber, reference].filter(Boolean).join(" / ") || "Source";
 };
 
 export function ChargeBucketSection({
@@ -158,6 +181,11 @@ export function ChargeBucketSection({
                             const isActiveRow =
                                 Boolean(activeChargeLineId) &&
                                 chargeLine?.charge_line_id === activeChargeLineId;
+                            const productCode = getEffectiveProductCode(chargeLine);
+                            const displayDescription =
+                                String(productCode?.description || chargeLine?.description || "").trim() ||
+                                "Imported charge";
+                            const sourceEvidenceLabel = getSourceEvidenceLabel(chargeLine);
 
                             return (
                                 <div
@@ -166,7 +194,7 @@ export function ChargeBucketSection({
                                     className={`rounded-xl border p-4 shadow-sm transition-colors ${statusCardClassName(chargeLine, isActiveRow)}`}
                                 >
                                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)_minmax(170px,0.55fr)_minmax(210px,0.75fr)] lg:items-start">
-                                        <div className="space-y-2">
+                                        <div className="min-w-0 space-y-2">
                                             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
                                                 Description
                                             </div>
@@ -174,10 +202,63 @@ export function ChargeBucketSection({
                                                 control={control}
                                                 name={`charges.${index}.description`}
                                                 render={({ field }) => (
-                                                    <FormItem>
-                                                        <FormControl>
-                                                            <Input placeholder="Description" {...field} className="h-9 bg-white" />
-                                                        </FormControl>
+                                                    <FormItem className="space-y-2">
+                                                        <div>
+                                                            <div className="whitespace-normal break-words text-base font-semibold leading-6 text-slate-950">
+                                                                {displayDescription}
+                                                            </div>
+                                                            {productCode?.code ? (
+                                                                <div className="mt-1 text-xs font-medium text-slate-500">
+                                                                    ProductCode {productCode.code}
+                                                                </div>
+                                                            ) : null}
+                                                            {sourceEvidenceLabel ? (
+                                                                <Popover>
+                                                                    <PopoverTrigger asChild>
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="sm"
+                                                                            className="mt-2 h-7 px-2 text-xs text-primary hover:bg-primary/5"
+                                                                        >
+                                                                            Source
+                                                                        </Button>
+                                                                    </PopoverTrigger>
+                                                                    <PopoverContent align="start" className="w-96 max-w-[calc(100vw-2rem)] space-y-3 text-sm">
+                                                                        <div>
+                                                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                                Source
+                                                                            </div>
+                                                                            <div className="mt-1 text-xs text-slate-600">{sourceEvidenceLabel}</div>
+                                                                        </div>
+                                                                        {chargeLine?.source_excerpt ? (
+                                                                            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-800">
+                                                                                {chargeLine.source_excerpt}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="text-sm text-slate-500">No source snippet captured for this line.</div>
+                                                                        )}
+                                                                        {chargeLine?.source_line_identity ? (
+                                                                            <div className="break-all text-xs text-slate-500">
+                                                                                {chargeLine.source_line_identity}
+                                                                            </div>
+                                                                        ) : null}
+                                                                    </PopoverContent>
+                                                                </Popover>
+                                                            ) : null}
+                                                        </div>
+                                                        <details className="group">
+                                                            <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-900">
+                                                                Edit display label
+                                                            </summary>
+                                                            <FormControl>
+                                                                <Input
+                                                                    placeholder="Description"
+                                                                    {...field}
+                                                                    className="mt-2 h-9 bg-white"
+                                                                />
+                                                            </FormControl>
+                                                        </details>
                                                         <FormMessage />
                                                     </FormItem>
                                                 )}

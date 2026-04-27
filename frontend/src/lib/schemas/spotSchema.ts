@@ -17,7 +17,13 @@ export const chargeLineSchema = z.object({
     bucket: z.enum(["airfreight", "origin_charges", "destination_charges"]),
     is_primary_cost: z.boolean().default(false),
     conditional: z.boolean().default(false),
+    conditional_acknowledged: z.boolean().optional(),
+    conditional_acknowledged_by: z.union([z.string(), z.number()]).optional().nullable(),
+    conditional_acknowledged_at: z.string().optional().nullable(),
     source_reference: z.string().min(1, "Source reference is required"),
+    source_excerpt: z.string().optional(),
+    source_line_number: z.number().int().positive().optional().nullable(),
+    source_line_identity: z.string().optional(),
     min_charge: z.string().optional().nullable(), // Form handles as string, converted later
     percentage_basis: z.string().optional().nullable(),
     note: z.string().optional(),

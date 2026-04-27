@@ -21,6 +21,7 @@ import {
     evaluateSpotTrigger,
     createSpotEnvelope,
     manuallyResolveSpotChargeLine,
+    resolveSpotConditionalChargeLine,
     updateSpotEnvelope,
     getSpotEnvelope,
     acknowledgeSpotEnvelope,
@@ -237,6 +238,34 @@ export function useSpotMode() {
         }
     }, [state.spe, updateState]);
 
+    const resolveConditionalChargeLine = useCallback(async (
+        chargeLineId: string,
+        action: 'KEEP' | 'REMOVE'
+    ): Promise<SpotPricingEnvelope | null> => {
+        if (!state.spe) {
+            updateState({ error: 'No SPE loaded' });
+            return null;
+        }
+
+        updateState({ isLoading: true, error: null });
+
+        try {
+            const spe = await resolveSpotConditionalChargeLine(state.spe.id, chargeLineId, { action });
+            updateState({
+                flowState: resolveSpotFlowState(spe),
+                spe,
+                isLoading: false,
+            });
+            return spe;
+        } catch (err) {
+            updateState({
+                error: err instanceof Error ? err.message : 'Conditional charge review failed',
+                isLoading: false,
+            });
+            throw err;
+        }
+    }, [state.spe, updateState]);
+
     // ==========================================================================
     // Load SPE by ID
     // ==========================================================================
@@ -428,6 +457,7 @@ export function useSpotMode() {
         updateSPE,
         loadSPE,
         manuallyResolveChargeLine,
+        resolveConditionalChargeLine,
         submitAcknowledgement,
         reviewSourceBatch,
         computeQuote,
@@ -440,6 +470,7 @@ export function useSpotMode() {
         updateSPE,
         loadSPE,
         manuallyResolveChargeLine,
+        resolveConditionalChargeLine,
         submitAcknowledgement,
         reviewSourceBatch,
         computeQuote,

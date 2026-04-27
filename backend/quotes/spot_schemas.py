@@ -385,6 +385,19 @@ class SPEChargeLine(BaseModel):
         min_length=1,
         description="Email ID, filename, or manual note - REQUIRED"
     )
+    source_excerpt: Optional[str] = Field(
+        default=None,
+        description="Verbatim source snippet supporting this charge line"
+    )
+    source_line_number: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="One-based source line number when available"
+    )
+    source_line_identity: Optional[str] = Field(
+        default=None,
+        description="Stable source-line identity when available"
+    )
     
     entered_by_user_id: str
     entered_at: datetime

@@ -141,7 +141,13 @@ export interface SPEChargeLine {
     bucket: SPEChargeBucket;
     is_primary_cost?: boolean;
     conditional?: boolean;
+    conditional_acknowledged?: boolean;
+    conditional_acknowledged_by?: string | number | null;
+    conditional_acknowledged_at?: string | null;
     source_reference: string;
+    source_excerpt?: string;
+    source_line_number?: number | null;
+    source_line_identity?: string;
 
     // Extended fields
     min_charge?: string | number;
@@ -188,6 +194,7 @@ export interface SPESourceBatch {
     target_bucket: 'airfreight' | 'origin_charges' | 'destination_charges' | 'mixed';
     label: string;
     source_reference: string;
+    raw_text: string;
     file_name: string;
     file_content_type: string;
     analysis_summary_json: Record<string, unknown>;
@@ -324,6 +331,8 @@ export interface ExtractedAssertion {
     status: AssertionStatus;
     confidence: number;
     source_line?: number | null;
+    source_excerpt?: string | null;
+    source_line_identity?: string | null;
 
     // Parsed values
     rate_amount?: string | null;

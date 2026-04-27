@@ -220,10 +220,59 @@ def _analysis_result_with_components():
     )
 
 
+def _create_aliases_for_component_analysis():
+    freight = _create_product_code(
+        id_=3101,
+        code="IMP-FRT-AIR-TEST",
+        description="Import Airfreight",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_FREIGHT,
+    )
+    origin = _create_product_code(
+        id_=3102,
+        code="IMP-ORIGIN-HANDLING-TEST",
+        description="Import Origin Handling",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+    )
+    destination = _create_product_code(
+        id_=3103,
+        code="IMP-DEST-HANDLING-TEST",
+        description="Import Destination Handling",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_HANDLING,
+    )
+    ChargeAlias.objects.create(
+        alias_text="Airfreight rate",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.MAIN,
+        product_code=freight,
+        priority=10,
+    )
+    ChargeAlias.objects.create(
+        alias_text="Origin handling",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.ORIGIN,
+        product_code=origin,
+        priority=10,
+    )
+    ChargeAlias.objects.create(
+        alias_text="Destination handling",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.DESTINATION,
+        product_code=destination,
+        priority=10,
+    )
+
+
 def _single_destination_analysis_result(
     label: str = "Destination handling",
     amount: str = "75.00",
     source_line: int | None = None,
+    source_excerpt: str | None = None,
     rate_unit: str = "flat",
 ):
     return ReplyAnalysisResult(
@@ -235,6 +284,7 @@ def _single_destination_analysis_result(
                 status=AssertionStatus.CONFIRMED,
                 confidence=0.95,
                 source_line=source_line,
+                source_excerpt=source_excerpt,
                 rate_amount=Decimal(amount),
                 rate_currency="USD",
                 rate_unit=rate_unit,
@@ -321,7 +371,10 @@ def test_ai_reply_analysis_persists_matched_charge_alias_metadata(monkeypatch):
     monkeypatch.setattr(
         ReplyAnalysisService,
         "analyze_with_ai",
-        lambda *args, **kwargs: _single_destination_analysis_result(),
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            source_line=3,
+            source_excerpt="Destination handling USD 75",
+        ),
     )
     monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
 
@@ -337,6 +390,9 @@ def test_ai_reply_analysis_persists_matched_charge_alias_metadata(monkeypatch):
     assert response.status_code == 200
     line = spe.charge_lines.get()
     assert line.source_label == "Destination handling"
+    assert line.source_excerpt == "Destination handling USD 75"
+    assert line.source_line_number == 3
+    assert line.source_line_identity == "assertion-line:3"
     assert line.normalized_label == "destination handling"
     assert line.normalization_status == SPEChargeLineDB.NormalizationStatus.MATCHED
     assert line.normalization_method == SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS
@@ -346,6 +402,9 @@ def test_ai_reply_analysis_persists_matched_charge_alias_metadata(monkeypatch):
     assert detail_response.status_code == 200
     payload_line = detail_response.json()["charges"][0]
     assert payload_line["source_label"] == "Destination handling"
+    assert payload_line["source_excerpt"] == "Destination handling USD 75"
+    assert payload_line["source_line_number"] == 3
+    assert payload_line["source_line_identity"] == "assertion-line:3"
     assert payload_line["normalized_label"] == "destination handling"
     assert payload_line["normalization_status"] == "MATCHED"
     assert payload_line["normalization_method"] == "EXACT_ALIAS"
@@ -357,6 +416,127 @@ def test_ai_reply_analysis_persists_matched_charge_alias_metadata(monkeypatch):
         "code": product_code.code,
         "description": product_code.description,
     }
+
+
+def test_ai_reply_analysis_reclassifies_existing_source_charge_without_leftover_duplicate(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_ORIGIN_LOCAL],
+    )
+    product_code = ProductCode.objects.get(code="IMP-CUS-CLR-ORIGIN")
+    alias = ChargeAlias.objects.create(
+        alias_text="Customs Clearance",
+        match_type=ChargeAlias.MatchType.EXACT,
+        mode_scope=ChargeAlias.ModeScope.IMPORT,
+        direction_scope=ChargeAlias.DirectionScope.ORIGIN,
+        product_code=product_code,
+        priority=10,
+    )
+    old_batch = SPESourceBatchDB.objects.create(
+        envelope=spe,
+        source_kind=SPESourceBatchDB.SourceKind.AGENT,
+        source_type=SPESourceBatchDB.SourceType.TEXT,
+        target_bucket=SPESourceBatchDB.TargetBucket.DESTINATION_CHARGES,
+        label="Destination Agent",
+        source_reference="Agent reply",
+        raw_text="Customs Clearance 50\nService Fee 20",
+        created_by=user,
+    )
+    stale_customs_line = SPEChargeLineDB.objects.create(
+        envelope=spe,
+        source_batch=old_batch,
+        code=COMPONENT_DESTINATION_LOCAL,
+        description="Customs Clearance",
+        amount=Decimal("50.00"),
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.FLAT,
+        bucket=SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+        source_reference="Agent reply",
+        entered_by=user,
+        entered_at=timezone.now(),
+        source_label="Customs Clearance",
+        normalized_label="customs clearance",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.UNMAPPED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.NONE,
+    )
+    unrelated_agent_line = SPEChargeLineDB.objects.create(
+        envelope=spe,
+        source_batch=old_batch,
+        code=COMPONENT_DESTINATION_LOCAL,
+        description="Service Fee",
+        amount=Decimal("20.00"),
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.FLAT,
+        bucket=SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+        source_reference="Agent reply",
+        entered_by=user,
+        entered_at=timezone.now(),
+        source_label="Service Fee",
+        normalized_label="service fee",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.UNMAPPED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.NONE,
+    )
+
+    monkeypatch.setattr(
+        ReplyAnalysisService,
+        "analyze_with_ai",
+        lambda *args, **kwargs: _single_destination_analysis_result(
+            label="Customs Clearance",
+            amount="50.00",
+        ),
+    )
+    monkeypatch.setattr("quotes.spot_services.RateAvailabilityService.get_component_outcomes", lambda **kwargs: {})
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Customs Clearance 50",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "source_kind": "AGENT",
+            "target_bucket": "mixed",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    lines = list(spe.charge_lines.order_by("description"))
+    assert len(lines) == 2
+
+    customs_lines = [line for line in lines if line.source_label == "Customs Clearance"]
+    assert len(customs_lines) == 1
+    customs_line = customs_lines[0]
+    assert customs_line.id == stale_customs_line.id
+    assert customs_line.bucket == SPEChargeLineDB.Bucket.ORIGIN_CHARGES
+    assert customs_line.code == COMPONENT_ORIGIN_LOCAL
+    assert customs_line.normalization_status == SPEChargeLineDB.NormalizationStatus.MATCHED
+    assert customs_line.normalization_method == SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS
+    assert customs_line.matched_alias_id == alias.id
+    assert customs_line.resolved_product_code_id == product_code.id
+    assert customs_line.source_label == "Customs Clearance"
+    assert customs_line.normalized_label == "customs clearance"
+
+    unrelated_agent_line.refresh_from_db()
+    assert unrelated_agent_line.bucket == SPEChargeLineDB.Bucket.DESTINATION_CHARGES
+    assert unrelated_agent_line.normalization_status == SPEChargeLineDB.NormalizationStatus.UNMAPPED
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    payload_lines = detail_response.json()["charges"]
+    assert sum(1 for line in payload_lines if line["source_label"] == "Customs Clearance") == 1
+    payload_customs = next(line for line in payload_lines if line["source_label"] == "Customs Clearance")
+    assert payload_customs["bucket"] == "origin_charges"
+    assert payload_customs["effective_resolved_product_code"]["code"] == "IMP-CUS-CLR-ORIGIN"
 
 
 def test_ai_reply_analysis_persists_unmapped_charge_metadata_non_fatally(monkeypatch):
@@ -1170,6 +1350,7 @@ def test_conditional_charge_does_not_satisfy_completeness():
 
 def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
+    _create_aliases_for_component_analysis()
     spe = _create_spe(
         user=user,
         origin_code=origin.code,
@@ -1265,8 +1446,9 @@ def test_ai_fill_makes_spe_complete_for_compute(monkeypatch):
     assert data["is_complete"] is True
 
 
-def test_ai_source_warnings_do_not_block_acknowledgement(monkeypatch):
+def test_ai_source_warnings_block_until_source_review(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
+    _create_aliases_for_component_analysis()
     spe = _create_spe(
         user=user,
         origin_code=origin.code,
@@ -1311,10 +1493,24 @@ def test_ai_source_warnings_do_not_block_acknowledgement(monkeypatch):
     detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
     assert detail_response.status_code == 200
     detail_payload = detail_response.json()
-    assert detail_payload["intake_safety"]["is_safe_to_quote"] is True
-    assert detail_payload["intake_safety"]["blocking_issues"] == []
-    assert detail_payload["sources"][0]["review_status"] == "NOT_REQUIRED"
+    assert detail_payload["intake_safety"]["is_safe_to_quote"] is False
+    assert detail_payload["intake_safety"]["blocking_issues"]
+    assert detail_payload["sources"][0]["review_status"] == "PENDING"
     assert detail_payload["sources"][0]["warnings"] == ["Possible missed destination charges. Review before quoting."]
+
+    acknowledge_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
+        {},
+        format="json",
+    )
+    assert acknowledge_response.status_code == 400
+
+    review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{analyze_response.json()['source_batch_id']}/review/",
+        {"reviewed_safe_to_quote": True, "review_note": "Reviewed source warning."},
+        format="json",
+    )
+    assert review_response.status_code == 200
 
     acknowledge_response = client.post(
         f"/api/v3/spot/envelopes/{spe.id}/acknowledge/",
@@ -1550,6 +1746,7 @@ def test_builder_threads_source_line_identity_from_analysis():
                 status=AssertionStatus.CONFIRMED,
                 confidence=0.9,
                 source_line=14,
+                source_excerpt="Destination fee USD 75",
                 rate_amount=Decimal("75.00"),
                 rate_currency="USD",
                 rate_unit="flat",
@@ -1571,3 +1768,5 @@ def test_builder_threads_source_line_identity_from_analysis():
 
     assert len(charges) == 1
     assert charges[0]["source_line_identity"] == "assertion-line:14"
+    assert charges[0]["source_excerpt"] == "Destination fee USD 75"
+    assert charges[0]["source_line_number"] == 14

@@ -117,6 +117,7 @@ type ImportedReviewLine = {
     issueKinds: ReviewIssueKind[];
     details: string[];
     canReviewInSheet: boolean;
+    canResolveConditional: boolean;
     charge: SPEChargeLine;
 };
 
@@ -667,7 +668,7 @@ export default function SpotRateEntryPage() {
                         charge.bucket
                     );
                 }
-                if (charge.conditional) {
+                if (charge.conditional && !charge.conditional_acknowledged) {
                     addLineIssue(
                         chargeLabel,
                         "conditional",
@@ -697,7 +698,9 @@ export default function SpotRateEntryPage() {
                 counts: {
                     unmapped: getAnalysisSignalCount(source, "unmapped_line_count"),
                     lowConfidence: getAnalysisSignalCount(source, "low_confidence_line_count"),
-                    conditional: getAnalysisSignalCount(source, "conditional_charge_count"),
+                    conditional: displayCharges.filter(
+                        (charge) => charge.conditional && !charge.conditional_acknowledged
+                    ).length,
                 },
                 lineIssues: Array.from(lineIssueMap.entries()).map(([key, item]) => ({
                     key,
@@ -773,7 +776,7 @@ export default function SpotRateEntryPage() {
                 issueKinds.add("ambiguous");
                 details.add("Multiple product matches were found. Confirm the correct mapping.");
             }
-            if (charge.conditional) {
+            if (charge.conditional && !charge.conditional_acknowledged) {
                 issueKinds.add("conditional");
                 details.add("Conditional charge. Confirm it should stay in the quote.");
             }
@@ -783,6 +786,7 @@ export default function SpotRateEntryPage() {
                 if (!parsed) continue;
                 if (
                     parsed.kind === "lowConfidence" &&
+                    charge.manual_resolution_status !== "RESOLVED" &&
                     parsed.labels.some((label) => normalizeIssueLabel(label) === normalizedLabel)
                 ) {
                     issueKinds.add("lowConfidence");
@@ -807,7 +811,9 @@ export default function SpotRateEntryPage() {
                     Boolean(charge.id) &&
                     charge.manual_resolution_status !== "RESOLVED" &&
                     (charge.normalization_status === "UNMAPPED" ||
-                        charge.normalization_status === "AMBIGUOUS"),
+                        charge.normalization_status === "AMBIGUOUS" ||
+                        issueKinds.has("lowConfidence")),
+                canResolveConditional: Boolean(charge.id) && Boolean(charge.conditional && !charge.conditional_acknowledged),
                 charge,
             };
 
@@ -884,6 +890,15 @@ export default function SpotRateEntryPage() {
     } | null>(null);
     const [reviewMode, setReviewMode] = useState<ReviewMode>("issues");
     const [activeIssueDetails, setActiveIssueDetails] = useState<ImportedReviewLine | null>(null);
+    const [sourceComparisonOpen, setSourceComparisonOpen] = useState(false);
+    const [selectedSourceChargeKey, setSelectedSourceChargeKey] = useState<string | null>(null);
+    const unresolvedReviewIssueCount = reviewLines.affected.length;
+    const quoteSubmitDisabled = quoteCreationBlocked || unresolvedReviewIssueCount > 0;
+    const quoteSubmitDisabledReason = unresolvedReviewIssueCount > 0
+        ? `Resolve ${unresolvedReviewIssueCount} issue${unresolvedReviewIssueCount === 1 ? "" : "s"} before creating quote.`
+        : quoteCreationBlocked
+            ? "Quote creation is temporarily unavailable."
+            : null;
     const hasReviewActions =
         importedReviewCounts.unmapped > 0 ||
         importedReviewCounts.lowConfidence > 0 ||
@@ -1000,9 +1015,36 @@ export default function SpotRateEntryPage() {
             requestKey: Date.now(),
         });
     }, []);
+    const handleConditionalDecision = useCallback(async (
+        line: ImportedReviewLine,
+        action: "KEEP" | "REMOVE"
+    ) => {
+        if (!line.chargeLineId) return;
+        await actions.resolveConditionalChargeLine(line.chargeLineId, action);
+        setActiveIssueDetails(null);
+    }, [actions]);
     const toggleIssueDetails = useCallback((key: string) => {
         void key;
     }, []);
+    const sourceComparisonCharges = useMemo(
+        () => visibleReviewFormCharges.filter((charge) => !isStandardRateCharge(charge)),
+        [visibleReviewFormCharges]
+    );
+    const selectedSourceCharge = useMemo(
+        () =>
+            sourceComparisonCharges.find((charge) =>
+                (charge.id || `${charge.bucket}-${charge.description}-${charge.amount}`) === selectedSourceChargeKey
+            ) || sourceComparisonCharges[0] || null,
+        [selectedSourceChargeKey, sourceComparisonCharges]
+    );
+    const sourceComparisonText = useMemo(() => {
+        const selectedSourceId = selectedSourceCharge?.source_batch_id;
+        const source =
+            state.spe?.sources?.find((item) => item.id === selectedSourceId) ||
+            state.spe?.sources?.find((item) => item.raw_text) ||
+            null;
+        return source?.raw_text || "";
+    }, [selectedSourceCharge?.source_batch_id, state.spe?.sources]);
 
 
 
@@ -1215,25 +1257,25 @@ export default function SpotRateEntryPage() {
                         {"<-"} Back to Import
                     </Button>
 
-                    <Card className="overflow-hidden border-slate-200/80 bg-white shadow-[0_22px_70px_-44px_rgba(15,23,42,0.55)]">
-                        <CardHeader className="border-b border-slate-800 bg-[linear-gradient(135deg,#071426_0%,#0f2744_58%,#0b5aa8_100%)] pb-5 text-white">
+                    <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+                        <CardHeader className="border-b border-primary/20 bg-primary pb-5 text-primary-foreground">
                             <div className="space-y-4">
                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                                     <div className="max-w-3xl">
-                                        <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-200">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary-foreground/75">
                                             RateEngine SPOT
                                         </div>
-                                        <CardTitle className="mt-2 text-2xl font-semibold text-white">
-                                            AI SPOT Rate Review
+                                        <CardTitle className="mt-2 text-2xl font-semibold text-primary-foreground">
+                                            SPOT Rate Review
                                         </CardTitle>
-                                        <p className="mt-2 text-sm leading-6 text-sky-100">
-                                            Rates extracted and organized. Review exceptions before quote creation.
+                                        <p className="mt-2 text-sm leading-6 text-primary-foreground/85">
+                                            Imported rates are organized for this quote. Resolve blockers, then review the final charge list.
                                         </p>
                                     </div>
                                     <Tabs value={reviewMode} onValueChange={(value) => setReviewMode(value as ReviewMode)}>
-                                        <TabsList className="h-auto border border-white/15 bg-white/10 p-1 text-white">
+                                        <TabsList className="h-auto border border-white/25 bg-white/10 p-1 text-primary-foreground">
                                             <TabsTrigger value="issues">
-                                                Needs Review ({reviewLines.affected.length})
+                                                Needs Review ({unresolvedReviewIssueCount})
                                             </TabsTrigger>
                                             <TabsTrigger value="allCharges">
                                                 All Charges ({visibleReviewFormCharges.length})
@@ -1242,35 +1284,35 @@ export default function SpotRateEntryPage() {
                                     </Tabs>
                                 </div>
                                 <div className="grid gap-3 sm:grid-cols-4">
-                                    <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 shadow-sm">
-                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100">
+                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Imported
                                         </div>
-                                        <div className="mt-2 text-2xl font-semibold text-white">
+                                        <div className="mt-2 text-2xl font-semibold text-slate-950">
                                             {totalImportedLines}
                                         </div>
                                     </div>
-                                    <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 shadow-sm">
-                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100">
+                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Needs review
                                         </div>
-                                        <div className={`mt-2 text-2xl font-semibold ${reviewLines.affected.length > 0 ? "text-amber-200" : "text-emerald-200"}`}>
-                                            {reviewLines.affected.length}
+                                        <div className={`mt-2 text-2xl font-semibold ${unresolvedReviewIssueCount > 0 ? "text-amber-700" : "text-emerald-700"}`}>
+                                            {unresolvedReviewIssueCount}
                                         </div>
                                     </div>
-                                    <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 shadow-sm">
-                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100">
+                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Matched
                                         </div>
-                                        <div className="mt-2 text-2xl font-semibold text-emerald-200">
+                                        <div className="mt-2 text-2xl font-semibold text-emerald-700">
                                             {matchedImportedLineCount}
                                         </div>
                                     </div>
-                                    <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 shadow-sm">
-                                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100">
+                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Conditional
                                         </div>
-                                        <div className={`mt-2 text-2xl font-semibold ${importedReviewCounts.conditional > 0 ? "text-amber-200" : "text-emerald-200"}`}>
+                                        <div className={`mt-2 text-2xl font-semibold ${importedReviewCounts.conditional > 0 ? "text-amber-700" : "text-emerald-700"}`}>
                                             {importedReviewCounts.conditional}
                                         </div>
                                     </div>
@@ -1280,10 +1322,10 @@ export default function SpotRateEntryPage() {
                             <CardContent className="p-6">
                                 <Tabs value={reviewMode} onValueChange={(value) => setReviewMode(value as ReviewMode)}>
                                     <TabsContent value="issues" className="mt-0 space-y-5">
-                                        {reviewLines.affected.length > 0 ? (
+                                        {unresolvedReviewIssueCount > 0 ? (
                                             <>
                                                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                                                    Resolve these lines before creating the quote.
+                                                    Resolve {unresolvedReviewIssueCount} issue{unresolvedReviewIssueCount === 1 ? "" : "s"} before creating quote.
                                                 </div>
                                                 <section className="space-y-3">
                                                     <div className="flex items-end justify-between gap-3">
@@ -1331,15 +1373,38 @@ export default function SpotRateEntryPage() {
                                                                             {line.bucketLabel} / {line.sourceLabel}
                                                                         </div>
                                                                     </div>
-                                                                    <div className="flex shrink-0 gap-2">
-                                                                        <Button
-                                                                            type="button"
-                                                                            size="sm"
-                                                                            onClick={() => handleReviewLine(line)}
-                                                                            disabled={!line.chargeLineId}
-                                                                        >
-                                                                            Resolve
-                                                                        </Button>
+                                                                    <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                                                                        {line.canResolveConditional ? (
+                                                                            <>
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    size="sm"
+                                                                                    onClick={() => void handleConditionalDecision(line, "KEEP")}
+                                                                                    disabled={!line.chargeLineId || state.isLoading}
+                                                                                >
+                                                                                    Keep in quote
+                                                                                </Button>
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    variant="outline"
+                                                                                    size="sm"
+                                                                                    onClick={() => void handleConditionalDecision(line, "REMOVE")}
+                                                                                    disabled={!line.chargeLineId || state.isLoading}
+                                                                                >
+                                                                                    Remove
+                                                                                </Button>
+                                                                            </>
+                                                                        ) : null}
+                                                                        {line.canReviewInSheet ? (
+                                                                            <Button
+                                                                                type="button"
+                                                                                size="sm"
+                                                                                onClick={() => handleReviewLine(line)}
+                                                                                disabled={!line.chargeLineId || state.isLoading}
+                                                                            >
+                                                                                Resolve
+                                                                            </Button>
+                                                                        ) : null}
                                                                         <Button
                                                                             type="button"
                                                                             variant="ghost"
@@ -1357,12 +1422,12 @@ export default function SpotRateEntryPage() {
                                             </>
                                         ) : (
                                             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                                                No imported lines need action right now. Switch to All Charges if you want to review the full list before confirming.
+                                                No imported lines need action right now. Review the final charge list before creating the quote.
                                             </div>
                                         )}
 
                                         {importWideChecks.length > 0 ? (
-                                            <details className="rounded-[24px] border border-slate-200 bg-slate-50/70 px-5 py-4">
+                                            <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-5 py-4">
                                                 <summary className="cursor-pointer text-sm font-medium text-slate-700">
                                                     Other checks ({importWideChecks.length})
                                                 </summary>
@@ -1376,8 +1441,26 @@ export default function SpotRateEntryPage() {
                                     </TabsContent>
 
                                     <TabsContent value="allCharges" className="mt-0 space-y-5">
-                                        <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-700">
-                                            Full charge list for editing and final confirmation. Use Needs Review to stay focused on only the lines that still need a decision.
+                                        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-5 py-4 text-sm text-slate-700 sm:flex-row sm:items-center sm:justify-between">
+                                            <div>
+                                                Full included charge list for final review. Return to Needs Review for any lines that still need a decision.
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => {
+                                                    setSelectedSourceChargeKey(
+                                                        sourceComparisonCharges[0]
+                                                            ? sourceComparisonCharges[0].id || `${sourceComparisonCharges[0].bucket}-${sourceComparisonCharges[0].description}-${sourceComparisonCharges[0].amount}`
+                                                            : null
+                                                    );
+                                                    setSourceComparisonOpen(true);
+                                                }}
+                                                disabled={sourceComparisonCharges.length === 0}
+                                            >
+                                                View source comparison
+                                            </Button>
                                         </div>
 
                                         <SpotRateEntryForm
@@ -1388,9 +1471,9 @@ export default function SpotRateEntryPage() {
                                             shipmentType={resolvedShipmentType}
                                             serviceScope={serviceScope}
                                             missingComponents={EMPTY_COMPONENTS}
-                                            submitLabel="Confirm & Create Quote"
-                                            submitDisabled={quoteCreationBlocked}
-                                            submitDisabledReason={quoteCreationBlocked ? "Quote creation is temporarily unavailable." : null}
+                                            submitLabel="Create Quote"
+                                            submitDisabled={quoteSubmitDisabled}
+                                            submitDisabledReason={quoteSubmitDisabledReason}
                                             onSaveDraft={handleSaveDraft}
                                             onManualResolveChargeLine={actions.manuallyResolveChargeLine}
                                             productCodeDomain={resolvedShipmentType}
@@ -1398,7 +1481,7 @@ export default function SpotRateEntryPage() {
                                         />
 
                                         {importWideChecks.length > 0 ? (
-                                            <details className="rounded-[24px] border border-slate-200 bg-slate-50/70 px-5 py-4">
+                                            <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-5 py-4">
                                                 <summary className="cursor-pointer text-sm font-medium text-slate-700">
                                                     Other checks ({importWideChecks.length})
                                                 </summary>
@@ -1413,48 +1496,67 @@ export default function SpotRateEntryPage() {
                                         <Card className="border-amber-200 bg-amber-50/60">
                                             <CardContent className="pt-4">
                                                 <p className="text-sm text-amber-900">
-                                                    Final submission records the SPOT acknowledgement and creates the quote from the imported charges. Rates are still conditional until carrier and space are confirmed.
+                                                    Creating the quote records the SPOT acknowledgement. Rates remain conditional until carrier and space are confirmed.
                                                 </p>
                                             </CardContent>
                                         </Card>
                                     </TabsContent>
                                 </Tabs>
 
-                                <div className={`mt-6 flex flex-col gap-3 rounded-2xl border px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${
-                                    reviewLines.affected.length > 0
-                                        ? "border-amber-200 bg-amber-50 text-amber-950"
-                                        : "border-emerald-200 bg-emerald-50 text-emerald-950"
-                                }`}>
-                                    <div>
-                                        <div className="text-sm font-semibold">
-                                            {reviewLines.affected.length > 0
-                                                ? `Resolve ${reviewLines.affected.length} issue${reviewLines.affected.length === 1 ? "" : "s"} before creating quote`
-                                                : "Ready to create quote"}
+                                {reviewMode === "issues" && (
+                                    <div className={`mt-6 flex flex-col gap-3 rounded-xl border px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${
+                                        unresolvedReviewIssueCount > 0
+                                            ? "border-amber-200 bg-amber-50 text-amber-950"
+                                            : "border-emerald-200 bg-emerald-50 text-emerald-950"
+                                    }`}>
+                                        <div>
+                                            <div className="text-sm font-semibold">
+                                                {unresolvedReviewIssueCount > 0
+                                                    ? `Resolve ${unresolvedReviewIssueCount} issue${unresolvedReviewIssueCount === 1 ? "" : "s"} before creating quote`
+                                                    : "Ready for final review"}
+                                            </div>
+                                            <div className="mt-1 text-xs opacity-80">
+                                                {unresolvedReviewIssueCount > 0
+                                                    ? "Needs Review shows only the decisions blocking quote creation."
+                                                    : "All blockers are resolved. Review the included charges before creating the quote."}
+                                            </div>
                                         </div>
-                                        <div className="mt-1 text-xs opacity-80">
-                                            {reviewLines.affected.length > 0
-                                                ? "Needs Review shows only the decisions blocking a clean quote."
-                                                : "All imported charges are mapped or intentionally conditional."}
-                                        </div>
+                                        {unresolvedReviewIssueCount > 0 ? (
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                onClick={() => {
+                                                    const firstIssue = reviewLines.affected[0];
+                                                    if (!firstIssue) return;
+                                                    if (firstIssue.canReviewInSheet) {
+                                                        handleReviewLine(firstIssue);
+                                                        return;
+                                                    }
+                                                    setActiveIssueDetails(firstIssue);
+                                                }}
+                                            >
+                                                Resolve first issue
+                                            </Button>
+                                        ) : (
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                onClick={() => setReviewMode("allCharges")}
+                                            >
+                                                Review Final Quote
+                                            </Button>
+                                        )}
                                     </div>
-                                    <Button
-                                        type="button"
-                                        size="sm"
-                                        variant={reviewLines.affected.length > 0 ? "outline" : "default"}
-                                        onClick={() => setReviewMode(reviewLines.affected.length > 0 ? "issues" : "allCharges")}
-                                    >
-                                        {reviewLines.affected.length > 0 ? "Review issues" : "Go to confirmation"}
-                                    </Button>
-                                </div>
+                                )}
 
                                 {false && (
                                     <>
                                 {hasReviewActions ? (
-                                    <div className="rounded-[24px] border border-amber-200 bg-[linear-gradient(135deg,#fff8eb_0%,#fffdf8_100%)] px-5 py-4 text-sm text-amber-950">
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-950">
                                         Fix the affected imported lines first, then confirm the quote.
                                     </div>
                                 ) : (
-                                    <div className="rounded-[24px] border border-emerald-200 bg-[linear-gradient(135deg,#edfcf4_0%,#f8fffb_100%)] px-5 py-4 text-sm text-emerald-900">
+                                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-900">
                                         Imported charges match the missing parts of this quote and are ready to confirm.
                                     </div>
                                 )}
@@ -1740,20 +1842,106 @@ export default function SpotRateEntryPage() {
                                         </div>
                                     </section>
 
-                                    <div className="border-t border-slate-200 pt-4">
-                                        <Button
-                                            type="button"
-                                            onClick={() => {
-                                                handleReviewLine(activeIssueDetails);
-                                                setActiveIssueDetails(null);
-                                            }}
-                                            disabled={!activeIssueDetails.chargeLineId}
-                                        >
-                                            Resolve
-                                        </Button>
+                                    <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+                                        {activeIssueDetails.canResolveConditional ? (
+                                            <>
+                                                <Button
+                                                    type="button"
+                                                    onClick={() => void handleConditionalDecision(activeIssueDetails, "KEEP")}
+                                                    disabled={!activeIssueDetails.chargeLineId || state.isLoading}
+                                                >
+                                                    Keep in quote
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    onClick={() => void handleConditionalDecision(activeIssueDetails, "REMOVE")}
+                                                    disabled={!activeIssueDetails.chargeLineId || state.isLoading}
+                                                >
+                                                    Remove
+                                                </Button>
+                                            </>
+                                        ) : null}
+                                        {activeIssueDetails.canReviewInSheet ? (
+                                            <Button
+                                                type="button"
+                                                onClick={() => {
+                                                    handleReviewLine(activeIssueDetails);
+                                                    setActiveIssueDetails(null);
+                                                }}
+                                                disabled={!activeIssueDetails.chargeLineId || state.isLoading}
+                                            >
+                                                Resolve
+                                            </Button>
+                                        ) : null}
                                     </div>
                                 </div>
                             ) : null}
+                        </SheetContent>
+                    </Sheet>
+
+                    <Sheet open={sourceComparisonOpen} onOpenChange={setSourceComparisonOpen}>
+                        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-5xl">
+                            <div className="space-y-6">
+                                <SheetHeader className="space-y-2 border-b border-slate-200 pb-5">
+                                    <SheetTitle>Source comparison</SheetTitle>
+                                    <SheetDescription>
+                                        Optional audit view. Select a charge to inspect the captured source evidence.
+                                    </SheetDescription>
+                                </SheetHeader>
+                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+                                    <section className="space-y-3">
+                                        <div className="text-sm font-semibold text-slate-950">Source text</div>
+                                        <div className="max-h-[70vh] overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">
+                                            {sourceComparisonText ? (
+                                                <pre className="whitespace-pre-wrap font-sans">{sourceComparisonText}</pre>
+                                            ) : (
+                                                <div className="text-slate-500">No source text captured for this source.</div>
+                                            )}
+                                        </div>
+                                    </section>
+                                    <section className="space-y-3">
+                                        <div className="text-sm font-semibold text-slate-950">Extracted charges</div>
+                                        <div className="space-y-2">
+                                            {sourceComparisonCharges.map((charge) => {
+                                                const key = charge.id || `${charge.bucket}-${charge.description}-${charge.amount}`;
+                                                const isSelected = key === (selectedSourceCharge?.id || `${selectedSourceCharge?.bucket}-${selectedSourceCharge?.description}-${selectedSourceCharge?.amount}`);
+                                                return (
+                                                    <button
+                                                        key={key}
+                                                        type="button"
+                                                        onClick={() => setSelectedSourceChargeKey(key)}
+                                                        className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition-colors ${
+                                                            isSelected
+                                                                ? "border-primary bg-primary/5 text-slate-950"
+                                                                : "border-slate-200 bg-white text-slate-700 hover:border-primary/40"
+                                                        }`}
+                                                    >
+                                                        <div className="font-semibold">{getSpotChargeDisplayLabel(charge, { includeProductCode: true })}</div>
+                                                        <div className="mt-1 text-xs text-slate-500">
+                                                            {formatChargeAmount(charge)} / {chargeUnitLabel(charge.unit)}
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="rounded-xl border border-slate-200 bg-white p-4">
+                                            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Source</div>
+                                            {selectedSourceCharge?.source_excerpt ? (
+                                                <div className="mt-3 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm leading-6 text-slate-900">
+                                                    {selectedSourceCharge.source_excerpt}
+                                                </div>
+                                            ) : (
+                                                <div className="mt-3 text-sm text-slate-500">No snippet captured for this charge.</div>
+                                            )}
+                                            <div className="mt-3 space-y-1 text-xs text-slate-500">
+                                                {selectedSourceCharge?.source_line_number ? <div>Line {selectedSourceCharge.source_line_number}</div> : null}
+                                                {selectedSourceCharge?.source_line_identity ? <div className="break-all">{selectedSourceCharge.source_line_identity}</div> : null}
+                                            </div>
+                                        </div>
+                                    </section>
+                                </div>
+                            </div>
                         </SheetContent>
                     </Sheet>
                 </div>

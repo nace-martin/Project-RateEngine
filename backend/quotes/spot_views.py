@@ -16,6 +16,7 @@ import hashlib
 import json
 import uuid
 from typing import Optional
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -261,6 +262,16 @@ def _normalize_reconciliation_value(value) -> str:
     return str(value or "").strip().lower()
 
 
+def _normalize_reconciliation_amount(value) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return str(value).strip()
+    return format(amount.normalize(), "f")
+
+
 def _source_line_fingerprint_payload(charge: dict) -> dict:
     return {
         "bucket": _normalize_reconciliation_value(charge.get("bucket")),
@@ -296,6 +307,17 @@ def _incoming_charge_source_line_identity(charge: dict) -> str:
     return f"fp:{_build_source_line_fingerprint(charge)}"
 
 
+def _incoming_charge_source_line_number(charge: dict) -> Optional[int]:
+    value = charge.get("source_line_number")
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _existing_line_source_line_identity(line: SPEChargeLineDB) -> str:
     explicit_identity = str(line.source_line_identity or "").strip()
     if explicit_identity:
@@ -329,6 +351,26 @@ def _incoming_charge_logical_identity_signature(charge: dict) -> tuple[str, str,
     )
 
 
+def _incoming_charge_source_semantic_signature(charge: dict) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_reconciliation_value(_incoming_charge_source_label(charge)),
+        _normalize_reconciliation_amount(charge.get("amount")),
+        str(charge.get("currency") or "").strip().upper(),
+        _normalize_reconciliation_value(charge.get("unit")),
+        _normalize_reconciliation_value(charge.get("source_reference")),
+    )
+
+
+def _existing_line_source_semantic_signature(line: SPEChargeLineDB) -> tuple[str, str, str, str, str]:
+    return (
+        _normalize_reconciliation_value(line.normalization_source_label),
+        _normalize_reconciliation_amount(line.amount),
+        str(line.currency or "").strip().upper(),
+        _normalize_reconciliation_value(line.unit),
+        _normalize_reconciliation_value(line.source_reference),
+    )
+
+
 def _should_preserve_existing_line_audit(existing_line: SPEChargeLineDB, charge: dict) -> bool:
     incoming_source_label = _incoming_charge_source_label(charge)
     incoming_bucket = str(charge.get("bucket") or "").strip().lower()
@@ -353,6 +395,20 @@ def _build_spe_charge_line_field_values(
         if existing_line is not None and _should_preserve_existing_line_audit(existing_line, charge)
         else None
     )
+    conditional = bool(charge.get("conditional", False))
+    if existing_line is not None and conditional and "conditional_acknowledged" not in charge:
+        conditional_acknowledged = existing_line.conditional_acknowledged
+        conditional_acknowledged_by = existing_line.conditional_acknowledged_by
+        conditional_acknowledged_at = existing_line.conditional_acknowledged_at
+    else:
+        conditional_acknowledged = bool(charge.get("conditional_acknowledged", False)) if conditional else False
+        conditional_acknowledged_by = existing_line.conditional_acknowledged_by if (
+            existing_line is not None and conditional_acknowledged
+        ) else None
+        conditional_acknowledged_at = existing_line.conditional_acknowledged_at if (
+            existing_line is not None and conditional_acknowledged
+        ) else None
+
     return {
         "envelope": spe_db,
         "source_batch": source_batch,
@@ -363,7 +419,10 @@ def _build_spe_charge_line_field_values(
         "unit": charge["unit"],
         "bucket": charge["bucket"],
         "is_primary_cost": charge.get("is_primary_cost", False),
-        "conditional": charge.get("conditional", False),
+        "conditional": conditional,
+        "conditional_acknowledged": conditional_acknowledged,
+        "conditional_acknowledged_by": conditional_acknowledged_by,
+        "conditional_acknowledged_at": conditional_acknowledged_at,
         "min_charge": charge.get("min_charge"),
         "note": charge.get("note") or "",
         "exclude_from_totals": charge.get("exclude_from_totals", False),
@@ -377,6 +436,8 @@ def _build_spe_charge_line_field_values(
         "percent_basis": charge.get("percent_basis"),
         "rule_meta": charge.get("rule_meta") or {},
         "source_reference": charge["source_reference"],
+        "source_excerpt": str(charge.get("source_excerpt") or "")[:4000],
+        "source_line_number": _incoming_charge_source_line_number(charge),
         "source_line_identity": _incoming_charge_source_line_identity(charge),
         "entered_by": entered_by,
         "entered_at": entered_at,
@@ -448,6 +509,7 @@ def _reconcile_spe_charge_lines(
     entered_at,
     shipment_context: Optional[dict],
     source_batch: Optional[SPESourceBatchDB] = None,
+    existing_lines_for_matching: Optional[list[SPEChargeLineDB]] = None,
 ):
     def _select_unique_unmatched_candidate(candidates):
         unmatched_candidates = [
@@ -459,18 +521,26 @@ def _reconcile_spe_charge_lines(
             return unmatched_candidates[0]
         return None
 
+    matching_lines = list(existing_lines_for_matching or existing_lines)
+
     existing_lines_by_id = {
         str(line.id): line
-        for line in existing_lines
+        for line in matching_lines
     }
     existing_lines_by_source_identity = {}
-    for line in existing_lines:
+    for line in matching_lines:
         existing_lines_by_source_identity.setdefault(
             _existing_line_source_line_identity(line),
             [],
         ).append(line)
+    existing_lines_by_source_semantic_signature = {}
+    for line in matching_lines:
+        existing_lines_by_source_semantic_signature.setdefault(
+            _existing_line_source_semantic_signature(line),
+            [],
+        ).append(line)
     existing_lines_by_signature = {}
-    for line in existing_lines:
+    for line in matching_lines:
         existing_lines_by_signature.setdefault(line.logical_identity_signature(), []).append(line)
 
     matched_existing_line_ids = set()
@@ -488,6 +558,11 @@ def _reconcile_spe_charge_lines(
             signature = _incoming_charge_logical_identity_signature(charge)
             existing_line = _select_unique_unmatched_candidate(
                 existing_lines_by_signature.get(signature, [])
+            )
+        if existing_line is None:
+            semantic_signature = _incoming_charge_source_semantic_signature(charge)
+            existing_line = _select_unique_unmatched_candidate(
+                existing_lines_by_source_semantic_signature.get(semantic_signature, [])
             )
 
         if existing_line is not None:
@@ -591,6 +666,87 @@ def _get_or_create_source_batch(
         ]
     )
     return batch
+
+
+SAFE_MATCH_METHODS = {
+    SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+}
+
+
+def _charge_line_missing_critical_fields(line: SPEChargeLineDB) -> list[str]:
+    missing = []
+    if line.amount is None or line.amount <= 0:
+        missing.append("amount")
+    if not str(line.currency or "").strip():
+        missing.append("currency")
+    if not str(line.unit or "").strip():
+        missing.append("unit")
+    return missing
+
+
+def _charge_line_review_blockers(line: SPEChargeLineDB) -> list[str]:
+    blockers = []
+    missing_fields = _charge_line_missing_critical_fields(line)
+    if missing_fields:
+        blockers.append("Missing " + ", ".join(missing_fields))
+    if line.requires_review:
+        if line.normalization_status == SPEChargeLineDB.NormalizationStatus.UNMAPPED:
+            blockers.append("Unmapped")
+        elif line.normalization_status == SPEChargeLineDB.NormalizationStatus.AMBIGUOUS:
+            blockers.append("Ambiguous")
+    elif (
+        line.normalization_status == SPEChargeLineDB.NormalizationStatus.MATCHED
+        and line.normalization_method not in SAFE_MATCH_METHODS
+        and line.manual_resolution_status != SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+    ):
+        blockers.append("Review non-exact match")
+    if line.requires_conditional_review:
+        blockers.append("Conditional")
+    return blockers
+
+
+def _spot_exception_blockers(spe_db: SpotPricingEnvelopeDB) -> list[str]:
+    blockers: list[str] = []
+    seen_source_identity: set[str] = set()
+    duplicate_source_identity: set[str] = set()
+
+    for line in spe_db.charge_lines.select_related("matched_alias", "resolved_product_code").all():
+        identity = str(line.source_line_identity or "").strip()
+        if identity:
+            if identity in seen_source_identity:
+                duplicate_source_identity.add(identity)
+            seen_source_identity.add(identity)
+
+        line_blockers = _charge_line_review_blockers(line)
+        if not line_blockers:
+            is_safe_match = (
+                line.normalization_status == SPEChargeLineDB.NormalizationStatus.MATCHED
+                and line.normalization_method in SAFE_MATCH_METHODS
+                and not line.conditional
+                and not _charge_line_missing_critical_fields(line)
+            )
+            if is_safe_match:
+                continue
+        for blocker in line_blockers:
+            blockers.append(f"{line.description}: {blocker}")
+
+    for identity in sorted(duplicate_source_identity):
+        blockers.append(f"Duplicate source line detected: {identity}")
+
+    return blockers
+
+
+def _exception_review_error_response(spe_db: SpotPricingEnvelopeDB):
+    blockers = _spot_exception_blockers(spe_db)
+    if not blockers:
+        return None
+    return Response(
+        {
+            "error": "Resolve SPOT charge exceptions before creating quote.",
+            "blocking_issues": blockers,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 def _resolve_output_currency_for_shipment(
@@ -735,6 +891,9 @@ def _build_spe_from_db(
                 is_primary_cost=cl.is_primary_cost,
                 conditional=cl.conditional,
                 source_reference=cl.source_reference,
+                source_excerpt=cl.source_excerpt,
+                source_line_number=cl.source_line_number,
+                source_line_identity=cl.source_line_identity,
                 entered_by_user_id=str(cl.entered_by_id) if cl.entered_by_id else "",
                 entered_at=cl.entered_at,
                 min_charge=float(cl.min_charge) if cl.min_charge is not None else None,
@@ -1332,7 +1491,7 @@ class SpotChargeLineManualResolutionAPIView(APIView):
     """
     PATCH /api/v3/spot/envelopes/<id>/charges/<charge_line_id>/manual-resolution/
 
-    Persist a manual ProductCode selection for unresolved deterministic charge lines.
+    Persist a manual ProductCode selection for exception charge lines.
     """
 
     permission_classes = [IsAuthenticated]
@@ -1354,11 +1513,12 @@ class SpotChargeLineManualResolutionAPIView(APIView):
         charge_line = get_object_or_404(spe_db.charge_lines, id=charge_line_id)
 
         if charge_line.normalization_status not in {
+            SPEChargeLineDB.NormalizationStatus.MATCHED,
             SPEChargeLineDB.NormalizationStatus.UNMAPPED,
             SPEChargeLineDB.NormalizationStatus.AMBIGUOUS,
         }:
             return Response(
-                {'error': 'Manual review is only available for UNMAPPED or AMBIGUOUS charge lines.'},
+                {'error': 'Manual review is only available for matched, needs-review, or ambiguous charge lines.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1392,6 +1552,64 @@ class SpotChargeLineManualResolutionAPIView(APIView):
         return Response(serializer.data)
 
 
+class SpotChargeLineConditionalResolutionAPIView(APIView):
+    """
+    PATCH /api/v3/spot/envelopes/<id>/charges/<charge_line_id>/conditional-resolution/
+
+    Resolve a conditional-charge blocker without erasing the original conditional
+    audit flag. Supported actions:
+    - KEEP: acknowledge the conditional charge and leave it in the quote
+    - REMOVE: delete the charge line from the draft SPE
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, envelope_id, charge_line_id):
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
+            _spe_queryset(),
+        )
+
+        if spe_db.status != 'draft':
+            return Response(
+                {'error': f"Cannot review conditional charges in status '{spe_db.status}'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        charge_line = get_object_or_404(spe_db.charge_lines, id=charge_line_id)
+        if not charge_line.conditional:
+            return Response(
+                {'error': 'Conditional review is only available for conditional charge lines.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        action = str(request.data.get("action") or "").strip().upper()
+        if action == "KEEP":
+            charge_line.conditional_acknowledged = True
+            charge_line.conditional_acknowledged_by = request.user
+            charge_line.conditional_acknowledged_at = timezone.now()
+            charge_line.save(
+                update_fields=[
+                    "conditional_acknowledged",
+                    "conditional_acknowledged_by",
+                    "conditional_acknowledged_at",
+                ]
+            )
+        elif action == "REMOVE":
+            charge_line.delete()
+        else:
+            return Response(
+                {'error': "action must be KEEP or REMOVE."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        spe_db.refresh_from_db()
+        serializer = SpotPricingEnvelopeSerializer(spe_db)
+        return Response(serializer.data)
+
+
 class SpotEnvelopeAcknowledgeAPIView(APIView):
     """
     POST /api/v3/spot/envelopes/<id>/acknowledge/
@@ -1419,6 +1637,10 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
             return intake_safety_error
+
+        exception_review_error = _exception_review_error_response(spe_db)
+        if exception_review_error is not None:
+            return exception_review_error
         
         temp_ack = SPEAcknowledgement(
             acknowledged_by_user_id=str(request.user.id),
@@ -1512,6 +1734,10 @@ class SpotEnvelopeComputeAPIView(APIView):
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
             return intake_safety_error
+
+        exception_review_error = _exception_review_error_response(spe_db)
+        if exception_review_error is not None:
+            return exception_review_error
         
         # Validate SPE is ready for pricing
         from quotes.spot_services import SpotEnvelopeService
@@ -1898,9 +2124,30 @@ class SpotReplyAnalysisAPIView(APIView):
                             }
                         )
 
+                existing_matching_lines = list(existing_batch_lines)
+                if normalized_auto_charges:
+                    batch_line_ids = {line.id for line in existing_batch_lines}
+                    incoming_source_signatures = {
+                        _incoming_charge_source_semantic_signature(charge)
+                        for charge in normalized_auto_charges
+                    }
+                    if incoming_source_signatures:
+                        stale_reclassification_candidates = [
+                            line
+                            for line in spe_db.charge_lines.select_related("source_batch").all()
+                            if line.id not in batch_line_ids
+                            and (
+                                line.source_batch is None
+                                or line.source_batch.source_kind == source_kind
+                            )
+                            and _existing_line_source_semantic_signature(line) in incoming_source_signatures
+                        ]
+                        existing_matching_lines.extend(stale_reclassification_candidates)
+
                 _reconcile_spe_charge_lines(
                     spe_db=spe_db,
                     existing_lines=existing_batch_lines,
+                    existing_lines_for_matching=existing_matching_lines,
                     incoming_charges=normalized_auto_charges,
                     entered_by=request.user,
                     entered_at=now,
@@ -1959,6 +2206,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
             return intake_safety_error
+
+        exception_review_error = _exception_review_error_response(spe_db)
+        if exception_review_error is not None:
+            return exception_review_error
 
         is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
         if not is_valid:
