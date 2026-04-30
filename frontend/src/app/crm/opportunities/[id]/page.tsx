@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
+import { TaskDialog, nextBusinessDay } from '@/components/crm/TaskDialog';
 import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
@@ -131,6 +132,8 @@ export default function OpportunityDetailPage() {
   const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const loadOpportunityData = useCallback(async () => {
     setLoading(true);
@@ -226,6 +229,16 @@ export default function OpportunityDetailPage() {
         return next;
       });
     }
+  };
+
+  const openCreateTaskDialog = () => {
+    setEditingTask(null);
+    setTaskDialogOpen(true);
+  };
+
+  const openEditTaskDialog = (task: Task) => {
+    setEditingTask(task);
+    setTaskDialogOpen(true);
   };
 
   const sortedInteractions = useMemo(() => {
@@ -432,9 +445,14 @@ export default function OpportunityDetailPage() {
 
               <TabsContent value="tasks">
                 <Card className="border-slate-200 shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg">Tasks</CardTitle>
-                    <CardDescription>Basic tasks linked to this opportunity.</CardDescription>
+                  <CardHeader className="flex flex-col gap-3 pb-2 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <CardTitle className="text-lg">Tasks</CardTitle>
+                      <CardDescription>Basic tasks linked to this opportunity.</CardDescription>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={openCreateTaskDialog}>
+                      Create Task
+                    </Button>
                   </CardHeader>
                   <CardContent className="px-6 pb-6 pt-2">
                     {tasks.length === 0 ? (
@@ -447,6 +465,8 @@ export default function OpportunityDetailPage() {
                           <TableHeader>
                             <TableRow>
                               <TableHead>Description</TableHead>
+                              <TableHead>Company</TableHead>
+                              <TableHead>Opportunity</TableHead>
                               <TableHead>Owner</TableHead>
                               <TableHead>Due Date</TableHead>
                               <TableHead>Status</TableHead>
@@ -457,19 +477,26 @@ export default function OpportunityDetailPage() {
                             {tasks.map((task) => (
                               <TableRow key={task.id}>
                                 <TableCell className="font-medium">{task.description}</TableCell>
+                                <TableCell>{opportunity.company_name || 'Company linked'}</TableCell>
+                                <TableCell>{opportunity.title}</TableCell>
                                 <TableCell>{task.owner_username || '-'}</TableCell>
                                 <TableCell>{formatDate(task.due_date)}</TableCell>
                                 <TableCell>{task.status}</TableCell>
                                 <TableCell className="text-right">
                                   {task.status === 'PENDING' ? (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => handleCompleteTask(task.id)}
-                                      disabled={completingTaskIds.has(task.id)}
-                                    >
-                                      {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
-                                    </Button>
+                                    <div className="flex justify-end gap-2">
+                                      <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
+                                        Edit
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => handleCompleteTask(task.id)}
+                                        disabled={completingTaskIds.has(task.id)}
+                                      >
+                                        {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
+                                      </Button>
+                                    </div>
                                   ) : (
                                     <span className="text-xs text-muted-foreground">
                                       Completed {formatDate(task.completed_at)}
@@ -503,6 +530,26 @@ export default function OpportunityDetailPage() {
           }}
           prefilledCompany={prefilledCompany}
           prefilledOpportunity={opportunity}
+        />
+        <TaskDialog
+          open={taskDialogOpen}
+          onOpenChange={(nextOpen) => {
+            setTaskDialogOpen(nextOpen);
+            if (!nextOpen) {
+              setEditingTask(null);
+            }
+          }}
+          task={editingTask}
+          defaults={{
+            company: prefilledCompany,
+            opportunity,
+            description: opportunity ? `Follow up on ${opportunity.title}` : '',
+            dueDate: nextBusinessDay(),
+            status: 'PENDING',
+          }}
+          onSaved={() => {
+            void loadOpportunityData();
+          }}
         />
       </StandardPageContainer>
     </ProtectedRoute>

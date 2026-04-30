@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
 import { CrmSubNav } from '@/components/crm/CrmSubNav';
+import { TaskDialog, nextBusinessDay } from '@/components/crm/TaskDialog';
 import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { listOpportunities, listRecentInteractions, listTasks, completeTask, createTask } from '@/lib/api/crm';
+import { listOpportunities, listRecentInteractions, listTasks, completeTask } from '@/lib/api/crm';
 import { listCustomers } from '@/lib/api/parties';
 import {
   daysSinceInteraction,
@@ -142,10 +143,13 @@ export default function CrmDashboardPage() {
   const [customers, setCustomers] = useState<CompanySearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
-  const [creatingTaskCompanyIds, setCreatingTaskCompanyIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [quickLogCompany, setQuickLogCompany] = useState<CompanySearchResult | null>(null);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [taskDialogCompany, setTaskDialogCompany] = useState<CompanySearchResult | null>(null);
+  const [taskDialogDescription, setTaskDialogDescription] = useState('');
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     setLoading(true);
@@ -199,36 +203,31 @@ export default function CrmDashboardPage() {
     setQuickLogOpen(true);
   };
 
-  const handleCreateFollowUpTask = async (company: CompanySearchResult) => {
-    if (creatingTaskCompanyIds.has(company.id)) return;
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 1);
-    const dueDateValue = dueDate.toISOString().slice(0, 10);
+  const openCreateTaskDialog = (company: CompanySearchResult, days: number | null) => {
+    setEditingTask(null);
+    setTaskDialogCompany(company);
+    setTaskDialogDescription(
+      days === null
+        ? `Follow up with ${company.name} - no recorded interaction`
+        : `Follow up with ${company.name} - no recorded interaction in ${days} days`,
+    );
+    setTaskDialogOpen(true);
+  };
 
-    setCreatingTaskCompanyIds((current) => new Set(current).add(company.id));
-    try {
-      await createTask({
-        company: company.id,
-        description: `Follow up with ${company.name}`,
-        due_date: dueDateValue,
-        status: 'PENDING',
-      });
-      toast({ title: 'Task Created', description: `Follow-up task added for ${company.name}.`, variant: 'success' });
-      void loadDashboardData();
-    } catch (err) {
-      toast({ title: 'Task Failed', description: String(err), variant: 'destructive' });
-    } finally {
-      setCreatingTaskCompanyIds((current) => {
-        const next = new Set(current);
-        next.delete(company.id);
-        return next;
-      });
-    }
+  const openEditTaskDialog = (task: Task) => {
+    setEditingTask(task);
+    setTaskDialogCompany(task.company ? customerById.get(task.company) || null : null);
+    setTaskDialogDescription(task.description);
+    setTaskDialogOpen(true);
   };
 
   const opportunityById = useMemo(() => {
     return new Map(opportunities.map((opportunity) => [opportunity.id, opportunity]));
   }, [opportunities]);
+
+  const customerById = useMemo(() => {
+    return new Map(customers.map((customer) => [customer.id, customer]));
+  }, [customers]);
 
   const openOpportunities = useMemo(() => {
     return opportunities.filter((opportunity) => openStatuses.has(opportunity.status));
@@ -472,7 +471,6 @@ export default function CrmDashboardPage() {
                         const tags = Array.isArray(customer.tags) ? customer.tags.filter(Boolean).slice(0, 2) : [];
                         const owner = customer.account_owner_username
                           || (customer.account_owner ? `Owner #${customer.account_owner}` : '-');
-                        const taskCreating = creatingTaskCompanyIds.has(customer.id);
                         return (
                           <TableRow key={customer.id}>
                             <TableCell className="font-medium">{customer.name}</TableCell>
@@ -500,10 +498,9 @@ export default function CrmDashboardPage() {
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => handleCreateFollowUpTask(customer)}
-                                  disabled={taskCreating}
+                                  onClick={() => openCreateTaskDialog(customer, days)}
                                 >
-                                  {taskCreating ? 'Creating...' : 'Create Task'}
+                                  Create Task
                                 </Button>
                               </div>
                             </TableCell>
@@ -529,30 +526,45 @@ export default function CrmDashboardPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Description</TableHead>
-                        <TableHead>Context</TableHead>
+                        <TableHead>Company</TableHead>
+                        <TableHead>Opportunity</TableHead>
+                        <TableHead>Owner</TableHead>
                         <TableHead>Due</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead className="text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                          <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                             Loading tasks...
                           </TableCell>
                         </TableRow>
                       ) : tasksDue.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                          <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                             No tasks due this week.
                           </TableCell>
                         </TableRow>
                       ) : (
                         tasksDue.map((task) => {
                           const opportunity = task.opportunity ? opportunityById.get(task.opportunity) : null;
+                          const company = task.company ? customerById.get(task.company) : null;
                           return (
                             <TableRow key={task.id}>
                               <TableCell className="font-medium">{task.description}</TableCell>
+                              <TableCell>
+                                {company ? (
+                                  <Link className="text-primary hover:underline" href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}>
+                                    {company.name}
+                                  </Link>
+                                ) : task.company ? (
+                                  'Company linked'
+                                ) : (
+                                  '-'
+                                )}
+                              </TableCell>
                               <TableCell>
                                 {opportunity ? (
                                   <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
@@ -564,21 +576,28 @@ export default function CrmDashboardPage() {
                                   '-'
                                 )}
                               </TableCell>
+                              <TableCell>{task.owner_username || '-'}</TableCell>
                               <TableCell>
                                 <div className="flex flex-col">
                                   <span>{formatDate(task.due_date)}</span>
                                   <span className="text-xs text-muted-foreground">{taskBucket(task)}</span>
                                 </div>
                               </TableCell>
+                              <TableCell>{task.status}</TableCell>
                               <TableCell className="text-right">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleCompleteTask(task.id)}
-                                  disabled={completingTaskIds.has(task.id)}
-                                >
-                                  {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
-                                </Button>
+                                <div className="flex justify-end gap-2">
+                                  <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleCompleteTask(task.id)}
+                                    disabled={completingTaskIds.has(task.id)}
+                                  >
+                                    {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
+                                  </Button>
+                                </div>
                               </TableCell>
                             </TableRow>
                           );
@@ -646,6 +665,27 @@ export default function CrmDashboardPage() {
             }
           }}
           prefilledCompany={quickLogCompany}
+        />
+        <TaskDialog
+          open={taskDialogOpen}
+          onOpenChange={(nextOpen) => {
+            setTaskDialogOpen(nextOpen);
+            if (!nextOpen) {
+              setEditingTask(null);
+              setTaskDialogCompany(null);
+              setTaskDialogDescription('');
+            }
+          }}
+          task={editingTask}
+          defaults={{
+            company: taskDialogCompany,
+            description: taskDialogDescription,
+            dueDate: nextBusinessDay(),
+            status: 'PENDING',
+          }}
+          onSaved={() => {
+            void loadDashboardData();
+          }}
         />
       </StandardPageContainer>
     </ProtectedRoute>

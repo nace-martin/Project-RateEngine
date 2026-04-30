@@ -281,7 +281,7 @@ export async function listTasksByOpportunity(opportunityId: string): Promise<Tas
   return listTasks({ opportunity: opportunityId });
 }
 
-type CreateTaskPayload = {
+export type TaskPayload = {
   company?: string | null;
   opportunity?: string | null;
   description: string;
@@ -290,7 +290,7 @@ type CreateTaskPayload = {
   status?: string;
 };
 
-export async function createTask(data: CreateTaskPayload): Promise<Task> {
+export async function createTask(data: TaskPayload): Promise<Task> {
   const response = await fetch(API_BASE_URL + "/api/v3/crm/tasks/", {
     method: "POST",
     headers: {
@@ -303,6 +303,24 @@ export async function createTask(data: CreateTaskPayload): Promise<Task> {
   if (!response.ok) {
     const detail = await parseErrorResponse(response);
     throw new Error(`Failed to create task: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function updateTask(taskId: string, data: Partial<TaskPayload>): Promise<Task> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update task: ${detail}`);
   }
 
   return response.json();
