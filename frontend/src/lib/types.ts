@@ -105,6 +105,12 @@ export interface Contact {
 export interface CompanySearchResult {
   id: string; // Company UUID
   name: string;
+  company_name?: string;
+  account_owner?: number | null;
+  account_owner_username?: string | null;
+  last_interaction_at?: string | null;
+  industry?: string;
+  tags?: string[];
 }
 
 // --- CRM TYPES ---
@@ -256,6 +262,11 @@ export interface Customer {
   is_active?: boolean;
   audience_type: string;
   address_description?: string | null;
+  account_owner?: number | null;
+  account_owner_username?: string | null;
+  last_interaction_at?: string | null;
+  industry?: string;
+  tags?: string[];
   primary_address?: CustomerAddress | null;
   contact_person_name?: string;
   contact_person_email?: string;

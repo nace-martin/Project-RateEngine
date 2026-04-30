@@ -36,6 +36,21 @@ export async function getCompany(
   return response.json();
 }
 
+export async function listCustomers(): Promise<CompanySearchResult[]> {
+  const url = API_BASE_URL + "/api/v3/customers/";
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch customers");
+  }
+  const payload = await response.json();
+  return Array.isArray(payload) ? payload : payload.results || [];
+}
+
 export async function getContactsForCompany(
   companyId: string,
 ): Promise<Contact[]> {

@@ -18,8 +18,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { listOpportunities, listRecentInteractions, listTasks, completeTask } from '@/lib/api/crm';
-import type { Interaction, Opportunity, Task } from '@/lib/types';
+import { listOpportunities, listRecentInteractions, listTasks, completeTask, createTask } from '@/lib/api/crm';
+import { listCustomers } from '@/lib/api/parties';
+import {
+  daysSinceInteraction,
+  engagementStatus,
+  formatEngagementDate,
+  needsFollowUp,
+} from '@/lib/crm-engagement-health';
+import type { CompanySearchResult, Interaction, Opportunity, Task } from '@/lib/types';
 import { useToast } from '@/context/toast-context';
 
 const openStatuses = new Set(['NEW', 'QUALIFIED', 'QUOTED']);
@@ -132,28 +139,34 @@ export default function CrmDashboardPage() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
+  const [customers, setCustomers] = useState<CompanySearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
+  const [creatingTaskCompanyIds, setCreatingTaskCompanyIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
+  const [quickLogCompany, setQuickLogCompany] = useState<CompanySearchResult | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [opportunityRows, taskRows, interactionRows] = await Promise.all([
+      const [opportunityRows, taskRows, interactionRows, customerRows] = await Promise.all([
         listOpportunities(),
         listTasks(),
         listRecentInteractions(),
+        listCustomers(),
       ]);
       setOpportunities(opportunityRows);
       setTasks(taskRows);
       setInteractions(interactionRows);
+      setCustomers(customerRows);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load CRM dashboard.');
       setOpportunities([]);
       setTasks([]);
       setInteractions([]);
+      setCustomers([]);
     } finally {
       setLoading(false);
     }
@@ -176,6 +189,38 @@ export default function CrmDashboardPage() {
       setCompletingTaskIds((current) => {
         const next = new Set(current);
         next.delete(taskId);
+        return next;
+      });
+    }
+  };
+
+  const handleOpenLogActivity = (company?: CompanySearchResult) => {
+    setQuickLogCompany(company || null);
+    setQuickLogOpen(true);
+  };
+
+  const handleCreateFollowUpTask = async (company: CompanySearchResult) => {
+    if (creatingTaskCompanyIds.has(company.id)) return;
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 1);
+    const dueDateValue = dueDate.toISOString().slice(0, 10);
+
+    setCreatingTaskCompanyIds((current) => new Set(current).add(company.id));
+    try {
+      await createTask({
+        company: company.id,
+        description: `Follow up with ${company.name}`,
+        due_date: dueDateValue,
+        status: 'PENDING',
+      });
+      toast({ title: 'Task Created', description: `Follow-up task added for ${company.name}.`, variant: 'success' });
+      void loadDashboardData();
+    } catch (err) {
+      toast({ title: 'Task Failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setCreatingTaskCompanyIds((current) => {
+        const next = new Set(current);
+        next.delete(company.id);
         return next;
       });
     }
@@ -208,6 +253,13 @@ export default function CrmDashboardPage() {
   const openTasks = useMemo(() => {
     return tasks.filter((task) => taskOpenStatuses.has(task.status));
   }, [tasks]);
+
+  const openOpportunityCounts = useMemo(() => {
+    return openOpportunities.reduce((counts, opportunity) => {
+      counts.set(opportunity.company, (counts.get(opportunity.company) || 0) + 1);
+      return counts;
+    }, new Map<string, number>());
+  }, [openOpportunities]);
 
   const overdueTasks = useMemo(() => {
     return openTasks.filter((task) => isOverdueDate(task.due_date));
@@ -246,6 +298,20 @@ export default function CrmDashboardPage() {
       })
       .slice(0, 10);
   }, [interactions]);
+
+  const customersNeedingFollowUp = useMemo(() => {
+    const now = new Date();
+    return customers
+      .filter((customer) => needsFollowUp(customer.last_interaction_at, now))
+      .sort((a, b) => {
+        const aDays = daysSinceInteraction(a.last_interaction_at, now);
+        const bDays = daysSinceInteraction(b.last_interaction_at, now);
+        if (aDays === null && bDays !== null) return -1;
+        if (aDays !== null && bDays === null) return 1;
+        return (bDays ?? Number.MAX_SAFE_INTEGER) - (aDays ?? Number.MAX_SAFE_INTEGER);
+      })
+      .slice(0, 8);
+  }, [customers]);
 
   const taskBucket = (task: Task): string => {
     if (isOverdueDate(task.due_date)) return 'Overdue';
@@ -366,6 +432,90 @@ export default function CrmDashboardPage() {
               detail="Pending tasks past due date"
             />
           </div>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Customers Needing Follow-Up</CardTitle>
+              <CardDescription>Accounts with no recorded CRM interaction in 90 days or more.</CardDescription>
+            </CardHeader>
+            <CardContent className="px-6 pb-6 pt-2">
+              <div className="overflow-hidden rounded-md border border-slate-200">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Company</TableHead>
+                      <TableHead>Owner</TableHead>
+                      <TableHead>Industry / Tags</TableHead>
+                      <TableHead>Last Interaction</TableHead>
+                      <TableHead>Days</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Open Opps</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                          Loading customers...
+                        </TableCell>
+                      </TableRow>
+                    ) : customersNeedingFollowUp.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                          No accounts need follow-up.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      customersNeedingFollowUp.map((customer) => {
+                        const days = daysSinceInteraction(customer.last_interaction_at);
+                        const tags = Array.isArray(customer.tags) ? customer.tags.filter(Boolean).slice(0, 2) : [];
+                        const owner = customer.account_owner_username
+                          || (customer.account_owner ? `Owner #${customer.account_owner}` : '-');
+                        const taskCreating = creatingTaskCompanyIds.has(customer.id);
+                        return (
+                          <TableRow key={customer.id}>
+                            <TableCell className="font-medium">{customer.name}</TableCell>
+                            <TableCell>{owner}</TableCell>
+                            <TableCell>
+                              {[customer.industry, ...tags].filter(Boolean).join(' / ') || '-'}
+                            </TableCell>
+                            <TableCell>{formatEngagementDate(customer.last_interaction_at)}</TableCell>
+                            <TableCell>{days === null ? '-' : days}</TableCell>
+                            <TableCell>
+                              <Badge variant={engagementStatus(customer.last_interaction_at) === 'Dormant' ? 'destructive' : 'outline'}>
+                                {engagementStatus(customer.last_interaction_at)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{openOpportunityCounts.get(customer.id) || 0}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button type="button" variant="outline" size="sm" onClick={() => handleOpenLogActivity(customer)}>
+                                  Log Activity
+                                </Button>
+                                <Button asChild variant="outline" size="sm">
+                                  <Link href={`/customers/${customer.id}/edit?returnTo=%2Fcrm`}>View Account</Link>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleCreateFollowUpTask(customer)}
+                                  disabled={taskCreating}
+                                >
+                                  {taskCreating ? 'Creating...' : 'Create Task'}
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <Card className="border-slate-200 shadow-sm">
@@ -491,9 +641,11 @@ export default function CrmDashboardPage() {
           onOpenChange={(nextOpen) => {
             setQuickLogOpen(nextOpen);
             if (!nextOpen) {
+              setQuickLogCompany(null);
               void loadDashboardData();
             }
           }}
+          prefilledCompany={quickLogCompany}
         />
       </StandardPageContainer>
     </ProtectedRoute>

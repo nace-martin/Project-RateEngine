@@ -281,6 +281,33 @@ export async function listTasksByOpportunity(opportunityId: string): Promise<Tas
   return listTasks({ opportunity: opportunityId });
 }
 
+type CreateTaskPayload = {
+  company?: string | null;
+  opportunity?: string | null;
+  description: string;
+  owner?: number | null;
+  due_date: string;
+  status?: string;
+};
+
+export async function createTask(data: CreateTaskPayload): Promise<Task> {
+  const response = await fetch(API_BASE_URL + "/api/v3/crm/tasks/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create task: ${detail}`);
+  }
+
+  return response.json();
+}
+
 export async function completeTask(taskId: string): Promise<Task> {
   const response = await fetch(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/complete/`, {
     method: "POST",

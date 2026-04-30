@@ -24,12 +24,15 @@ import { StandardPageContainer } from "@/components/layout/standard-page";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 import { CustomerCrmActivityCard } from "@/components/crm/CustomerCrmActivityCard";
+import { InteractionLogSheet } from "@/components/crm/InteractionLogSheet";
 import PageActionBar from "@/components/navigation/PageActionBar";
 import PageBackButton from "@/components/navigation/PageBackButton";
 import PageCancelButton from "@/components/navigation/PageCancelButton";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { getEditCustomerCopy } from "@/lib/page-copy";
+import { getCompany } from "@/lib/api/parties";
+import { daysSinceInteraction, engagementStatus, needsFollowUp } from "@/lib/crm-engagement-health";
 
 type ErrorWithResponse = {
   response?: {
@@ -53,6 +56,18 @@ const normalizeCommercialProfile = (profile?: Customer["commercial_profile"] | n
   payment_term_default: profile?.payment_term_default || "",
 });
 
+const editableCustomerSnapshot = (customer: Customer) => JSON.stringify({
+  company_name: customer.company_name,
+  is_active: customer.is_active,
+  audience_type: customer.audience_type,
+  address_description: customer.address_description,
+  primary_address: customer.primary_address,
+  contact_person_name: customer.contact_person_name,
+  contact_person_email: customer.contact_person_email,
+  contact_person_phone: customer.contact_person_phone,
+  commercial_profile: customer.commercial_profile,
+});
+
 export default function EditCustomerPage() {
   // Use our strong types instead of 'any'
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -72,6 +87,7 @@ export default function EditCustomerPage() {
   const [editingDiscount, setEditingDiscount] = useState<api.CustomerDiscount | null>(null);
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
   const [initialCustomerSnapshot, setInitialCustomerSnapshot] = useState<string>("");
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
   const router = useRouter();
   const params = useParams();
   const { id } = params;
@@ -87,13 +103,21 @@ export default function EditCustomerPage() {
       const fetchCustomer = async () => {
         try {
           const customerData = await api.getCustomer(token, id as string);
+          const customerSummary = await getCompany(id as string).catch(() => null);
           // Ensure primary_address is not null for the form
           if (!customerData.primary_address) {
             customerData.primary_address = {
               address_line_1: "", city_id: "", city: "", state_province: "", postcode: "", country: "", country_name: "",
             };
           }
-          setCustomer(customerData);
+          setCustomer({
+            ...customerData,
+            account_owner: customerSummary?.account_owner,
+            account_owner_username: customerSummary?.account_owner_username,
+            last_interaction_at: customerSummary?.last_interaction_at,
+            industry: customerSummary?.industry,
+            tags: customerSummary?.tags,
+          });
         } catch (fetchError) {
           console.error(fetchError);
           setError("Failed to fetch customer data.");
@@ -105,7 +129,7 @@ export default function EditCustomerPage() {
 
   useEffect(() => {
     if (customer && !initialCustomerSnapshot) {
-      setInitialCustomerSnapshot(JSON.stringify(customer));
+      setInitialCustomerSnapshot(editableCustomerSnapshot(customer));
     }
   }, [customer, initialCustomerSnapshot]);
 
@@ -444,7 +468,7 @@ export default function EditCustomerPage() {
     }
   };
 
-  const isDirty = customer !== null && initialCustomerSnapshot !== "" && JSON.stringify(customer) !== initialCustomerSnapshot;
+  const isDirty = customer !== null && initialCustomerSnapshot !== "" && editableCustomerSnapshot(customer) !== initialCustomerSnapshot;
   useUnsavedChangesGuard(isDirty);
   const returnTo = useReturnTo();
   const confirmLeave = async () => {
@@ -470,6 +494,11 @@ export default function EditCustomerPage() {
   const commercialProfile = normalizeCommercialProfile(customer.commercial_profile);
   const pageCopy = getEditCustomerCopy();
   const canSaveCustomer = Boolean(customer.company_name.trim());
+  const customerNeedsFollowUp = needsFollowUp(customer.last_interaction_at);
+  const daysSinceLastInteraction = daysSinceInteraction(customer.last_interaction_at);
+  const followUpMessage = daysSinceLastInteraction === null
+    ? "No recorded interaction. Follow-up recommended."
+    : `No recorded interaction in ${daysSinceLastInteraction} days. Follow-up recommended.`;
 
   return (
     <StandardPageContainer>
@@ -485,6 +514,17 @@ export default function EditCustomerPage() {
         description={pageCopy.description}
         note={pageCopy.note}
       />
+      {customerNeedsFollowUp ? (
+        <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="font-medium">{followUpMessage}</p>
+            <p className="text-xs text-amber-800">Engagement status: {engagementStatus(customer.last_interaction_at)}</p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => setActivityLogOpen(true)}>
+            Log Activity
+          </Button>
+        </div>
+      ) : null}
       <CustomerCrmActivityCard company={{ id: customer.id, name: customer.company_name }} />
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -882,6 +922,29 @@ export default function EditCustomerPage() {
           }}
         />
       )}
+      <InteractionLogSheet
+        open={activityLogOpen}
+        onOpenChange={(nextOpen) => {
+          setActivityLogOpen(nextOpen);
+          if (!nextOpen && id) {
+            void getCompany(id as string)
+              .then((summary) => {
+                setCustomer((current) => current
+                  ? {
+                      ...current,
+                      account_owner: summary.account_owner,
+                      account_owner_username: summary.account_owner_username,
+                      last_interaction_at: summary.last_interaction_at,
+                      industry: summary.industry,
+                      tags: summary.tags,
+                    }
+                  : current);
+              })
+              .catch(() => undefined);
+          }
+        }}
+        prefilledCompany={{ id: customer.id, name: customer.company_name }}
+      />
     </StandardPageContainer>
   );
 }
