@@ -23,6 +23,7 @@ import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { StandardPageContainer } from "@/components/layout/standard-page";
 import { CityOption, CountryOption, Customer } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
+import { CustomerCrmActivityCard } from "@/components/crm/CustomerCrmActivityCard";
 import PageActionBar from "@/components/navigation/PageActionBar";
 import PageBackButton from "@/components/navigation/PageBackButton";
 import PageCancelButton from "@/components/navigation/PageCancelButton";
@@ -484,6 +485,7 @@ export default function EditCustomerPage() {
         description={pageCopy.description}
         note={pageCopy.note}
       />
+      <CustomerCrmActivityCard company={{ id: customer.id, name: customer.company_name }} />
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className={isSaving || isDeleting || isArchiving ? "space-y-6 pointer-events-none opacity-70" : "space-y-6"}>

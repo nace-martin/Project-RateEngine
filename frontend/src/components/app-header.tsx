@@ -25,7 +25,11 @@ import {
 } from "@/components/ui/sheet";
 import { useState } from 'react';
 
-export default function AppHeader() {
+type AppHeaderProps = {
+  onLogActivity?: () => void;
+};
+
+export default function AppHeader({ onLogActivity }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -128,7 +132,21 @@ export default function AppHeader() {
                     </Link>
                   )
                 })}
-                {moreItems.length > 0 && <div className="border-t my-2" />}
+                {(onLogActivity || moreItems.length > 0) && <div className="border-t my-2" />}
+                {onLogActivity ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mx-3 justify-start"
+                    onClick={() => {
+                      onLogActivity();
+                      setOpen(false);
+                    }}
+                  >
+                    Log Activity
+                  </Button>
+                ) : null}
+                {onLogActivity && moreItems.length > 0 && <div className="border-t my-2" />}
                 {moreItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname.startsWith(item.href);
@@ -220,11 +238,21 @@ export default function AppHeader() {
         </nav>
 
         {/* New Quote Action Button - Hide for Finance (they can't edit quotes) */}
+        {onLogActivity ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onLogActivity}
+            className="hidden md:flex ml-auto"
+          >
+            Log Activity
+          </Button>
+        ) : null}
         {canEditQuotes && (
           <Button
             variant="success"
             onClick={() => router.push('/quotes/new')}
-            className="hidden md:flex ml-auto"
+            className={`hidden md:flex ${onLogActivity ? '' : 'ml-auto'}`}
           >
             <Plus className="w-4 h-4 mr-2" />
             New Quote

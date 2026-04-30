@@ -107,6 +107,76 @@ export interface CompanySearchResult {
   name: string;
 }
 
+// --- CRM TYPES ---
+export type InteractionType = 'CALL' | 'MEETING' | 'EMAIL' | 'SITE_VISIT' | 'SYSTEM';
+
+export interface Opportunity {
+  id: string;
+  company: string;
+  company_name?: string;
+  title: string;
+  service_type: 'AIR' | 'SEA' | 'CUSTOMS' | 'DOMESTIC' | 'MULTIMODAL' | string;
+  direction?: 'IMPORT' | 'EXPORT' | 'DOMESTIC' | string;
+  scope?: string;
+  origin?: string;
+  destination?: string;
+  status: 'NEW' | 'QUALIFIED' | 'QUOTED' | 'WON' | 'LOST' | string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | string;
+  owner?: number | null;
+  owner_username?: string | null;
+  next_action?: string;
+  next_action_date?: string | null;
+  last_activity_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Interaction {
+  id: string;
+  company: string;
+  company_name?: string;
+  contact?: string | null;
+  opportunity?: string | null;
+  author?: number | null;
+  author_username?: string | null;
+  interaction_type: InteractionType;
+  summary: string;
+  outcomes?: string;
+  next_action?: string;
+  next_action_date?: string | null;
+  is_system_generated?: boolean;
+  system_event_type?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateInteractionPayload {
+  company: string;
+  contact?: string | null;
+  opportunity?: string | null;
+  interaction_type: Exclude<InteractionType, 'SYSTEM'>;
+  summary: string;
+  outcomes?: string;
+  next_action?: string;
+  next_action_date?: string | null;
+}
+
+export interface Task {
+  id: string;
+  company?: string | null;
+  opportunity?: string | null;
+  description: string;
+  owner: number;
+  owner_username?: string | null;
+  due_date: string;
+  status: 'PENDING' | 'COMPLETED' | 'CANCELLED' | string;
+  completed_at?: string | null;
+  completed_by?: number | null;
+  completed_by_username?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface AirportSearchResult {
   iata_code: string;
   name: string;

@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/auth-context';
+import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
 import {
     LayoutDashboard,
     FileText,
@@ -21,6 +22,7 @@ export function AppSidebar() {
     const pathname = usePathname();
     const { user, logout } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
+    const [quickLogOpen, setQuickLogOpen] = useState(false);
     const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
     const brandLogoUrl = user?.organization?.branding?.logo_url || null;
 
@@ -97,6 +99,14 @@ export function AppSidebar() {
             </div>
 
             <div className="space-y-1 px-3 flex-1">
+                <Button
+                    type="button"
+                    variant="outline"
+                    className={cn("mb-3 w-full", collapsed && "px-2")}
+                    onClick={() => setQuickLogOpen(true)}
+                >
+                    {collapsed ? "Log" : "Log Activity"}
+                </Button>
                 {routes.map((route) => {
                     if (route.role && (!user || !route.role.includes(user.role))) return null;
 
@@ -132,6 +142,7 @@ export function AppSidebar() {
                     </Button>
                 </div>
             </div>
+            <InteractionLogSheet open={quickLogOpen} onOpenChange={setQuickLogOpen} />
         </div>
     );
 }
