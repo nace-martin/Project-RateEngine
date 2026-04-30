@@ -53,6 +53,7 @@ export default function AppHeader({ onLogActivity }: AppHeaderProps) {
   // Customers - only for non-Finance roles
   if (!isFinance) {
     navItems.push({ href: '/customers', label: 'Customers', icon: Users });
+    navItems.push({ href: '/crm/opportunities', label: 'Opportunities', icon: FileText });
   }
 
   // 2. Secondary/Configuration Navigation (Dropdown)

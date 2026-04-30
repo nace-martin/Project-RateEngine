@@ -4,6 +4,7 @@ import type {
   Interaction,
   Opportunity,
   PaginatedResponse,
+  Task,
 } from "../types";
 import { searchCompanies as searchPartyCompanies } from "./parties";
 import { API_BASE_URL, parseErrorResponse, resolveAuthToken } from "./shared";
@@ -40,9 +41,25 @@ export async function searchCompanies(query: string): Promise<CompanySearchResul
   return searchPartyCompanies(query);
 }
 
-export async function listOpportunitiesByCompany(companyId: string): Promise<Opportunity[]> {
+type ListOpportunityParams = {
+  company?: string;
+  status?: string;
+  owner?: string;
+  service_type?: string;
+  priority?: string;
+};
+
+function appendDefinedParams(url: URL, params: Record<string, string | undefined>) {
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  });
+}
+
+export async function listOpportunities(params: ListOpportunityParams = {}): Promise<Opportunity[]> {
   const url = new URL(API_BASE_URL + "/api/v3/crm/opportunities/");
-  url.searchParams.set("company", companyId);
+  appendDefinedParams(url, params);
 
   const response = await fetch(url.toString(), {
     headers: {
@@ -58,6 +75,26 @@ export async function listOpportunitiesByCompany(companyId: string): Promise<Opp
 
   const payload = (await response.json()) as Opportunity[] | PaginatedResponse<Opportunity>;
   return normalizeListResponse(payload);
+}
+
+export async function getOpportunity(opportunityId: string): Promise<Opportunity> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/opportunities/${opportunityId}/`, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load opportunity: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function listOpportunitiesByCompany(companyId: string): Promise<Opportunity[]> {
+  return listOpportunities({ company: companyId });
 }
 
 export async function listInteractionsByCompany(companyId: string): Promise<Interaction[]> {
@@ -77,5 +114,45 @@ export async function listInteractionsByCompany(companyId: string): Promise<Inte
   }
 
   const payload = (await response.json()) as Interaction[] | PaginatedResponse<Interaction>;
+  return normalizeListResponse(payload);
+}
+
+export async function listInteractionsByOpportunity(opportunityId: string): Promise<Interaction[]> {
+  const url = new URL(API_BASE_URL + "/api/v3/crm/interactions/");
+  url.searchParams.set("opportunity", opportunityId);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load activity timeline: ${detail}`);
+  }
+
+  const payload = (await response.json()) as Interaction[] | PaginatedResponse<Interaction>;
+  return normalizeListResponse(payload);
+}
+
+export async function listTasksByOpportunity(opportunityId: string): Promise<Task[]> {
+  const url = new URL(API_BASE_URL + "/api/v3/crm/tasks/");
+  url.searchParams.set("opportunity", opportunityId);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load tasks: ${detail}`);
+  }
+
+  const payload = (await response.json()) as Task[] | PaginatedResponse<Task>;
   return normalizeListResponse(payload);
 }

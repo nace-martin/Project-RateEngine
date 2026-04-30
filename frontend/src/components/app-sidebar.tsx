@@ -52,6 +52,13 @@ export function AppSidebar() {
             color: 'text-pink-700',
         },
         {
+            label: 'Opportunities',
+            icon: FileText,
+            href: '/crm/opportunities',
+            color: 'text-slate-600',
+            role: ['sales', 'manager', 'admin']
+        },
+        {
             label: 'Settings',
             icon: Settings,
             href: '/settings',
@@ -116,7 +123,7 @@ export function AppSidebar() {
                             href={route.href}
                             className={cn(
                                 "text-sm group flex p-3 w-full justify-start font-medium cursor-pointer hover:text-primary hover:bg-primary/10 rounded-lg transition",
-                                pathname === route.href ? "bg-primary/10 text-primary" : "text-muted-foreground",
+                                pathname === route.href || (route.href !== "/" && pathname.startsWith(route.href)) ? "bg-primary/10 text-primary" : "text-muted-foreground",
                                 collapsed && "justify-center"
                             )}
                         >

@@ -120,6 +120,12 @@ export interface Opportunity {
   scope?: string;
   origin?: string;
   destination?: string;
+  estimated_weight_kg?: string | number | null;
+  estimated_volume_cbm?: string | number | null;
+  estimated_fcl_count?: number | null;
+  estimated_frequency?: string;
+  estimated_revenue?: string | number | null;
+  estimated_currency?: string;
   status: 'NEW' | 'QUALIFIED' | 'QUOTED' | 'WON' | 'LOST' | string;
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | string;
   owner?: number | null;
@@ -127,6 +133,12 @@ export interface Opportunity {
   next_action?: string;
   next_action_date?: string | null;
   last_activity_at?: string | null;
+  won_at?: string | null;
+  won_by?: number | null;
+  won_by_username?: string | null;
+  won_reason?: string;
+  lost_reason?: string;
+  is_active?: boolean;
   created_at?: string;
   updated_at?: string;
 }
