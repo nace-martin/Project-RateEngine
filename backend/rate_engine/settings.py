@@ -128,6 +128,7 @@ INSTALLED_APPS = [
     'parties',
     'shipments',
     'quotes',
+    'crm',
     'ratecards',
     'services',
     'pricing_v4',  # Greenfield pricing engine

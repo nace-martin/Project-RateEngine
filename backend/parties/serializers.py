@@ -29,6 +29,10 @@ class CustomerV3Serializer(serializers.ModelSerializer):
             "is_agent",
             "is_carrier",
             "tax_id",
+            "account_owner",
+            "last_interaction_at",
+            "industry",
+            "tags",
             "created_at",
             "updated_at",
         ]
@@ -36,6 +40,7 @@ class CustomerV3Serializer(serializers.ModelSerializer):
             "id",
             "contact_person_name",
             "primary_address",
+            "last_interaction_at",
             "created_at",
             "updated_at",
         ]

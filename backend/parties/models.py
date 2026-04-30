@@ -36,6 +36,16 @@ class Company(models.Model):
     # Deprecated - to be removed after data migration
     company_type = models.CharField(max_length=20, choices=[('CUSTOMER', 'Customer'), ('SUPPLIER', 'Supplier')], default='CUSTOMER', null=True, blank=True)
     tax_id = models.CharField(max_length=50, blank=True)
+    account_owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='owned_companies',
+    )
+    last_interaction_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    industry = models.CharField(max_length=120, blank=True, default='')
+    tags = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

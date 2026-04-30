@@ -174,6 +174,7 @@ class QuoteStateMachine:
         # Perform transition
         now = timezone.now()
         self.quote.status = target_status
+        self.quote._transition_user = user
         
         # Set lifecycle timestamps based on target state
         if target_status == Quote.Status.FINALIZED:

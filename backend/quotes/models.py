@@ -130,6 +130,14 @@ class Quote(models.Model):
         help_text="The exact FX snapshot used for this quote calculation.",
         null=True, blank=True
     )
+    opportunity = models.ForeignKey(
+        "crm.Opportunity",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="quotes",
+        help_text="CRM opportunity this quote supports, if any.",
+    )
 
     commodity_code = models.CharField(
         max_length=10,
