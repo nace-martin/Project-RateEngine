@@ -134,6 +134,58 @@ export async function updateOpportunity(
   return response.json();
 }
 
+export async function markOpportunityQualified(opportunityId: string): Promise<Opportunity> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/opportunities/${opportunityId}/mark_qualified/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to mark opportunity as qualified: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function markOpportunityWon(opportunityId: string, wonReason?: string): Promise<Opportunity> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/opportunities/${opportunityId}/mark_won/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify({ won_reason: wonReason }),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to mark opportunity as won: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function markOpportunityLost(opportunityId: string, lostReason?: string): Promise<Opportunity> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/opportunities/${opportunityId}/mark_lost/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify({ lost_reason: lostReason }),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to mark opportunity as lost: ${detail}`);
+  }
+
+  return response.json();
+}
+
 export async function listOpportunitiesByCompany(companyId: string): Promise<Opportunity[]> {
   return listOpportunities({ company: companyId });
 }
@@ -227,6 +279,22 @@ export async function listTasks(params: ListTaskParams = {}): Promise<Task[]> {
 
 export async function listTasksByOpportunity(opportunityId: string): Promise<Task[]> {
   return listTasks({ opportunity: opportunityId });
+}
+
+export async function completeTask(taskId: string): Promise<Task> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/complete/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to complete task: ${detail}`);
+  }
+
+  return response.json();
 }
 
 export async function listQuotesByOpportunity(opportunityId: string): Promise<V3QuoteComputeResponse[]> {

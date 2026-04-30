@@ -1,7 +1,11 @@
-from rest_framework import permissions, viewsets
+from django.utils import timezone
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from .models import Interaction, Opportunity, Task
 from .serializers import InteractionSerializer, OpportunitySerializer, TaskSerializer
+from .services import mark_opportunity_lost, mark_opportunity_won
 
 
 class CrmWritePermission(permissions.BasePermission):
@@ -41,6 +45,40 @@ class OpportunityViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         owner = serializer.validated_data.get("owner") or self.request.user
         serializer.save(owner=owner)
+
+    @action(detail=True, methods=["post"])
+    def mark_qualified(self, request, pk=None):
+        opportunity = self.get_object()
+        opportunity.status = Opportunity.Status.QUALIFIED
+        opportunity.lost_reason = ""
+        opportunity.save(update_fields=["status", "lost_reason", "updated_at"])
+        serializer = self.get_serializer(opportunity)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def mark_won(self, request, pk=None):
+        opportunity = self.get_object()
+        opportunity = mark_opportunity_won(
+            opportunity,
+            actor=request.user,
+            reason=request.data.get("won_reason", ""),
+            source_type="MANUAL",
+        )
+        serializer = self.get_serializer(opportunity)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def mark_lost(self, request, pk=None):
+        lost_reason = str(request.data.get("lost_reason", "")).strip()
+        if not lost_reason:
+            return Response(
+                {"lost_reason": ["Lost reason is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        opportunity = self.get_object()
+        opportunity = mark_opportunity_lost(opportunity, actor=request.user, reason=lost_reason)
+        serializer = self.get_serializer(opportunity)
+        return Response(serializer.data)
 
 
 class InteractionViewSet(viewsets.ModelViewSet):
@@ -87,3 +125,16 @@ class TaskViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         owner = serializer.validated_data.get("owner") or self.request.user
         serializer.save(owner=owner)
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        task = self.get_object()
+        if task.status == Task.Status.COMPLETED:
+            serializer = self.get_serializer(task)
+            return Response(serializer.data)
+        task.status = Task.Status.COMPLETED
+        task.completed_at = timezone.now()
+        task.completed_by = request.user
+        task.save(update_fields=["status", "completed_at", "completed_by", "updated_at"])
+        serializer = self.get_serializer(task)
+        return Response(serializer.data)

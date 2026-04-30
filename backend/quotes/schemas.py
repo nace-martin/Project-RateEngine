@@ -34,6 +34,7 @@ class QuoteComputeRequest(BaseModel):
     Used in views.py `post` method.
     """
     quote_id: Optional[UUID] = None
+    opportunity_id: Optional[UUID] = None
     customer_id: UUID
     contact_id: UUID
     mode: str

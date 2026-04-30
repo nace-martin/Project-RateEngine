@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/context/auth-context";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { computeQuoteV3 } from "@/lib/api/quotes";
+import { getCompany, getLocation, searchLocations } from "@/lib/api/parties";
 import { useToast } from "@/context/toast-context";
 import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
 import QuoteForm from "@/components/forms/QuoteForm";
@@ -15,6 +16,7 @@ import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { getNewQuoteCopy } from "@/lib/page-copy";
 import { buildQuoteComputePayload, getQuoteMissingRateFlags } from "@/lib/quote-workflow";
+import type { CompanySearchResult, LocationSearchResult } from "@/lib/types";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -24,14 +26,82 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
-export default function NewQuotePage() {
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const resolveLocationParam = async (value: string | null): Promise<LocationSearchResult | undefined> => {
+  const normalized = (value || "").trim();
+  if (!normalized) return undefined;
+
+  if (UUID_PATTERN.test(normalized)) {
+    return getLocation(normalized);
+  }
+
+  const matches = await searchLocations(normalized);
+  const upper = normalized.toUpperCase();
+  return matches.find((location) => location.code.toUpperCase() === upper) || matches[0];
+};
+
+const quoteModeFromServiceType = (serviceType: string | null): QuoteFormSchemaV3["mode"] => {
+  if ((serviceType || "").toUpperCase() === "AIR") return "AIR";
+  return "AIR";
+};
+
+function NewQuoteContent() {
   const { user } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isFormDirty, setIsFormDirty] = useState(false);
+
+  // Initial data from query params
+  const [initialCustomer, setInitialCustomer] = useState<CompanySearchResult | undefined>(undefined);
+  const [initialOrigin, setInitialOrigin] = useState<LocationSearchResult | undefined>(undefined);
+  const [initialDestination, setInitialDestination] = useState<LocationSearchResult | undefined>(undefined);
+  const [defaultValues, setDefaultValues] = useState<Partial<QuoteFormSchemaV3> | undefined>(undefined);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(false);
+
+  useEffect(() => {
+    const customerId = searchParams.get("company");
+    const opportunityId = searchParams.get("opportunity");
+    const serviceType = searchParams.get("service_type");
+    const originParam = searchParams.get("origin");
+    const destinationParam = searchParams.get("destination");
+
+    if (customerId || originParam || destinationParam || serviceType || opportunityId) {
+      const fetchInitial = async () => {
+        setIsLoadingInitial(true);
+        try {
+          const [customer, origin, destination] = await Promise.all([
+            customerId ? getCompany(customerId) : Promise.resolve(undefined),
+            resolveLocationParam(originParam),
+            resolveLocationParam(destinationParam),
+          ]);
+
+          if (customer) setInitialCustomer(customer);
+          if (origin) setInitialOrigin(origin);
+          if (destination) setInitialDestination(destination);
+
+          setDefaultValues({
+            customer_id: customerId || "",
+            opportunity_id: opportunityId || undefined,
+            mode: quoteModeFromServiceType(serviceType),
+            origin_location_id: origin?.id || "",
+            destination_location_id: destination?.id || "",
+            origin_airport: origin?.code || "",
+            destination_airport: destination?.code || "",
+          });
+        } catch (err) {
+          console.error("Failed to load initial data from params", err);
+        } finally {
+          setIsLoadingInitial(false);
+        }
+      };
+      void fetchInitial();
+    }
+  }, [searchParams]);
 
   // Missing Rates State
   const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });
@@ -143,14 +213,24 @@ export default function NewQuotePage() {
         note={pageCopy.note}
       />
 
-      <QuoteForm
-        user={user}
-        onSubmit={handleQuoteSubmit}
-        isSubmitting={isSubmitting}
-        serverError={apiError}
-        onDirtyChange={setIsFormDirty}
-        onCancel={handleCancel}
-      />
+      {isLoadingInitial ? (
+        <div className="flex h-64 items-center justify-center rounded-lg border border-dashed">
+          <p className="text-muted-foreground">Loading initial data...</p>
+        </div>
+      ) : (
+        <QuoteForm
+          user={user}
+          defaultValues={defaultValues}
+          initialCustomer={initialCustomer}
+          initialOrigin={initialOrigin}
+          initialDestination={initialDestination}
+          onSubmit={handleQuoteSubmit}
+          isSubmitting={isSubmitting}
+          serverError={apiError}
+          onDirtyChange={setIsFormDirty}
+          onCancel={handleCancel}
+        />
+      )}
 
       {showMissingRatesModal && (
         <MissingRatesModal
@@ -159,12 +239,8 @@ export default function NewQuotePage() {
           onSubmit={handleMissingRatesDone}
           missingRates={{ carrier: missingRates.carrier, agent: missingRates.agent }}
           quoteId={pendingQuoteId}
-          // We need shipment details for the modal to generate email
-          // Since we don't have form data easily available here without state,
-          // We can either pass minimal dummy data or store pendingFormData just for display.
-          // Let's bring back pendingFormData just for display purposes.
           shipmentDetails={{
-            origin: "Quote Origin", // Ideally fix this to use form data
+            origin: "Quote Origin",
             destination: "Quote Destination",
             mode: "AIR",
             pieces: 1,
@@ -175,5 +251,13 @@ export default function NewQuotePage() {
         />
       )}
     </div>
+  );
+}
+
+export default function NewQuotePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Loading page...</div>}>
+      <NewQuoteContent />
+    </Suspense>
   );
 }

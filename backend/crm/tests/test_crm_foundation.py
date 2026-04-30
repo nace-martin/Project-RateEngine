@@ -184,6 +184,80 @@ def test_quote_api_filters_by_opportunity(company, opportunity, user):
 
 
 @pytest.mark.django_db
+def test_opportunity_workflow_actions_use_lifecycle_helpers(opportunity, user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    qualified_response = client.post(f"/api/v3/crm/opportunities/{opportunity.id}/mark_qualified/")
+    assert qualified_response.status_code == 200
+    assert qualified_response.json()["status"] == Opportunity.Status.QUALIFIED
+
+    won_response = client.post(
+        f"/api/v3/crm/opportunities/{opportunity.id}/mark_won/",
+        {"won_reason": "Customer confirmed manually."},
+        format="json",
+    )
+    assert won_response.status_code == 200
+    assert won_response.json()["status"] == Opportunity.Status.WON
+    opportunity.refresh_from_db()
+    assert opportunity.won_by == user
+    assert opportunity.won_reason == "Customer confirmed manually."
+    assert opportunity.interactions.filter(
+        system_event_type="OPPORTUNITY_WON",
+        outcomes__contains="Source: MANUAL",
+    ).exists()
+
+    lost_response = client.post(
+        f"/api/v3/crm/opportunities/{opportunity.id}/mark_lost/",
+        {"lost_reason": "Customer chose another provider."},
+        format="json",
+    )
+    assert lost_response.status_code == 200
+    opportunity.refresh_from_db()
+    assert opportunity.status == Opportunity.Status.LOST
+    assert opportunity.lost_reason == "Customer chose another provider."
+    assert opportunity.won_at is None
+    assert opportunity.won_by is None
+
+
+@pytest.mark.django_db
+def test_mark_lost_requires_reason(opportunity, user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/crm/opportunities/{opportunity.id}/mark_lost/",
+        {"lost_reason": ""},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    opportunity.refresh_from_db()
+    assert opportunity.status == Opportunity.Status.NEW
+
+
+@pytest.mark.django_db
+def test_task_complete_action_sets_completion_fields(company, opportunity, user):
+    task = Task.objects.create(
+        company=company,
+        opportunity=opportunity,
+        owner=user,
+        description="Follow up with customer.",
+        due_date=date.today(),
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(f"/api/v3/crm/tasks/{task.id}/complete/")
+
+    assert response.status_code == 200
+    task.refresh_from_db()
+    assert task.status == Task.Status.COMPLETED
+    assert task.completed_at is not None
+    assert task.completed_by == user
+
+
+@pytest.mark.django_db
 def test_import_opportunity_can_be_won_without_shipment(opportunity, user):
     won = mark_opportunity_won(
         opportunity,

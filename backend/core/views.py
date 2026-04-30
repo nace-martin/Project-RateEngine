@@ -5,6 +5,7 @@ from typing import List, Dict
 from django.db import connection
 from django.db.models import Q  # Import Q for complex lookups
 from django.db.utils import OperationalError
+from django.shortcuts import get_object_or_404
 from rest_framework import generics, filters
 from rest_framework.permissions import AllowAny
 from rest_framework.permissions import IsAuthenticated
@@ -107,6 +108,18 @@ class LocationV3SearchView(APIView):
         results = _build_location_results(query)
         serializer = LocationSearchSerializer(results, many=True)
         return Response(serializer.data)
+
+
+class LocationV3DetailView(APIView):
+    """
+    V3 endpoint to retrieve a single location by ID.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, location_id):
+        location = get_object_or_404(Location, id=location_id)
+        data = _serialize_location(location)
+        return Response(data)
 
 
 class HealthCheckAPIView(APIView):

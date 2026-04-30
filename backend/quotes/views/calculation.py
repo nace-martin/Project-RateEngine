@@ -444,6 +444,17 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         """
         customer = get_object_or_404(Company, id=validated_data.customer_id)
         contact = get_object_or_404(Contact, id=validated_data.contact_id)
+
+        # Resolve opportunity if provided
+        opportunity = None
+        if validated_data.opportunity_id:
+            from crm.models import Opportunity as CrmOpportunity
+            opportunity = get_object_or_404(
+                CrmOpportunity,
+                id=validated_data.opportunity_id,
+                company=customer,
+            )
+
         request_payload = validated_data.model_dump(mode='json')
         if resolved_dimensions is not None:
             request_payload['resolved_dimensions'] = serialize_resolved_rate_dimensions(resolved_dimensions)
@@ -454,6 +465,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote = Quote.objects.create(
                 customer=customer,
                 contact=contact,
+                opportunity=opportunity,
                 mode=validated_data.mode,
                 shipment_type=shipment_type, # <-- Save calculated type
                 incoterm=validated_data.incoterm,
@@ -495,6 +507,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.save(update_fields=[
                 'customer',
                 'contact',
+                'opportunity',
                 'mode',
                 'shipment_type',
                 'incoterm',

@@ -299,6 +299,7 @@ export const quoteFormSchemaV3 = z
   .object({
     // --- Step 1: Customer ---
     quote_id: z.string().optional(),
+    opportunity_id: z.string().uuid().optional(),
     customer_id: z.string().uuid({ message: 'Customer must be selected.' }),
     contact_id: z.string().uuid({ message: 'Contact must be selected.' }),
 

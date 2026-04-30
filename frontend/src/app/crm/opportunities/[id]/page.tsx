@@ -19,8 +19,18 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { getOpportunity, listInteractionsByOpportunity, listQuotesByOpportunity, listTasksByOpportunity } from '@/lib/api/crm';
+import {
+  completeTask,
+  getOpportunity,
+  listInteractionsByOpportunity,
+  listQuotesByOpportunity,
+  listTasksByOpportunity,
+  markOpportunityQualified,
+  markOpportunityLost,
+  markOpportunityWon,
+} from '@/lib/api/crm';
 import type { CompanySearchResult, Interaction, Opportunity, Task, V3QuoteComputeResponse } from '@/lib/types';
+import { useToast } from '@/context/toast-context';
 
 const interactionLabels: Record<string, string> = {
   CALL: 'Call',
@@ -111,11 +121,14 @@ function TimelineItem({ interaction }: { interaction: Interaction }) {
 
 export default function OpportunityDetailPage() {
   const params = useParams<{ id: string }>();
+  const { toast } = useToast();
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<'qualified' | 'won' | 'lost' | null>(null);
+  const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
 
@@ -148,6 +161,73 @@ export default function OpportunityDetailPage() {
     void loadOpportunityData();
   }, [loadOpportunityData]);
 
+  const handleMarkQualified = async () => {
+    if (actionLoading) return;
+    setActionLoading('qualified');
+    try {
+      await markOpportunityQualified(params.id);
+      toast({ title: 'Opportunity Qualified', variant: 'success' });
+      void loadOpportunityData();
+    } catch (err) {
+      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleMarkWon = async () => {
+    const reason = window.prompt('Optional won reason:');
+    if (reason === null) return;
+    if (actionLoading) return;
+    setActionLoading('won');
+    try {
+      await markOpportunityWon(params.id, reason);
+      toast({ title: 'Opportunity Won!', variant: 'success' });
+      void loadOpportunityData();
+    } catch (err) {
+      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleMarkLost = async () => {
+    const reason = window.prompt('Lost reason (required):');
+    if (!reason) {
+      if (reason === '') toast({ title: 'Reason required', variant: 'destructive' });
+      return;
+    }
+    if (actionLoading) return;
+    setActionLoading('lost');
+    try {
+      await markOpportunityLost(params.id, reason);
+      toast({ title: 'Opportunity Lost', variant: 'default' });
+      void loadOpportunityData();
+    } catch (err) {
+      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCompleteTask = async (taskId: string) => {
+    if (completingTaskIds.has(taskId)) return;
+    setCompletingTaskIds((current) => new Set(current).add(taskId));
+    try {
+      await completeTask(taskId);
+      toast({ title: 'Task Completed', variant: 'success' });
+      void loadOpportunityData();
+    } catch (err) {
+      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setCompletingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+
   const sortedInteractions = useMemo(() => {
     return [...interactions].sort((a, b) => {
       const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -170,6 +250,19 @@ export default function OpportunityDetailPage() {
     return formatCurrency(amount, currency);
   };
 
+  const isClosed = opportunity?.status === 'WON' || opportunity?.status === 'LOST';
+  const createQuoteHref = useMemo(() => {
+    if (!opportunity) return '/quotes/new';
+    const params = new URLSearchParams({
+      company: opportunity.company,
+      opportunity: opportunity.id,
+      service_type: opportunity.service_type || '',
+      origin: opportunity.origin || '',
+      destination: opportunity.destination || '',
+    });
+    return `/quotes/new?${params.toString()}`;
+  }, [opportunity]);
+
   return (
     <ProtectedRoute>
       <StandardPageContainer>
@@ -181,16 +274,16 @@ export default function OpportunityDetailPage() {
               <Button variant="outline" asChild>
                 <Link href="/crm/opportunities">Back to Opportunities</Link>
               </Button>
-              {opportunity ? (
+              {opportunity && !isClosed && (
                 <Button variant="outline" asChild>
                   <Link href={`/crm/opportunities/${opportunity.id}/edit`}>Edit</Link>
                 </Button>
-              ) : null}
-              {opportunity ? (
+              )}
+              {opportunity && (
                 <Button type="button" onClick={() => setQuickLogOpen(true)}>
                   Log Activity
                 </Button>
-              ) : null}
+              )}
             </div>
           }
         />
@@ -207,6 +300,27 @@ export default function OpportunityDetailPage() {
           </Card>
         ) : opportunity ? (
           <>
+            <div className="mb-6 flex flex-wrap gap-2">
+              {!isClosed && (
+                <>
+                  {opportunity.status === 'NEW' && (
+                    <Button variant="outline" size="sm" onClick={handleMarkQualified} disabled={Boolean(actionLoading)}>
+                      {actionLoading === 'qualified' ? 'Saving...' : 'Mark Qualified'}
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={handleMarkWon} disabled={Boolean(actionLoading)} className="text-green-700 hover:text-green-800 hover:bg-green-50">
+                    {actionLoading === 'won' ? 'Saving...' : 'Mark Won'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleMarkLost} disabled={Boolean(actionLoading)} className="text-red-700 hover:text-red-800 hover:bg-red-50">
+                    {actionLoading === 'lost' ? 'Saving...' : 'Mark Lost'}
+                  </Button>
+                  <Button size="sm" asChild>
+                    <Link href={createQuoteHref}>Create Quote</Link>
+                  </Button>
+                </>
+              )}
+            </div>
+
             <Card className="border-slate-200 shadow-sm">
               <CardHeader className="pb-2">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -237,14 +351,14 @@ export default function OpportunityDetailPage() {
                   <DetailItem label="Next Action" value={opportunity.next_action || '-'} />
                   <DetailItem label="Next Action Date" value={formatDate(opportunity.next_action_date)} />
                   <DetailItem label="Last Activity" value={formatDateTime(opportunity.last_activity_at)} />
-                  <DetailItem label="Won At" value={formatDateTime(opportunity.won_at)} />
-                  <DetailItem label="Won Reason" value={opportunity.won_reason || '-'} />
-                  <DetailItem label="Lost Reason" value={opportunity.lost_reason || '-'} />
+                  {opportunity.won_at && <DetailItem label="Won At" value={formatDateTime(opportunity.won_at)} />}
+                  {opportunity.won_reason && <DetailItem label="Won Reason" value={opportunity.won_reason} />}
+                  {opportunity.lost_reason && <DetailItem label="Lost Reason" value={opportunity.lost_reason} />}
                 </dl>
               </CardContent>
             </Card>
 
-            <Tabs defaultValue="timeline" className="space-y-4">
+            <Tabs defaultValue="timeline" className="mt-6 space-y-4">
               <TabsList>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
                 <TabsTrigger value="quotes">Quotes</TabsTrigger>
@@ -336,7 +450,7 @@ export default function OpportunityDetailPage() {
                               <TableHead>Owner</TableHead>
                               <TableHead>Due Date</TableHead>
                               <TableHead>Status</TableHead>
-                              <TableHead>Completed</TableHead>
+                              <TableHead className="text-right">Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -346,7 +460,22 @@ export default function OpportunityDetailPage() {
                                 <TableCell>{task.owner_username || '-'}</TableCell>
                                 <TableCell>{formatDate(task.due_date)}</TableCell>
                                 <TableCell>{task.status}</TableCell>
-                                <TableCell>{formatDateTime(task.completed_at)}</TableCell>
+                                <TableCell className="text-right">
+                                  {task.status === 'PENDING' ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleCompleteTask(task.id)}
+                                      disabled={completingTaskIds.has(task.id)}
+                                    >
+                                      {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
+                                    </Button>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground">
+                                      Completed {formatDate(task.completed_at)}
+                                    </span>
+                                  )}
+                                </TableCell>
                               </TableRow>
                             ))}
                           </TableBody>

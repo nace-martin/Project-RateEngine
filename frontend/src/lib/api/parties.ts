@@ -21,6 +21,21 @@ export async function searchCompanies(
   return response.json();
 }
 
+export async function getCompany(
+  companyId: string,
+): Promise<CompanySearchResult> {
+  const url = API_BASE_URL + `/api/v3/customers/${companyId}/`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch company");
+  }
+  return response.json();
+}
+
 export async function getContactsForCompany(
   companyId: string,
 ): Promise<Contact[]> {
@@ -67,5 +82,20 @@ export async function searchLocations(
     throw new Error("Failed to search locations");
   }
 
+  return response.json();
+}
+
+export async function getLocation(
+  locationId: string,
+): Promise<LocationSearchResult> {
+  const url = API_BASE_URL + `/api/v3/locations/${locationId}/`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${getToken()}`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch location");
+  }
   return response.json();
 }

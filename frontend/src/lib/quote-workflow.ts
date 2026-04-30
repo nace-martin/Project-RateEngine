@@ -56,6 +56,7 @@ export const buildQuoteComputePayload = (
   const commodityCode = CARGO_TYPE_TO_COMMODITY_CODE[data.cargo_type] || "GCR";
   const payload: V3QuoteComputeRequest = {
     quote_id: existingQuoteId || undefined,
+    opportunity_id: data.opportunity_id,
     customer_id: data.customer_id,
     contact_id: data.contact_id,
     mode: data.mode,

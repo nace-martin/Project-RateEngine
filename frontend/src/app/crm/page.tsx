@@ -18,8 +18,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { listOpportunities, listRecentInteractions, listTasks } from '@/lib/api/crm';
+import { listOpportunities, listRecentInteractions, listTasks, completeTask } from '@/lib/api/crm';
 import type { Interaction, Opportunity, Task } from '@/lib/types';
+import { useToast } from '@/context/toast-context';
 
 const openStatuses = new Set(['NEW', 'QUALIFIED', 'QUOTED']);
 const taskOpenStatuses = new Set(['PENDING']);
@@ -127,10 +128,12 @@ function statusBadgeVariant(status: string) {
 }
 
 export default function CrmDashboardPage() {
+  const { toast } = useToast();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
 
@@ -159,6 +162,24 @@ export default function CrmDashboardPage() {
   useEffect(() => {
     void loadDashboardData();
   }, [loadDashboardData]);
+
+  const handleCompleteTask = async (taskId: string) => {
+    if (completingTaskIds.has(taskId)) return;
+    setCompletingTaskIds((current) => new Set(current).add(taskId));
+    try {
+      await completeTask(taskId);
+      toast({ title: 'Task Completed', variant: 'success' });
+      void loadDashboardData();
+    } catch (err) {
+      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
+    } finally {
+      setCompletingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
 
   const opportunityById = useMemo(() => {
     return new Map(opportunities.map((opportunity) => [opportunity.id, opportunity]));
@@ -359,21 +380,20 @@ export default function CrmDashboardPage() {
                       <TableRow>
                         <TableHead>Description</TableHead>
                         <TableHead>Context</TableHead>
-                        <TableHead>Owner</TableHead>
                         <TableHead>Due</TableHead>
-                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loading ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
                             Loading tasks...
                           </TableCell>
                         </TableRow>
                       ) : tasksDue.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
                             No tasks due this week.
                           </TableCell>
                         </TableRow>
@@ -394,14 +414,22 @@ export default function CrmDashboardPage() {
                                   '-'
                                 )}
                               </TableCell>
-                              <TableCell>{task.owner_username || '-'}</TableCell>
                               <TableCell>
                                 <div className="flex flex-col">
                                   <span>{formatDate(task.due_date)}</span>
                                   <span className="text-xs text-muted-foreground">{taskBucket(task)}</span>
                                 </div>
                               </TableCell>
-                              <TableCell>{task.status}</TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleCompleteTask(task.id)}
+                                  disabled={completingTaskIds.has(task.id)}
+                                >
+                                  {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
+                                </Button>
+                              </TableCell>
                             </TableRow>
                           );
                         })

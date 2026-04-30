@@ -300,6 +300,7 @@ export interface V3ManualOverride {
 
 export interface V3QuoteComputeRequest {
   quote_id?: string;
+  opportunity_id?: string;
   customer_id: string;
   contact_id: string;
   mode: string;
