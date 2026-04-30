@@ -53,6 +53,7 @@ export default function AppHeader({ onLogActivity }: AppHeaderProps) {
   // Customers - only for non-Finance roles
   if (!isFinance) {
     navItems.push({ href: '/customers', label: 'Customers', icon: Users });
+    navItems.push({ href: '/crm', label: 'Sales CRM', icon: FileText });
     navItems.push({ href: '/crm/opportunities', label: 'Opportunities', icon: FileText });
   }
 
@@ -117,7 +118,11 @@ export default function AppHeader({ onLogActivity }: AppHeaderProps) {
               <nav className="flex flex-col gap-1">
                 {navItems.map((item) => {
                   const Icon = item.icon;
-                  const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+                  const isActive = item.href === '/'
+                    ? pathname === item.href
+                    : item.href === '/crm'
+                      ? pathname === item.href
+                      : pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
                     <Link
                       key={item.href}
@@ -198,7 +203,11 @@ export default function AppHeader({ onLogActivity }: AppHeaderProps) {
             // Priority: Text First. Icons Removed for desktop as per "Icons optional but de-emphasized" (or kept separate but small)
             // User request: "Icons optional but de-emphasized (text-first priority)"
             // I will keep generic active logic but styling: text-muted-foreground vs text-primary
-            const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+            const isActive = item.href === '/'
+              ? pathname === item.href
+              : item.href === '/crm'
+                ? pathname === item.href
+                : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
             return (
               <Link

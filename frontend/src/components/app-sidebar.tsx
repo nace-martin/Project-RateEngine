@@ -52,6 +52,13 @@ export function AppSidebar() {
             color: 'text-pink-700',
         },
         {
+            label: 'CRM Dashboard',
+            icon: FileText,
+            href: '/crm',
+            color: 'text-slate-600',
+            role: ['sales', 'manager', 'admin']
+        },
+        {
             label: 'Opportunities',
             icon: FileText,
             href: '/crm/opportunities',
@@ -116,6 +123,11 @@ export function AppSidebar() {
                 </Button>
                 {routes.map((route) => {
                     if (route.role && (!user || !route.role.includes(user.role))) return null;
+                    const isActive = route.href === "/"
+                        ? pathname === route.href
+                        : route.href === "/crm"
+                            ? pathname === route.href
+                            : pathname === route.href || pathname.startsWith(`${route.href}/`);
 
                     return (
                         <Link
@@ -123,7 +135,7 @@ export function AppSidebar() {
                             href={route.href}
                             className={cn(
                                 "text-sm group flex p-3 w-full justify-start font-medium cursor-pointer hover:text-primary hover:bg-primary/10 rounded-lg transition",
-                                pathname === route.href || (route.href !== "/" && pathname.startsWith(route.href)) ? "bg-primary/10 text-primary" : "text-muted-foreground",
+                                isActive ? "bg-primary/10 text-primary" : "text-muted-foreground",
                                 collapsed && "justify-center"
                             )}
                         >

@@ -158,6 +158,25 @@ export async function listInteractionsByCompany(companyId: string): Promise<Inte
   return normalizeListResponse(payload);
 }
 
+export async function listRecentInteractions(): Promise<Interaction[]> {
+  const url = new URL(API_BASE_URL + "/api/v3/crm/interactions/");
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load recent activity: ${detail}`);
+  }
+
+  const payload = (await response.json()) as Interaction[] | PaginatedResponse<Interaction>;
+  return normalizeListResponse(payload);
+}
+
 export async function listInteractionsByOpportunity(opportunityId: string): Promise<Interaction[]> {
   const url = new URL(API_BASE_URL + "/api/v3/crm/interactions/");
   url.searchParams.set("opportunity", opportunityId);
@@ -178,9 +197,17 @@ export async function listInteractionsByOpportunity(opportunityId: string): Prom
   return normalizeListResponse(payload);
 }
 
-export async function listTasksByOpportunity(opportunityId: string): Promise<Task[]> {
+type ListTaskParams = {
+  owner?: string;
+  status?: string;
+  due_date?: string;
+  company?: string;
+  opportunity?: string;
+};
+
+export async function listTasks(params: ListTaskParams = {}): Promise<Task[]> {
   const url = new URL(API_BASE_URL + "/api/v3/crm/tasks/");
-  url.searchParams.set("opportunity", opportunityId);
+  appendDefinedParams(url, params);
 
   const response = await fetch(url.toString(), {
     headers: {
@@ -196,6 +223,10 @@ export async function listTasksByOpportunity(opportunityId: string): Promise<Tas
 
   const payload = (await response.json()) as Task[] | PaginatedResponse<Task>;
   return normalizeListResponse(payload);
+}
+
+export async function listTasksByOpportunity(opportunityId: string): Promise<Task[]> {
+  return listTasks({ opportunity: opportunityId });
 }
 
 export async function listQuotesByOpportunity(opportunityId: string): Promise<V3QuoteComputeResponse[]> {
