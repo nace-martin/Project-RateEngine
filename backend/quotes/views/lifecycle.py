@@ -296,6 +296,10 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             # if the base queryset is already restricted for Sales.
             qs = qs.filter(created_by_id=creator_id)
 
+        opportunity_id = self.request.query_params.get('opportunity')
+        if opportunity_id:
+            qs = qs.filter(opportunity_id=opportunity_id)
+
         # 3. Archival Filtering
         is_archived_param = self.request.query_params.get('is_archived')        
         if is_archived_param is not None:

@@ -143,6 +143,27 @@ export interface Opportunity {
   updated_at?: string;
 }
 
+export interface OpportunityPayload {
+  company: string;
+  title: string;
+  service_type: string;
+  direction?: string;
+  scope?: string;
+  origin: string;
+  destination: string;
+  estimated_weight_kg?: string | number | null;
+  estimated_volume_cbm?: string | number | null;
+  estimated_fcl_count?: number | null;
+  estimated_frequency?: string;
+  estimated_revenue?: string | number | null;
+  estimated_currency?: string;
+  status: string;
+  priority: string;
+  owner?: number | null;
+  next_action?: string;
+  next_action_date?: string | null;
+}
+
 export interface Interaction {
   id: string;
   company: string;
@@ -468,6 +489,7 @@ export interface V3QuoteComputeResponse {
   quote_number: string;
   customer: string | QuoteCustomerRef;
   contact: string | QuoteContactRef;
+  opportunity?: string | null;
   branding?: QuoteBrandingRef | null;
   mode: string;
   shipment_type: string; // The backend calculates and returns this

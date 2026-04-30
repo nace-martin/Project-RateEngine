@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import ProtectedRoute from '@/components/protected-route';
@@ -128,6 +129,11 @@ export default function OpportunityListPage() {
         <PageHeader
           title="Opportunities"
           description="Review active and closed CRM opportunities before dashboards and pipeline boards are added."
+          actions={
+            <Button asChild>
+              <Link href="/crm/opportunities/new">New Opportunity</Link>
+            </Button>
+          }
         />
 
         <Card className="border-slate-200 shadow-sm">

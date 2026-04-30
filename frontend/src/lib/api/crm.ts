@@ -3,8 +3,10 @@ import type {
   CreateInteractionPayload,
   Interaction,
   Opportunity,
+  OpportunityPayload,
   PaginatedResponse,
   Task,
+  V3QuoteComputeResponse,
 } from "../types";
 import { searchCompanies as searchPartyCompanies } from "./parties";
 import { API_BASE_URL, parseErrorResponse, resolveAuthToken } from "./shared";
@@ -93,6 +95,45 @@ export async function getOpportunity(opportunityId: string): Promise<Opportunity
   return response.json();
 }
 
+export async function createOpportunity(data: OpportunityPayload): Promise<Opportunity> {
+  const response = await fetch(API_BASE_URL + "/api/v3/crm/opportunities/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to create opportunity: ${detail}`);
+  }
+
+  return response.json();
+}
+
+export async function updateOpportunity(
+  opportunityId: string,
+  data: Partial<OpportunityPayload>,
+): Promise<Opportunity> {
+  const response = await fetch(API_BASE_URL + `/api/v3/crm/opportunities/${opportunityId}/`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to update opportunity: ${detail}`);
+  }
+
+  return response.json();
+}
+
 export async function listOpportunitiesByCompany(companyId: string): Promise<Opportunity[]> {
   return listOpportunities({ company: companyId });
 }
@@ -154,5 +195,26 @@ export async function listTasksByOpportunity(opportunityId: string): Promise<Tas
   }
 
   const payload = (await response.json()) as Task[] | PaginatedResponse<Task>;
+  return normalizeListResponse(payload);
+}
+
+export async function listQuotesByOpportunity(opportunityId: string): Promise<V3QuoteComputeResponse[]> {
+  const url = new URL(API_BASE_URL + "/api/v3/quotes/");
+  url.searchParams.set("opportunity", opportunityId);
+  url.searchParams.set("is_archived", "false");
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load linked quotes: ${detail}`);
+  }
+
+  const payload = (await response.json()) as V3QuoteComputeResponse[] | PaginatedResponse<V3QuoteComputeResponse>;
   return normalizeListResponse(payload);
 }

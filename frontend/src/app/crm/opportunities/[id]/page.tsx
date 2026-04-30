@@ -19,8 +19,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { getOpportunity, listInteractionsByOpportunity, listTasksByOpportunity } from '@/lib/api/crm';
-import type { CompanySearchResult, Interaction, Opportunity, Task } from '@/lib/types';
+import { getOpportunity, listInteractionsByOpportunity, listQuotesByOpportunity, listTasksByOpportunity } from '@/lib/api/crm';
+import type { CompanySearchResult, Interaction, Opportunity, Task, V3QuoteComputeResponse } from '@/lib/types';
 
 const interactionLabels: Record<string, string> = {
   CALL: 'Call',
@@ -114,6 +114,7 @@ export default function OpportunityDetailPage() {
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
@@ -122,19 +123,22 @@ export default function OpportunityDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [opportunityRow, interactionRows, taskRows] = await Promise.all([
+      const [opportunityRow, interactionRows, taskRows, quoteRows] = await Promise.all([
         getOpportunity(params.id),
         listInteractionsByOpportunity(params.id),
         listTasksByOpportunity(params.id).catch(() => []),
+        listQuotesByOpportunity(params.id).catch(() => []),
       ]);
       setOpportunity(opportunityRow);
       setInteractions(interactionRows);
       setTasks(taskRows);
+      setQuotes(quoteRows);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load opportunity.');
       setOpportunity(null);
       setInteractions([]);
       setTasks([]);
+      setQuotes([]);
     } finally {
       setLoading(false);
     }
@@ -159,6 +163,13 @@ export default function OpportunityDetailPage() {
     }
     : null;
 
+  const formatQuoteTotal = (quote: V3QuoteComputeResponse): string => {
+    const totals = quote.latest_version?.totals;
+    const amount = totals?.total_sell_fcy_incl_gst || totals?.total_sell_fcy || totals?.total_sell_pgk;
+    const currency = totals?.total_sell_fcy_currency || totals?.currency || quote.output_currency || 'PGK';
+    return formatCurrency(amount, currency);
+  };
+
   return (
     <ProtectedRoute>
       <StandardPageContainer>
@@ -170,6 +181,11 @@ export default function OpportunityDetailPage() {
               <Button variant="outline" asChild>
                 <Link href="/crm/opportunities">Back to Opportunities</Link>
               </Button>
+              {opportunity ? (
+                <Button variant="outline" asChild>
+                  <Link href={`/crm/opportunities/${opportunity.id}/edit`}>Edit</Link>
+                </Button>
+              ) : null}
               {opportunity ? (
                 <Button type="button" onClick={() => setQuickLogOpen(true)}>
                   Log Activity
@@ -259,12 +275,43 @@ export default function OpportunityDetailPage() {
                 <Card className="border-slate-200 shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg">Quotes</CardTitle>
-                    <CardDescription>Linked quote display is reserved for a clean quotes API filter by opportunity.</CardDescription>
+                    <CardDescription>Quotes linked to this CRM opportunity.</CardDescription>
                   </CardHeader>
                   <CardContent className="px-6 pb-6 pt-2">
-                    <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      Quote records already support optional CRM opportunity links, but this screen does not load all quotes client-side to infer matches.
-                    </p>
+                    {quotes.length === 0 ? (
+                      <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                        No quotes linked to this opportunity.
+                      </p>
+                    ) : (
+                      <div className="overflow-hidden rounded-md border border-slate-200">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Quote</TableHead>
+                              <TableHead>Status</TableHead>
+                              <TableHead>Created</TableHead>
+                              <TableHead className="text-right">Total Sell</TableHead>
+                              <TableHead className="text-right">Action</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {quotes.map((quote) => (
+                              <TableRow key={quote.id}>
+                                <TableCell className="font-medium">{quote.quote_number || quote.id}</TableCell>
+                                <TableCell>{quote.status}</TableCell>
+                                <TableCell>{formatDateTime(quote.created_at)}</TableCell>
+                                <TableCell className="text-right tabular-nums">{formatQuoteTotal(quote)}</TableCell>
+                                <TableCell className="text-right">
+                                  <Button variant="ghost" size="sm" asChild>
+                                    <Link href={`/quotes/${quote.id}`}>View</Link>
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>

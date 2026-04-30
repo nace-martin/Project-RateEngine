@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from rest_framework.test import APIClient
 
 from crm.models import Interaction, Opportunity, Task
 from crm.services import mark_opportunity_lost, mark_opportunity_quoted, mark_opportunity_won
@@ -157,6 +158,29 @@ def test_quote_can_link_to_opportunity(company, opportunity, user):
 
     assert quote.opportunity == opportunity
     assert opportunity.quotes.get() == quote
+
+
+@pytest.mark.django_db
+def test_quote_api_filters_by_opportunity(company, opportunity, user):
+    other_opportunity = Opportunity.objects.create(
+        company=company,
+        title="Unrelated lane",
+        service_type="SEA",
+        origin="LAE",
+        destination="POM",
+        owner=user,
+    )
+    matching_quote = create_quote(company, opportunity, user)
+    create_quote(company, other_opportunity, user)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.get(f"/api/v3/quotes/?opportunity={opportunity.id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    results = payload["results"] if isinstance(payload, dict) and "results" in payload else payload
+    assert [row["id"] for row in results] == [str(matching_quote.id)]
 
 
 @pytest.mark.django_db
