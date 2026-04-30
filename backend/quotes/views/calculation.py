@@ -488,6 +488,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Update the existing quote details and append a new version
             quote.customer = customer
             quote.contact = contact
+            if validated_data.opportunity_id:
+                quote.opportunity = opportunity
             quote.mode = validated_data.mode
             quote.shipment_type = shipment_type
             quote.incoterm = validated_data.incoterm

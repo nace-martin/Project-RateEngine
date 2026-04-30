@@ -3,6 +3,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
+from django.http import Http404
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -13,10 +14,12 @@ from core.commodity import COMMODITY_CODE_AVI, COMMODITY_CODE_DG, DEFAULT_COMMOD
 from core.dataclasses import CalculatedTotals, QuoteCharges
 from core.models import Country, Currency, FxSnapshot, Location, Policy
 from core.tests.helpers import create_location
+from crm.models import Opportunity
 from parties.models import Company, Contact
 from pricing_v4.models import CommodityChargeRule, ProductCode
 from quotes.models import Quote
 from quotes.schemas import QuoteComputeRequest
+from quotes.services.rate_resolution import ResolvedRateDimensions
 from quotes.views.calculation import QuoteComputeV3APIView, _classify_shipment_type
 
 
@@ -115,6 +118,16 @@ class QuoteCommodityPersistenceTests(TestCase):
         request.user = self.user
         return request
 
+    def _resolved_dimensions(self):
+        return ResolvedRateDimensions(
+            buy_currency=None,
+            agent_id=None,
+            carrier_id=None,
+            resolution_basis="TEST",
+            required_components=(),
+            buy_side_components=(),
+        )
+
     def test_build_quote_input_carries_commodity_code(self):
         payload = QuoteComputeRequest(
             customer_id=self.customer.id,
@@ -143,6 +156,7 @@ class QuoteCommodityPersistenceTests(TestCase):
             shipment_type,
             self.origin,
             self.destination,
+            self._resolved_dimensions(),
         )
 
         self.assertEqual(quote_input.shipment.commodity_code, COMMODITY_CODE_AVI)
@@ -199,6 +213,147 @@ class QuoteCommodityPersistenceTests(TestCase):
         self.assertFalse(quote.is_dangerous_goods)
         self.assertEqual(quote.request_details_json["commodity_code"], COMMODITY_CODE_AVI)
         self.assertEqual(version.payload_json["commodity_code"], COMMODITY_CODE_AVI)
+
+    def _empty_charges(self):
+        return QuoteCharges(
+            lines=[],
+            totals=CalculatedTotals(
+                total_cost_pgk=Decimal("0.00"),
+                total_sell_pgk=Decimal("0.00"),
+                total_sell_pgk_incl_gst=Decimal("0.00"),
+                total_sell_fcy=Decimal("0.00"),
+                total_sell_fcy_incl_gst=Decimal("0.00"),
+                total_sell_fcy_currency="PGK",
+                has_missing_rates=False,
+            ),
+        )
+
+    def _base_payload(self, **overrides):
+        payload = {
+            "customer_id": self.customer.id,
+            "contact_id": self.contact.id,
+            "mode": "AIR",
+            "service_scope": "A2D",
+            "origin_location_id": self.origin.id,
+            "destination_location_id": self.destination.id,
+            "incoterm": "DAP",
+            "payment_term": "PREPAID",
+            "dimensions": [
+                {
+                    "pieces": 2,
+                    "length_cm": "20",
+                    "width_cm": "30",
+                    "height_cm": "40",
+                    "gross_weight_kg": "60",
+                }
+            ],
+        }
+        payload.update(overrides)
+        return QuoteComputeRequest(**payload)
+
+    def test_save_quote_create_still_works_without_opportunity_id(self):
+        payload = self._base_payload()
+
+        quote = QuoteComputeV3APIView()._save_quote_v3(
+            request=self._build_request(),
+            validated_data=payload,
+            shipment_type=Quote.ShipmentType.IMPORT,
+            charges=self._empty_charges(),
+            snapshot=self.fx_snapshot,
+            policy=self.policy,
+            output_currency="PGK",
+            initial_status=Quote.Status.DRAFT,
+        )
+
+        self.assertIsNone(quote.opportunity_id)
+        self.assertEqual(quote.customer, self.customer)
+
+    def test_save_quote_update_attaches_valid_opportunity_id(self):
+        quote = Quote.objects.create(
+            customer=self.customer,
+            contact=self.contact,
+            mode="AIR",
+            shipment_type=Quote.ShipmentType.IMPORT,
+            status=Quote.Status.DRAFT,
+            created_by=self.user,
+        )
+        opportunity = Opportunity.objects.create(
+            company=self.customer,
+            title="CRM linked quote",
+            service_type="AIR",
+            owner=self.user,
+        )
+        payload = self._base_payload(quote_id=quote.id, opportunity_id=opportunity.id)
+
+        updated = QuoteComputeV3APIView()._save_quote_v3(
+            request=self._build_request(),
+            validated_data=payload,
+            shipment_type=Quote.ShipmentType.IMPORT,
+            charges=self._empty_charges(),
+            snapshot=self.fx_snapshot,
+            policy=self.policy,
+            output_currency="PGK",
+            initial_status=Quote.Status.DRAFT,
+            quote=quote,
+        )
+
+        updated.refresh_from_db()
+        self.assertEqual(updated.opportunity, opportunity)
+
+    def test_save_quote_update_preserves_opportunity_when_opportunity_id_omitted(self):
+        opportunity = Opportunity.objects.create(
+            company=self.customer,
+            title="Existing CRM link",
+            service_type="AIR",
+            owner=self.user,
+        )
+        quote = Quote.objects.create(
+            customer=self.customer,
+            contact=self.contact,
+            opportunity=opportunity,
+            mode="AIR",
+            shipment_type=Quote.ShipmentType.IMPORT,
+            status=Quote.Status.DRAFT,
+            created_by=self.user,
+        )
+        payload = self._base_payload(quote_id=quote.id)
+
+        updated = QuoteComputeV3APIView()._save_quote_v3(
+            request=self._build_request(),
+            validated_data=payload,
+            shipment_type=Quote.ShipmentType.IMPORT,
+            charges=self._empty_charges(),
+            snapshot=self.fx_snapshot,
+            policy=self.policy,
+            output_currency="PGK",
+            initial_status=Quote.Status.DRAFT,
+            quote=quote,
+        )
+
+        updated.refresh_from_db()
+        self.assertEqual(updated.opportunity, opportunity)
+
+    def test_save_quote_rejects_opportunity_customer_mismatch(self):
+        other_customer = Company.objects.create(name="Other Customer")
+        opportunity = Opportunity.objects.create(
+            company=other_customer,
+            title="Wrong customer opportunity",
+            service_type="AIR",
+            owner=self.user,
+        )
+        payload = self._base_payload(opportunity_id=opportunity.id)
+
+        with self.assertRaises(Http404):
+            QuoteComputeV3APIView()._save_quote_v3(
+                request=self._build_request(),
+                validated_data=payload,
+                shipment_type=Quote.ShipmentType.IMPORT,
+                charges=self._empty_charges(),
+                snapshot=self.fx_snapshot,
+                policy=self.policy,
+                output_currency="PGK",
+                initial_status=Quote.Status.DRAFT,
+            )
 
 
 class QuoteCommodityAPITests(APITestCase):

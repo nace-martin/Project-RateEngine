@@ -15,6 +15,7 @@ import { useConfirm } from "@/hooks/useConfirm";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { getNewQuoteCopy } from "@/lib/page-copy";
+import { buildQuotePrefillDefaults } from "@/lib/crm-quote-prefill";
 import { buildQuoteComputePayload, getQuoteMissingRateFlags } from "@/lib/quote-workflow";
 import type { CompanySearchResult, LocationSearchResult } from "@/lib/types";
 import {
@@ -41,11 +42,6 @@ const resolveLocationParam = async (value: string | null): Promise<LocationSearc
   return matches.find((location) => location.code.toUpperCase() === upper) || matches[0];
 };
 
-const quoteModeFromServiceType = (serviceType: string | null): QuoteFormSchemaV3["mode"] => {
-  if ((serviceType || "").toUpperCase() === "AIR") return "AIR";
-  return "AIR";
-};
-
 function NewQuoteContent() {
   const { user } = useAuth();
   const router = useRouter();
@@ -61,6 +57,7 @@ function NewQuoteContent() {
   const [initialOrigin, setInitialOrigin] = useState<LocationSearchResult | undefined>(undefined);
   const [initialDestination, setInitialDestination] = useState<LocationSearchResult | undefined>(undefined);
   const [defaultValues, setDefaultValues] = useState<Partial<QuoteFormSchemaV3> | undefined>(undefined);
+  const [unsupportedServiceType, setUnsupportedServiceType] = useState<string | undefined>(undefined);
   const [isLoadingInitial, setIsLoadingInitial] = useState(false);
 
   useEffect(() => {
@@ -84,15 +81,17 @@ function NewQuoteContent() {
           if (origin) setInitialOrigin(origin);
           if (destination) setInitialDestination(destination);
 
-          setDefaultValues({
-            customer_id: customerId || "",
-            opportunity_id: opportunityId || undefined,
-            mode: quoteModeFromServiceType(serviceType),
-            origin_location_id: origin?.id || "",
-            destination_location_id: destination?.id || "",
-            origin_airport: origin?.code || "",
-            destination_airport: destination?.code || "",
+          const prefill = buildQuotePrefillDefaults({
+            companyId: customerId,
+            opportunityId,
+            serviceType,
+            originLocationId: origin?.id,
+            destinationLocationId: destination?.id,
+            originCode: origin?.code,
+            destinationCode: destination?.code,
           });
+          setDefaultValues(prefill.defaultValues);
+          setUnsupportedServiceType(prefill.unsupportedServiceType);
         } catch (err) {
           console.error("Failed to load initial data from params", err);
         } finally {
@@ -218,18 +217,26 @@ function NewQuoteContent() {
           <p className="text-muted-foreground">Loading initial data...</p>
         </div>
       ) : (
-        <QuoteForm
-          user={user}
-          defaultValues={defaultValues}
-          initialCustomer={initialCustomer}
-          initialOrigin={initialOrigin}
-          initialDestination={initialDestination}
-          onSubmit={handleQuoteSubmit}
-          isSubmitting={isSubmitting}
-          serverError={apiError}
-          onDirtyChange={setIsFormDirty}
-          onCancel={handleCancel}
-        />
+        <>
+          {unsupportedServiceType && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              This CRM opportunity uses {unsupportedServiceType}. The quote form currently supports AIR quotes only, so
+              the quote mode was not prefilled from the opportunity.
+            </div>
+          )}
+          <QuoteForm
+            user={user}
+            defaultValues={defaultValues}
+            initialCustomer={initialCustomer}
+            initialOrigin={initialOrigin}
+            initialDestination={initialDestination}
+            onSubmit={handleQuoteSubmit}
+            isSubmitting={isSubmitting}
+            serverError={apiError}
+            onDirtyChange={setIsFormDirty}
+            onCancel={handleCancel}
+          />
+        </>
       )}
 
       {showMissingRatesModal && (

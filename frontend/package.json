@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test:quote-store": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/quote-store.test.mjs",
     "test:quote-workflow": "node scripts/quote-workflow-roundtrip.test.mjs",
+    "test:crm-quote-prefill": "node scripts/crm-quote-prefill.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
