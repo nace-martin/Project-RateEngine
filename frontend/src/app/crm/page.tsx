@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
+import { CrmSubNav } from '@/components/crm/CrmSubNav';
 import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
@@ -236,7 +237,7 @@ export default function CrmDashboardPage() {
     <ProtectedRoute>
       <StandardPageContainer>
         <PageHeader
-          title="Sales CRM"
+          title="CRM"
           description="Pipeline, follow-ups, and recent CRM activity."
           actions={
             <>
@@ -250,157 +251,71 @@ export default function CrmDashboardPage() {
           }
         />
 
+        <CrmSubNav />
+
         {error ? (
           <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {error}
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <KpiCard
-            label="Open Opportunities"
-            value={loading ? '...' : String(openOpportunities.length)}
-            detail="NEW, QUALIFIED, and QUOTED"
-          />
-          <KpiCard
-            label="Open Pipeline"
-            value={loading ? '...' : formatCurrency(pipelineRevenue, 'PGK')}
-            detail="Estimated revenue across open opportunities"
-          />
-          <KpiCard
-            label="Won This Month"
-            value={loading ? '...' : String(wonThisMonth)}
-            detail="Opportunities with won_at in the current month"
-          />
-          <KpiCard
-            label="Overdue Tasks"
-            value={loading ? '...' : String(overdueTasks.length)}
-            detail="Pending tasks past due date"
-          />
-        </div>
-
-        <Card className="border-slate-200 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Priority Opportunities</CardTitle>
-            <CardDescription>Overdue follow-ups first, then priority and oldest activity.</CardDescription>
-          </CardHeader>
-          <CardContent className="px-6 pb-6 pt-2">
-            <div className="overflow-hidden rounded-md border border-slate-200">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Company</TableHead>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Service</TableHead>
-                    <TableHead>Route</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Priority</TableHead>
-                    <TableHead className="text-right">Est. Revenue</TableHead>
-                    <TableHead>Next Action</TableHead>
-                    <TableHead>Last Activity</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
-                        Loading opportunities...
-                      </TableCell>
-                    </TableRow>
-                  ) : priorityOpportunities.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
-                        No open opportunities.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    priorityOpportunities.map((opportunity) => (
-                      <TableRow key={opportunity.id}>
-                        <TableCell>{opportunity.company_name || '-'}</TableCell>
-                        <TableCell className="font-medium">
-                          <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
-                            {opportunity.title}
-                          </Link>
-                        </TableCell>
-                        <TableCell>{opportunity.service_type || '-'}</TableCell>
-                        <TableCell>{[opportunity.origin, opportunity.destination].filter(Boolean).join(' - ') || '-'}</TableCell>
-                        <TableCell>
-                          <Badge variant={statusBadgeVariant(opportunity.status)}>{opportunity.status}</Badge>
-                        </TableCell>
-                        <TableCell>{opportunity.priority || '-'}</TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatCurrency(opportunity.estimated_revenue, opportunity.estimated_currency)}
-                        </TableCell>
-                        <TableCell>{formatDate(opportunity.next_action_date)}</TableCell>
-                        <TableCell>{formatDateTime(opportunity.last_activity_at)}</TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="space-y-6">
           <Card className="border-slate-200 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Tasks Due</CardTitle>
-              <CardDescription>Overdue, today, and this week.</CardDescription>
+              <CardTitle className="text-lg">Priority Opportunities</CardTitle>
+              <CardDescription>Overdue follow-ups first, then priority and oldest activity.</CardDescription>
             </CardHeader>
             <CardContent className="px-6 pb-6 pt-2">
               <div className="overflow-hidden rounded-md border border-slate-200">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Context</TableHead>
-                      <TableHead>Owner</TableHead>
-                      <TableHead>Due</TableHead>
+                      <TableHead>Company</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Service</TableHead>
+                      <TableHead>Route</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Priority</TableHead>
+                      <TableHead className="text-right">Est. Revenue</TableHead>
+                      <TableHead>Next Action</TableHead>
+                      <TableHead>Last Activity</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                          Loading tasks...
+                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                          Loading opportunities...
                         </TableCell>
                       </TableRow>
-                    ) : tasksDue.length === 0 ? (
+                    ) : priorityOpportunities.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                          No tasks due this week.
+                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                          No open opportunities.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      tasksDue.map((task) => {
-                        const opportunity = task.opportunity ? opportunityById.get(task.opportunity) : null;
-                        return (
-                          <TableRow key={task.id}>
-                            <TableCell className="font-medium">{task.description}</TableCell>
-                            <TableCell>
-                              {opportunity ? (
-                                <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
-                                  {opportunity.title}
-                                </Link>
-                              ) : task.company ? (
-                                'Company linked'
-                              ) : (
-                                '-'
-                              )}
-                            </TableCell>
-                            <TableCell>{task.owner_username || '-'}</TableCell>
-                            <TableCell>
-                              <div className="flex flex-col">
-                                <span>{formatDate(task.due_date)}</span>
-                                <span className="text-xs text-muted-foreground">{taskBucket(task)}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell>{task.status}</TableCell>
-                          </TableRow>
-                        );
-                      })
+                      priorityOpportunities.map((opportunity) => (
+                        <TableRow key={opportunity.id}>
+                          <TableCell>{opportunity.company_name || '-'}</TableCell>
+                          <TableCell className="font-medium">
+                            <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
+                              {opportunity.title}
+                            </Link>
+                          </TableCell>
+                          <TableCell>{opportunity.service_type || '-'}</TableCell>
+                          <TableCell>{[opportunity.origin, opportunity.destination].filter(Boolean).join(' - ') || '-'}</TableCell>
+                          <TableCell>
+                            <Badge variant={statusBadgeVariant(opportunity.status)}>{opportunity.status}</Badge>
+                          </TableCell>
+                          <TableCell>{opportunity.priority || '-'}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatCurrency(opportunity.estimated_revenue, opportunity.estimated_currency)}
+                          </TableCell>
+                          <TableCell>{formatDate(opportunity.next_action_date)}</TableCell>
+                          <TableCell>{formatDateTime(opportunity.last_activity_at)}</TableCell>
+                        </TableRow>
+                      ))
                     )}
                   </TableBody>
                 </Table>
@@ -408,49 +323,139 @@ export default function CrmDashboardPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Recent Activity</CardTitle>
-              <CardDescription>Newest CRM interactions.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 px-6 pb-6 pt-2">
-              {loading ? (
-                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                  Loading activity...
-                </p>
-              ) : recentActivity.length === 0 ? (
-                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                  No recent activity.
-                </p>
-              ) : (
-                recentActivity.map((interaction) => {
-                  const opportunity = interaction.opportunity ? opportunityById.get(interaction.opportunity) : null;
-                  const isSystem = Boolean(interaction.is_system_generated);
-                  return (
-                    <div key={interaction.id} className="rounded-md border border-slate-200 bg-white p-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={isSystem ? 'secondary' : 'outline'}>
-                          {isSystem ? 'SYSTEM' : interactionLabels[interaction.interaction_type] || interaction.interaction_type}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">{formatDateTime(interaction.created_at)}</span>
-                        {interaction.company_name ? (
-                          <span className="text-xs font-medium text-slate-600">{interaction.company_name}</span>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <KpiCard
+              label="Open Opportunities"
+              value={loading ? '...' : String(openOpportunities.length)}
+              detail="NEW, QUALIFIED, and QUOTED"
+            />
+            <KpiCard
+              label="Open Pipeline"
+              value={loading ? '...' : formatCurrency(pipelineRevenue, 'PGK')}
+              detail="Estimated revenue across open opportunities"
+            />
+            <KpiCard
+              label="Won This Month"
+              value={loading ? '...' : String(wonThisMonth)}
+              detail="Opportunities with won_at in the current month"
+            />
+            <KpiCard
+              label="Overdue Tasks"
+              value={loading ? '...' : String(overdueTasks.length)}
+              detail="Pending tasks past due date"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">Tasks Due</CardTitle>
+                <CardDescription>Overdue, today, and this week.</CardDescription>
+              </CardHeader>
+              <CardContent className="px-6 pb-6 pt-2">
+                <div className="overflow-hidden rounded-md border border-slate-200">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Description</TableHead>
+                        <TableHead>Context</TableHead>
+                        <TableHead>Owner</TableHead>
+                        <TableHead>Due</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {loading ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                            Loading tasks...
+                          </TableCell>
+                        </TableRow>
+                      ) : tasksDue.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                            No tasks due this week.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        tasksDue.map((task) => {
+                          const opportunity = task.opportunity ? opportunityById.get(task.opportunity) : null;
+                          return (
+                            <TableRow key={task.id}>
+                              <TableCell className="font-medium">{task.description}</TableCell>
+                              <TableCell>
+                                {opportunity ? (
+                                  <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
+                                    {opportunity.title}
+                                  </Link>
+                                ) : task.company ? (
+                                  'Company linked'
+                                ) : (
+                                  '-'
+                                )}
+                              </TableCell>
+                              <TableCell>{task.owner_username || '-'}</TableCell>
+                              <TableCell>
+                                <div className="flex flex-col">
+                                  <span>{formatDate(task.due_date)}</span>
+                                  <span className="text-xs text-muted-foreground">{taskBucket(task)}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>{task.status}</TableCell>
+                            </TableRow>
+                          );
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">Recent Activity</CardTitle>
+                <CardDescription>Newest CRM interactions.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 px-6 pb-6 pt-2">
+                {loading ? (
+                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    Loading activity...
+                  </p>
+                ) : recentActivity.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    No recent activity.
+                  </p>
+                ) : (
+                  recentActivity.map((interaction) => {
+                    const opportunity = interaction.opportunity ? opportunityById.get(interaction.opportunity) : null;
+                    const isSystem = Boolean(interaction.is_system_generated);
+                    return (
+                      <div key={interaction.id} className="rounded-md border border-slate-200 bg-white p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={isSystem ? 'secondary' : 'outline'}>
+                            {isSystem ? 'SYSTEM' : interactionLabels[interaction.interaction_type] || interaction.interaction_type}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{formatDateTime(interaction.created_at)}</span>
+                          {interaction.company_name ? (
+                            <span className="text-xs font-medium text-slate-600">{interaction.company_name}</span>
+                          ) : null}
+                        </div>
+                        {opportunity ? (
+                          <Link className="mt-2 block text-xs font-medium text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
+                            {opportunity.title}
+                          </Link>
+                        ) : interaction.opportunity ? (
+                          <p className="mt-2 text-xs font-medium text-slate-600">Opportunity linked</p>
                         ) : null}
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">{interaction.summary}</p>
                       </div>
-                      {opportunity ? (
-                        <Link className="mt-2 block text-xs font-medium text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
-                          {opportunity.title}
-                        </Link>
-                      ) : interaction.opportunity ? (
-                        <p className="mt-2 text-xs font-medium text-slate-600">Opportunity linked</p>
-                      ) : null}
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">{interaction.summary}</p>
-                    </div>
-                  );
-                })
-              )}
-            </CardContent>
-          </Card>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         <InteractionLogSheet

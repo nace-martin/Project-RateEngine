@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
+import { CrmSubNav } from '@/components/crm/CrmSubNav';
 import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
@@ -135,6 +136,8 @@ export default function OpportunityListPage() {
             </Button>
           }
         />
+
+        <CrmSubNav />
 
         <Card className="border-slate-200 shadow-sm">
           <CardHeader className="pb-2">
