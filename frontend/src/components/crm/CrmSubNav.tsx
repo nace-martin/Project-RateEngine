@@ -9,6 +9,7 @@ export function CrmSubNav() {
   const links = [
     { href: '/crm', label: 'Dashboard' },
     { href: '/crm/activities', label: 'Activities' },
+    { href: '/crm/reports', label: 'Reports' },
     { href: '/crm/opportunities', label: 'Opportunities' },
     { href: '/customers', label: 'Accounts' },
   ];
