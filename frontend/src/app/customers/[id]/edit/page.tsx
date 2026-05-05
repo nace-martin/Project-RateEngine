@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,10 +21,11 @@ import BulkDiscountCsvImportModal from "@/components/pricing/BulkDiscountCsvImpo
 import { downloadDiscountCsvTemplate } from "@/components/pricing/discount-csv-template";
 import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { StandardPageContainer } from "@/components/layout/standard-page";
-import { CityOption, CountryOption, Customer } from "@/lib/types";
+import { CityOption, CountryOption, Customer, Task } from "@/lib/types";
 import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 import { CustomerCrmActivityCard } from "@/components/crm/CustomerCrmActivityCard";
 import { InteractionLogSheet } from "@/components/crm/InteractionLogSheet";
+import { TaskDialog, nextBusinessDay } from "@/components/crm/TaskDialog";
 import PageActionBar from "@/components/navigation/PageActionBar";
 import PageBackButton from "@/components/navigation/PageBackButton";
 import PageCancelButton from "@/components/navigation/PageCancelButton";
@@ -32,6 +33,7 @@ import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { getEditCustomerCopy } from "@/lib/page-copy";
 import { getCompany } from "@/lib/api/parties";
+import { completeTask, listTasksByCompany } from "@/lib/api/crm";
 import { daysSinceInteraction, engagementStatus, needsFollowUp } from "@/lib/crm-engagement-health";
 
 type ErrorWithResponse = {
@@ -68,6 +70,13 @@ const editableCustomerSnapshot = (customer: Customer) => JSON.stringify({
   commercial_profile: customer.commercial_profile,
 });
 
+function formatDate(value?: string | null): string {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
+}
+
 export default function EditCustomerPage() {
   // Use our strong types instead of 'any'
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -88,6 +97,11 @@ export default function EditCustomerPage() {
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
   const [initialCustomerSnapshot, setInitialCustomerSnapshot] = useState<string>("");
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [customerTasks, setCustomerTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
   const router = useRouter();
   const params = useParams();
   const { id } = params;
@@ -97,6 +111,22 @@ export default function EditCustomerPage() {
   const { isAdmin } = usePermissions();
   const canEditCustomerMaster = isAdmin;
   const canManageCommercialTerms = isAdmin;
+
+  const loadCustomerTasks = useCallback(async () => {
+    if (!id) return;
+    setTasksLoading(true);
+    setTasksError(null);
+    try {
+      const rows = await listTasksByCompany(id as string);
+      setCustomerTasks(rows);
+    } catch (taskError) {
+      console.error(taskError);
+      setCustomerTasks([]);
+      setTasksError("Failed to load customer tasks.");
+    } finally {
+      setTasksLoading(false);
+    }
+  }, [id]);
 
   useEffect(() => {
     if (id && token) {
@@ -126,6 +156,10 @@ export default function EditCustomerPage() {
       fetchCustomer();
     }
   }, [id, token]);
+
+  useEffect(() => {
+    void loadCustomerTasks();
+  }, [loadCustomerTasks]);
 
   useEffect(() => {
     if (customer && !initialCustomerSnapshot) {
@@ -468,6 +502,28 @@ export default function EditCustomerPage() {
     }
   };
 
+  const handleCompleteTask = async (taskId: string) => {
+    if (completingTaskIds.has(taskId)) return;
+    setCompletingTaskIds((current) => new Set(current).add(taskId));
+    try {
+      await completeTask(taskId);
+      toast({ title: "Task completed", variant: "success" });
+      await loadCustomerTasks();
+    } catch (taskError) {
+      toast({
+        title: "Task update failed",
+        description: taskError instanceof Error ? taskError.message : "The task was not completed.",
+        variant: "destructive",
+      });
+    } finally {
+      setCompletingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  };
+
   const isDirty = customer !== null && initialCustomerSnapshot !== "" && editableCustomerSnapshot(customer) !== initialCustomerSnapshot;
   useUnsavedChangesGuard(isDirty);
   const returnTo = useReturnTo();
@@ -499,6 +555,12 @@ export default function EditCustomerPage() {
   const followUpMessage = daysSinceLastInteraction === null
     ? "No recorded interaction. Follow-up recommended."
     : `No recorded interaction in ${daysSinceLastInteraction} days. Follow-up recommended.`;
+  const taskDescription = customerNeedsFollowUp
+    ? daysSinceLastInteraction === null
+      ? `Follow up with ${customer.company_name} — no recorded interaction`
+      : `Follow up with ${customer.company_name} — no recorded interaction in ${daysSinceLastInteraction} days`
+    : `Follow up with ${customer.company_name}`;
+  const openTasks = customerTasks.filter((task) => task.status === "PENDING");
 
   return (
     <StandardPageContainer>
@@ -520,12 +582,79 @@ export default function EditCustomerPage() {
             <p className="font-medium">{followUpMessage}</p>
             <p className="text-xs text-amber-800">Engagement status: {engagementStatus(customer.last_interaction_at)}</p>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => setActivityLogOpen(true)}>
+              Log Activity
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(true)}>
+              Create Task
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {!customerNeedsFollowUp ? (
+        <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => setActivityLogOpen(true)}>
             Log Activity
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(true)}>
+            Create Task
           </Button>
         </div>
       ) : null}
       <CustomerCrmActivityCard company={{ id: customer.id, name: customer.company_name }} />
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle>Open Tasks</CardTitle>
+            <CardDescription>Pending follow-up tasks for this account.</CardDescription>
+          </div>
+          <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(true)}>
+            Create Task
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3 px-6 pb-6 pt-2">
+          {tasksLoading ? (
+            <p className="text-sm text-muted-foreground">Loading tasks...</p>
+          ) : tasksError ? (
+            <p className="text-sm text-red-600">{tasksError}</p>
+          ) : openTasks.length === 0 ? (
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No open tasks for this account.
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-md border border-slate-200">
+              <div className="grid grid-cols-12 gap-3 border-b bg-slate-50 px-4 py-2 text-xs font-medium uppercase text-muted-foreground">
+                <div className="col-span-12 md:col-span-5">Description</div>
+                <div className="col-span-6 md:col-span-2">Due Date</div>
+                <div className="col-span-6 md:col-span-2">Status</div>
+                <div className="col-span-6 md:col-span-2">Owner</div>
+                <div className="col-span-6 text-right md:col-span-1">Action</div>
+              </div>
+              {openTasks.map((task) => (
+                <div key={task.id} className="grid grid-cols-12 items-center gap-3 border-b px-4 py-3 text-sm last:border-b-0">
+                  <div className="col-span-12 font-medium md:col-span-5">{task.description}</div>
+                  <div className="col-span-6 md:col-span-2">{formatDate(task.due_date)}</div>
+                  <div className="col-span-6 md:col-span-2">{task.status}</div>
+                  <div className="col-span-6 md:col-span-2">{task.owner_username || "-"}</div>
+                  <div className="col-span-6 text-right md:col-span-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCompleteTask(task.id)}
+                      disabled={completingTaskIds.has(task.id)}
+                    >
+                      {completingTaskIds.has(task.id) ? "Saving..." : "Done"}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className={isSaving || isDeleting || isArchiving ? "space-y-6 pointer-events-none opacity-70" : "space-y-6"}>
@@ -944,6 +1073,19 @@ export default function EditCustomerPage() {
           }
         }}
         prefilledCompany={{ id: customer.id, name: customer.company_name }}
+      />
+      <TaskDialog
+        open={taskDialogOpen}
+        onOpenChange={setTaskDialogOpen}
+        defaults={{
+          company: { id: customer.id, name: customer.company_name },
+          description: taskDescription,
+          dueDate: nextBusinessDay(),
+          status: "PENDING",
+        }}
+        onSaved={() => {
+          void loadCustomerTasks();
+        }}
       />
     </StandardPageContainer>
   );

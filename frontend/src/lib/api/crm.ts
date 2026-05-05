@@ -281,6 +281,10 @@ export async function listTasksByOpportunity(opportunityId: string): Promise<Tas
   return listTasks({ opportunity: opportunityId });
 }
 
+export async function listTasksByCompany(companyId: string): Promise<Task[]> {
+  return listTasks({ company: companyId });
+}
+
 export type TaskPayload = {
   company?: string | null;
   opportunity?: string | null;
