@@ -7,7 +7,7 @@ export function CrmSubNav() {
   const pathname = usePathname();
 
   const links = [
-    { href: '/crm', label: 'Dashboard' },
+    { href: '/crm', label: 'Overview' },
     { href: '/crm/activities', label: 'Activities' },
     { href: '/crm/reports', label: 'Reports' },
     { href: '/crm/opportunities', label: 'Opportunities' },

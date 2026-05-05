@@ -52,7 +52,7 @@ export function AppSidebar() {
             color: 'text-pink-700',
         },
         {
-            label: 'CRM Dashboard',
+            label: 'CRM',
             icon: FileText,
             href: '/crm',
             color: 'text-slate-600',

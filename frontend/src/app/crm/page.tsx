@@ -135,7 +135,7 @@ function statusBadgeVariant(status: string) {
   return 'outline';
 }
 
-export default function CrmDashboardPage() {
+export default function CrmOverviewPage() {
   const { toast } = useToast();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -151,7 +151,7 @@ export default function CrmDashboardPage() {
   const [taskDialogDescription, setTaskDialogDescription] = useState('');
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  const loadDashboardData = useCallback(async () => {
+  const loadOverviewData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -166,7 +166,7 @@ export default function CrmDashboardPage() {
       setInteractions(interactionRows);
       setCustomers(customerRows);
     } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : 'Failed to load CRM dashboard.');
+      setError(fetchError instanceof Error ? fetchError.message : 'Failed to load CRM overview.');
       setOpportunities([]);
       setTasks([]);
       setInteractions([]);
@@ -177,8 +177,8 @@ export default function CrmDashboardPage() {
   }, []);
 
   useEffect(() => {
-    void loadDashboardData();
-  }, [loadDashboardData]);
+    void loadOverviewData();
+  }, [loadOverviewData]);
 
   const handleCompleteTask = async (taskId: string) => {
     if (completingTaskIds.has(taskId)) return;
@@ -186,7 +186,7 @@ export default function CrmDashboardPage() {
     try {
       await completeTask(taskId);
       toast({ title: 'Task Completed', variant: 'success' });
-      void loadDashboardData();
+      void loadOverviewData();
     } catch (err) {
       toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
     } finally {
@@ -323,7 +323,7 @@ export default function CrmDashboardPage() {
     <ProtectedRoute>
       <StandardPageContainer>
         <PageHeader
-          title="CRM"
+          title="CRM Overview"
           description="Pipeline, follow-ups, and recent CRM activity."
           actions={
             <>
@@ -544,7 +544,7 @@ export default function CrmDashboardPage() {
                       ) : tasksDue.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                            No tasks due this week.
+                            No overdue, due today, or due-this-week tasks.
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -570,8 +570,8 @@ export default function CrmDashboardPage() {
                                   <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
                                     {opportunity.title}
                                   </Link>
-                                ) : task.company ? (
-                                  'Company linked'
+                                ) : task.opportunity ? (
+                                  'Opportunity linked'
                                 ) : (
                                   '-'
                                 )}
@@ -661,7 +661,7 @@ export default function CrmDashboardPage() {
             setQuickLogOpen(nextOpen);
             if (!nextOpen) {
               setQuickLogCompany(null);
-              void loadDashboardData();
+              void loadOverviewData();
             }
           }}
           prefilledCompany={quickLogCompany}
@@ -684,7 +684,7 @@ export default function CrmDashboardPage() {
             status: 'PENDING',
           }}
           onSaved={() => {
-            void loadDashboardData();
+            void loadOverviewData();
           }}
         />
       </StandardPageContainer>

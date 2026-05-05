@@ -129,7 +129,7 @@ export default function OpportunityListPage() {
       <StandardPageContainer>
         <PageHeader
           title="Opportunities"
-          description="Review active and closed CRM opportunities before dashboards and pipeline boards are added."
+          description="Review active and closed CRM opportunities by account, status, and service type."
           actions={
             <Button asChild>
               <Link href="/crm/opportunities/new">New Opportunity</Link>

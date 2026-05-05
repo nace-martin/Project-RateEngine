@@ -592,16 +592,6 @@ export default function EditCustomerPage() {
           </div>
         </div>
       ) : null}
-      {!customerNeedsFollowUp ? (
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => setActivityLogOpen(true)}>
-            Log Activity
-          </Button>
-          <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(true)}>
-            Create Task
-          </Button>
-        </div>
-      ) : null}
       <CustomerCrmActivityCard company={{ id: customer.id, name: customer.company_name }} />
 
       <Card className="border-slate-200 shadow-sm">
