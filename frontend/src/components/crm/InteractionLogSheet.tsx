@@ -135,6 +135,14 @@ export function InteractionLogSheet({
     setOpportunitiesError(null);
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      if (saving) return;
+      resetForm();
+    }
+    onOpenChange(nextOpen);
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (saving) return;
@@ -197,7 +205,7 @@ export function InteractionLogSheet({
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent side="right" className="flex h-full w-full flex-col overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>Log Activity</SheetTitle>
@@ -311,7 +319,7 @@ export function InteractionLogSheet({
           </div>
 
           <SheetFooter className="mt-auto border-t pt-4">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={saving}>
               Cancel
             </Button>
             <Button type="submit" loading={saving} loadingText="Saving" disabled={saving}>

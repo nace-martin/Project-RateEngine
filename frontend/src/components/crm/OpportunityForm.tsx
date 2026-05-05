@@ -19,7 +19,7 @@ type OpportunityFormProps = {
 };
 
 const serviceTypeOptions = ['AIR', 'SEA', 'CUSTOMS', 'DOMESTIC', 'MULTIMODAL'];
-const statusOptions = ['NEW', 'QUALIFIED', 'QUOTED', 'WON', 'LOST'];
+const statusOptions = ['NEW', 'QUALIFIED', 'QUOTED'];
 const priorityOptions = ['LOW', 'MEDIUM', 'HIGH'];
 const currencyOptions = ['PGK', 'AUD', 'USD', 'NZD'];
 

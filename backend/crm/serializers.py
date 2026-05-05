@@ -8,6 +8,7 @@ class OpportunitySerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
     owner_username = serializers.CharField(source="owner.username", read_only=True)
     won_by_username = serializers.CharField(source="won_by.username", read_only=True)
+    terminal_statuses = {Opportunity.Status.WON, Opportunity.Status.LOST}
 
     class Meta:
         model = Opportunity
@@ -45,6 +46,13 @@ class OpportunitySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "last_activity_at", "won_at", "won_by", "created_at", "updated_at"]
         extra_kwargs = {"owner": {"required": False, "allow_null": True}}
+
+    def validate_status(self, value):
+        if value in self.terminal_statuses:
+            raise serializers.ValidationError(
+                "Use the Mark Won or Mark Lost workflow action instead of setting terminal status directly."
+            )
+        return value
 
 
 class InteractionSerializer(serializers.ModelSerializer):

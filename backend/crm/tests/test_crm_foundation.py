@@ -221,6 +221,48 @@ def test_opportunity_workflow_actions_use_lifecycle_helpers(opportunity, user):
 
 
 @pytest.mark.django_db
+def test_opportunity_api_rejects_direct_terminal_status_on_create(company, user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/crm/opportunities/",
+        {
+            "company": str(company.id),
+            "title": "Unsafe won status",
+            "service_type": "AIR",
+            "origin": "BNE",
+            "destination": "POM",
+            "status": Opportunity.Status.WON,
+            "priority": Opportunity.Priority.MEDIUM,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "status" in response.json()
+    assert not Opportunity.objects.filter(title="Unsafe won status").exists()
+
+
+@pytest.mark.django_db
+def test_opportunity_api_rejects_direct_terminal_status_on_update(opportunity, user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.patch(
+        f"/api/v3/crm/opportunities/{opportunity.id}/",
+        {"status": Opportunity.Status.LOST},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "status" in response.json()
+    opportunity.refresh_from_db()
+    assert opportunity.status == Opportunity.Status.NEW
+    assert opportunity.lost_reason == ""
+
+
+@pytest.mark.django_db
 def test_mark_lost_requires_reason(opportunity, user):
     client = APIClient()
     client.force_authenticate(user=user)
