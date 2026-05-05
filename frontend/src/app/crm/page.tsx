@@ -208,8 +208,8 @@ export default function CrmDashboardPage() {
     setTaskDialogCompany(company);
     setTaskDialogDescription(
       days === null
-        ? `Follow up with ${company.name} - no recorded interaction`
-        : `Follow up with ${company.name} - no recorded interaction in ${days} days`,
+        ? `Follow up with ${company.name} — no recorded interaction`
+        : `Follow up with ${company.name} — no recorded interaction in ${days} days`,
     );
     setTaskDialogOpen(true);
   };
