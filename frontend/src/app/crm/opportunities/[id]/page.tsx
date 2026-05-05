@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
 import { TaskDialog, nextBusinessDay } from '@/components/crm/TaskDialog';
@@ -12,6 +12,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
   Table,
   TableBody,
   TableCell,
@@ -20,6 +29,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import {
   completeTask,
   getOpportunity,
@@ -134,6 +144,10 @@ export default function OpportunityDetailPage() {
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [wonDialogOpen, setWonDialogOpen] = useState(false);
+  const [lostDialogOpen, setLostDialogOpen] = useState(false);
+  const [wonReason, setWonReason] = useState('');
+  const [lostReason, setLostReason] = useState('');
 
   const loadOpportunityData = useCallback(async () => {
     setLoading(true);
@@ -178,14 +192,16 @@ export default function OpportunityDetailPage() {
     }
   };
 
-  const handleMarkWon = async () => {
-    const reason = window.prompt('Optional won reason:');
-    if (reason === null) return;
-    if (actionLoading) return;
+  const handleMarkWon = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (actionLoading || !opportunity) return;
     setActionLoading('won');
     try {
-      await markOpportunityWon(params.id, reason);
+      const reason = wonReason.trim();
+      await markOpportunityWon(params.id, reason || undefined);
       toast({ title: 'Opportunity Won!', variant: 'success' });
+      setWonDialogOpen(false);
+      setWonReason('');
       void loadOpportunityData();
     } catch (err) {
       toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
@@ -194,17 +210,20 @@ export default function OpportunityDetailPage() {
     }
   };
 
-  const handleMarkLost = async () => {
-    const reason = window.prompt('Lost reason (required):');
+  const handleMarkLost = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const reason = lostReason.trim();
     if (!reason) {
-      if (reason === '') toast({ title: 'Reason required', variant: 'destructive' });
+      toast({ title: 'Reason required', variant: 'destructive' });
       return;
     }
-    if (actionLoading) return;
+    if (actionLoading || !opportunity) return;
     setActionLoading('lost');
     try {
       await markOpportunityLost(params.id, reason);
       toast({ title: 'Opportunity Lost', variant: 'default' });
+      setLostDialogOpen(false);
+      setLostReason('');
       void loadOpportunityData();
     } catch (err) {
       toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
@@ -321,10 +340,10 @@ export default function OpportunityDetailPage() {
                       {actionLoading === 'qualified' ? 'Saving...' : 'Mark Qualified'}
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={handleMarkWon} disabled={Boolean(actionLoading)} className="text-green-700 hover:text-green-800 hover:bg-green-50">
+                  <Button variant="outline" size="sm" onClick={() => setWonDialogOpen(true)} disabled={Boolean(actionLoading)} className="text-green-700 hover:text-green-800 hover:bg-green-50">
                     {actionLoading === 'won' ? 'Saving...' : 'Mark Won'}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={handleMarkLost} disabled={Boolean(actionLoading)} className="text-red-700 hover:text-red-800 hover:bg-red-50">
+                  <Button variant="outline" size="sm" onClick={() => setLostDialogOpen(true)} disabled={Boolean(actionLoading)} className="text-red-700 hover:text-red-800 hover:bg-red-50">
                     {actionLoading === 'lost' ? 'Saving...' : 'Mark Lost'}
                   </Button>
                   <Button size="sm" asChild>
@@ -531,6 +550,118 @@ export default function OpportunityDetailPage() {
           prefilledCompany={prefilledCompany}
           prefilledOpportunity={opportunity}
         />
+        <Dialog
+          open={wonDialogOpen}
+          onOpenChange={(nextOpen) => {
+            if (actionLoading === 'won') return;
+            setWonDialogOpen(nextOpen);
+            if (!nextOpen) setWonReason('');
+          }}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Mark Opportunity Won</DialogTitle>
+              <DialogDescription>
+                Confirm this opportunity was won. You can add a short reason for the activity record.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleMarkWon} className="space-y-5">
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <div><span className="font-medium">Opportunity:</span> {opportunity?.title || '-'}</div>
+                <div><span className="font-medium">Company:</span> {opportunity?.company_name || '-'}</div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="crm-won-reason">Won reason (optional)</Label>
+                <Textarea
+                  id="crm-won-reason"
+                  value={wonReason}
+                  onChange={(event) => setWonReason(event.target.value)}
+                  disabled={actionLoading === 'won'}
+                  className="min-h-24"
+                  placeholder="Add brief context if useful."
+                />
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setWonDialogOpen(false);
+                    setWonReason('');
+                  }}
+                  disabled={actionLoading === 'won'}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" loading={actionLoading === 'won'} loadingText="Saving" disabled={Boolean(actionLoading)}>
+                  Mark Won
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={lostDialogOpen}
+          onOpenChange={(nextOpen) => {
+            if (actionLoading === 'lost') return;
+            setLostDialogOpen(nextOpen);
+            if (!nextOpen) setLostReason('');
+          }}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Mark Opportunity Lost</DialogTitle>
+              <DialogDescription>
+                Confirm this opportunity was lost. A lost reason is required.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleMarkLost} className="space-y-5">
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <div><span className="font-medium">Opportunity:</span> {opportunity?.title || '-'}</div>
+                <div><span className="font-medium">Company:</span> {opportunity?.company_name || '-'}</div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="crm-lost-reason">Lost reason</Label>
+                <Textarea
+                  id="crm-lost-reason"
+                  value={lostReason}
+                  onChange={(event) => setLostReason(event.target.value)}
+                  disabled={actionLoading === 'lost'}
+                  className="min-h-24"
+                  placeholder="Enter why the opportunity was lost."
+                  required
+                />
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setLostDialogOpen(false);
+                    setLostReason('');
+                  }}
+                  disabled={actionLoading === 'lost'}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  loading={actionLoading === 'lost'}
+                  loadingText="Saving"
+                  disabled={Boolean(actionLoading) || !lostReason.trim()}
+                >
+                  Mark Lost
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
         <TaskDialog
           open={taskDialogOpen}
           onOpenChange={(nextOpen) => {
