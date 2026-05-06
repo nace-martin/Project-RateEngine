@@ -34,6 +34,7 @@ from quotes.services.rate_resolution import (
     serialize_resolved_rate_dimensions,
 )
 
+from crm.services import create_auto_quote_opportunity_interaction, resolve_quote_opportunity
 from services.models import ServiceComponent
 from core.models import FxSnapshot, Policy, Location
 from core.commodity import DEFAULT_COMMODITY_CODE
@@ -445,21 +446,27 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         customer = get_object_or_404(Company, id=validated_data.customer_id)
         contact = get_object_or_404(Contact, id=validated_data.contact_id)
 
-        # Resolve opportunity if provided
-        opportunity = None
-        if validated_data.opportunity_id:
-            from crm.models import Opportunity as CrmOpportunity
-            opportunity = get_object_or_404(
-                CrmOpportunity,
-                id=validated_data.opportunity_id,
-                company=customer,
-            )
-
         request_payload = validated_data.model_dump(mode='json')
         if resolved_dimensions is not None:
             request_payload['resolved_dimensions'] = serialize_resolved_rate_dimensions(resolved_dimensions)
 
         is_new_quote = quote is None
+        origin_location = Location.objects.filter(id=validated_data.origin_location_id).first()
+        destination_location = Location.objects.filter(id=validated_data.destination_location_id).first()
+        opportunity, opportunity_was_auto_created = resolve_quote_opportunity(
+            customer=customer,
+            opportunity_id=validated_data.opportunity_id,
+            existing_quote=quote,
+            mode=validated_data.mode,
+            shipment_type=shipment_type,
+            service_scope=validated_data.service_scope,
+            origin_location=origin_location,
+            destination_location=destination_location,
+            actor=request.user,
+            quote_status=initial_status,
+            persist=True,
+        )
+
         if is_new_quote:
             # --- Create the Quote object ---
             quote = Quote.objects.create(
@@ -488,8 +495,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Update the existing quote details and append a new version
             quote.customer = customer
             quote.contact = contact
-            if validated_data.opportunity_id:
-                quote.opportunity = opportunity
+            quote.opportunity = opportunity
             quote.mode = validated_data.mode
             quote.shipment_type = shipment_type
             quote.incoterm = validated_data.incoterm
@@ -529,6 +535,9 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
 
             latest_version = quote.versions.order_by('-version_number').first()
             version_number = 1 if latest_version is None else latest_version.version_number + 1
+
+        if opportunity_was_auto_created:
+            create_auto_quote_opportunity_interaction(opportunity, quote, request.user)
 
         # Create the QuoteVersion
         version = QuoteVersion.objects.create(

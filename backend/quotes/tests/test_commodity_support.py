@@ -14,7 +14,7 @@ from core.commodity import COMMODITY_CODE_AVI, COMMODITY_CODE_DG, DEFAULT_COMMOD
 from core.dataclasses import CalculatedTotals, QuoteCharges
 from core.models import Country, Currency, FxSnapshot, Location, Policy
 from core.tests.helpers import create_location
-from crm.models import Opportunity
+from crm.models import Interaction, Opportunity
 from parties.models import Company, Contact
 from pricing_v4.models import CommodityChargeRule, ProductCode
 from quotes.models import Quote
@@ -251,7 +251,7 @@ class QuoteCommodityPersistenceTests(TestCase):
         payload.update(overrides)
         return QuoteComputeRequest(**payload)
 
-    def test_save_quote_create_still_works_without_opportunity_id(self):
+    def test_save_quote_create_without_opportunity_auto_creates_and_links(self):
         payload = self._base_payload()
 
         quote = QuoteComputeV3APIView()._save_quote_v3(
@@ -265,8 +265,24 @@ class QuoteCommodityPersistenceTests(TestCase):
             initial_status=Quote.Status.DRAFT,
         )
 
-        self.assertIsNone(quote.opportunity_id)
+        self.assertIsNotNone(quote.opportunity_id)
         self.assertEqual(quote.customer, self.customer)
+        opportunity = quote.opportunity
+        self.assertEqual(Opportunity.objects.count(), 1)
+        self.assertEqual(opportunity.company, self.customer)
+        self.assertEqual(opportunity.service_type, "AIR")
+        self.assertEqual(opportunity.direction, Quote.ShipmentType.IMPORT)
+        self.assertEqual(opportunity.scope, "A2D")
+        self.assertEqual(opportunity.status, Opportunity.Status.NEW)
+        self.assertIn("AIR IMPORT SYD", opportunity.title)
+        self.assertIn("POM", opportunity.title)
+        self.assertTrue(
+            opportunity.interactions.filter(
+                interaction_type=Interaction.InteractionType.SYSTEM,
+                system_event_type="QUOTE_OPPORTUNITY_CREATED",
+                outcomes__contains=f"quote_id={quote.id}",
+            ).exists()
+        )
 
     def test_save_quote_update_attaches_valid_opportunity_id(self):
         quote = Quote.objects.create(
@@ -283,6 +299,7 @@ class QuoteCommodityPersistenceTests(TestCase):
             service_type="AIR",
             owner=self.user,
         )
+        before_count = Opportunity.objects.count()
         payload = self._base_payload(quote_id=quote.id, opportunity_id=opportunity.id)
 
         updated = QuoteComputeV3APIView()._save_quote_v3(
@@ -299,6 +316,7 @@ class QuoteCommodityPersistenceTests(TestCase):
 
         updated.refresh_from_db()
         self.assertEqual(updated.opportunity, opportunity)
+        self.assertEqual(Opportunity.objects.count(), before_count)
 
     def test_save_quote_update_preserves_opportunity_when_opportunity_id_omitted(self):
         opportunity = Opportunity.objects.create(
@@ -317,6 +335,7 @@ class QuoteCommodityPersistenceTests(TestCase):
             created_by=self.user,
         )
         payload = self._base_payload(quote_id=quote.id)
+        before_count = Opportunity.objects.count()
 
         updated = QuoteComputeV3APIView()._save_quote_v3(
             request=self._build_request(),
@@ -332,6 +351,68 @@ class QuoteCommodityPersistenceTests(TestCase):
 
         updated.refresh_from_db()
         self.assertEqual(updated.opportunity, opportunity)
+        self.assertEqual(Opportunity.objects.count(), before_count)
+
+    def test_save_quote_recompute_without_opportunity_id_does_not_duplicate_auto_created_opportunity(self):
+        payload = self._base_payload()
+        view = QuoteComputeV3APIView()
+        quote = view._save_quote_v3(
+            request=self._build_request(),
+            validated_data=payload,
+            shipment_type=Quote.ShipmentType.IMPORT,
+            charges=self._empty_charges(),
+            snapshot=self.fx_snapshot,
+            policy=self.policy,
+            output_currency="PGK",
+            initial_status=Quote.Status.DRAFT,
+        )
+        first_opportunity = quote.opportunity
+
+        updated = view._save_quote_v3(
+            request=self._build_request(),
+            validated_data=self._base_payload(quote_id=quote.id),
+            shipment_type=Quote.ShipmentType.IMPORT,
+            charges=self._empty_charges(),
+            snapshot=self.fx_snapshot,
+            policy=self.policy,
+            output_currency="PGK",
+            initial_status=Quote.Status.DRAFT,
+            quote=quote,
+        )
+
+        updated.refresh_from_db()
+        self.assertEqual(updated.opportunity, first_opportunity)
+        self.assertEqual(Opportunity.objects.count(), 1)
+
+    def test_save_quote_domestic_air_maps_to_air_domestic_opportunity(self):
+        domestic_origin = create_location(
+            code="LAE",
+            name="Lae",
+            country=self.destination.country,
+            is_active=True,
+        )
+        payload = self._base_payload(
+            origin_location_id=domestic_origin.id,
+            destination_location_id=self.destination.id,
+            service_scope="D2D",
+        )
+
+        quote = QuoteComputeV3APIView()._save_quote_v3(
+            request=self._build_request(),
+            validated_data=payload,
+            shipment_type=Quote.ShipmentType.DOMESTIC,
+            charges=self._empty_charges(),
+            snapshot=self.fx_snapshot,
+            policy=self.policy,
+            output_currency="PGK",
+            initial_status=Quote.Status.DRAFT,
+        )
+
+        opportunity = quote.opportunity
+        self.assertEqual(opportunity.service_type, "AIR")
+        self.assertEqual(opportunity.direction, Quote.ShipmentType.DOMESTIC)
+        self.assertEqual(opportunity.scope, "D2D")
+        self.assertFalse(Opportunity.objects.filter(service_type="DOMESTIC").exists())
 
     def test_save_quote_rejects_opportunity_customer_mismatch(self):
         other_customer = Company.objects.create(name="Other Customer")

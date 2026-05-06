@@ -7,7 +7,12 @@ from django.core.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from crm.models import Interaction, Opportunity, Task
-from crm.services import mark_opportunity_lost, mark_opportunity_quoted, mark_opportunity_won
+from crm.services import (
+    resolve_quote_opportunity,
+    mark_opportunity_lost,
+    mark_opportunity_quoted,
+    mark_opportunity_won,
+)
 from parties.models import Company
 from quotes.models import Quote
 from quotes.state_machine import QuoteStateMachine
@@ -144,6 +149,42 @@ def test_mark_quoted_does_not_override_terminal_status(opportunity, user):
 
     assert quoted.status == Opportunity.Status.WON
     assert quoted.interactions.filter(system_event_type="OPPORTUNITY_QUOTED").exists()
+
+
+@pytest.mark.django_db
+def test_quote_opportunity_helper_creates_quoted_status_for_finalized_quote(company, user):
+    opportunity, was_created = resolve_quote_opportunity(
+        customer=company,
+        mode="AIR",
+        shipment_type="EXPORT",
+        service_scope="A2A",
+        actor=user,
+        quote_status=Quote.Status.FINALIZED,
+    )
+
+    assert was_created is True
+    assert opportunity.status == Opportunity.Status.QUOTED
+    assert opportunity.service_type == "AIR"
+    assert opportunity.direction == "EXPORT"
+    assert opportunity.scope == "A2A"
+
+
+@pytest.mark.django_db
+def test_quote_opportunity_helper_maps_land_to_transport_without_domestic_service_type(company, user):
+    opportunity, was_created = resolve_quote_opportunity(
+        customer=company,
+        mode="LAND",
+        shipment_type="DOMESTIC",
+        service_scope="D2D",
+        actor=user,
+        quote_status=Quote.Status.DRAFT,
+    )
+
+    assert was_created is True
+    assert opportunity.status == Opportunity.Status.NEW
+    assert opportunity.service_type == "TRANSPORT"
+    assert opportunity.direction == "DOMESTIC"
+    assert not Opportunity.objects.filter(service_type="DOMESTIC").exists()
 
 
 @pytest.mark.django_db

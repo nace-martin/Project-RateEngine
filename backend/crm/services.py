@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.http import Http404
 from django.utils import timezone
 
 from .models import Interaction, Opportunity
@@ -24,6 +25,45 @@ QUOTE_EVENT_TYPES = {
 }
 
 
+AUTO_QUOTE_OPPORTUNITY_EVENT_TYPE = "QUOTE_OPPORTUNITY_CREATED"
+
+
+def _quote_service_type(mode: str) -> str:
+    normalized = str(mode or "").strip().upper()
+    if normalized == "AIR":
+        return "AIR"
+    if normalized == "SEA":
+        return "SEA"
+    if normalized == "LAND":
+        return "TRANSPORT"
+    return "TRANSPORT"
+
+
+def _label_from_location(location) -> str:
+    if location is None:
+        return ""
+    return (
+        str(getattr(location, "code", "") or "").strip()
+        or str(getattr(location, "name", "") or "").strip()
+    )
+
+
+def _quote_opportunity_status(quote_status: str) -> str:
+    normalized = str(quote_status or "").strip().upper()
+    if normalized in {"FINALIZED", "SENT"}:
+        return Opportunity.Status.QUOTED
+    return Opportunity.Status.NEW
+
+
+def _quote_opportunity_title(*, service_type: str, direction: str, origin: str, destination: str, customer) -> str:
+    service_label = service_type or "SERVICE"
+    direction_label = direction or "LANE"
+    origin_label = origin or "Origin"
+    destination_label = destination or "Destination"
+    customer_label = str(getattr(customer, "name", "") or "Customer").strip() or "Customer"
+    return f"{service_label} {direction_label} {origin_label} \u2192 {destination_label} - {customer_label}"
+
+
 def _system_interaction(opportunity, actor, event_type: str, summary: str, outcomes: str = "") -> Interaction:
     return Interaction.objects.create(
         company=opportunity.company,
@@ -35,6 +75,96 @@ def _system_interaction(opportunity, actor, event_type: str, summary: str, outco
         is_system_generated=True,
         system_event_type=event_type,
     )
+
+
+def create_auto_quote_opportunity_interaction(opportunity, quote, actor=None):
+    quote_id = str(getattr(quote, "id", "") or "")
+    existing = Interaction.objects.filter(
+        opportunity=opportunity,
+        is_system_generated=True,
+        system_event_type=AUTO_QUOTE_OPPORTUNITY_EVENT_TYPE,
+    )
+    if quote_id:
+        existing = existing.filter(outcomes__contains=f"quote_id={quote_id}")
+    if existing.exists():
+        return None
+
+    quote_label = getattr(quote, "quote_number", None) or quote_id or "quote"
+    outcomes = "Auto-created by quote-first flow."
+    if quote_id:
+        outcomes = f"{outcomes}\nquote_id={quote_id}"
+    return _system_interaction(
+        opportunity,
+        actor,
+        AUTO_QUOTE_OPPORTUNITY_EVENT_TYPE,
+        f"Opportunity auto-created from quote {quote_label}.",
+        outcomes=outcomes,
+    )
+
+
+@transaction.atomic
+def resolve_quote_opportunity(
+    *,
+    customer,
+    opportunity_id=None,
+    existing_quote=None,
+    mode="",
+    shipment_type="",
+    service_scope="",
+    origin_location=None,
+    destination_location=None,
+    actor=None,
+    quote_status="",
+    persist=True,
+):
+    """
+    Resolve the opportunity for a persisted quote create/update.
+
+    Explicit opportunity ids always win and must belong to the same customer.
+    Omitted opportunity ids preserve an existing quote link; otherwise a new
+    opportunity is created only for persisted quote saves.
+    """
+    if opportunity_id:
+        try:
+            return Opportunity.objects.select_for_update().get(
+                id=opportunity_id,
+                company=customer,
+            ), False
+        except Opportunity.DoesNotExist as exc:
+            raise Http404("No Opportunity matches the given query.") from exc
+
+    if existing_quote is not None and getattr(existing_quote, "opportunity_id", None):
+        opportunity = Opportunity.objects.select_for_update().get(pk=existing_quote.opportunity_id)
+        if opportunity.company_id != customer.id:
+            raise Http404("No Opportunity matches the given query.")
+        return opportunity, False
+
+    if not persist:
+        return None, False
+
+    service_type = _quote_service_type(mode)
+    direction = str(shipment_type or "").strip().upper()
+    scope = str(service_scope or "").strip().upper()
+    origin = _label_from_location(origin_location)
+    destination = _label_from_location(destination_location)
+    opportunity = Opportunity.objects.create(
+        company=customer,
+        title=_quote_opportunity_title(
+            service_type=service_type,
+            direction=direction,
+            origin=origin,
+            destination=destination,
+            customer=customer,
+        ),
+        service_type=service_type,
+        direction=direction,
+        scope=scope,
+        origin=origin,
+        destination=destination,
+        status=_quote_opportunity_status(quote_status),
+        owner=actor if getattr(actor, "is_authenticated", False) else None,
+    )
+    return opportunity, True
 
 
 def create_quote_system_interaction(opportunity, quote, actor, event_type: str, summary: str, outcomes: str = ""):

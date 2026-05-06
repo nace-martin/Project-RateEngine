@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 from core.dataclasses import CalculatedChargeLine, CalculatedTotals, QuoteCharges
 from core.models import Currency, Country, Location
 from core.tests.helpers import create_location
+from crm.models import Interaction, Opportunity
 from parties.models import Company
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
 from quotes.models import Quote
@@ -290,6 +291,47 @@ def test_spot_create_quote_uses_export_prepaid_pgk_output_currency(monkeypatch):
     quote = Quote.objects.get(id=payload["quote_id"])
     assert captured.get("output_currency") == "PGK"
     assert quote.output_currency == "PGK"
+
+
+def test_spot_create_quote_auto_creates_and_links_opportunity(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+    )
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["origin_charges", "airfreight", "destination_charges"]),
+    )
+    customer = Company.objects.create(name="Spot Opportunity Customer", is_customer=True, company_type="CUSTOMER")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "D2D", "payment_term": "PREPAID", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    quote = Quote.objects.get(id=response.json()["quote_id"])
+    opportunity = quote.opportunity
+    assert opportunity is not None
+    assert opportunity.company == customer
+    assert opportunity.service_type == "AIR"
+    assert opportunity.direction == Quote.ShipmentType.IMPORT
+    assert opportunity.scope == "D2D"
+    assert opportunity.interactions.filter(
+        interaction_type=Interaction.InteractionType.SYSTEM,
+        system_event_type="QUOTE_OPPORTUNITY_CREATED",
+        outcomes__contains=f"quote_id={quote.id}",
+    ).exists()
+    assert not Opportunity.objects.filter(service_type="DOMESTIC").exists()
 
 
 def test_spot_create_quote_allows_matched_exact_alias_line(monkeypatch):
