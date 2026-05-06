@@ -18,6 +18,7 @@ import type { CompanySearchResult, Interaction, Opportunity } from '@/lib/types'
 
 type CustomerCrmActivityCardProps = {
   company: CompanySearchResult;
+  onActivityChanged?: () => void;
 };
 
 const interactionLabels: Record<string, string> = {
@@ -98,7 +99,7 @@ function TimelineItem({
   );
 }
 
-export function CustomerCrmActivityCard({ company }: CustomerCrmActivityCardProps) {
+export function CustomerCrmActivityCard({ company, onActivityChanged }: CustomerCrmActivityCardProps) {
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -236,6 +237,7 @@ export function CustomerCrmActivityCard({ company }: CustomerCrmActivityCardProp
           setQuickLogOpen(nextOpen);
           if (!nextOpen) {
             void loadCrmData();
+            onActivityChanged?.();
           }
         }}
         prefilledCompany={company}

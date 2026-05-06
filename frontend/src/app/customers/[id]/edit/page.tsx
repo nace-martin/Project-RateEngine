@@ -22,19 +22,16 @@ import { downloadDiscountCsvTemplate } from "@/components/pricing/discount-csv-t
 import DiscountFormModal from "@/components/pricing/DiscountFormModal";
 import { StandardPageContainer } from "@/components/layout/standard-page";
 import { CityOption, CountryOption, Customer, Task } from "@/lib/types";
-import WorkspaceContextCard from "@/components/WorkspaceContextCard";
 import { CustomerCrmActivityCard } from "@/components/crm/CustomerCrmActivityCard";
-import { InteractionLogSheet } from "@/components/crm/InteractionLogSheet";
 import { TaskDialog, nextBusinessDay } from "@/components/crm/TaskDialog";
 import PageActionBar from "@/components/navigation/PageActionBar";
 import PageBackButton from "@/components/navigation/PageBackButton";
 import PageCancelButton from "@/components/navigation/PageCancelButton";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
-import { getEditCustomerCopy } from "@/lib/page-copy";
 import { getCompany } from "@/lib/api/parties";
 import { completeTask, listTasksByCompany } from "@/lib/api/crm";
-import { daysSinceInteraction, engagementStatus, needsFollowUp } from "@/lib/crm-engagement-health";
+import { daysSinceInteraction, engagementStatus, formatEngagementDate, needsFollowUp } from "@/lib/crm-engagement-health";
 
 type ErrorWithResponse = {
   response?: {
@@ -57,6 +54,34 @@ const normalizeCommercialProfile = (profile?: Customer["commercial_profile"] | n
   min_margin_percent: profile?.min_margin_percent || "",
   payment_term_default: profile?.payment_term_default || "",
 });
+
+const audienceTypeLabels: Record<string, string> = {
+  LOCAL_PNG_CUSTOMER: "Local PNG Customer",
+  OVERSEAS_PARTNER_AU: "Overseas Partner (AU)",
+  OVERSEAS_PARTNER_NON_AU: "Overseas Partner (Non-AU)",
+};
+
+function formatAudienceType(value?: string | null): string {
+  if (!value) return "";
+  return audienceTypeLabels[value] || value.replaceAll("_", " ");
+}
+
+function CustomerIdentityField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | number | null;
+}) {
+  if (value === undefined || value === null || value === "") return null;
+
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate text-sm font-medium text-slate-900">{value}</p>
+    </div>
+  );
+}
 
 const editableCustomerSnapshot = (customer: Customer) => JSON.stringify({
   company_name: customer.company_name,
@@ -96,7 +121,6 @@ export default function EditCustomerPage() {
   const [editingDiscount, setEditingDiscount] = useState<api.CustomerDiscount | null>(null);
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<string | null>(null);
   const [initialCustomerSnapshot, setInitialCustomerSnapshot] = useState<string>("");
-  const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [customerTasks, setCustomerTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
@@ -548,7 +572,6 @@ export default function EditCustomerPage() {
     label: city.display_name,
   }));
   const commercialProfile = normalizeCommercialProfile(customer.commercial_profile);
-  const pageCopy = getEditCustomerCopy();
   const canSaveCustomer = Boolean(customer.company_name.trim());
   const customerNeedsFollowUp = needsFollowUp(customer.last_interaction_at);
   const daysSinceLastInteraction = daysSinceInteraction(customer.last_interaction_at);
@@ -561,6 +584,24 @@ export default function EditCustomerPage() {
       : `Follow up with ${customer.company_name} — no recorded interaction in ${daysSinceLastInteraction} days`
     : `Follow up with ${customer.company_name}`;
   const openTasks = customerTasks.filter((task) => task.status === "PENDING");
+  const customerEngagementStatus = engagementStatus(customer.last_interaction_at);
+  const lastInteractionLabel = formatEngagementDate(customer.last_interaction_at);
+  const refreshCustomerSummary = async () => {
+    if (!id) return;
+    const summary = await getCompany(id as string).catch(() => null);
+    if (!summary) return;
+
+    setCustomer((current) => current
+      ? {
+          ...current,
+          account_owner: summary.account_owner,
+          account_owner_username: summary.account_owner_username,
+          last_interaction_at: summary.last_interaction_at,
+          industry: summary.industry,
+          tags: summary.tags,
+        }
+      : current);
+  };
 
   return (
     <StandardPageContainer>
@@ -571,28 +612,43 @@ export default function EditCustomerPage() {
         confirmLeave={confirmLeave}
         disabled={isSaving || isDeleting || isArchiving}
       />
-      <WorkspaceContextCard
-        title={pageCopy.title}
-        description={pageCopy.description}
-        note={pageCopy.note}
-      />
+      <Card className="border-slate-200 shadow-sm">
+        <CardContent className="space-y-5 px-6 py-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-muted-foreground">Customer Details</p>
+              <h1 className="mt-1 break-words text-2xl font-semibold text-slate-950">
+                {customer.company_name}
+              </h1>
+            </div>
+            {customer.is_active === false ? (
+              <Badge variant="secondary" className="w-fit">Archived</Badge>
+            ) : null}
+          </div>
+          <div className="grid grid-cols-1 gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2 lg:grid-cols-3">
+            <CustomerIdentityField label="Audience Type" value={formatAudienceType(customer.audience_type)} />
+            <CustomerIdentityField label="Primary Contact" value={customer.contact_person_name} />
+            <CustomerIdentityField label="Email" value={customer.contact_person_email} />
+            <CustomerIdentityField label="Phone" value={customer.contact_person_phone} />
+            <CustomerIdentityField label="Account Owner" value={customer.account_owner_username} />
+            <CustomerIdentityField label="Engagement" value={`${customerEngagementStatus} - ${lastInteractionLabel}`} />
+          </div>
+        </CardContent>
+      </Card>
       {customerNeedsFollowUp ? (
-        <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between">
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <div>
             <p className="font-medium">{followUpMessage}</p>
-            <p className="text-xs text-amber-800">Engagement status: {engagementStatus(customer.last_interaction_at)}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => setActivityLogOpen(true)}>
-              Log Activity
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setTaskDialogOpen(true)}>
-              Create Task
-            </Button>
+            <p className="text-xs text-amber-800">Engagement status: {customerEngagementStatus}</p>
           </div>
         </div>
       ) : null}
-      <CustomerCrmActivityCard company={{ id: customer.id, name: customer.company_name }} />
+      <CustomerCrmActivityCard
+        company={{ id: customer.id, name: customer.company_name }}
+        onActivityChanged={() => {
+          void refreshCustomerSummary();
+        }}
+      />
 
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1041,29 +1097,6 @@ export default function EditCustomerPage() {
           }}
         />
       )}
-      <InteractionLogSheet
-        open={activityLogOpen}
-        onOpenChange={(nextOpen) => {
-          setActivityLogOpen(nextOpen);
-          if (!nextOpen && id) {
-            void getCompany(id as string)
-              .then((summary) => {
-                setCustomer((current) => current
-                  ? {
-                      ...current,
-                      account_owner: summary.account_owner,
-                      account_owner_username: summary.account_owner_username,
-                      last_interaction_at: summary.last_interaction_at,
-                      industry: summary.industry,
-                      tags: summary.tags,
-                    }
-                  : current);
-              })
-              .catch(() => undefined);
-          }
-        }}
-        prefilledCompany={{ id: customer.id, name: customer.company_name }}
-      />
       <TaskDialog
         open={taskDialogOpen}
         onOpenChange={setTaskDialogOpen}
