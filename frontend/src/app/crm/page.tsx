@@ -521,91 +521,99 @@ export default function CrmOverviewPage() {
                 <CardDescription>Overdue, today, and this week.</CardDescription>
               </CardHeader>
               <CardContent className="px-6 pb-6 pt-2">
-                <div className="overflow-hidden rounded-md border border-slate-200">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Company</TableHead>
-                        <TableHead>Opportunity</TableHead>
-                        <TableHead>Owner</TableHead>
-                        <TableHead>Due</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {loading ? (
-                        <TableRow>
-                          <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                            Loading tasks...
-                          </TableCell>
-                        </TableRow>
-                      ) : tasksDue.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                            No overdue, due today, or due-this-week tasks.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        tasksDue.map((task) => {
-                          const opportunity = task.opportunity ? opportunityById.get(task.opportunity) : null;
-                          const company = task.company ? customerById.get(task.company) : null;
-                          return (
-                            <TableRow key={task.id}>
-                              <TableCell className="font-medium">{task.description}</TableCell>
-                              <TableCell>
-                                {company ? (
-                                  <Link className="text-primary hover:underline" href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}>
-                                    {company.name}
-                                  </Link>
-                                ) : task.company ? (
-                                  'Company linked'
-                                ) : (
-                                  '-'
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {opportunity ? (
-                                  <Link className="text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
-                                    {opportunity.title}
-                                  </Link>
-                                ) : task.opportunity ? (
-                                  'Opportunity linked'
-                                ) : (
-                                  '-'
-                                )}
-                              </TableCell>
-                              <TableCell>{task.owner_username || '-'}</TableCell>
-                              <TableCell>
-                                <div className="flex flex-col">
-                                  <span>{formatDate(task.due_date)}</span>
-                                  <span className="text-xs text-muted-foreground">{taskBucket(task)}</span>
-                                </div>
-                              </TableCell>
-                              <TableCell>{task.status}</TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex justify-end gap-2">
-                                  <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleCompleteTask(task.id)}
-                                    disabled={completingTaskIds.has(task.id)}
-                                  >
-                                    {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                {loading ? (
+                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    Loading tasks...
+                  </p>
+                ) : tasksDue.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                    No tasks due.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {tasksDue.map((task) => {
+                      const opportunity = task.opportunity ? opportunityById.get(task.opportunity) : null;
+                      const company = task.company ? customerById.get(task.company) : null;
+                      const bucket = taskBucket(task);
+                      return (
+                        <div key={task.id} className="rounded-md border border-slate-200 bg-white p-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0 space-y-2">
+                              <p className="break-words text-sm font-medium leading-6 text-slate-900">
+                                {task.description}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                                <span>
+                                  <span className="font-medium text-slate-700">Company:</span>{' '}
+                                  {company ? (
+                                    <Link
+                                      className="text-primary hover:underline"
+                                      href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}
+                                    >
+                                      {company.name}
+                                    </Link>
+                                  ) : task.company ? (
+                                    'Company linked'
+                                  ) : (
+                                    '-'
+                                  )}
+                                </span>
+                                <span>
+                                  <span className="font-medium text-slate-700">Opportunity:</span>{' '}
+                                  {opportunity ? (
+                                    <Link
+                                      className="text-primary hover:underline"
+                                      href={`/crm/opportunities/${opportunity.id}`}
+                                    >
+                                      {opportunity.title}
+                                    </Link>
+                                  ) : task.opportunity ? (
+                                    'Opportunity linked'
+                                  ) : (
+                                    '-'
+                                  )}
+                                </span>
+                                <span>
+                                  <span className="font-medium text-slate-700">Owner:</span>{' '}
+                                  {task.owner_username || '-'}
+                                </span>
+                                <span>
+                                  <span className="font-medium text-slate-700">Due:</span>{' '}
+                                  {formatDate(task.due_date)}
+                                </span>
+                                <Badge variant={bucket === 'Overdue' ? 'destructive' : 'outline'}>{bucket}</Badge>
+                                <Badge variant="secondary">{task.status}</Badge>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+                              <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
+                                Edit
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleCompleteTask(task.id)}
+                                disabled={completingTaskIds.has(task.id)}
+                              >
+                                {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
+                              </Button>
+                              {company ? (
+                                <Button variant="outline" size="sm" asChild>
+                                  <Link href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}>View Account</Link>
+                                </Button>
+                              ) : null}
+                              {opportunity ? (
+                                <Button variant="outline" size="sm" asChild>
+                                  <Link href={`/crm/opportunities/${opportunity.id}`}>View Opportunity</Link>
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
