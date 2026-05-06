@@ -85,6 +85,16 @@ export const buildQuoteComputePayload = (
     output_currency: data.output_currency || undefined,
   };
 
+  const counterpartyMatch = data.pricing_counterparty?.match(/^(agent|carrier):(\d+)$/);
+  if (counterpartyMatch) {
+    const [, kind, id] = counterpartyMatch;
+    if (kind === "agent") {
+      payload.agent_id = Number(id);
+    } else {
+      payload.carrier_id = Number(id);
+    }
+  }
+
   if (!speOverrides) {
     return payload;
   }

@@ -488,7 +488,7 @@ export function QuoteForm({
                 onAction={getSectionStatus(2) === "completed" ? () => openSection(2) : undefined}
               >
                 <div className="space-y-6">
-                  <QuoteTermsSection />
+                  <QuoteTermsSection user={user} />
 
                   <QuoteWorkflowActionBar
                     secondaryAction={renderSectionDiscardAction()}

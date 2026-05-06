@@ -737,14 +737,15 @@ class RateAvailabilityService:
             return cls._missing_rate_outcome(component)
 
         if direction == 'DOMESTIC':
-            domestic_rows = list(
+            domestic_cogs_rows = list(
                 DomesticCOGS.objects.filter(
                     origin_zone=origin_airport,
                     destination_zone=destination_airport,
                     valid_from__lte=today,
                     valid_until__gte=today,
                 ).select_related('product_code')
-            ) + list(
+            )
+            domestic_sell_rows = list(
                 DomesticSellRate.objects.filter(
                     origin_zone=origin_airport,
                     destination_zone=destination_airport,
@@ -752,12 +753,24 @@ class RateAvailabilityService:
                     valid_until__gte=today,
                 ).select_related('product_code')
             )
-            freight_outcomes = [
+            cogs_freight_outcomes = [
                 evaluate_row(COMPONENT_FREIGHT, row)
-                for row in domestic_rows
+                for row in domestic_cogs_rows
                 if row.product_code.category == ProductCode.CATEGORY_FREIGHT
             ]
-            outcomes[COMPONENT_FREIGHT] = choose_best(COMPONENT_FREIGHT, freight_outcomes)
+            sell_freight_outcomes = [
+                evaluate_row(COMPONENT_FREIGHT, row)
+                for row in domestic_sell_rows
+                if row.product_code.category == ProductCode.CATEGORY_FREIGHT
+            ]
+            best_cogs = choose_best(COMPONENT_FREIGHT, cogs_freight_outcomes)
+            if best_cogs['status'] in {cls.STATUS_MISSING_DIMENSION, cls.STATUS_AMBIGUOUS}:
+                outcomes[COMPONENT_FREIGHT] = best_cogs
+            else:
+                outcomes[COMPONENT_FREIGHT] = choose_best(
+                    COMPONENT_FREIGHT,
+                    [best_cogs, *sell_freight_outcomes],
+                )
             return outcomes
 
         if direction == 'EXPORT':

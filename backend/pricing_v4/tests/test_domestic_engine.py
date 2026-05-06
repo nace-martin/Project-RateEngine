@@ -26,6 +26,7 @@ from pricing_v4.models import (
 )
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult
+from pricing_v4.services.rate_selector import RateAmbiguityError
 
 
 EXPECTED_QUOTE_RESULT_FIELDS = {field.name for field in fields(QuoteResult)}
@@ -178,6 +179,70 @@ class DomesticFreightTest(DomesticEngineTestCase):
         self.assertTrue(freight_line.is_rate_missing)
         self.assertFalse(freight_line.included_in_total)
         self.assertEqual(result.tax_breakdown, {'service_in_PNG': Decimal('0.00')})
+
+    def test_multiple_domestic_cogs_without_counterparty_raises_ambiguity(self):
+        agent = Agent.objects.create(
+            code='DOM-AG',
+            name='Domestic Agent',
+            country_code='PG',
+            agent_type='ORIGIN',
+        )
+        DomesticCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_zone='POM',
+            destination_zone='LAE',
+            agent=agent,
+            currency='PGK',
+            rate_per_kg=Decimal('7.00'),
+            min_charge=Decimal('100.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        engine = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=50,
+            service_scope='A2A',
+        )
+
+        with self.assertRaises(RateAmbiguityError):
+            engine.calculate_quote()
+
+    def test_selected_domestic_cogs_counterparty_resolves_rate(self):
+        agent = Agent.objects.create(
+            code='DOM-AG-SEL',
+            name='Domestic Agent Selected',
+            country_code='PG',
+            agent_type='ORIGIN',
+        )
+        selected = DomesticCOGS.objects.create(
+            product_code=self.pc_freight,
+            origin_zone='POM',
+            destination_zone='LAE',
+            agent=agent,
+            currency='PGK',
+            rate_per_kg=Decimal('7.00'),
+            min_charge=Decimal('100.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        engine = DomesticPricingEngine(
+            cogs_origin='POM',
+            destination='LAE',
+            weight_kg=50,
+            service_scope='A2A',
+            preferred_agent_id=agent.id,
+        )
+        result = engine.calculate_quote()
+
+        self.assertEqual(result.cogs_breakdown[0].amount, Decimal('350.00'))
+        self.assertEqual(result.line_items[0].cost_source, f'DomesticCOGS #{selected.pk}')
+        self.assertEqual(
+            result.audit_metadata['selected_rates'][0]['rate']['id'],
+            selected.pk,
+        )
 
 
 class DomesticWeightBreaksTest(DomesticEngineTestCase):

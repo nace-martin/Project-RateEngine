@@ -31,6 +31,9 @@ function formatQuoteComputeError(
       ? payload.resolution_reason
       : null;
   const component = typeof payload.component === "string" ? payload.component : null;
+  const missingDimensions = Array.isArray(payload.missing_dimensions)
+    ? payload.missing_dimensions.filter((item): item is string => typeof item === "string")
+    : [];
 
   if (!detail) {
     return Object.keys(payload).length > 0 ? JSON.stringify(payload) : message;
@@ -45,6 +48,10 @@ function formatQuoteComputeError(
     message = `${detail} [${contextBits.join(" | ")}]`;
   } else {
     message = detail;
+  }
+
+  if (missingDimensions.length > 0) {
+    message = `${message} Missing: ${missingDimensions.join(", ")}.`;
   }
 
   if (remediation) {

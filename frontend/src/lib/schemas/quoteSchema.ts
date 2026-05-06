@@ -331,6 +331,10 @@ export const quoteFormSchemaV3 = z
 
     is_dangerous_goods: z.boolean().default(false),
     output_currency: z.string().length(3).optional(),
+    pricing_counterparty: z
+      .string()
+      .regex(/^(agent|carrier):\d+$/, 'Select a valid buy counterparty.')
+      .optional(),
 
     // --- Step 4: Dimensions (The Array) ---
     dimensions: z
