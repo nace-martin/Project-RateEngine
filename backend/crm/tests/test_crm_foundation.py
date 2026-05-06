@@ -263,6 +263,29 @@ def test_opportunity_api_rejects_direct_terminal_status_on_update(opportunity, u
 
 
 @pytest.mark.django_db
+def test_opportunity_api_accepts_transport_service_type(company, user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/crm/opportunities/",
+        {
+            "company": str(company.id),
+            "title": "Local delivery follow-up",
+            "service_type": "TRANSPORT",
+            "origin": "Lae",
+            "destination": "Port Moresby",
+            "status": Opportunity.Status.NEW,
+            "priority": Opportunity.Priority.MEDIUM,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["service_type"] == "TRANSPORT"
+
+
+@pytest.mark.django_db
 def test_mark_lost_requires_reason(opportunity, user):
     client = APIClient()
     client.force_authenticate(user=user)

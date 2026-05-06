@@ -121,7 +121,7 @@ export interface Opportunity {
   company: string;
   company_name?: string;
   title: string;
-  service_type: 'AIR' | 'SEA' | 'CUSTOMS' | 'DOMESTIC' | 'MULTIMODAL' | string;
+  service_type: 'AIR' | 'SEA' | 'CUSTOMS' | 'TRANSPORT' | 'DOMESTIC' | 'MULTIMODAL' | string;
   direction?: 'IMPORT' | 'EXPORT' | 'DOMESTIC' | string;
   scope?: string;
   origin?: string;

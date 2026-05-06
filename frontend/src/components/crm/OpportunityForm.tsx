@@ -18,10 +18,32 @@ type OpportunityFormProps = {
   opportunity?: Opportunity | null;
 };
 
-const serviceTypeOptions = ['AIR', 'SEA', 'CUSTOMS', 'DOMESTIC', 'MULTIMODAL'];
+const serviceTypeOptions = [
+  { value: 'AIR', label: 'Air' },
+  { value: 'SEA', label: 'Sea' },
+  { value: 'CUSTOMS', label: 'Customs' },
+  { value: 'TRANSPORT', label: 'Transport' },
+];
+const legacyServiceTypeLabels: Record<string, string> = {
+  DOMESTIC: 'Domestic',
+  MULTIMODAL: 'Multimodal',
+};
 const statusOptions = ['NEW', 'QUALIFIED', 'QUOTED'];
 const priorityOptions = ['LOW', 'MEDIUM', 'HIGH'];
 const currencyOptions = ['PGK', 'AUD', 'USD', 'NZD'];
+
+const statusHelp: Record<string, string> = {
+  NEW: 'Lead identified, not yet confirmed.',
+  QUALIFIED: 'Customer has a real requirement worth pursuing.',
+  QUOTED: 'Quote has been issued or is being prepared.',
+};
+
+const serviceTypeHelp: Record<string, string> = {
+  AIR: 'Use this for air freight opportunities. Quote scope is selected during quote creation; this form does not assume airport-to-airport.',
+  SEA: 'Use this for sea freight opportunities. Capture the route, volume or FCL count, and expected frequency.',
+  CUSTOMS: 'Use this for customs clearance work. Use the location fields for arrival, port, airport, or clearance location context.',
+  TRANSPORT: 'Use this for pickup, delivery, and local transport work. Use origin and destination as pickup and delivery points.',
+};
 
 function stringValue(value?: string | number | null): string {
   if (value === null || value === undefined) return '';
@@ -65,10 +87,54 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
   const [nextAction, setNextAction] = useState(opportunity?.next_action || '');
   const [nextActionDate, setNextActionDate] = useState(opportunity?.next_action_date || '');
   const [saving, setSaving] = useState(false);
+  const normalizedServiceType = serviceType.toUpperCase();
+  const isAir = normalizedServiceType === 'AIR';
+  const isSea = normalizedServiceType === 'SEA';
+  const isCustoms = normalizedServiceType === 'CUSTOMS';
+  const isTransport = normalizedServiceType === 'TRANSPORT';
+  const isLegacyServiceType = Boolean(legacyServiceTypeLabels[normalizedServiceType]);
+  const serviceTypeSelectOptions = useMemo(() => {
+    if (!isLegacyServiceType) return serviceTypeOptions;
+    return [
+      ...serviceTypeOptions,
+      {
+        value: normalizedServiceType,
+        label: `Legacy: ${legacyServiceTypeLabels[normalizedServiceType]}`,
+      },
+    ];
+  }, [isLegacyServiceType, normalizedServiceType]);
+  const originLabel = isTransport
+    ? 'Pickup / Origin'
+    : isCustoms
+      ? 'Arrival / Clearance Location'
+      : 'Origin';
+  const destinationLabel = isTransport
+    ? 'Delivery / Destination'
+    : isCustoms
+      ? 'Delivery / Final Location'
+      : 'Destination';
+  const originHelper = isTransport
+    ? 'Pickup address, town, depot, or origin point.'
+    : isCustoms
+      ? 'Port, airport, bond store, or arrival location.'
+      : 'Airport, port, city, or lane origin.';
+  const destinationHelper = isTransport
+    ? 'Delivery address, town, depot, or destination point.'
+    : isCustoms
+      ? 'Delivery point, consignee location, or clearance destination.'
+      : 'Airport, port, city, or lane destination.';
+  const showEstimatedWeight = isAir;
+  const showEstimatedVolume = isAir || isSea;
+  const showEstimatedFcl = isSea;
+  const nextActionHelper = isCustoms
+    ? 'Use this for missing documents, clearance follow-up, or customer confirmation.'
+    : isTransport
+      ? 'Use this for pickup/delivery confirmation or transport follow-up.'
+      : 'Use this for the next sales or quoting follow-up.';
 
   const validate = () => {
     if (!company) return 'Company is required.';
-    if (!title.trim()) return 'Title is required.';
+    if (!title.trim()) return 'Opportunity name is required.';
     if (!serviceType) return 'Service type is required.';
     if (!origin.trim()) return 'Origin is required.';
     if (!destination.trim()) return 'Destination is required.';
@@ -153,7 +219,7 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
               disabled={saving}
             />
             <div className="space-y-2">
-              <Label htmlFor="opportunity-title">Title</Label>
+              <Label htmlFor="opportunity-title">Opportunity Name</Label>
               <Input
                 id="opportunity-title"
                 value={title}
@@ -161,6 +227,9 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                 disabled={saving}
                 required
               />
+              <p className="text-xs text-muted-foreground">
+                Short name for this opportunity, e.g. Weekly BNE-POM Air Freight or Customs + Delivery for Medical Supplies.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="opportunity-service-type">Service Type</Label>
@@ -171,10 +240,14 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                 disabled={saving}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
-                {serviceTypeOptions.map((option) => (
-                  <option key={option} value={option}>{option}</option>
+                {serviceTypeSelectOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
+              <p className="text-xs text-muted-foreground">
+                {serviceTypeHelp[normalizedServiceType] ||
+                  'Legacy service type retained for this existing record. Change it only if the opportunity should move to a current service type.'}
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="opportunity-status">Status</Label>
@@ -189,9 +262,10 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
+              <p className="text-xs text-muted-foreground">{statusHelp[status]}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="opportunity-origin">Origin</Label>
+              <Label htmlFor="opportunity-origin">{originLabel}</Label>
               <Input
                 id="opportunity-origin"
                 value={origin}
@@ -199,9 +273,10 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                 disabled={saving}
                 required
               />
+              <p className="text-xs text-muted-foreground">{originHelper}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="opportunity-destination">Destination</Label>
+              <Label htmlFor="opportunity-destination">{destinationLabel}</Label>
               <Input
                 id="opportunity-destination"
                 value={destination}
@@ -209,6 +284,7 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                 disabled={saving}
                 required
               />
+              <p className="text-xs text-muted-foreground">{destinationHelper}</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="opportunity-priority">Priority</Label>
@@ -234,42 +310,53 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                 placeholder="Weekly"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="opportunity-weight">Estimated Weight KG</Label>
-              <Input
-                id="opportunity-weight"
-                type="number"
-                min="0"
-                step="0.001"
-                value={estimatedWeightKg}
-                onChange={(event) => setEstimatedWeightKg(event.target.value)}
-                disabled={saving}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="opportunity-volume">Estimated Volume CBM</Label>
-              <Input
-                id="opportunity-volume"
-                type="number"
-                min="0"
-                step="0.001"
-                value={estimatedVolumeCbm}
-                onChange={(event) => setEstimatedVolumeCbm(event.target.value)}
-                disabled={saving}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="opportunity-fcl">Estimated FCL Count</Label>
-              <Input
-                id="opportunity-fcl"
-                type="number"
-                min="0"
-                step="1"
-                value={estimatedFclCount}
-                onChange={(event) => setEstimatedFclCount(event.target.value)}
-                disabled={saving}
-              />
-            </div>
+            {showEstimatedWeight ? (
+              <div className="space-y-2">
+                <Label htmlFor="opportunity-weight">Estimated Weight KG</Label>
+                <Input
+                  id="opportunity-weight"
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={estimatedWeightKg}
+                  onChange={(event) => setEstimatedWeightKg(event.target.value)}
+                  disabled={saving}
+                />
+                <p className="text-xs text-muted-foreground">Useful for early air freight sizing. Leave blank if unknown.</p>
+              </div>
+            ) : null}
+            {showEstimatedVolume ? (
+              <div className="space-y-2">
+                <Label htmlFor="opportunity-volume">Estimated Volume CBM</Label>
+                <Input
+                  id="opportunity-volume"
+                  type="number"
+                  min="0"
+                  step="0.001"
+                  value={estimatedVolumeCbm}
+                  onChange={(event) => setEstimatedVolumeCbm(event.target.value)}
+                  disabled={saving}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {isSea ? 'Useful for LCL or loose cargo estimates.' : 'Optional estimate for bulky air cargo.'}
+                </p>
+              </div>
+            ) : null}
+            {showEstimatedFcl ? (
+              <div className="space-y-2">
+                <Label htmlFor="opportunity-fcl">Estimated FCL Count</Label>
+                <Input
+                  id="opportunity-fcl"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={estimatedFclCount}
+                  onChange={(event) => setEstimatedFclCount(event.target.value)}
+                  disabled={saving}
+                />
+                <p className="text-xs text-muted-foreground">Optional full-container estimate for sea opportunities.</p>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="opportunity-revenue">Estimated Revenue</Label>
               <Input
@@ -281,6 +368,7 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                 onChange={(event) => setEstimatedRevenue(event.target.value)}
                 disabled={saving}
               />
+              <p className="text-xs text-muted-foreground">Optional estimate only. Leave blank if unknown before quoting.</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="opportunity-currency">Estimated Currency</Label>
@@ -295,6 +383,7 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
+              <p className="text-xs text-muted-foreground">Optional. Final quote currency will be confirmed during quoting.</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="opportunity-next-action-date">Next Action Date</Label>
@@ -317,6 +406,7 @@ export function OpportunityForm({ mode, opportunity = null }: OpportunityFormPro
               disabled={saving}
               className="min-h-24"
             />
+            <p className="text-xs text-muted-foreground">{nextActionHelper}</p>
           </div>
 
           <div className="flex flex-wrap justify-end gap-2 border-t pt-4">

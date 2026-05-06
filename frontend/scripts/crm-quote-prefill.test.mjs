@@ -33,7 +33,7 @@ const { buildQuotePrefillDefaults, quoteModeFromServiceType } = await loadPrefil
 assert.equal(quoteModeFromServiceType("AIR"), "AIR");
 assert.equal(quoteModeFromServiceType("air"), "AIR");
 
-for (const serviceType of ["SEA", "CUSTOMS", "DOMESTIC", "MULTIMODAL"]) {
+for (const serviceType of ["SEA", "CUSTOMS", "TRANSPORT", "DOMESTIC", "MULTIMODAL"]) {
   const prefill = buildQuotePrefillDefaults({
     companyId: "company-1",
     opportunityId: "opportunity-1",
@@ -61,6 +61,7 @@ const airPrefill = buildQuotePrefillDefaults({
 
 assert.equal(airPrefill.defaultValues.mode, "AIR");
 assert.equal(airPrefill.defaultValues.opportunity_id, "opportunity-1");
+assert.equal(airPrefill.defaultValues.service_scope, undefined);
 assert.equal(airPrefill.unsupportedServiceType, undefined);
 
 console.log("crm quote prefill safety checks passed");

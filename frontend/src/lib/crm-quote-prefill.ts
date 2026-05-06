@@ -40,6 +40,7 @@ export const buildQuotePrefillDefaults = ({
   const defaultValues: Partial<QuoteFormSchemaV3> = {
     customer_id: companyId || "",
     opportunity_id: shouldLinkOpportunity ? opportunityId || undefined : undefined,
+    service_scope: undefined,
     origin_location_id: originLocationId || "",
     destination_location_id: destinationLocationId || "",
     origin_airport: originCode || "",

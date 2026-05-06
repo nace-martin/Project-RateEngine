@@ -11,6 +11,7 @@ SERVICE_TYPE_CHOICES = [
     ("AIR", "Air"),
     ("SEA", "Sea"),
     ("CUSTOMS", "Customs"),
+    ("TRANSPORT", "Transport"),
     ("DOMESTIC", "Domestic"),
     ("MULTIMODAL", "Multimodal"),
 ]
