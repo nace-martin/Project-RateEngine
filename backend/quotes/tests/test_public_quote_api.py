@@ -194,6 +194,13 @@ class QuotePublicDetailAPITest(APITestCase):
             leg="ORIGIN",
             category="DOCUMENTATION",
         )
+        terminal_component = ServiceComponent.objects.create(
+            code="DOM-TERMINAL",
+            description="Terminal Fee",
+            mode="AIR",
+            leg="ORIGIN",
+            category="HANDLING",
+        )
 
         QuoteLine.objects.create(
             quote_version=version,
@@ -215,6 +222,18 @@ class QuotePublicDetailAPITest(APITestCase):
             sell_fcy_incl_gst=Decimal("0.00"),
             cost_pgk=Decimal("35.00"),
             cost_source_description="Documentation Fee",
+            leg="ORIGIN",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=terminal_component,
+            sell_pgk=Decimal("0.00"),
+            sell_fcy=Decimal("0.00"),
+            sell_fcy_currency="PGK",
+            sell_fcy_incl_gst=Decimal("0.00"),
+            cost_pgk=Decimal("35.00"),
+            cost_source_description="Terminal Fee",
             leg="ORIGIN",
             bucket="origin_charges",
         )

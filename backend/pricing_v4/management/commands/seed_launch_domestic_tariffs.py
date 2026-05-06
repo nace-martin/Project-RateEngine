@@ -121,13 +121,13 @@ COGS_SURCHARGES = (
     ("DOM-DOC", "FLAT", "35.00", None),
     ("DOM-TERMINAL", "FLAT", "35.00", None),
     ("DOM-SECURITY", "PER_KG", "0.20", "5.00"),
-    ("DOM-FSC", "PER_KG", "0.25", None),
+    ("DOM-FSC", "PER_KG", "0.50", None),
 )
 
 SELL_SURCHARGES = (
     ("DOM-AWB", "FLAT", "70.00", None),
     ("DOM-SECURITY", "PER_KG", "0.20", "5.00"),
-    ("DOM-FSC", "PER_KG", "0.35", None),
+    ("DOM-FSC", "PER_KG", "0.70", None),
     ("DOM-DG-HANDLING", "FLAT", "195.00", None),
 )
 

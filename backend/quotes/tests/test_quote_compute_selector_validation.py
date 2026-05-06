@@ -8,7 +8,7 @@ from rest_framework.test import APITestCase
 from core.models import Country, Currency
 from core.tests.helpers import create_location
 from parties.models import Company, Contact
-from pricing_v4.models import Agent, Carrier, DomesticCOGS, DomesticSellRate, ImportCOGS, ProductCode
+from pricing_v4.models import Agent, Carrier, DomesticCOGS, DomesticSellRate, ImportCOGS, ProductCode, Surcharge
 from services.models import ServiceComponent
 
 
@@ -94,6 +94,35 @@ class QuoteComputeSelectorValidationTests(APITestCase):
             unit="KG",
             audience="BOTH",
         )
+        self.domestic_product_codes = {}
+        for product_id, code, description, category, unit in [
+            (3661, "DOM-AWB", "AWB Fee", "DOCUMENTATION", "SHIPMENT"),
+            (3662, "DOM-DOC", "Documentation Fee", "DOCUMENTATION", "SHIPMENT"),
+            (3663, "DOM-TERMINAL", "Terminal Fee", "HANDLING", "SHIPMENT"),
+            (3664, "DOM-SECURITY", "Security Surcharge", "SCREENING", "KG"),
+            (3665, "DOM-FSC", "Fuel Surcharge", "SURCHARGE", "KG"),
+        ]:
+            self.domestic_product_codes[code] = ProductCode.objects.create(
+                id=product_id,
+                code=code,
+                description=description,
+                domain="DOMESTIC",
+                category=category,
+                is_gst_applicable=True,
+                gst_rate=Decimal("0.10"),
+                gl_revenue_code="4100",
+                gl_cost_code="5100",
+                default_unit="KG" if unit == "KG" else "SHIPMENT",
+            )
+            ServiceComponent.objects.create(
+                code=code,
+                description=description,
+                mode="AIR",
+                leg="ORIGIN",
+                category="DOCUMENTATION" if code in {"DOM-AWB", "DOM-DOC"} else "ACCESSORIAL",
+                unit=unit,
+                audience="BOTH",
+            )
         self.valid_from = date.today() - timedelta(days=1)
         self.valid_until = date.today() + timedelta(days=30)
 
@@ -156,6 +185,28 @@ class QuoteComputeSelectorValidationTests(APITestCase):
             min_charge=Decimal("100.00"),
             valid_from=self.valid_from,
             valid_until=self.valid_until,
+        )
+
+    def _seed_domestic_surcharge(
+        self,
+        *,
+        code: str,
+        rate_side: str,
+        rate_type: str,
+        amount: str,
+        min_charge: str | None = None,
+    ):
+        return Surcharge.objects.create(
+            product_code=self.domestic_product_codes[code],
+            service_type="DOMESTIC_AIR",
+            rate_side=rate_side,
+            rate_type=rate_type,
+            amount=Decimal(amount),
+            min_charge=Decimal(min_charge) if min_charge else None,
+            currency="PGK",
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+            is_active=True,
         )
 
     def test_quote_compute_requires_buy_currency_when_import_cogs_are_multicurrency(self):
@@ -238,6 +289,86 @@ class QuoteComputeSelectorValidationTests(APITestCase):
         line = response.data["latest_version"]["lines"][0]
         self.assertEqual(line["cost_source"], f"DomesticCOGS #{selected.pk}")
         self.assertEqual(line["cost_pgk"], "175.00")
+
+    def test_domestic_quote_includes_standard_domestic_air_surcharges(self):
+        selected = DomesticCOGS.objects.create(
+            product_code=self.domestic_freight_pc,
+            origin_zone="POM",
+            destination_zone="LAE",
+            agent=self.domestic_agent,
+            currency="PGK",
+            rate_per_kg=Decimal("6.10"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+        DomesticSellRate.objects.create(
+            product_code=self.domestic_freight_pc,
+            origin_zone="POM",
+            destination_zone="LAE",
+            currency="PGK",
+            rate_per_kg=Decimal("7.30"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+        self._seed_domestic_surcharge(code="DOM-DOC", rate_side="COGS", rate_type="FLAT", amount="35.00")
+        self._seed_domestic_surcharge(code="DOM-TERMINAL", rate_side="COGS", rate_type="FLAT", amount="35.00")
+        self._seed_domestic_surcharge(
+            code="DOM-SECURITY",
+            rate_side="COGS",
+            rate_type="PER_KG",
+            amount="0.20",
+            min_charge="5.00",
+        )
+        self._seed_domestic_surcharge(code="DOM-FSC", rate_side="COGS", rate_type="PER_KG", amount="0.50")
+        self._seed_domestic_surcharge(code="DOM-AWB", rate_side="SELL", rate_type="FLAT", amount="70.00")
+        self._seed_domestic_surcharge(
+            code="DOM-SECURITY",
+            rate_side="SELL",
+            rate_type="PER_KG",
+            amount="0.20",
+            min_charge="5.00",
+        )
+        self._seed_domestic_surcharge(code="DOM-FSC", rate_side="SELL", rate_type="PER_KG", amount="0.70")
+
+        payload = self._domestic_payload(
+            agent_id=self.domestic_agent.id,
+            dimensions=[
+                {
+                    "pieces": 1,
+                    "length_cm": "10",
+                    "width_cm": "10",
+                    "height_cm": "10",
+                    "gross_weight_kg": "10",
+                    "package_type": "Box",
+                }
+            ],
+        )
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        lines = {
+            line["service_component"]["code"]: line
+            for line in response.data["latest_version"]["lines"]
+        }
+
+        self.assertEqual(lines["DOM-FRT-AIR"]["cost_source"], f"DomesticCOGS #{selected.pk}")
+        self.assertEqual(lines["DOM-FRT-AIR"]["cost_pgk"], "61.00")
+        self.assertEqual(lines["DOM-FRT-AIR"]["sell_pgk"], "73.00")
+        self.assertEqual(lines["DOM-AWB"]["sell_pgk"], "70.00")
+        self.assertEqual(lines["DOM-AWB"]["cost_pgk"], "0.00")
+        self.assertEqual(lines["DOM-DOC"]["cost_pgk"], "35.00")
+        self.assertEqual(lines["DOM-DOC"]["sell_pgk"], "0.00")
+        self.assertEqual(lines["DOM-TERMINAL"]["cost_pgk"], "35.00")
+        self.assertEqual(lines["DOM-TERMINAL"]["sell_pgk"], "0.00")
+        self.assertEqual(lines["DOM-SECURITY"]["cost_pgk"], "5.00")
+        self.assertEqual(lines["DOM-SECURITY"]["sell_pgk"], "5.00")
+        self.assertEqual(lines["DOM-FSC"]["cost_pgk"], "5.00")
+        self.assertEqual(lines["DOM-FSC"]["sell_pgk"], "7.00")
+
+        totals = response.data["latest_version"]["totals"]
+        self.assertEqual(totals["total_cost_pgk"], "141.00")
+        self.assertEqual(totals["total_sell_pgk"], "155.00")
+        self.assertEqual(totals["total_sell_pgk_incl_gst"], "170.50")
 
     def test_quote_compute_requires_agent_when_counterparty_specific_import_cogs_exist(self):
         for agent in [self.agent_a, self.agent_b]:

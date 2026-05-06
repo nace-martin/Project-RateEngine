@@ -67,7 +67,7 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             rate_side="COGS",
             valid_from="2026-01-01",
         )
-        self.assertEqual(str(fuel_cogs.amount), "0.2500")
+        self.assertEqual(str(fuel_cogs.amount), "0.5000")
 
         fuel_sell = Surcharge.objects.get(
             product_code__code="DOM-FSC",
@@ -75,7 +75,7 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             rate_side="SELL",
             valid_from="2026-01-01",
         )
-        self.assertEqual(str(fuel_sell.amount), "0.3500")
+        self.assertEqual(str(fuel_sell.amount), "0.7000")
 
         awb_sell = Surcharge.objects.get(
             product_code__code="DOM-AWB",
