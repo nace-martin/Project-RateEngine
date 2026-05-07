@@ -33,6 +33,10 @@ from quotes.services.rate_resolution import (
     resolve_quote_rate_dimensions,
     serialize_resolved_rate_dimensions,
 )
+from pricing_v4.services.rate_selector import (
+    RateAmbiguityError,
+    build_rate_selection_error_payload,
+)
 
 from crm.services import create_auto_quote_opportunity_interaction, resolve_quote_opportunity
 from services.models import ServiceComponent
@@ -278,6 +282,19 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             # Dispatcher routing errors -> 400 Bad Request
             logger.warning(f"Pricing dispatcher routing error: {e}")
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        except RateAmbiguityError as e:
+            payload = build_rate_selection_error_payload(e, component='FREIGHT')
+            if e.model_name == 'DomesticCOGS' and 'counterparty' in e.unresolved_dimensions:
+                payload['detail'] = (
+                    'Multiple Domestic COGS rates matched this route and currency. '
+                    'Select the buy-side carrier or agent for this Domestic Air quote.'
+                )
+                payload['suggested_remediation'] = (
+                    'Choose the matching Domestic COGS counterparty, or retire/revise overlapping active Domestic COGS rows.'
+                )
+            logger.warning("Quote compute rate selection ambiguity: %s", payload)
+            return Response(payload, status=status.HTTP_409_CONFLICT)
             
         except (ValueError, NotImplementedError) as e:
             # Domain logic errors (e.g., "Unsupported shipment type") -> 400 Bad Request
@@ -406,7 +423,10 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 continue
 
             return {
-                'detail': outcome.get('detail') or 'Rate selection could not be resolved deterministically.',
+                'detail': self._selector_detail_message(
+                    shipment_type=shipment_type,
+                    outcome=outcome,
+                ),
                 'error_code': (
                     'RATE_SELECTION_AMBIGUOUS'
                     if outcome.get('status') == RateAvailabilityService.STATUS_AMBIGUOUS
@@ -422,6 +442,20 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             }
 
         return None
+
+    @staticmethod
+    def _selector_detail_message(*, shipment_type: str, outcome: dict) -> str:
+        missing_dimensions = outcome.get('missing_dimensions') or []
+        if (
+            shipment_type == Quote.ShipmentType.DOMESTIC
+            and outcome.get('selector_model') == 'DomesticCOGS'
+            and any(item in {'agent_id', 'carrier_id', 'counterparty'} for item in missing_dimensions)
+        ):
+            return (
+                'Multiple Domestic COGS rates matched this route and currency. '
+                'Select the buy-side carrier or agent for this Domestic Air quote.'
+            )
+        return outcome.get('detail') or 'Rate selection could not be resolved deterministically.'
 
     @staticmethod
     def _selector_remediation_message(missing_dimensions: list[str]) -> str:

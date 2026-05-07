@@ -4,7 +4,7 @@ from datetime import date
 from django.core.management import call_command
 from django.test import TestCase
 
-from pricing_v4.models import DomesticCOGS, DomesticSellRate, ProductCode, Surcharge
+from pricing_v4.models import Carrier, DomesticCOGS, DomesticSellRate, ProductCode, Surcharge
 
 
 class SeedLaunchDomesticTariffsCommandTest(TestCase):
@@ -48,6 +48,8 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             valid_from="2026-01-01",
         )
         self.assertEqual(str(pom_lae_cogs.rate_per_kg), "6.1000")
+        self.assertEqual(pom_lae_cogs.agent.code, "PX-DOM")
+        self.assertIsNone(pom_lae_cogs.carrier_id)
         self.assertEqual(str(pom_lae_sell.rate_per_kg), "7.3000")
         self.assertEqual(str(lae_pom_sell.rate_per_kg), "7.1000")
 
@@ -67,7 +69,7 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             rate_side="COGS",
             valid_from="2026-01-01",
         )
-        self.assertEqual(str(fuel_cogs.amount), "0.2500")
+        self.assertEqual(str(fuel_cogs.amount), "0.5000")
 
         fuel_sell = Surcharge.objects.get(
             product_code__code="DOM-FSC",
@@ -75,7 +77,7 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
             rate_side="SELL",
             valid_from="2026-01-01",
         )
-        self.assertEqual(str(fuel_sell.amount), "0.3500")
+        self.assertEqual(str(fuel_sell.amount), "0.7000")
 
         awb_sell = Surcharge.objects.get(
             product_code__code="DOM-AWB",
@@ -158,3 +160,45 @@ class SeedLaunchDomesticTariffsCommandTest(TestCase):
 
         self.assertFalse(legacy_doc.is_active)
         self.assertFalse(legacy_security.is_active)
+
+    def test_command_retires_overlapping_legacy_px_carrier_domestic_cogs(self):
+        freight_pc = ProductCode.objects.get(code="DOM-FRT-AIR")
+        px_carrier = Carrier.objects.create(
+            code="PX",
+            name="Air Niugini",
+            carrier_type="AIRLINE",
+        )
+        legacy_px_cogs = DomesticCOGS.objects.create(
+            product_code=freight_pc,
+            origin_zone="POM",
+            destination_zone="LAE",
+            carrier=px_carrier,
+            currency="PGK",
+            rate_per_kg="6.10",
+            valid_from=date(2025, 1, 1),
+            valid_until=date(2026, 12, 31),
+        )
+
+        call_command("seed_launch_domestic_tariffs", year=2026, stdout=StringIO())
+
+        legacy_px_cogs.refresh_from_db()
+        self.assertEqual(legacy_px_cogs.valid_until, date(2025, 12, 31))
+        self.assertFalse(
+            DomesticCOGS.objects.filter(
+                product_code=freight_pc,
+                origin_zone="POM",
+                destination_zone="LAE",
+                carrier=px_carrier,
+                valid_from__lte=date(2026, 5, 6),
+                valid_until__gte=date(2026, 5, 6),
+            ).exists()
+        )
+
+        active_launch = DomesticCOGS.objects.get(
+            product_code=freight_pc,
+            origin_zone="POM",
+            destination_zone="LAE",
+            agent__code="PX-DOM",
+            valid_from=date(2026, 1, 1),
+        )
+        self.assertEqual(str(active_launch.rate_per_kg), "6.1000")

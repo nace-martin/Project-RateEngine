@@ -4,7 +4,7 @@
  * SPOT Rate Entry Page
  * 
  * SPOT workflow:
- * 1. Import - Paste agent reply or upload source data
+ * 1. Intake - Paste agent reply or upload source data
  * 2. Review - Resolve imported-rate exceptions
  * 3. Confirm - Create quote from reviewed charges
  */
@@ -49,7 +49,7 @@ type Step = "intake" | "review";
 type DisplayStep = Step | "confirm";
 
 const STEPS: { id: DisplayStep; label: string; description: string }[] = [
-    { id: "intake", label: "1. Import", description: "Paste or upload rates" },
+    { id: "intake", label: "1. Intake", description: "Paste or upload rates" },
     { id: "review", label: "2. Review", description: "Resolve exceptions" },
     { id: "confirm", label: "3. Confirm", description: "Create quote" },
 ];
@@ -1254,7 +1254,7 @@ export default function SpotRateEntryPage() {
                         }}
                         className="mb-4"
                     >
-                        {"<-"} Back to Import
+                        {"<-"} Back to Intake
                     </Button>
 
                     <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">

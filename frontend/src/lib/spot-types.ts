@@ -90,6 +90,9 @@ export interface TriggerEvaluateRequest {
     has_valid_sell?: boolean;
     is_multi_leg?: boolean;
     service_scope?: string;
+    agent_id?: number;
+    carrier_id?: number;
+    buy_currency?: string;
 }
 
 /** Trigger result from backend */
@@ -106,6 +109,15 @@ export interface TriggerResult {
 export interface TriggerEvaluateResponse {
     is_spot_required: boolean;
     trigger: TriggerResult | null;
+    selector_issue?: {
+        detail?: string;
+        component?: string;
+        selector_model?: string;
+        selector_context?: Record<string, unknown>;
+        missing_dimensions?: string[];
+        conflicting_rows?: Array<Record<string, unknown>>;
+        suggested_remediation?: string;
+    };
 }
 
 // =============================================================================

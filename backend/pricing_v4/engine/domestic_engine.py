@@ -14,6 +14,7 @@ from pricing_v4.services.rate_selector import (
     RateSelectionContext,
     select_domestic_cogs_rate,
     select_domestic_sell_rate,
+    serialize_rate_candidate,
 )
 from core.charge_rules import (
     CALCULATION_LOOKUP_RATE,
@@ -37,6 +38,8 @@ class BillableCharge:
     agent_name: Optional[str] = None
     rule_family: str = CALCULATION_LOOKUP_RATE
     is_rate_missing: bool = False
+    cost_source: Optional[str] = None
+    calculation_notes: Optional[str] = None
 
 class DomesticPricingEngine:
     """
@@ -71,6 +74,7 @@ class DomesticPricingEngine:
         self.preferred_agent_id = preferred_agent_id
         self.preferred_carrier_id = preferred_carrier_id
         self.buy_currency = (buy_currency or "").strip().upper() or None
+        self._selected_rate_metadata: list[dict] = []
         
         # Validation: Door service only available in specific ports
         self.DOOR_PORTS = ['POM', 'LAE']
@@ -131,6 +135,11 @@ class DomesticPricingEngine:
             total_sell_pgk=sum((item.sell_amount for item in line_items), Decimal('0.00')),
             fx_applied=False,
             tax_breakdown=build_tax_breakdown(line_items, default_labels=['service_in_PNG']),
+            audit_metadata=(
+                {"selected_rates": self._selected_rate_metadata}
+                if self._selected_rate_metadata
+                else {}
+            ),
             origin=self.origin,
             destination=self.destination,
             quote_date=self.quote_date,
@@ -178,6 +187,14 @@ class DomesticPricingEngine:
             cost_eval = self._evaluate_rate_record(cogs)
             if cost_eval.amount > 0:
                 agent_name = cogs.agent.name if cogs.agent else None
+                counterparty_name = cogs.agent.name if cogs.agent else (cogs.carrier.name if cogs.carrier else None)
+                self._selected_rate_metadata.append(
+                    {
+                        "component": "FREIGHT",
+                        "selector_model": "DomesticCOGS",
+                        "rate": serialize_rate_candidate(cogs),
+                    }
+                )
                 cogs_breakdown.append(
                     BillableCharge(
                         "Air Freight (Cost)",
@@ -185,6 +202,11 @@ class DomesticPricingEngine:
                         product_code='DOM-FRT-AIR',
                         agent_name=agent_name,
                         rule_family=cost_eval.rule_family,
+                        cost_source=f"DomesticCOGS #{cogs.pk}",
+                        calculation_notes=(
+                            f"Selected DomesticCOGS #{cogs.pk}"
+                            + (f" for {counterparty_name}" if counterparty_name else "")
+                        ),
                     )
                 )
             
@@ -335,10 +357,11 @@ class DomesticPricingEngine:
             )
             item.cost_amount += charge.amount
             item.cost_currency = 'PGK'
-            item.cost_source = QuoteCostSource.DB_TARIFF if not charge.is_rate_missing else 'N/A'
+            item.cost_source = charge.cost_source or (QuoteCostSource.DB_TARIFF if not charge.is_rate_missing else 'N/A')
             item.rate_source = QuoteRateSource.DB_TARIFF if not charge.is_rate_missing else 'N/A'
             item.agent_name = charge.agent_name
             item.rule_family = charge.rule_family
+            item.calculation_notes = charge.calculation_notes or item.calculation_notes
             if charge.is_rate_missing:
                 item.is_rate_missing = True
                 item.included_in_total = False

@@ -393,6 +393,9 @@ export async function computeQuoteV3(
           ? payload.resolution_reason
           : null;
       const component = typeof payload.component === 'string' ? payload.component : null;
+      const missingDimensions = Array.isArray(payload.missing_dimensions)
+        ? payload.missing_dimensions.filter((item): item is string => typeof item === 'string')
+        : [];
 
       if (detail) {
         const contextBits: string[] = [];
@@ -400,6 +403,9 @@ export async function computeQuoteV3(
         if (resolutionReason) contextBits.push(resolutionReason);
         if (component) contextBits.push(`component ${component}`);
         message = contextBits.length > 0 ? `${detail} [${contextBits.join(' | ')}]` : detail;
+        if (missingDimensions.length > 0) {
+          message = `${message} Missing: ${missingDimensions.join(', ')}.`;
+        }
         if (remediation) {
           message = `${message} Suggested action: ${remediation}`;
         }

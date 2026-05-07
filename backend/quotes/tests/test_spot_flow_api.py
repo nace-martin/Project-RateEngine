@@ -3,13 +3,23 @@ from django.urls import reverse
 from unittest.mock import patch
 from django.utils import timezone
 from datetime import date, timedelta
+from decimal import Decimal
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from core.models import Location
 from core.tests.helpers import create_location
-from pricing_v4.models import ChargeAlias, CommodityChargeRule, ProductCode
+from pricing_v4.models import (
+    Agent,
+    Carrier,
+    ChargeAlias,
+    CommodityChargeRule,
+    DomesticCOGS,
+    DomesticSellRate,
+    ProductCode,
+    Surcharge,
+)
 from services.models import ServiceComponent
 from quotes.completeness import (
     COMPONENT_FREIGHT,
@@ -84,6 +94,93 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             alias_source=ChargeAlias.AliasSource.ADMIN,
             review_status=ChargeAlias.ReviewStatus.APPROVED,
         )
+
+    def _product_code(self, product_id: int, code: str, description: str, category: str, unit: str = "SHIPMENT"):
+        return ProductCode.objects.create(
+            id=product_id,
+            code=code,
+            description=description,
+            domain="DOMESTIC",
+            category=category,
+            default_unit=unit,
+            is_gst_applicable=True,
+            gst_rate=Decimal("0.10"),
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+        )
+
+    def _seed_domestic_air_rates(self, *, include_carrier: bool = True):
+        valid_from = date.today() - timedelta(days=1)
+        valid_until = date.today() + timedelta(days=30)
+        freight = self._product_code(9701, "DOM-FRT-AIR", "Domestic Air Freight", ProductCode.CATEGORY_FREIGHT, "KG")
+        awb = self._product_code(9702, "DOM-AWB", "AWB Fee", ProductCode.CATEGORY_DOCUMENTATION)
+        doc = self._product_code(9703, "DOM-DOC", "Documentation Fee", ProductCode.CATEGORY_DOCUMENTATION)
+        terminal = self._product_code(9704, "DOM-TERMINAL", "Terminal Fee", ProductCode.CATEGORY_HANDLING)
+        security = self._product_code(9705, "DOM-SECURITY", "Security Surcharge", ProductCode.CATEGORY_SCREENING, "KG")
+        fuel = self._product_code(9706, "DOM-FSC", "Fuel Surcharge", ProductCode.CATEGORY_SURCHARGE, "KG")
+        agent = Agent.objects.create(
+            code="PX-DOM-API",
+            name="PX Domestic API",
+            country_code="PG",
+            agent_type="DOMESTIC",
+        )
+        carrier = Carrier.objects.create(
+            code="PX-CAR-API",
+            name="PX Carrier API",
+            carrier_type="AIR",
+        )
+        DomesticCOGS.objects.create(
+            product_code=freight,
+            origin_zone="POM",
+            destination_zone="LAE",
+            agent=agent,
+            currency="PGK",
+            rate_per_kg=Decimal("6.10"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+        if include_carrier:
+            DomesticCOGS.objects.create(
+                product_code=freight,
+                origin_zone="POM",
+                destination_zone="LAE",
+                carrier=carrier,
+                currency="PGK",
+                rate_per_kg=Decimal("6.50"),
+                valid_from=valid_from,
+                valid_until=valid_until,
+            )
+        DomesticSellRate.objects.create(
+            product_code=freight,
+            origin_zone="POM",
+            destination_zone="LAE",
+            currency="PGK",
+            rate_per_kg=Decimal("7.30"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+        )
+        for product, side, rate_type, amount, minimum in [
+            (doc, "COGS", "FLAT", "35.00", None),
+            (terminal, "COGS", "FLAT", "35.00", None),
+            (security, "COGS", "PER_KG", "0.20", "5.00"),
+            (fuel, "COGS", "PER_KG", "0.50", None),
+            (awb, "SELL", "FLAT", "70.00", None),
+            (security, "SELL", "PER_KG", "0.20", "5.00"),
+            (fuel, "SELL", "PER_KG", "0.70", None),
+        ]:
+            Surcharge.objects.create(
+                product_code=product,
+                service_type="DOMESTIC_AIR",
+                rate_side=side,
+                rate_type=rate_type,
+                amount=Decimal(amount),
+                min_charge=Decimal(minimum) if minimum else None,
+                currency="PGK",
+                valid_from=valid_from,
+                valid_until=valid_until,
+                is_active=True,
+        )
+        return agent, carrier
 
     def test_spot_envelope_flow_acknowledge_compute(self):
         self._create_exact_alias(
@@ -838,6 +935,115 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertFalse(response.json()["is_spot_required"])
         kwargs = mock_outcomes.call_args.kwargs
         self.assertEqual(kwargs["payment_term"], "COLLECT")
+
+    def test_evaluate_trigger_passes_counterparty_to_availability(self):
+        agent, _carrier = self._seed_domestic_air_rates()
+
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "PG",
+                "destination_country": "PG",
+                "origin_airport": "POM",
+                "destination_airport": "LAE",
+                "service_scope": "D2D",
+                "payment_term": "PREPAID",
+                "commodity": "GCR",
+                "agent_id": agent.id,
+                "buy_currency": "PGK",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertFalse(payload["is_spot_required"])
+        self.assertIsNone(payload["trigger"])
+        self.assertNotIn("selector_issue", payload)
+        self.assertEqual(payload["component_outcomes"][COMPONENT_FREIGHT]["status"], "covered_exact")
+
+    def test_evaluate_trigger_domestic_single_pxdom_path_does_not_trigger_spot(self):
+        self._seed_domestic_air_rates(include_carrier=False)
+
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "PG",
+                "destination_country": "PG",
+                "origin_airport": "POM",
+                "destination_airport": "LAE",
+                "service_scope": "D2D",
+                "payment_term": "PREPAID",
+                "commodity": "GCR",
+                "buy_currency": "PGK",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertFalse(payload["is_spot_required"])
+        self.assertIsNone(payload["trigger"])
+        self.assertNotIn("selector_issue", payload)
+        self.assertEqual(payload["component_outcomes"][COMPONENT_FREIGHT]["status"], "covered_exact")
+
+    def test_evaluate_trigger_domestic_selected_carrier_does_not_trigger_spot(self):
+        _agent, carrier = self._seed_domestic_air_rates()
+
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "PG",
+                "destination_country": "PG",
+                "origin_airport": "POM",
+                "destination_airport": "LAE",
+                "service_scope": "D2D",
+                "payment_term": "PREPAID",
+                "commodity": "GCR",
+                "carrier_id": carrier.id,
+                "buy_currency": "PGK",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertFalse(payload["is_spot_required"])
+        self.assertIsNone(payload["trigger"])
+        self.assertNotIn("selector_issue", payload)
+        self.assertEqual(payload["component_outcomes"][COMPONENT_FREIGHT]["status"], "covered_exact")
+
+    def test_evaluate_trigger_domestic_cogs_ambiguity_returns_selector_issue_not_spot(self):
+        self._seed_domestic_air_rates()
+
+        response = self.client.post(
+            self.evaluate_url,
+            {
+                "origin_country": "PG",
+                "destination_country": "PG",
+                "origin_airport": "POM",
+                "destination_airport": "LAE",
+                "service_scope": "D2D",
+                "payment_term": "PREPAID",
+                "commodity": "GCR",
+                "buy_currency": "PGK",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertFalse(payload["is_spot_required"])
+        self.assertIsNone(payload["trigger"])
+        self.assertEqual(payload["component_outcomes"][COMPONENT_FREIGHT]["status"], "missing_dimension")
+        self.assertEqual(
+            payload["selector_issue"]["missing_dimensions"],
+            ["agent_id", "carrier_id"],
+        )
+        self.assertNotEqual(
+            payload.get("trigger", {}).get("code") if payload.get("trigger") else None,
+            "MISSING_SCOPE_RATES",
+        )
 
     @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
     def test_evaluate_trigger_returns_missing_commodity_rates(self, mock_outcomes):

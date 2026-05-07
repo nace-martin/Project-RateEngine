@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from pricing_v4.models import Agent, Carrier, ImportCOGS, ProductCode
+from pricing_v4.models import Agent, Carrier, DomesticCOGS, ImportCOGS, ProductCode
 
 
 class QuoteCounterpartyHintsAPITests(APITestCase):
@@ -133,6 +133,54 @@ class QuoteCounterpartyHintsAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["available_counterparty_types"], ["agent"])
         self.assertEqual(response.data["carriers"], [])
+
+    def test_domestic_lane_with_single_pxdom_path_returns_one_hint_for_hidden_selector(self):
+        domestic_agent = Agent.objects.create(
+            code="PX-DOM",
+            name="Air Niugini (Domestic)",
+            country_code="PG",
+            agent_type="CARRIER",
+        )
+        domestic_freight = ProductCode.objects.create(
+            id=3801,
+            code="DOM-FRT-HINT",
+            description="Domestic Freight Hint",
+            domain="DOMESTIC",
+            category="FREIGHT",
+            default_unit="KG",
+            is_gst_applicable=True,
+            gst_rate=Decimal("0.10"),
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+        )
+        DomesticCOGS.objects.create(
+            product_code=domestic_freight,
+            origin_zone="POM",
+            destination_zone="LAE",
+            agent=domestic_agent,
+            currency="PGK",
+            rate_per_kg=Decimal("6.10"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        self.client.force_authenticate(self.manager)
+        response = self.client.get(
+            "/api/v4/quote/counterparty-hints/",
+            {
+                "direction": "DOMESTIC",
+                "service_scope": "D2D",
+                "origin_airport": "POM",
+                "destination_airport": "LAE",
+                "buy_currency": "PGK",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["available_counterparty_types"], ["agent"])
+        self.assertEqual(response.data["recommended_counterparty_type"], "agent")
+        self.assertEqual(response.data["carriers"], [])
+        self.assertEqual([agent["code"] for agent in response.data["agents"]], ["PX-DOM"])
 
     def test_sales_users_cannot_access_counterparty_hints(self):
         self.client.force_authenticate(self.sales)

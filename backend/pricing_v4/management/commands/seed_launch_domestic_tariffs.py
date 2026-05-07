@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
@@ -121,13 +121,13 @@ COGS_SURCHARGES = (
     ("DOM-DOC", "FLAT", "35.00", None),
     ("DOM-TERMINAL", "FLAT", "35.00", None),
     ("DOM-SECURITY", "PER_KG", "0.20", "5.00"),
-    ("DOM-FSC", "PER_KG", "0.25", None),
+    ("DOM-FSC", "PER_KG", "0.50", None),
 )
 
 SELL_SURCHARGES = (
     ("DOM-AWB", "FLAT", "70.00", None),
     ("DOM-SECURITY", "PER_KG", "0.20", "5.00"),
-    ("DOM-FSC", "PER_KG", "0.35", None),
+    ("DOM-FSC", "PER_KG", "0.70", None),
     ("DOM-DG-HANDLING", "FLAT", "195.00", None),
 )
 
@@ -191,6 +191,7 @@ class Command(BaseCommand):
         cogs_surcharge_created = cogs_surcharge_updated = 0
         sell_surcharge_created = sell_surcharge_updated = 0
         legacy_surcharges_disabled = 0
+        legacy_cogs_retired = 0
 
         with transaction.atomic():
             for route in COGS_ROUTE_RATES:
@@ -276,6 +277,10 @@ class Command(BaseCommand):
                 valid_from=valid_from,
                 valid_until=valid_until,
             )
+            legacy_cogs_retired += self._retire_overlapping_px_carrier_cogs(
+                freight_pc=freight_pc,
+                valid_from=valid_from,
+            )
 
         self.stdout.write("")
         self.stdout.write(
@@ -285,7 +290,8 @@ class Command(BaseCommand):
                 f"SELL freight created/updated={sell_freight_created}/{sell_freight_updated}; "
                 f"COGS surcharges created/updated={cogs_surcharge_created}/{cogs_surcharge_updated}; "
                 f"SELL surcharges created/updated={sell_surcharge_created}/{sell_surcharge_updated}; "
-                f"legacy surcharges disabled={legacy_surcharges_disabled}"
+                f"legacy surcharges disabled={legacy_surcharges_disabled}; "
+                f"legacy PX carrier COGS retired={legacy_cogs_retired}"
             )
         )
 
@@ -362,6 +368,29 @@ class Command(BaseCommand):
             ).update(is_active=False, valid_until=valid_until)
             disabled += updated
         return disabled
+
+    def _retire_overlapping_px_carrier_cogs(
+        self,
+        *,
+        freight_pc: ProductCode,
+        valid_from: date,
+    ) -> int:
+        launch_routes = {(route.origin, route.destination) for route in COGS_ROUTE_RATES}
+        retired = 0
+        retire_until = valid_from - timedelta(days=1)
+
+        for origin, destination in launch_routes:
+            retired += DomesticCOGS.objects.filter(
+                product_code=freight_pc,
+                origin_zone=origin,
+                destination_zone=destination,
+                carrier__code="PX",
+                agent__isnull=True,
+                valid_from__lt=valid_from,
+                valid_until__gte=valid_from,
+            ).update(valid_until=retire_until)
+
+        return retired
 
     def _get_product_code(self, code: str) -> ProductCode:
         product_code = ProductCode.objects.filter(code=code).first()
