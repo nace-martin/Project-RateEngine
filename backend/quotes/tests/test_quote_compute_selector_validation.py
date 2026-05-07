@@ -331,7 +331,6 @@ class QuoteComputeSelectorValidationTests(APITestCase):
         self._seed_domestic_surcharge(code="DOM-FSC", rate_side="SELL", rate_type="PER_KG", amount="0.70")
 
         payload = self._domestic_payload(
-            agent_id=self.domestic_agent.id,
             dimensions=[
                 {
                     "pieces": 1,
