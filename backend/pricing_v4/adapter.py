@@ -189,6 +189,111 @@ class PricingServiceV4Adapter:
         except Exception as e:
             logger.warning(f"Failed to load customer discounts: {e}")
             return {}
+
+    def _discount_amount_to_pgk(
+        self,
+        amount: Decimal,
+        currency: Optional[str],
+        fx_rates: dict,
+    ) -> Decimal:
+        curr = (currency or 'PGK').upper()
+        if curr == 'PGK':
+            return amount
+
+        fx_sell = self._get_fx_sell_rate(curr, fx_rates)
+        if fx_sell <= 0:
+            logger.warning("Invalid FX sell rate for discount currency %s; using 1.0", curr)
+            fx_sell = Decimal('1')
+        return amount * fx_sell
+
+    def _product_code_ids_by_service_component(
+        self,
+        lines: List[CalculatedChargeLine],
+    ) -> Dict[str, int]:
+        sc_codes = [line.service_component_code for line in lines]
+        pc_map: Dict[str, int] = {}
+
+        try:
+            for pc in ProductCode.objects.filter(code__in=sc_codes):
+                pc_map[pc.code] = pc.id
+        except Exception as e:
+            logger.warning(f"Failed to map ServiceComponent to ProductCode: {e}")
+            return {}
+
+        return pc_map
+
+    def _discounted_sell_pgk(
+        self,
+        line: CalculatedChargeLine,
+        discount: 'CustomerDiscount',
+        original_sell: Decimal,
+        fx_rates: dict,
+    ) -> Optional[Decimal]:
+        if discount.discount_type == CustomerDiscount.TYPE_PERCENTAGE:
+            discount_pct = discount.discount_value / Decimal('100')
+            return original_sell * (Decimal('1') - discount_pct)
+
+        if discount.discount_type == CustomerDiscount.TYPE_FLAT_AMOUNT:
+            discount_amount_pgk = self._discount_amount_to_pgk(
+                discount.discount_value,
+                discount.currency,
+                fx_rates,
+            )
+            return max(Decimal('0'), original_sell - discount_amount_pgk)
+
+        if discount.discount_type == CustomerDiscount.TYPE_FIXED_CHARGE:
+            return self._discount_amount_to_pgk(discount.discount_value, discount.currency, fx_rates)
+
+        if discount.discount_type == CustomerDiscount.TYPE_RATE_REDUCTION:
+            logger.warning(
+                f"RATE_REDUCTION discount for {line.service_component_code} "
+                "cannot be applied at this stage (requires weight context)"
+            )
+            return None
+
+        if discount.discount_type == CustomerDiscount.TYPE_MARGIN_OVERRIDE:
+            custom_margin = discount.discount_value / Decimal('100')
+            cost = line.cost_pgk
+            if cost > 0:
+                return cost * (Decimal('1') + custom_margin)
+
+            logger.warning(
+                f"MARGIN_OVERRIDE for {line.service_component_code} "
+                "cannot be applied (no cost data)"
+            )
+            return None
+
+        return original_sell
+
+    def _update_line_sell_amounts(
+        self,
+        line: CalculatedChargeLine,
+        discount: 'CustomerDiscount',
+        original_sell: Decimal,
+        discounted_sell: Decimal,
+    ) -> None:
+        gst_amount = line.sell_pgk_incl_gst - line.sell_pgk
+        gst_rate = gst_amount / original_sell if original_sell > 0 else Decimal('0')
+        new_gst = discounted_sell * gst_rate
+
+        try:
+            line.sell_pgk = discounted_sell
+            line.sell_pgk_incl_gst = discounted_sell + new_gst
+
+            if line.sell_fcy_currency != 'PGK' and original_sell > 0:
+                ratio = discounted_sell / original_sell
+                line.sell_fcy = line.sell_fcy * ratio
+                line.sell_fcy_incl_gst = line.sell_fcy_incl_gst * ratio
+            else:
+                line.sell_fcy = discounted_sell
+                line.sell_fcy_incl_gst = discounted_sell + new_gst
+
+            logger.debug(
+                f"Applied {discount.discount_type} discount to {line.service_component_code}: "
+                f"{original_sell} -> {discounted_sell}"
+            )
+        except AttributeError:
+            logger.warning(f"Cannot apply discount to frozen line: {line.service_component_code}")
     
     def _apply_customer_discounts(self, lines: List[CalculatedChargeLine]) -> List[CalculatedChargeLine]:
         """
@@ -207,98 +312,23 @@ class PricingServiceV4Adapter:
             return lines
 
         fx_rates = self._get_fx_rates_dict()
-
-        def discount_amount_to_pgk(amount: Decimal, currency: Optional[str]) -> Decimal:
-            curr = (currency or 'PGK').upper()
-            if curr == 'PGK':
-                return amount
-            fx_sell = self._get_fx_sell_rate(curr, fx_rates)
-            if fx_sell <= 0:
-                logger.warning("Invalid FX sell rate for discount currency %s; using 1.0", curr)
-                fx_sell = Decimal('1')
-            return amount * fx_sell
-        
-        # Build a mapping from ServiceComponent code to ProductCode ID
-        sc_codes = [l.service_component_code for l in lines]
-        pc_map = {}
-        try:
-            for pc in ProductCode.objects.filter(code__in=sc_codes):
-                pc_map[pc.code] = pc.id
-        except Exception as e:
-            logger.warning(f"Failed to map ServiceComponent to ProductCode: {e}")
+        pc_map = self._product_code_ids_by_service_component(lines)
+        if not pc_map:
             return lines
-        
+
         for line in lines:
             pc_id = pc_map.get(line.service_component_code)
-            if pc_id and pc_id in discounts:
-                discount = discounts[pc_id]
-                original_sell = line.sell_pgk
-                discounted_sell = original_sell
-                
-                # Apply discount based on type
-                if discount.discount_type == CustomerDiscount.TYPE_PERCENTAGE:
-                    discount_pct = discount.discount_value / Decimal('100')
-                    discounted_sell = original_sell * (Decimal('1') - discount_pct)
-                    
-                elif discount.discount_type == CustomerDiscount.TYPE_FLAT_AMOUNT:
-                    discount_amount_pgk = discount_amount_to_pgk(discount.discount_value, discount.currency)
-                    discounted_sell = max(Decimal('0'), original_sell - discount_amount_pgk)
-                    
-                elif discount.discount_type == CustomerDiscount.TYPE_FIXED_CHARGE:
-                    # Replace the entire sell price with fixed charge (normalized to PGK).
-                    discounted_sell = discount_amount_to_pgk(discount.discount_value, discount.currency)
-                    
-                elif discount.discount_type == CustomerDiscount.TYPE_RATE_REDUCTION:
-                    # Rate reduction requires weight context - log warning and skip
-                    logger.warning(
-                        f"RATE_REDUCTION discount for {line.service_component_code} "
-                        "cannot be applied at this stage (requires weight context)"
-                    )
-                    continue
-                    
-                elif discount.discount_type == CustomerDiscount.TYPE_MARGIN_OVERRIDE:
-                    # Recalculate sell from cost using custom margin rate
-                    # discount_value is the margin % (e.g., 15.00 for 15%)
-                    custom_margin = discount.discount_value / Decimal('100')
-                    cost = line.cost_pgk
-                    if cost > 0:
-                        discounted_sell = cost * (Decimal('1') + custom_margin)
-                    else:
-                        # No cost info - can't apply margin override
-                        logger.warning(
-                            f"MARGIN_OVERRIDE for {line.service_component_code} "
-                            "cannot be applied (no cost data)"
-                        )
-                        continue
-                
-                if discounted_sell == original_sell:
-                    continue  # No change
-                
-                # Recalculate GST on discounted amount
-                gst_amount = line.sell_pgk_incl_gst - line.sell_pgk
-                gst_rate = gst_amount / original_sell if original_sell > 0 else Decimal('0')
-                new_gst = discounted_sell * gst_rate
-                
-                try:
-                    line.sell_pgk = discounted_sell
-                    line.sell_pgk_incl_gst = discounted_sell + new_gst
-                    
-                    # Update FCY if applicable
-                    if line.sell_fcy_currency != 'PGK' and original_sell > 0:
-                        ratio = discounted_sell / original_sell
-                        line.sell_fcy = line.sell_fcy * ratio
-                        line.sell_fcy_incl_gst = line.sell_fcy_incl_gst * ratio
-                    else:
-                        line.sell_fcy = discounted_sell
-                        line.sell_fcy_incl_gst = discounted_sell + new_gst
-                        
-                    logger.debug(
-                        f"Applied {discount.discount_type} discount to {line.service_component_code}: "
-                        f"{original_sell} -> {discounted_sell}"
-                    )
-                except AttributeError:
-                    logger.warning(f"Cannot apply discount to frozen line: {line.service_component_code}")
-        
+            if not pc_id or pc_id not in discounts:
+                continue
+
+            discount = discounts[pc_id]
+            original_sell = line.sell_pgk
+            discounted_sell = self._discounted_sell_pgk(line, discount, original_sell, fx_rates)
+            if discounted_sell is None or discounted_sell == original_sell:
+                continue
+
+            self._update_line_sell_amounts(line, discount, original_sell, discounted_sell)
+
         return lines
 
     def calculate_charges(self) -> QuoteCharges:
