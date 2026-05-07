@@ -66,6 +66,18 @@ const resolveCountryCode = (
     return AIRPORT_COUNTRY_MAP[code] || "OTHER";
 };
 
+const parsePricingCounterparty = (
+    value?: string,
+): { agent_id?: number; carrier_id?: number } => {
+    const match = value?.match(/^(agent|carrier):(\d+)$/);
+    if (!match) return {};
+
+    const id = Number(match[2]);
+    if (!Number.isFinite(id)) return {};
+
+    return match[1] === "agent" ? { agent_id: id } : { carrier_id: id };
+};
+
 interface UseQuoteLogicProps {
     defaultValues?: Partial<QuoteFormSchemaV3>;
     initialCustomer?: CompanySearchResult;
@@ -176,7 +188,9 @@ export function useQuoteLogic({
     // --- Side Effects & Derived State ---
 
     // Auto-update Incoterms
-    const isImport = destinationLocation?.country_code === 'PG';
+    const originCountryForTerms = resolveCountryCode(originLocation, originLocation?.code);
+    const destinationCountryForTerms = resolveCountryCode(destinationLocation, destinationLocation?.code);
+    const isImport = destinationCountryForTerms === 'PG' && originCountryForTerms !== 'PG';
     const validIncoterms = useMemo(() => {
         return getValidIncoterms(isImport, serviceScope, paymentTerm);
     }, [isImport, serviceScope, paymentTerm]);
@@ -273,6 +287,7 @@ export function useQuoteLogic({
                     data.payment_term === 'COLLECT' ? 'COLLECT' : 'PREPAID';
                 const paymentTermLower: 'prepaid' | 'collect' =
                     paymentTermUpper === 'COLLECT' ? 'collect' : 'prepaid';
+                const selectedCounterparty = parsePricingCounterparty(data.pricing_counterparty);
                 const triggerResult = await evaluateSpotTrigger({
                     origin_country: originCountry,
                     destination_country: destCountry,
@@ -282,6 +297,8 @@ export function useQuoteLogic({
                     has_valid_buy_rate: true,
                     service_scope: data.service_scope,
                     payment_term: paymentTermUpper,
+                    buy_currency: originCountry === 'PG' && destCountry === 'PG' ? 'PGK' : undefined,
+                    ...selectedCounterparty,
                 });
 
                 if (triggerResult.is_spot_required && triggerResult.trigger) {

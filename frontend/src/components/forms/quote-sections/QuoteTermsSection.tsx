@@ -33,15 +33,30 @@ interface QuoteTermsSectionProps {
   user?: User | null;
 }
 
+const DOMESTIC_AIRPORT_COUNTRY_MAP: Record<string, string> = {
+  POM: "PG",
+  LAE: "PG",
+};
+
+const resolveCountryCode = (location: { country_code?: string | null; code?: string | null } | null) => {
+  const explicit = (location?.country_code || "").trim().toUpperCase();
+  if (explicit) return explicit;
+  const code = (location?.code || "").trim().toUpperCase();
+  return DOMESTIC_AIRPORT_COUNTRY_MAP[code] || "";
+};
+
 export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
   const form = useFormContext<QuoteFormSchemaV3>();
+  const { control, setValue } = form;
   const originLocation = useQuoteStore((state) => state.originLocation);
   const destinationLocation = useQuoteStore((state) => state.destinationLocation);
-  const serviceScope = useWatch({ control: form.control, name: "service_scope" });
-  const paymentTerm = useWatch({ control: form.control, name: "payment_term" });
-  const pricingCounterparty = useWatch({ control: form.control, name: "pricing_counterparty" });
-  const isImport = destinationLocation?.country_code === "PG" && originLocation?.country_code !== "PG";
-  const isDomestic = originLocation?.country_code === "PG" && destinationLocation?.country_code === "PG";
+  const serviceScope = useWatch({ control, name: "service_scope" });
+  const paymentTerm = useWatch({ control, name: "payment_term" });
+  const pricingCounterparty = useWatch({ control, name: "pricing_counterparty" });
+  const originCountry = resolveCountryCode(originLocation);
+  const destinationCountry = resolveCountryCode(destinationLocation);
+  const isImport = destinationCountry === "PG" && originCountry !== "PG";
+  const isDomestic = originCountry === "PG" && destinationCountry === "PG";
   const canLoadCounterpartyHints = user?.role === "manager" || user?.role === "admin";
   const [counterpartyHints, setCounterpartyHints] = useState<QuoteCounterpartyHints | null>(null);
   const [isLoadingCounterparties, setIsLoadingCounterparties] = useState(false);
@@ -64,6 +79,10 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
       })),
     ];
   }, [counterpartyHints]);
+  const counterpartyOptionValues = useMemo(
+    () => counterpartyOptions.map((option) => option.value).join("|"),
+    [counterpartyOptions],
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -71,7 +90,9 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
     if (!isDomestic || !canLoadCounterpartyHints || !originLocation?.code || !destinationLocation?.code) {
       setCounterpartyHints(null);
       setIsLoadingCounterparties(false);
-      form.setValue("pricing_counterparty", undefined, { shouldDirty: false, shouldValidate: true });
+      if (pricingCounterparty) {
+        setValue("pricing_counterparty", undefined, { shouldDirty: false, shouldValidate: true });
+      }
       return () => {
         isActive = false;
       };
@@ -107,36 +128,34 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
   }, [
     canLoadCounterpartyHints,
     destinationLocation?.code,
-    form,
     isDomestic,
     originLocation?.code,
+    pricingCounterparty,
+    setValue,
     serviceScope,
   ]);
 
   useEffect(() => {
-    if (!isDomestic) {
+    if (!isDomestic || !pricingCounterparty) {
       return;
     }
-    const hasCurrentOption = counterpartyOptions.some((option) => option.value === pricingCounterparty);
-    if (pricingCounterparty && !hasCurrentOption) {
-      form.setValue("pricing_counterparty", undefined, {
+
+    const validValues = counterpartyOptionValues ? counterpartyOptionValues.split("|") : [];
+    const shouldClearSelection =
+      validValues.length <= 1 || !validValues.includes(pricingCounterparty);
+
+    if (shouldClearSelection) {
+      setValue("pricing_counterparty", undefined, {
         shouldDirty: true,
         shouldValidate: true,
       });
-      return;
     }
-    if (counterpartyOptions.length === 1 && !pricingCounterparty) {
-      form.setValue("pricing_counterparty", counterpartyOptions[0].value, {
-        shouldDirty: true,
-        shouldValidate: true,
-      });
-    }
-  }, [counterpartyOptions, form, isDomestic, pricingCounterparty]);
+  }, [counterpartyOptionValues, isDomestic, pricingCounterparty, setValue]);
 
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       <FormField
-        control={form.control}
+        control={control}
         name="payment_term"
         render={({ field }) => (
           <FormItem>
@@ -164,7 +183,7 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
       />
 
       <FormField
-        control={form.control}
+        control={control}
         name="incoterm"
         render={({ field }) => (
           <FormItem>
@@ -197,7 +216,7 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
 
       {isDomestic && canLoadCounterpartyHints && counterpartyOptions.length > 1 ? (
         <FormField
-          control={form.control}
+          control={control}
           name="pricing_counterparty"
           render={({ field }) => (
             <FormItem>
