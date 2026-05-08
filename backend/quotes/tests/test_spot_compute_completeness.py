@@ -613,4 +613,51 @@ def test_spot_create_quote_blocks_unacknowledged_conditional_matched_line(monkey
     )
 
     assert response.status_code == 400
+    assert response.json()["error"] == "Resolve SPOT charge exceptions before creating quote."
     assert "Conditional destination fee: Conditional" in response.json()["blocking_issues"]
+
+
+def test_spot_create_quote_allows_acknowledged_conditional_matched_line(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+    )
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code="DESTINATION_LOCAL",
+        description="Conditional destination fee",
+        amount=Decimal("75.00"),
+        currency="USD",
+        unit="flat",
+        bucket="destination_charges",
+        conditional=True,
+        conditional_acknowledged=True,
+        conditional_acknowledged_by=user,
+        conditional_acknowledged_at=timezone.now(),
+        source_reference="Agent reply",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        entered_at=timezone.now(),
+    )
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["airfreight", "destination_charges"]),
+    )
+    customer = Company.objects.create(name="Acknowledged Conditional Customer", is_customer=True, company_type="CUSTOMER")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True

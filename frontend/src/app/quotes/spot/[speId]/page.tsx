@@ -33,6 +33,7 @@ import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
 import type { ReplyAnalysisResult } from "@/lib/spot-types";
 import { getSpotStandardCharges } from "@/lib/api";
 import { getEffectiveProductCode, getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
+import { getSpotFinalizeDisabledReason } from "@/lib/spot-finalization";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -716,8 +717,6 @@ export default function SpotRateEntryPage() {
         });
     }, [editableBuckets, state.spe?.charges, state.spe?.sources, visibleReviewFormCharges]);
 
-    const intakeSafety = state.spe?.intake_safety;
-    const quoteCreationBlocked = Boolean(intakeSafety && !intakeSafety.is_safe_to_quote);
     const totalImportedLines = sourceReviewSummaries.reduce((count, summary) => count + summary.lineCount, 0);
     const importedReviewCounts = useMemo(
         () =>
@@ -888,17 +887,17 @@ export default function SpotRateEntryPage() {
         openManualReview: boolean;
         requestKey: number;
     } | null>(null);
+    const [finalizeError, setFinalizeError] = useState<string | null>(null);
     const [reviewMode, setReviewMode] = useState<ReviewMode>("issues");
     const [activeIssueDetails, setActiveIssueDetails] = useState<ImportedReviewLine | null>(null);
     const [sourceComparisonOpen, setSourceComparisonOpen] = useState(false);
     const [selectedSourceChargeKey, setSelectedSourceChargeKey] = useState<string | null>(null);
     const unresolvedReviewIssueCount = reviewLines.affected.length;
-    const quoteSubmitDisabled = quoteCreationBlocked || unresolvedReviewIssueCount > 0;
-    const quoteSubmitDisabledReason = unresolvedReviewIssueCount > 0
-        ? `Resolve ${unresolvedReviewIssueCount} issue${unresolvedReviewIssueCount === 1 ? "" : "s"} before creating quote.`
-        : quoteCreationBlocked
-            ? "Quote creation is temporarily unavailable."
-            : null;
+    const quoteSubmitDisabledReason = getSpotFinalizeDisabledReason({
+        spe: state.spe,
+        unresolvedReviewIssueCount,
+    });
+    const quoteSubmitDisabled = Boolean(quoteSubmitDisabledReason);
     const hasReviewActions =
         importedReviewCounts.unmapped > 0 ||
         importedReviewCounts.lowConfidence > 0 ||
@@ -911,40 +910,50 @@ export default function SpotRateEntryPage() {
         charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>
     ) => {
         if (state.spe) {
-            if (quoteCreationBlocked) {
+            if (quoteSubmitDisabledReason) {
+                setFinalizeError(quoteSubmitDisabledReason);
                 return;
             }
-            // 1. Update charges
-            const spe = await actions.updateSPE(state.spe.id, {
-                charges,
-                conditions: {
-                    space_not_confirmed: true,
-                    airline_acceptance_not_confirmed: true,
-                    rate_validity_hours: 72,
-                    conditional_charges_present: charges.some(c => c.conditional),
+
+            setFinalizeError(null);
+            let spe = state.spe;
+
+            if (spe.status === "draft") {
+                const updatedSpe = await actions.updateSPE(spe.id, {
+                    charges,
+                    conditions: {
+                        space_not_confirmed: true,
+                        airline_acceptance_not_confirmed: true,
+                        rate_validity_hours: 72,
+                        conditional_charges_present: charges.some(c => c.conditional),
+                    }
+                });
+                if (!updatedSpe) {
+                    return;
                 }
+                spe = updatedSpe;
+            }
+
+            if (!spe.acknowledgement && spe.status !== "ready") {
+                const success = await actions.submitAcknowledgement();
+                if (!success) {
+                    return;
+                }
+            }
+
+            const resolvedScope = serviceScope || "D2D";
+            const resolvedPaymentTerm = paymentTerm || "PREPAID";
+            const resolvedOutputCurrency = outputCurrency || "PGK";
+
+            const result = await actions.createQuote({
+                payment_term: resolvedPaymentTerm,
+                service_scope: resolvedScope,
+                output_currency: resolvedOutputCurrency,
+                customer_id: customerIdParam || undefined,
             });
 
-            if (spe) {
-                // 2. Auto-acknowledge
-                const success = await actions.submitAcknowledgement();
-                if (success) {
-                    // 3. Create the quote directly (backend handles compute internally)
-                    const resolvedScope = serviceScope || "D2D";
-                    const resolvedPaymentTerm = paymentTerm || "PREPAID";
-                    const resolvedOutputCurrency = outputCurrency || "PGK";
-
-                    const result = await actions.createQuote({
-                        payment_term: resolvedPaymentTerm,
-                        service_scope: resolvedScope,
-                        output_currency: resolvedOutputCurrency,
-                        customer_id: customerIdParam || undefined,
-                    });
-
-                    if (result?.success && result.quote_id) {
-                        router.push(`/quotes/${result.quote_id}`);
-                    }
-                }
+            if (result?.success && result.quote_id) {
+                router.push(`/quotes/${result.quote_id}`);
             }
         }
     };
@@ -1203,9 +1212,9 @@ export default function SpotRateEntryPage() {
             </Card>
 
             {/* Error display */}
-            {state.error && (
+            {(state.error || finalizeError) && (
                 <div className="mb-6 rounded-md border border-red-200 bg-red-50 p-4">
-                    <p className="text-sm font-medium text-red-800">{state.error}</p>
+                    <p className="text-sm font-medium text-red-800">{state.error || finalizeError}</p>
                     {state.quoteResult?.has_missing_rates && (
                         <div className="mt-2 text-sm text-red-700">
                             {formatMissingComponents(state.quoteResult.missing_components)?.length ? (
