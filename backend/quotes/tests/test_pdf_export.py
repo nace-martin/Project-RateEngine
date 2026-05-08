@@ -241,7 +241,7 @@ class QuotePDFExportTest(TestCase):
         )
         version = QuoteVersion.objects.create(quote=quote, version_number=1)
         wrong_component = ServiceComponent.objects.create(
-            code="IMP-AGENCY-ORIGIN-TEST",
+            code="IMP-AGY-ORIG-TEST",
             description="Import Origin Agency Test",
             mode="AIR",
             leg="DESTINATION",

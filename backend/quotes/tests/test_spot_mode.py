@@ -322,7 +322,7 @@ class TestRateAvailabilityService:
         )
 
         pc_freight = ProductCode.objects.create(
-            id=2901,
+            id=22911,
             code="IMP-FRT-AIR-SPOTTEST",
             description="Import Air Freight (SPOT test)",
             domain="IMPORT",
@@ -333,7 +333,7 @@ class TestRateAvailabilityService:
             default_unit="KG",
         )
         pc_origin = ProductCode.objects.create(
-            id=2902,
+            id=22912,
             code="IMP-ORIGIN-HANDLING-SPOTTEST",
             description="Import Origin Handling (SPOT test)",
             domain="IMPORT",
@@ -344,7 +344,7 @@ class TestRateAvailabilityService:
             default_unit="SHIPMENT",
         )
         pc_destination = ProductCode.objects.create(
-            id=2903,
+            id=22913,
             code="IMP-CARTAGE-DEST-SPOTTEST",
             description="Import Destination Cartage (SPOT test)",
             domain="IMPORT",

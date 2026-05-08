@@ -196,7 +196,7 @@ def test_import_d2d_missing_origin_component_still_triggers_spot():
     valid_from, valid_until = _today_window()
     agent = _agent()
     pc_freight = _pc(2961, "IMP-FRT-AIR-MISS-ORIGIN", "IMPORT", "FREIGHT", unit="KG")
-    pc_dest = _pc(2962, "IMP-CARTAGE-DEST-MISS-ORIGIN", "IMPORT", "CARTAGE")
+    pc_dest = _pc(2962, "IMP-CARTAGE-DEST-MISSORG", "IMPORT", "CARTAGE")
 
     ImportCOGS.objects.create(
         product_code=pc_freight,
@@ -695,7 +695,7 @@ def test_import_a2d_special_local_sell_rate_allows_standard_quote_without_spot(
 ):
     valid_from, valid_until = _today_window()
     agent = _agent()
-    pc_dest = _pc(2963, "IMP-CARTAGE-DEST-COMMODITY-BASE", "IMPORT", "CARTAGE")
+    pc_dest = _pc(2963, "IMP-CARTAGE-DEST-COMM-BASE", "IMPORT", "CARTAGE")
     pc_special = _pc(product_id, product_code, "IMPORT", "HANDLING")
 
     LocalCOGSRate.objects.create(

@@ -12,7 +12,7 @@ class RolloverLocalSellRatesCommandTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.pc_export = ProductCode.objects.create(
-            id=1901,
+            id=11901,
             code="EXP-ROLL-DOC",
             description="Export rollover doc",
             domain="EXPORT",
@@ -23,7 +23,7 @@ class RolloverLocalSellRatesCommandTests(TestCase):
             default_unit="SHIPMENT",
         )
         cls.pc_import = ProductCode.objects.create(
-            id=2901,
+            id=22901,
             code="IMP-ROLL-CLEAR",
             description="Import rollover clearance",
             domain="IMPORT",
