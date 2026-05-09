@@ -234,7 +234,7 @@ class SPEShipmentContext(BaseModel):
     total_weight_kg: float = Field(default=0, description="Total Weight in KG")
     volume_cbm: Optional[float] = Field(default=None, description="Total Volume in CBM")
     pieces: int = Field(default=1, description="Number of pieces")
-    service_scope: Literal['p2p', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
+    service_scope: Literal['p2p', 'a2a', 'd2a', 'a2d', 'd2d'] = Field(default='p2p', description="Service Scope")
     payment_term: Optional[Literal['prepaid', 'collect']] = Field(default=None, description="Payment term")
     missing_components: Optional[List[str]] = Field(default=None, description="Components explicitly missing rates")
 

@@ -216,6 +216,27 @@ def mark_source_analysis_review(
     return summary
 
 
+def sync_source_analysis_summary_counts(
+    value: Any,
+    *,
+    unmapped_line_count: int,
+    low_confidence_line_count: int,
+    conditional_charge_count: int,
+) -> dict[str, Any]:
+    """
+    Update a source analysis summary with current counts and re-derive risk flags.
+    Used when charge lines are manually resolved or updated.
+    """
+    raw = value if isinstance(value, dict) else {}
+    updated = dict(raw)
+    updated["unmapped_line_count"] = int(unmapped_line_count)
+    updated["low_confidence_line_count"] = int(low_confidence_line_count)
+    updated["conditional_charge_count"] = int(conditional_charge_count)
+
+    # normalize will re-derive risk_flags, risk_level etc. from these new counts
+    return normalize_source_analysis_summary(updated)
+
+
 def evaluate_envelope_intake_safety(source_batches: Iterable[Any]) -> dict[str, Any]:
     blocking_issues: list[str] = []
     pending_source_batch_ids: list[str] = []

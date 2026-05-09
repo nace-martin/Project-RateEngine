@@ -61,13 +61,13 @@ from quotes.intake_safety import (
     evaluate_envelope_intake_safety,
     mark_source_analysis_review,
     normalize_source_analysis_summary,
+    sync_source_analysis_summary_counts,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer
 from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
 )
-from quotes.completeness import required_components
 from quotes.selectors import get_quote_for_user
 from quotes.currency_rules import determine_quote_currency
 from quotes.services.charge_normalization import resolve_charge_alias
@@ -109,6 +109,32 @@ def _spe_queryset():
         'source_batches__charge_lines',
         'acknowledgement',
     )
+
+
+def _sync_batch_analysis_summary(batch: SPESourceBatchDB):
+    """Update batch analysis summary based on current charge line status."""
+    lines = list(batch.charge_lines.all())
+    unmapped = sum(
+        1
+        for l in lines
+        if l.normalization_status == SPEChargeLineDB.NormalizationStatus.UNMAPPED
+        and l.manual_resolution_status != SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+    )
+    
+    # We don't currently store normalization_confidence on the charge line model,
+    # so we preserve the original AI-detected count for now.
+    summary = normalize_source_analysis_summary(batch.analysis_summary_json)
+    low_conf = summary.get("low_confidence_line_count", 0)
+    
+    conditional = sum(1 for l in lines if l.conditional and not l.conditional_acknowledged)
+
+    batch.analysis_summary_json = sync_source_analysis_summary_counts(
+        batch.analysis_summary_json,
+        unmapped_line_count=unmapped,
+        low_confidence_line_count=low_conf,
+        conditional_charge_count=conditional,
+    )
+    batch.save(update_fields=["analysis_summary_json", "updated_at"])
 
 
 def _resolve_country_pair(
@@ -271,19 +297,6 @@ def _normalize_reconciliation_amount(value) -> str:
     except (InvalidOperation, ValueError, TypeError):
         return str(value).strip()
     return format(amount.normalize(), "f")
-
-
-def _parse_optional_int(value, field_name: str) -> tuple[Optional[int], Optional[Response]]:
-    if value in (None, ""):
-        return None, None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None, Response(
-            {"error": f"{field_name} must be an integer."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    return parsed, None
 
 
 def _source_line_fingerprint_payload(charge: dict) -> dict:
@@ -1053,19 +1066,6 @@ class SpotTriggerEvaluateAPIView(APIView):
                 {'error': "payment_term is required and must be PREPAID or COLLECT"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        agent_id, error_response = _parse_optional_int(request.data.get('agent_id'), 'agent_id')
-        if error_response is not None:
-            return error_response
-        carrier_id, error_response = _parse_optional_int(request.data.get('carrier_id'), 'carrier_id')
-        if error_response is not None:
-            return error_response
-        if agent_id is not None and carrier_id is not None:
-            return Response(
-                {'error': "Provide either agent_id or carrier_id, not both."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        buy_currency = str(request.data.get('buy_currency') or '').strip().upper() or None
         
         from quotes.spot_services import CommodityRateRuleService, RateAvailabilityService
         component_outcomes = RateAvailabilityService.get_component_outcomes(
@@ -1074,39 +1074,7 @@ class SpotTriggerEvaluateAPIView(APIView):
             direction=direction,
             service_scope=service_scope,
             payment_term=payment_term,
-            agent_id=agent_id,
-            carrier_id=carrier_id,
-            buy_currency=buy_currency,
         )
-        selector_blockers = {
-            component: outcome
-            for component, outcome in component_outcomes.items()
-            if component in required_components(direction, service_scope)
-            and outcome.get('status') in {
-                RateAvailabilityService.STATUS_MISSING_DIMENSION,
-                RateAvailabilityService.STATUS_AMBIGUOUS,
-            }
-        }
-        if selector_blockers:
-            component, outcome = next(iter(selector_blockers.items()))
-            return Response({
-                'is_spot_required': False,
-                'trigger': None,
-                'selector_issue': {
-                    'detail': outcome.get('detail') or (
-                        "A matching DB rate exists, but a selector dimension is required."
-                    ),
-                    'component': component,
-                    'selector_model': outcome.get('selector_model'),
-                    'selector_context': outcome.get('selector_context', {}),
-                    'missing_dimensions': outcome.get('missing_dimensions', []),
-                    'conflicting_rows': outcome.get('conflicting_rows', []),
-                    'suggested_remediation': (
-                        "Select the buy-side carrier or agent for this quote."
-                    ),
-                },
-                'component_outcomes': component_outcomes,
-            })
         component_availability = {
             component: outcome.get('status') in {'covered_exact', 'covered_fallback'}
             for component, outcome in component_outcomes.items()
@@ -1519,6 +1487,10 @@ class SpotEnvelopeDetailAPIView(APIView):
                     shipment_context=spe_db.shipment_context_json,
                 )
 
+                # Sync summaries for all batches after manual charge reconciliation
+                for batch in spe_db.source_batches.all():
+                    _sync_batch_analysis_summary(batch)
+
             spe_db.save()
             SpotEnvelopeListCreateAPIView()._validate_spe(spe_db)
         except Exception as exc:
@@ -1606,6 +1578,9 @@ class SpotChargeLineManualResolutionAPIView(APIView):
             ]
         )
 
+        if charge_line.source_batch:
+            _sync_batch_analysis_summary(charge_line.source_batch)
+
         charge_line.refresh_from_db()
         serializer = SPEChargeLineSerializer(charge_line)
         return Response(serializer.data)
@@ -1656,8 +1631,13 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
                     "conditional_acknowledged_at",
                 ]
             )
+            if charge_line.source_batch:
+                _sync_batch_analysis_summary(charge_line.source_batch)
         elif action == "REMOVE":
+            batch = charge_line.source_batch
             charge_line.delete()
+            if batch:
+                _sync_batch_analysis_summary(batch)
         else:
             return Response(
                 {'error': "action must be KEEP or REMOVE."},
