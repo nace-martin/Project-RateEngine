@@ -82,20 +82,23 @@ const withAlpha = (hex: string, alphaHex: string) => {
   return `${value}${alphaHex}`;
 };
 
+type PublicQuoteSearchParams = {
+  token?: string | string[];
+  version?: string | string[];
+  summary?: string | string[];
+};
+
 type PublicQuotePageProps = {
-  searchParams?: {
-    token?: string | string[];
-    version?: string | string[];
-    summary?: string | string[];
-  };
+  searchParams?: Promise<PublicQuoteSearchParams>;
 };
 
 export default async function PublicQuotePage({ searchParams }: PublicQuotePageProps) {
-  const tokenParam = searchParams?.token;
+  const resolvedSearchParams = await searchParams;
+  const tokenParam = resolvedSearchParams?.token;
   const token = Array.isArray(tokenParam) ? tokenParam[0] : tokenParam;
-  const versionParam = searchParams?.version;
+  const versionParam = resolvedSearchParams?.version;
   const version = Array.isArray(versionParam) ? versionParam[0] : versionParam;
-  const summaryParam = searchParams?.summary;
+  const summaryParam = resolvedSearchParams?.summary;
   const summaryValue = Array.isArray(summaryParam) ? summaryParam[0] : summaryParam;
   const summaryOnly = summaryValue ? ["1", "true", "yes"].includes(summaryValue.toLowerCase()) : false;
   if (!token) {

@@ -18,17 +18,18 @@ from quotes.spot_schemas import SpotPricingEnvelope, SPEShipmentContext, SPEStat
 
 pytestmark = pytest.mark.django_db
 
+
 def _setup_test_data():
     User = get_user_model()
     user = User.objects.create_user(username="testuser", password="testpass")
-    
+
     currency = Currency.objects.create(code="PGK", name="Papua New Guinea Kina")
     pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=currency)
     au = Country.objects.create(code="AU", name="Australia", currency=currency)
-    
+
     origin = create_location(code="POM", name="Port Moresby", country=pg)
     dest = create_location(code="SYD", name="Sydney", country=au)
-    
+
     product_code = ProductCode.objects.create(
         id=5001,
         code="EXP-FRT-TEST",
@@ -41,14 +42,15 @@ def _setup_test_data():
         gl_revenue_code="4100",
         gl_cost_code="5100",
     )
-    
+
     return user, origin, dest, product_code
+
 
 def test_manual_resolution_syncs_batch_analysis_summary():
     user, origin, dest, pc = _setup_test_data()
     client = APIClient()
     client.force_authenticate(user=user)
-    
+
     # 1. Create SPE with an unsafe batch (unmapped line)
     spe = SpotPricingEnvelopeDB.objects.create(
         created_by=user,
@@ -67,7 +69,7 @@ def test_manual_resolution_syncs_batch_analysis_summary():
         spot_trigger_reason_code=SpotTriggerReason.MISSING_SCOPE_RATES,
         spot_trigger_reason_text="Missing required rate components",
     )
-    
+
     batch = SPESourceBatchDB.objects.create(
         envelope=spe,
         source_kind='AGENT',
@@ -81,7 +83,7 @@ def test_manual_resolution_syncs_batch_analysis_summary():
             'is_safe_to_quote': False
         }
     )
-    
+
     cl = SPEChargeLineDB.objects.create(
         envelope=spe,
         source_batch=batch,
@@ -96,12 +98,12 @@ def test_manual_resolution_syncs_batch_analysis_summary():
         entered_by=user,
         source_reference='Test'
     )
-    
+
     # Verify initial state is unsafe
     detail_url = reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": spe.id})
     resp = client.get(detail_url)
     assert resp.json()["intake_safety"]["is_safe_to_quote"] is False
-    
+
     # 2. Resolve the line via API
     resolution_url = reverse(
         "quotes:spot-charge-line-manual-resolution",
@@ -109,14 +111,15 @@ def test_manual_resolution_syncs_batch_analysis_summary():
     )
     resp = client.patch(resolution_url, {"manual_resolved_product_code_id": pc.id}, format="json")
     assert resp.status_code == 200
-    
+
     # 3. Verify batch summary is synced and SPE is now safe
     batch.refresh_from_db()
     assert batch.analysis_summary_json["unmapped_line_count"] == 0
     assert batch.analysis_summary_json["risk_level"] == "LOW"
-    
+
     resp = client.get(detail_url)
     assert resp.json()["intake_safety"]["is_safe_to_quote"] is True
+
 
 def test_a2a_service_scope_schema_support():
     """Verify that 'a2a' service scope is supported in the Pydantic schema."""
@@ -131,7 +134,7 @@ def test_a2a_service_scope_schema_support():
         service_scope="a2a", # This should not raise ValidationError now
     )
     assert context.service_scope == "a2a"
-    
+
     spe = SpotPricingEnvelope(
         id=str(uuid.uuid4()),
         status=SPEStatus.DRAFT,

@@ -120,12 +120,12 @@ def _sync_batch_analysis_summary(batch: SPESourceBatchDB):
         if l.normalization_status == SPEChargeLineDB.NormalizationStatus.UNMAPPED
         and l.manual_resolution_status != SPEChargeLineDB.ManualResolutionStatus.RESOLVED
     )
-    
+
     # We don't currently store normalization_confidence on the charge line model,
     # so we preserve the original AI-detected count for now.
     summary = normalize_source_analysis_summary(batch.analysis_summary_json)
     low_conf = summary.get("low_confidence_line_count", 0)
-    
+
     conditional = sum(1 for l in lines if l.conditional and not l.conditional_acknowledged)
 
     batch.analysis_summary_json = sync_source_analysis_summary_counts(
@@ -1045,7 +1045,31 @@ class SpotTriggerEvaluateAPIView(APIView):
         }
     """
     permission_classes = [IsAuthenticated]
-    
+
+    @staticmethod
+    def _optional_int(value):
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _selector_issue_from_outcomes(
+        *,
+        component_outcomes: dict,
+        direction: str,
+        service_scope: str,
+    ) -> Optional[dict]:
+        from quotes.completeness import required_components
+
+        for component in sorted(required_components(direction, service_scope)):
+            outcome = component_outcomes.get(component) or {}
+            if outcome.get("status") in {"missing_dimension", "ambiguous"}:
+                return outcome
+        return None
+
     def post(self, request):
         # Calculate direction
         origin_airport = request.data.get('origin_airport', '')
@@ -1074,9 +1098,24 @@ class SpotTriggerEvaluateAPIView(APIView):
             direction=direction,
             service_scope=service_scope,
             payment_term=payment_term,
+            agent_id=self._optional_int(request.data.get("agent_id")),
+            carrier_id=self._optional_int(request.data.get("carrier_id")),
+            buy_currency=request.data.get("buy_currency"),
+            quote_currency=request.data.get("quote_currency"),
+        )
+        selector_issue = self._selector_issue_from_outcomes(
+            component_outcomes=component_outcomes,
+            direction=direction,
+            service_scope=service_scope,
         )
         component_availability = {
-            component: outcome.get('status') in {'covered_exact', 'covered_fallback'}
+            component: (
+                outcome.get('status') in {'covered_exact', 'covered_fallback'}
+                or (
+                    selector_issue is outcome
+                    and outcome.get('status') in {'missing_dimension', 'ambiguous'}
+                )
+            )
             for component, outcome in component_outcomes.items()
         }
         commodity = str(request.data.get('commodity') or 'GCR').upper()
@@ -1119,7 +1158,7 @@ class SpotTriggerEvaluateAPIView(APIView):
             is_spot,
         )
         
-        return Response({
+        response_payload = {
             'is_spot_required': is_spot,
             'trigger': {
                 'code': trigger.code,
@@ -1130,7 +1169,11 @@ class SpotTriggerEvaluateAPIView(APIView):
                 'manual_required_product_codes': trigger.manual_required_product_codes,
             } if trigger else None,
             'component_outcomes': component_outcomes,
-        })
+        }
+        if selector_issue is not None:
+            response_payload['selector_issue'] = selector_issue
+
+        return Response(response_payload)
 
 
 # =============================================================================
