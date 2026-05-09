@@ -5,7 +5,6 @@ import type {
   Opportunity,
   OpportunityPayload,
   PaginatedResponse,
-  Task,
   V3QuoteComputeResponse,
 } from "../types";
 import { searchCompanies as searchPartyCompanies } from "./parties";
@@ -247,103 +246,6 @@ export async function listInteractionsByOpportunity(opportunityId: string): Prom
 
   const payload = (await response.json()) as Interaction[] | PaginatedResponse<Interaction>;
   return normalizeListResponse(payload);
-}
-
-type ListTaskParams = {
-  owner?: string;
-  status?: string;
-  due_date?: string;
-  company?: string;
-  opportunity?: string;
-};
-
-export async function listTasks(params: ListTaskParams = {}): Promise<Task[]> {
-  const url = new URL(API_BASE_URL + "/api/v3/crm/tasks/");
-  appendDefinedParams(url, params);
-
-  const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to load tasks: ${detail}`);
-  }
-
-  const payload = (await response.json()) as Task[] | PaginatedResponse<Task>;
-  return normalizeListResponse(payload);
-}
-
-export async function listTasksByOpportunity(opportunityId: string): Promise<Task[]> {
-  return listTasks({ opportunity: opportunityId });
-}
-
-export async function listTasksByCompany(companyId: string): Promise<Task[]> {
-  return listTasks({ company: companyId });
-}
-
-export type TaskPayload = {
-  company?: string | null;
-  opportunity?: string | null;
-  description: string;
-  owner?: number | null;
-  due_date: string;
-  status?: string;
-};
-
-export async function createTask(data: TaskPayload): Promise<Task> {
-  const response = await fetch(API_BASE_URL + "/api/v3/crm/tasks/", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to create task: ${detail}`);
-  }
-
-  return response.json();
-}
-
-export async function updateTask(taskId: string, data: Partial<TaskPayload>): Promise<Task> {
-  const response = await fetch(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to update task: ${detail}`);
-  }
-
-  return response.json();
-}
-
-export async function completeTask(taskId: string): Promise<Task> {
-  const response = await fetch(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/complete/`, {
-    method: "POST",
-    headers: {
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-  });
-
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to complete task: ${detail}`);
-  }
-
-  return response.json();
 }
 
 export async function listQuotesByOpportunity(opportunityId: string): Promise<V3QuoteComputeResponse[]> {

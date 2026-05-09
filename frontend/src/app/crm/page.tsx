@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
 import { CrmSubNav } from '@/components/crm/CrmSubNav';
-import { TaskDialog, nextBusinessDay } from '@/components/crm/TaskDialog';
 import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { listOpportunities, listRecentInteractions, listTasks, completeTask } from '@/lib/api/crm';
+import { listOpportunities, listRecentInteractions } from '@/lib/api/crm';
 import { listCustomers } from '@/lib/api/parties';
 import {
   daysSinceInteraction,
@@ -27,11 +26,9 @@ import {
   formatEngagementDate,
   needsFollowUp,
 } from '@/lib/crm-engagement-health';
-import type { CompanySearchResult, Interaction, Opportunity, Task } from '@/lib/types';
-import { useToast } from '@/context/toast-context';
+import type { CompanySearchResult, Interaction, Opportunity } from '@/lib/types';
 
 const openStatuses = new Set(['NEW', 'QUALIFIED', 'QUOTED']);
-const taskOpenStatuses = new Set(['PENDING']);
 const interactionLabels: Record<string, string> = {
   CALL: 'Call',
   MEETING: 'Meeting',
@@ -40,27 +37,10 @@ const interactionLabels: Record<string, string> = {
   SYSTEM: 'System',
 };
 
-function startOfToday(): Date {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function endOfThisWeek(): Date {
-  const date = startOfToday();
-  date.setDate(date.getDate() + 7);
-  return date;
-}
-
-function dateOnly(value?: string | null): Date | null {
-  if (!value) return null;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
 function formatDate(value?: string | null): string {
-  const date = dateOnly(value);
-  if (!date) return '-';
+  if (!value) return '-';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
 }
 
@@ -97,23 +77,12 @@ function oldestActivityRank(value?: string | null): number {
 }
 
 function isOverdueDate(value?: string | null): boolean {
-  const dueDate = dateOnly(value);
-  if (!dueDate) return false;
-  return dueDate < startOfToday();
-}
-
-function isToday(value?: string | null): boolean {
-  const dueDate = dateOnly(value);
-  if (!dueDate) return false;
-  return dueDate.getTime() === startOfToday().getTime();
-}
-
-function isThisWeek(value?: string | null): boolean {
-  const dueDate = dateOnly(value);
-  if (!dueDate) return false;
-  const today = startOfToday();
-  const weekEnd = endOfThisWeek();
-  return dueDate > today && dueDate <= weekEnd;
+  if (!value) return false;
+  const dueDate = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(dueDate.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return dueDate < today;
 }
 
 function KpiCard({ label, value, detail }: { label: string; value: string; detail: string }) {
@@ -136,39 +105,29 @@ function statusBadgeVariant(status: string) {
 }
 
 export default function CrmOverviewPage() {
-  const { toast } = useToast();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [customers, setCustomers] = useState<CompanySearchResult[]>([]);
   const [loading, setLoading] = useState(true);
-  const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [quickLogCompany, setQuickLogCompany] = useState<CompanySearchResult | null>(null);
-  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [taskDialogCompany, setTaskDialogCompany] = useState<CompanySearchResult | null>(null);
-  const [taskDialogDescription, setTaskDialogDescription] = useState('');
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   const loadOverviewData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [opportunityRows, taskRows, interactionRows, customerRows] = await Promise.all([
+      const [opportunityRows, interactionRows, customerRows] = await Promise.all([
         listOpportunities(),
-        listTasks(),
         listRecentInteractions(),
         listCustomers(),
       ]);
       setOpportunities(opportunityRows);
-      setTasks(taskRows);
       setInteractions(interactionRows);
       setCustomers(customerRows);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load CRM overview.');
       setOpportunities([]);
-      setTasks([]);
       setInteractions([]);
       setCustomers([]);
     } finally {
@@ -180,54 +139,10 @@ export default function CrmOverviewPage() {
     void loadOverviewData();
   }, [loadOverviewData]);
 
-  const handleCompleteTask = async (taskId: string) => {
-    if (completingTaskIds.has(taskId)) return;
-    setCompletingTaskIds((current) => new Set(current).add(taskId));
-    try {
-      await completeTask(taskId);
-      toast({ title: 'Task Completed', variant: 'success' });
-      void loadOverviewData();
-    } catch (err) {
-      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
-    } finally {
-      setCompletingTaskIds((current) => {
-        const next = new Set(current);
-        next.delete(taskId);
-        return next;
-      });
-    }
-  };
-
   const handleOpenLogActivity = (company?: CompanySearchResult) => {
     setQuickLogCompany(company || null);
     setQuickLogOpen(true);
   };
-
-  const openCreateTaskDialog = (company: CompanySearchResult, days: number | null) => {
-    setEditingTask(null);
-    setTaskDialogCompany(company);
-    setTaskDialogDescription(
-      days === null
-        ? `Follow up with ${company.name} — no recorded interaction`
-        : `Follow up with ${company.name} — no recorded interaction in ${days} days`,
-    );
-    setTaskDialogOpen(true);
-  };
-
-  const openEditTaskDialog = (task: Task) => {
-    setEditingTask(task);
-    setTaskDialogCompany(task.company ? customerById.get(task.company) || null : null);
-    setTaskDialogDescription(task.description);
-    setTaskDialogOpen(true);
-  };
-
-  const opportunityById = useMemo(() => {
-    return new Map(opportunities.map((opportunity) => [opportunity.id, opportunity]));
-  }, [opportunities]);
-
-  const customerById = useMemo(() => {
-    return new Map(customers.map((customer) => [customer.id, customer]));
-  }, [customers]);
 
   const openOpportunities = useMemo(() => {
     return opportunities.filter((opportunity) => openStatuses.has(opportunity.status));
@@ -249,20 +164,12 @@ export default function CrmOverviewPage() {
     }).length;
   }, [opportunities]);
 
-  const openTasks = useMemo(() => {
-    return tasks.filter((task) => taskOpenStatuses.has(task.status));
-  }, [tasks]);
-
   const openOpportunityCounts = useMemo(() => {
     return openOpportunities.reduce((counts, opportunity) => {
       counts.set(opportunity.company, (counts.get(opportunity.company) || 0) + 1);
       return counts;
     }, new Map<string, number>());
   }, [openOpportunities]);
-
-  const overdueTasks = useMemo(() => {
-    return openTasks.filter((task) => isOverdueDate(task.due_date));
-  }, [openTasks]);
 
   const priorityOpportunities = useMemo(() => {
     return [...openOpportunities]
@@ -276,17 +183,6 @@ export default function CrmOverviewPage() {
       })
       .slice(0, 8);
   }, [openOpportunities]);
-
-  const tasksDue = useMemo(() => {
-    return openTasks
-      .filter((task) => isOverdueDate(task.due_date) || isToday(task.due_date) || isThisWeek(task.due_date))
-      .sort((a, b) => {
-        const aTime = dateOnly(a.due_date)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-        const bTime = dateOnly(b.due_date)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-        return aTime - bTime;
-      })
-      .slice(0, 10);
-  }, [openTasks]);
 
   const recentActivity = useMemo(() => {
     return [...interactions]
@@ -311,13 +207,6 @@ export default function CrmOverviewPage() {
       })
       .slice(0, 8);
   }, [customers]);
-
-  const taskBucket = (task: Task): string => {
-    if (isOverdueDate(task.due_date)) return 'Overdue';
-    if (isToday(task.due_date)) return 'Today';
-    if (isThisWeek(task.due_date)) return 'This week';
-    return 'Upcoming';
-  };
 
   return (
     <ProtectedRoute>
@@ -409,7 +298,7 @@ export default function CrmOverviewPage() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             <KpiCard
               label="Open Opportunities"
               value={loading ? '...' : String(openOpportunities.length)}
@@ -424,11 +313,6 @@ export default function CrmOverviewPage() {
               label="Won This Month"
               value={loading ? '...' : String(wonThisMonth)}
               detail="Opportunities with won_at in the current month"
-            />
-            <KpiCard
-              label="Overdue Tasks"
-              value={loading ? '...' : String(overdueTasks.length)}
-              detail="Pending tasks past due date"
             />
           </div>
 
@@ -494,14 +378,6 @@ export default function CrmOverviewPage() {
                                 <Button asChild variant="outline" size="sm">
                                   <Link href={`/customers/${customer.id}/edit?returnTo=%2Fcrm`}>View Account</Link>
                                 </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openCreateTaskDialog(customer, days)}
-                                >
-                                  Create Task
-                                </Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -514,153 +390,41 @@ export default function CrmOverviewPage() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <Card className="border-slate-200 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Tasks Due</CardTitle>
-                <CardDescription>Overdue, today, and this week.</CardDescription>
-              </CardHeader>
-              <CardContent className="px-6 pb-6 pt-2">
-                {loading ? (
-                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    Loading tasks...
-                  </p>
-                ) : tasksDue.length === 0 ? (
-                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    No tasks due.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {tasksDue.map((task) => {
-                      const opportunity = task.opportunity ? opportunityById.get(task.opportunity) : null;
-                      const company = task.company ? customerById.get(task.company) : null;
-                      const bucket = taskBucket(task);
-                      return (
-                        <div key={task.id} className="rounded-md border border-slate-200 bg-white p-4">
-                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="min-w-0 space-y-2">
-                              <p className="break-words text-sm font-medium leading-6 text-slate-900">
-                                {task.description}
-                              </p>
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-                                <span>
-                                  <span className="font-medium text-slate-700">Company:</span>{' '}
-                                  {company ? (
-                                    <Link
-                                      className="text-primary hover:underline"
-                                      href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}
-                                    >
-                                      {company.name}
-                                    </Link>
-                                  ) : task.company ? (
-                                    'Company linked'
-                                  ) : (
-                                    '-'
-                                  )}
-                                </span>
-                                <span>
-                                  <span className="font-medium text-slate-700">Opportunity:</span>{' '}
-                                  {opportunity ? (
-                                    <Link
-                                      className="text-primary hover:underline"
-                                      href={`/crm/opportunities/${opportunity.id}`}
-                                    >
-                                      {opportunity.title}
-                                    </Link>
-                                  ) : task.opportunity ? (
-                                    'Opportunity linked'
-                                  ) : (
-                                    '-'
-                                  )}
-                                </span>
-                                <span>
-                                  <span className="font-medium text-slate-700">Owner:</span>{' '}
-                                  {task.owner_username || '-'}
-                                </span>
-                                <span>
-                                  <span className="font-medium text-slate-700">Due:</span>{' '}
-                                  {formatDate(task.due_date)}
-                                </span>
-                                <Badge variant={bucket === 'Overdue' ? 'destructive' : 'outline'}>{bucket}</Badge>
-                                <Badge variant="secondary">{task.status}</Badge>
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-                              <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
-                                Edit
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleCompleteTask(task.id)}
-                                disabled={completingTaskIds.has(task.id)}
-                              >
-                                {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
-                              </Button>
-                              {company ? (
-                                <Button variant="outline" size="sm" asChild>
-                                  <Link href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}>View Account</Link>
-                                </Button>
-                              ) : null}
-                              {opportunity ? (
-                                <Button variant="outline" size="sm" asChild>
-                                  <Link href={`/crm/opportunities/${opportunity.id}`}>View Opportunity</Link>
-                                </Button>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="border-slate-200 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg">Recent Activity</CardTitle>
-                <CardDescription>Newest CRM interactions.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3 px-6 pb-6 pt-2">
-                {loading ? (
-                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    Loading activity...
-                  </p>
-                ) : recentActivity.length === 0 ? (
-                  <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                    No recent activity.
-                  </p>
-                ) : (
-                  recentActivity.map((interaction) => {
-                    const opportunity = interaction.opportunity ? opportunityById.get(interaction.opportunity) : null;
-                    const isSystem = Boolean(interaction.is_system_generated);
-                    return (
-                      <div key={interaction.id} className="rounded-md border border-slate-200 bg-white p-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant={isSystem ? 'secondary' : 'outline'}>
-                            {isSystem ? 'SYSTEM' : interactionLabels[interaction.interaction_type] || interaction.interaction_type}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">{formatDateTime(interaction.created_at)}</span>
-                          {interaction.company_name ? (
-                            <span className="text-xs font-medium text-slate-600">{interaction.company_name}</span>
-                          ) : null}
-                        </div>
-                        {opportunity ? (
-                          <Link className="mt-2 block text-xs font-medium text-primary hover:underline" href={`/crm/opportunities/${opportunity.id}`}>
-                            {opportunity.title}
-                          </Link>
-                        ) : interaction.opportunity ? (
-                          <p className="mt-2 text-xs font-medium text-slate-600">Opportunity linked</p>
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Recent Activity</CardTitle>
+              <CardDescription>Newest CRM interactions.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 px-6 pb-6 pt-2">
+              {loading ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  Loading activity...
+                </p>
+              ) : recentActivity.length === 0 ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No recent activity.
+                </p>
+              ) : (
+                recentActivity.map((interaction) => {
+                  const isSystem = Boolean(interaction.is_system_generated);
+                  return (
+                    <div key={interaction.id} className="rounded-md border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={isSystem ? 'secondary' : 'outline'}>
+                          {isSystem ? 'SYSTEM' : interactionLabels[interaction.interaction_type] || interaction.interaction_type}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">{formatDateTime(interaction.created_at)}</span>
+                        {interaction.company_name ? (
+                          <span className="text-xs font-medium text-slate-600">{interaction.company_name}</span>
                         ) : null}
-                        <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">{interaction.summary}</p>
                       </div>
-                    );
-                  })
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-900">{interaction.summary}</p>
+                    </div>
+                  );
+                })
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         <InteractionLogSheet
@@ -673,27 +437,6 @@ export default function CrmOverviewPage() {
             }
           }}
           prefilledCompany={quickLogCompany}
-        />
-        <TaskDialog
-          open={taskDialogOpen}
-          onOpenChange={(nextOpen) => {
-            setTaskDialogOpen(nextOpen);
-            if (!nextOpen) {
-              setEditingTask(null);
-              setTaskDialogCompany(null);
-              setTaskDialogDescription('');
-            }
-          }}
-          task={editingTask}
-          defaults={{
-            company: taskDialogCompany,
-            description: taskDialogDescription,
-            dueDate: nextBusinessDay(),
-            status: 'PENDING',
-          }}
-          onSaved={() => {
-            void loadOverviewData();
-          }}
         />
       </StandardPageContainer>
     </ProtectedRoute>

@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from rest_framework.test import APIClient
 
-from crm.models import Interaction, Opportunity, Task
+from crm.models import Interaction, Opportunity
 from crm.services import (
     resolve_quote_opportunity,
     mark_opportunity_lost,
@@ -75,29 +75,9 @@ def test_crm_model_creation(company, user):
         interaction_type=Interaction.InteractionType.CALL,
         summary="Discussed weekly distribution needs.",
     )
-    task = Task.objects.create(
-        company=company,
-        opportunity=opportunity,
-        owner=user,
-        description="Prepare distribution estimate.",
-        due_date=date.today() + timedelta(days=1),
-    )
 
     assert opportunity.status == Opportunity.Status.NEW
     assert interaction.summary
-    assert task.status == Task.Status.PENDING
-
-
-@pytest.mark.django_db
-def test_task_requires_company_or_opportunity(user):
-    task = Task(
-        owner=user,
-        description="Unlinked task",
-        due_date=date.today(),
-    )
-
-    with pytest.raises(ValidationError):
-        task.full_clean()
 
 
 @pytest.mark.django_db
@@ -340,27 +320,6 @@ def test_mark_lost_requires_reason(opportunity, user):
     assert response.status_code == 400
     opportunity.refresh_from_db()
     assert opportunity.status == Opportunity.Status.NEW
-
-
-@pytest.mark.django_db
-def test_task_complete_action_sets_completion_fields(company, opportunity, user):
-    task = Task.objects.create(
-        company=company,
-        opportunity=opportunity,
-        owner=user,
-        description="Follow up with customer.",
-        due_date=date.today(),
-    )
-    client = APIClient()
-    client.force_authenticate(user=user)
-
-    response = client.post(f"/api/v3/crm/tasks/{task.id}/complete/")
-
-    assert response.status_code == 200
-    task.refresh_from_db()
-    assert task.status == Task.Status.COMPLETED
-    assert task.completed_at is not None
-    assert task.completed_by == user
 
 
 @pytest.mark.django_db

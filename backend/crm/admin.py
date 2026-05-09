@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Interaction, Opportunity, Task
+from .models import Interaction, Opportunity
 
 
 @admin.register(Opportunity)
@@ -15,10 +15,3 @@ class InteractionAdmin(admin.ModelAdmin):
     list_display = ("company", "opportunity", "interaction_type", "author", "is_system_generated", "created_at")
     list_filter = ("interaction_type", "is_system_generated", "system_event_type")
     search_fields = ("company__name", "summary", "outcomes")
-
-
-@admin.register(Task)
-class TaskAdmin(admin.ModelAdmin):
-    list_display = ("description", "company", "opportunity", "owner", "due_date", "status")
-    list_filter = ("status", "due_date")
-    search_fields = ("description", "company__name", "opportunity__title")

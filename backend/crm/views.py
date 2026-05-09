@@ -1,10 +1,9 @@
-from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import Interaction, Opportunity, Task
-from .serializers import InteractionSerializer, OpportunitySerializer, TaskSerializer
+from .models import Interaction, Opportunity
+from .serializers import InteractionSerializer, OpportunitySerializer
 from .services import mark_opportunity_lost, mark_opportunity_won
 
 
@@ -97,44 +96,3 @@ class InteractionViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
-
-
-class TaskViewSet(viewsets.ModelViewSet):
-    serializer_class = TaskSerializer
-    permission_classes = [permissions.IsAuthenticated, CrmWritePermission]
-
-    def get_queryset(self):
-        queryset = Task.objects.select_related("company", "opportunity", "owner", "completed_by")
-        owner = self.request.query_params.get("owner")
-        status = self.request.query_params.get("status")
-        due_date = self.request.query_params.get("due_date")
-        company = self.request.query_params.get("company")
-        opportunity = self.request.query_params.get("opportunity")
-        if owner:
-            queryset = queryset.filter(owner_id=owner)
-        if status:
-            queryset = queryset.filter(status=status.upper())
-        if due_date:
-            queryset = queryset.filter(due_date=due_date)
-        if company:
-            queryset = queryset.filter(company_id=company)
-        if opportunity:
-            queryset = queryset.filter(opportunity_id=opportunity)
-        return queryset.order_by("due_date", "-created_at")
-
-    def perform_create(self, serializer):
-        owner = serializer.validated_data.get("owner") or self.request.user
-        serializer.save(owner=owner)
-
-    @action(detail=True, methods=["post"])
-    def complete(self, request, pk=None):
-        task = self.get_object()
-        if task.status == Task.Status.COMPLETED:
-            serializer = self.get_serializer(task)
-            return Response(serializer.data)
-        task.status = Task.Status.COMPLETED
-        task.completed_at = timezone.now()
-        task.completed_by = request.user
-        task.save(update_fields=["status", "completed_at", "completed_by", "updated_at"])
-        serializer = self.get_serializer(task)
-        return Response(serializer.data)

@@ -1,7 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import Interaction, Opportunity, Task
+from .models import Interaction, Opportunity
 
 
 class OpportunitySerializer(serializers.ModelSerializer):
@@ -97,58 +97,4 @@ class InteractionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"contact": "Selected contact does not belong to the selected company."})
         if opportunity and company and opportunity.company_id != company.id:
             raise serializers.ValidationError({"opportunity": "Selected opportunity does not belong to the selected company."})
-        return attrs
 
-
-class TaskSerializer(serializers.ModelSerializer):
-    owner_username = serializers.CharField(source="owner.username", read_only=True)
-    completed_by_username = serializers.CharField(source="completed_by.username", read_only=True)
-
-    class Meta:
-        model = Task
-        fields = [
-            "id",
-            "company",
-            "opportunity",
-            "description",
-            "owner",
-            "owner_username",
-            "due_date",
-            "status",
-            "completed_at",
-            "completed_by",
-            "completed_by_username",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "completed_at", "completed_by", "created_at", "updated_at"]
-        extra_kwargs = {"owner": {"required": False}}
-
-    def validate(self, attrs):
-        instance = getattr(self, "instance", None)
-        company = attrs.get("company", getattr(instance, "company", None))
-        opportunity = attrs.get("opportunity", getattr(instance, "opportunity", None))
-        if not company and not opportunity:
-            raise serializers.ValidationError("Task must link to at least a company or opportunity.")
-        if company and opportunity and opportunity.company_id != company.id:
-            raise serializers.ValidationError({"opportunity": "Selected opportunity does not belong to the selected company."})
-        return attrs
-
-    def create(self, validated_data):
-        if validated_data.get("opportunity") and not validated_data.get("company"):
-            validated_data["company"] = validated_data["opportunity"].company
-        if validated_data.get("status") == Task.Status.COMPLETED:
-            request = self.context.get("request")
-            validated_data["completed_at"] = timezone.now()
-            validated_data["completed_by"] = getattr(request, "user", None)
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        prior_status = instance.status
-        if validated_data.get("opportunity") and not validated_data.get("company", instance.company):
-            validated_data["company"] = validated_data["opportunity"].company
-        if validated_data.get("status") == Task.Status.COMPLETED and prior_status != Task.Status.COMPLETED:
-            request = self.context.get("request")
-            validated_data["completed_at"] = timezone.now()
-            validated_data["completed_by"] = getattr(request, "user", None)
-        return super().update(instance, validated_data)

@@ -200,23 +200,9 @@ export interface CreateInteractionPayload {
   next_action_date?: string | null;
 }
 
-export interface Task {
-  id: string;
-  company?: string | null;
-  opportunity?: string | null;
-  description: string;
-  owner: number;
-  owner_username?: string | null;
-  due_date: string;
-  status: 'PENDING' | 'COMPLETED' | 'CANCELLED' | string;
-  completed_at?: string | null;
-  completed_by?: number | null;
-  completed_by_username?: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
 
 export interface AirportSearchResult {
+
   iata_code: string;
   name: string;
   city_country: string;

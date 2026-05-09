@@ -5,7 +5,6 @@ import { useParams } from 'next/navigation';
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
-import { TaskDialog, nextBusinessDay } from '@/components/crm/TaskDialog';
 import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
@@ -31,16 +30,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  completeTask,
   getOpportunity,
   listInteractionsByOpportunity,
   listQuotesByOpportunity,
-  listTasksByOpportunity,
   markOpportunityQualified,
   markOpportunityLost,
   markOpportunityWon,
 } from '@/lib/api/crm';
-import type { CompanySearchResult, Interaction, Opportunity, Task, V3QuoteComputeResponse } from '@/lib/types';
+import type { CompanySearchResult, Interaction, Opportunity, V3QuoteComputeResponse } from '@/lib/types';
 import { useToast } from '@/context/toast-context';
 
 const interactionLabels: Record<string, string> = {
@@ -135,15 +132,11 @@ export default function OpportunityDetailPage() {
   const { toast } = useToast();
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [quotes, setQuotes] = useState<V3QuoteComputeResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<'qualified' | 'won' | 'lost' | null>(null);
-  const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
-  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonReason, setWonReason] = useState('');
@@ -153,21 +146,18 @@ export default function OpportunityDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [opportunityRow, interactionRows, taskRows, quoteRows] = await Promise.all([
+      const [opportunityRow, interactionRows, quoteRows] = await Promise.all([
         getOpportunity(params.id),
         listInteractionsByOpportunity(params.id),
-        listTasksByOpportunity(params.id).catch(() => []),
         listQuotesByOpportunity(params.id).catch(() => []),
       ]);
       setOpportunity(opportunityRow);
       setInteractions(interactionRows);
-      setTasks(taskRows);
       setQuotes(quoteRows);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load opportunity.');
       setOpportunity(null);
       setInteractions([]);
-      setTasks([]);
       setQuotes([]);
     } finally {
       setLoading(false);
@@ -230,34 +220,6 @@ export default function OpportunityDetailPage() {
     } finally {
       setActionLoading(null);
     }
-  };
-
-  const handleCompleteTask = async (taskId: string) => {
-    if (completingTaskIds.has(taskId)) return;
-    setCompletingTaskIds((current) => new Set(current).add(taskId));
-    try {
-      await completeTask(taskId);
-      toast({ title: 'Task Completed', variant: 'success' });
-      void loadOpportunityData();
-    } catch (err) {
-      toast({ title: 'Action Failed', description: String(err), variant: 'destructive' });
-    } finally {
-      setCompletingTaskIds((current) => {
-        const next = new Set(current);
-        next.delete(taskId);
-        return next;
-      });
-    }
-  };
-
-  const openCreateTaskDialog = () => {
-    setEditingTask(null);
-    setTaskDialogOpen(true);
-  };
-
-  const openEditTaskDialog = (task: Task) => {
-    setEditingTask(task);
-    setTaskDialogOpen(true);
   };
 
   const sortedInteractions = useMemo(() => {
@@ -394,7 +356,6 @@ export default function OpportunityDetailPage() {
               <TabsList>
                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
                 <TabsTrigger value="quotes">Quotes</TabsTrigger>
-                <TabsTrigger value="tasks">Tasks</TabsTrigger>
               </TabsList>
 
               <TabsContent value="timeline" className="space-y-3">
@@ -451,76 +412,6 @@ export default function OpportunityDetailPage() {
                                   <Button variant="ghost" size="sm" asChild>
                                     <Link href={`/quotes/${quote.id}`}>View</Link>
                                   </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="tasks">
-                <Card className="border-slate-200 shadow-sm">
-                  <CardHeader className="flex flex-col gap-3 pb-2 md:flex-row md:items-start md:justify-between">
-                    <div>
-                      <CardTitle className="text-lg">Tasks</CardTitle>
-                      <CardDescription>Basic tasks linked to this opportunity.</CardDescription>
-                    </div>
-                    <Button type="button" variant="outline" size="sm" onClick={openCreateTaskDialog}>
-                      Create Task
-                    </Button>
-                  </CardHeader>
-                  <CardContent className="px-6 pb-6 pt-2">
-                    {tasks.length === 0 ? (
-                      <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                        No tasks linked to this opportunity.
-                      </p>
-                    ) : (
-                      <div className="overflow-hidden rounded-md border border-slate-200">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Description</TableHead>
-                              <TableHead>Company</TableHead>
-                              <TableHead>Opportunity</TableHead>
-                              <TableHead>Owner</TableHead>
-                              <TableHead>Due Date</TableHead>
-                              <TableHead>Status</TableHead>
-                              <TableHead className="text-right">Action</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {tasks.map((task) => (
-                              <TableRow key={task.id}>
-                                <TableCell className="font-medium">{task.description}</TableCell>
-                                <TableCell>{opportunity.company_name || 'Company linked'}</TableCell>
-                                <TableCell>{opportunity.title}</TableCell>
-                                <TableCell>{task.owner_username || '-'}</TableCell>
-                                <TableCell>{formatDate(task.due_date)}</TableCell>
-                                <TableCell>{task.status}</TableCell>
-                                <TableCell className="text-right">
-                                  {task.status === 'PENDING' ? (
-                                    <div className="flex justify-end gap-2">
-                                      <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
-                                        Edit
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleCompleteTask(task.id)}
-                                        disabled={completingTaskIds.has(task.id)}
-                                      >
-                                        {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
-                                      </Button>
-                                    </div>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">
-                                      Completed {formatDate(task.completed_at)}
-                                    </span>
-                                  )}
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -662,26 +553,6 @@ export default function OpportunityDetailPage() {
             </form>
           </DialogContent>
         </Dialog>
-        <TaskDialog
-          open={taskDialogOpen}
-          onOpenChange={(nextOpen) => {
-            setTaskDialogOpen(nextOpen);
-            if (!nextOpen) {
-              setEditingTask(null);
-            }
-          }}
-          task={editingTask}
-          defaults={{
-            company: prefilledCompany,
-            opportunity,
-            description: opportunity ? `Follow up on ${opportunity.title}` : '',
-            dueDate: nextBusinessDay(),
-            status: 'PENDING',
-          }}
-          onSaved={() => {
-            void loadOpportunityData();
-          }}
-        />
       </StandardPageContainer>
     </ProtectedRoute>
   );
