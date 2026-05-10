@@ -1,6 +1,7 @@
 "use client";
 
-import { useFormContext } from "react-hook-form";
+import { useEffect, useMemo } from "react";
+import { useFormContext, useWatch } from "react-hook-form";
 
 import { Plane, Ship } from "lucide-react";
 
@@ -27,6 +28,11 @@ import {
 import {
   V3_LOCATION_TYPES,
 } from "@/lib/schemas/quoteSchema";
+import {
+  getDomesticServiceScopeError,
+  isDomesticPngRoute,
+  resolveCountryCode,
+} from "@/lib/domestic-service-scope";
 import { SERVICE_SCOPE_OPTIONS } from "@/lib/display";
 import { useQuoteStore } from "@/store/useQuoteStore";
 
@@ -36,6 +42,40 @@ export default function QuoteRouteSection() {
   const destinationLocation = useQuoteStore((state) => state.destinationLocation);
   const setOriginLocation = useQuoteStore((state) => state.setOriginLocation);
   const setDestinationLocation = useQuoteStore((state) => state.setDestinationLocation);
+  const mode = useWatch({ control: form.control, name: "mode" });
+  const selectedServiceScope = useWatch({ control: form.control, name: "service_scope" });
+  const originAirport = useWatch({ control: form.control, name: "origin_airport" });
+  const destinationAirport = useWatch({ control: form.control, name: "destination_airport" });
+
+  const originCode = (originAirport || originLocation?.code || "").trim().toUpperCase();
+  const destinationCode = (destinationAirport || destinationLocation?.code || "").trim().toUpperCase();
+  const originCountry = resolveCountryCode(originLocation, originCode);
+  const destinationCountry = resolveCountryCode(destinationLocation, destinationCode);
+  const isDomesticAirRoute =
+    mode === "AIR" &&
+    isDomesticPngRoute(originCountry, destinationCountry, originCode, destinationCode);
+  const serviceScopeError = useMemo(
+    () =>
+      mode === "AIR"
+        ? getDomesticServiceScopeError(
+            selectedServiceScope,
+            originCode,
+            destinationCode,
+            originCountry,
+            destinationCountry,
+          )
+        : "",
+    [destinationCode, destinationCountry, mode, originCode, originCountry, selectedServiceScope],
+  );
+
+  useEffect(() => {
+    if (serviceScopeError) {
+      form.setError("service_scope", { type: "validate", message: serviceScopeError });
+      return;
+    }
+
+    form.clearErrors("service_scope");
+  }, [form, serviceScopeError]);
 
   return (
     <div className="space-y-6">
@@ -85,13 +125,40 @@ export default function QuoteRouteSection() {
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  {SERVICE_SCOPE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
+                  {SERVICE_SCOPE_OPTIONS.map((option) => {
+                    const disabledReason =
+                      isDomesticAirRoute
+                        ? getDomesticServiceScopeError(
+                            option.value,
+                            originCode,
+                            destinationCode,
+                            originCountry,
+                            destinationCountry,
+                          )
+                        : "";
+
+                    return (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        disabled={Boolean(disabledReason)}
+                      >
+                        <span className="flex w-full items-center justify-between gap-3">
+                          <span>{option.label}</span>
+                          {disabledReason ? (
+                            <span className="text-xs text-muted-foreground">Unavailable</span>
+                          ) : null}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
+              {serviceScopeError ? (
+                <FormDescription className="text-destructive">
+                  {serviceScopeError}
+                </FormDescription>
+              ) : null}
               <FormMessage />
             </FormItem>
           )}
