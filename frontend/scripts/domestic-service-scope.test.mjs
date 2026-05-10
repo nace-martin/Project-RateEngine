@@ -47,9 +47,14 @@ assert.match(
 );
 assert.equal(isDomesticServiceScopeAvailable("D2A", "POM", "HGU", "PG", "PG"), true);
 assert.equal(isDomesticServiceScopeAvailable("A2D", "HGU", "POM", "PG", "PG"), true);
+assert.equal(isDomesticServiceScopeAvailable("A2A", "HGU", "GKA", "PG", "PG"), true);
 assert.match(
   getDomesticServiceScopeError("D2A", "HGU", "POM", "PG", "PG"),
   /Pickup is only available/,
+);
+assert.match(
+  getDomesticServiceScopeError("A2D", "POM", "HGU", "PG", "PG"),
+  /Delivery is only available/,
 );
 assert.match(
   getDomesticServiceScopeError("D2D", "POM", "WEW", "PG", "PG"),

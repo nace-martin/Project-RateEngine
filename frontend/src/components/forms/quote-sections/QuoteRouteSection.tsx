@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 
 import { Plane, Ship } from "lucide-react";
@@ -67,15 +67,6 @@ export default function QuoteRouteSection() {
         : "",
     [destinationCode, destinationCountry, mode, originCode, originCountry, selectedServiceScope],
   );
-
-  useEffect(() => {
-    if (serviceScopeError) {
-      form.setError("service_scope", { type: "validate", message: serviceScopeError });
-      return;
-    }
-
-    form.clearErrors("service_scope");
-  }, [form, serviceScopeError]);
 
   return (
     <div className="space-y-6">
