@@ -17,6 +17,10 @@ import {
     getValidIncoterms,
     getDefaultIncoterm,
 } from "@/lib/schemas/quoteSchema";
+import {
+    getDomesticServiceScopeError,
+    resolveCountryCode,
+} from "@/lib/domestic-service-scope";
 import { Contact, CompanySearchResult, LocationSearchResult, User } from "@/lib/types";
 import { SPECommodity } from "@/lib/spot-types";
 import { useQuoteStore } from "@/store/useQuoteStore";
@@ -34,36 +38,6 @@ const mapCargoToSPECommodity = (cargoType: string): SPECommodity => {
         case 'General Cargo':
         default: return 'GCR';
     }
-};
-
-const AIRPORT_COUNTRY_MAP: Record<string, string> = {
-    POM: "PG",
-    LAE: "PG",
-    SIN: "SG",
-    HKG: "HK",
-    BNE: "AU",
-    SYD: "AU",
-    CNS: "AU",
-    NAN: "FJ",
-    HIR: "SB",
-    VLI: "VU",
-};
-
-const resolveCountryCode = (
-    location: LocationSearchResult | null,
-    airportCode?: string,
-): string => {
-    const explicit = (location?.country_code || "").trim().toUpperCase();
-    if (explicit) return explicit;
-
-    const displayName = location?.display_name || "";
-    const displayMatch = displayName.match(/,\s*([A-Z]{2})\s*$/i);
-    if (displayMatch?.[1]) {
-        return displayMatch[1].toUpperCase();
-    }
-
-    const code = (airportCode || location?.code || "").trim().toUpperCase();
-    return AIRPORT_COUNTRY_MAP[code] || "OTHER";
 };
 
 const parsePricingCounterparty = (
@@ -266,6 +240,22 @@ export function useQuoteLogic({
             const destinationCode = (data.destination_airport || destinationLocation?.code || '').toUpperCase();
             const originCountry = resolveCountryCode(originLocation, originCode);
             const destCountry = resolveCountryCode(destinationLocation, destinationCode);
+            const domesticServiceScopeError =
+                data.mode === "AIR"
+                    ? getDomesticServiceScopeError(
+                        data.service_scope,
+                        originCode,
+                        destinationCode,
+                        originCountry,
+                        destCountry,
+                    )
+                    : "";
+
+            if (domesticServiceScopeError) {
+                form.setError("service_scope", { type: "validate", message: domesticServiceScopeError });
+                setInternalError(domesticServiceScopeError);
+                return;
+            }
 
             try {
                 // 1. Validate Scope
