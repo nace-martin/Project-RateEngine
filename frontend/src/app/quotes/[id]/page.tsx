@@ -498,43 +498,45 @@ export default function QuoteDetailPage() {
 
         {/* Main Content Area */}
         {isIncomplete ? (
-          spotTriggerChecking || !spotTriggerChecked ? (
-            <SpotTriggerCheckingCard quote={quote} />
-          ) : isSpotRequired ? (
-            <SpotWorkflowRequiredCard
-              quote={quote}
-              spotLaunching={spotLaunching}
-              spotLaunchError={spotLaunchError}
-              onLaunchSpot={handleLaunchSpotWorkflow}
-            />
-          ) : (
-            <IncompleteQuoteCard
-              quote={quote}
-              triggerCheckError={spotTriggerCheckError}
-              onRetryCheck={async () => {
-                if (!quote) {
-                  return;
-                }
-                setSpotTriggerChecking(true);
-                setSpotTriggerChecked(false);
-                setSpotTriggerCheckError(null);
-                try {
-                  const result = await evaluateLatestSpotTrigger(quote);
-                  setSpotTriggerResult(result.trigger ?? null);
-                } catch (err) {
-                  setSpotTriggerResult(null);
-                  setSpotTriggerCheckError(
-                    err instanceof Error ? err.message : "Failed to verify the latest SPOT trigger.",
-                  );
-                } finally {
-                  setSpotTriggerChecking(false);
-                  setSpotTriggerChecked(true);
-                }
-              }}
-            />
-          )
+          <div className="space-y-6">
+            {spotTriggerChecking || !spotTriggerChecked ? (
+              <SpotTriggerCheckingCard quote={quote} />
+            ) : isSpotRequired ? (
+              <SpotWorkflowRequiredCard
+                quote={quote}
+                spotLaunching={spotLaunching}
+                spotLaunchError={spotLaunchError}
+                onLaunchSpot={handleLaunchSpotWorkflow}
+              />
+            ) : (
+              <IncompleteQuoteCard
+                quote={quote}
+                triggerCheckError={spotTriggerCheckError}
+                onRetryCheck={async () => {
+                  if (!quote) {
+                    return;
+                  }
+                  setSpotTriggerChecking(true);
+                  setSpotTriggerChecked(false);
+                  setSpotTriggerCheckError(null);
+                  try {
+                    const result = await evaluateLatestSpotTrigger(quote);
+                    setSpotTriggerResult(result.trigger ?? null);
+                  } catch (err) {
+                    setSpotTriggerResult(null);
+                    setSpotTriggerCheckError(
+                      err instanceof Error ? err.message : "Failed to verify the latest SPOT trigger.",
+                    );
+                  } finally {
+                    setSpotTriggerChecking(false);
+                    setSpotTriggerChecked(true);
+                  }
+                }}
+              />
+            )}
+            <QuoteFinancialBreakdown result={quote} />
+          </div>
         ) : (
-          /* Full-width Layout for Finalized Quotes */
           <div className="space-y-6">
             <QuoteFinancialBreakdown result={quote} />
           </div>
