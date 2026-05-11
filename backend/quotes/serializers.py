@@ -153,7 +153,10 @@ class V3QuoteLineSerializer(serializers.ModelSerializer):
             'sell_pgk', 'sell_pgk_incl_gst', 'sell_fcy', 'sell_fcy_incl_gst',
             'sell_fcy_currency', 'exchange_rate', 'cost_source',
             'cost_source_description', 'is_rate_missing', 'leg', 'bucket',
-            'gst_category', 'gst_rate', 'gst_amount'
+            'basis', 'rule_family', 'service_family', 'unit_type', 'rate',
+            'rate_source', 'canonical_cost_source', 'is_spot_sourced',
+            'is_manual_override', 'calculation_notes', 'is_informational',
+            'conditional', 'gst_category', 'gst_rate', 'gst_amount'
         )
     
     def to_representation(self, instance):
@@ -290,6 +293,8 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     rate = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True)
     cost_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
     sell_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    margin_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    margin_percent = serializers.DecimalField(max_digits=18, decimal_places=2)
     tax_code = serializers.CharField()
     tax_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
     included_in_total = serializers.BooleanField()

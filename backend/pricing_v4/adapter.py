@@ -288,6 +288,14 @@ class PricingServiceV4Adapter:
                 line.sell_fcy = discounted_sell
                 line.sell_fcy_incl_gst = discounted_sell + new_gst
 
+            line.calculation_notes = (
+                f"{line.calculation_notes} | " if line.calculation_notes else ""
+            ) + (
+                f"Customer discount applied: {discount.discount_type} "
+                f"{discount.discount_value} {discount.currency or '%'}"
+            )
+            line.rate_source = line.rate_source or 'DB_TARIFF'
+
             logger.debug(
                 f"Applied {discount.discount_type} discount to {line.service_component_code}: "
                 f"{original_sell} -> {discounted_sell}"

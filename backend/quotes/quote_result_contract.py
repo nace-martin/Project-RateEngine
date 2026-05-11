@@ -667,6 +667,16 @@ def line_item_from_quote_line(
     else:
         sell_amount = decimal_or_zero(getattr(line, "sell_fcy", None))
 
+    cost_amount_pgk = decimal_or_zero(getattr(line, "cost_pgk", None))
+    sell_amount_pgk = decimal_or_zero(getattr(line, "sell_pgk", None))
+    margin_amount_pgk = sell_amount_pgk - cost_amount_pgk
+    margin_percent = ZERO_DECIMAL
+    if sell_amount_pgk > ZERO_DECIMAL:
+        margin_percent = ((margin_amount_pgk / sell_amount_pgk) * Decimal("100")).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+
     tax_amount = display_tax_amount(line, customer_currency)
     notes = _dedupe(
         [
@@ -718,8 +728,10 @@ def line_item_from_quote_line(
             quantity=quantity,
             sell_amount=sell_amount,
         ),
-        "cost_amount": decimal_or_zero(getattr(line, "cost_pgk", None)),
+        "cost_amount": cost_amount_pgk,
         "sell_amount": sell_amount,
+        "margin_amount": margin_amount_pgk,
+        "margin_percent": margin_percent,
         "tax_code": getattr(line, "gst_category", None) or getattr(service_component, "tax_code", None) or "GST",
         "tax_amount": tax_amount,
         "included_in_total": included_in_total,
