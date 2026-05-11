@@ -249,6 +249,57 @@ class QuotePublicDetailAPITest(APITestCase):
         self.assertEqual(len(origin_lines), 1)
         self.assertEqual(origin_lines[0]["description"], "AWB Fee")
 
+    def test_public_quote_hides_unapplied_conditional_lines_from_charge_breakdown(self):
+        quote = self._create_quote(service_scope="D2D")
+        quote.quote_number = "QT-2026-0001"
+        quote.output_currency = "PGK"
+        quote.save(update_fields=["quote_number", "output_currency"])
+        version = quote.versions.get(version_number=1)
+
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Documentation Fee (Origin)",
+            sell_pgk=Decimal("159.02"),
+            leg="DESTINATION",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Origin Customs Clearance",
+            sell_pgk=Decimal("159.02"),
+            leg="ORIGIN",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Origin Permit / License",
+            sell_pgk=Decimal("265.04"),
+            leg="ORIGIN",
+            bucket="origin_charges",
+            conditional=True,
+            is_informational=True,
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Pick-Up Fee (Origin)",
+            sell_pgk=Decimal("689.09"),
+            leg="DESTINATION",
+            bucket="origin_charges",
+        )
+
+        token = build_public_quote_token(str(quote.id))
+        response = self.client.get(self.url, {"token": token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        buckets = {bucket["name"]: bucket for bucket in payload["charge_buckets"]}
+        origin_bucket = buckets["Origin Charges"]
+        descriptions = [line["description"] for line in origin_bucket["lines"]]
+
+        self.assertEqual(origin_bucket["subtotal"], "1007.13")
+        self.assertNotIn("Import Origin Permit / License", descriptions)
+        self.assertNotIn("265.04", [line["sell"] for line in origin_bucket["lines"]])
+
     def test_public_quote_includes_branding_payload(self):
         quote = self._create_quote(service_scope="D2D")
         token = build_public_quote_token(str(quote.id))

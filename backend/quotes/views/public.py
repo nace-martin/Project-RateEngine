@@ -9,7 +9,12 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from quotes.branding import get_quote_branding
-from quotes.buckets import resolve_quote_line_leg
+from quotes.buckets import (
+    resolve_quote_line_leg,
+    resolve_quote_line_sell_value,
+    should_display_quote_line,
+    should_include_quote_line_in_subtotal,
+)
 from quotes.models import Quote, QuoteLine, QuoteTotal
 from quotes.public_links import get_public_quote_id_from_token
 
@@ -104,17 +109,11 @@ def _resolve_service_scope(quote: Quote, version) -> str | None:
 
 
 def _resolve_line_sell_value(line, quote_currency: str) -> Decimal:
-    if quote_currency != "PGK":
-        line_currency = str(getattr(line, "sell_fcy_currency", "") or "").upper()
-        if line_currency == quote_currency and getattr(line, "sell_fcy", None) is not None:
-            return line.sell_fcy
-    return line.sell_pgk or Decimal("0")
+    return resolve_quote_line_sell_value(line, quote_currency)
 
 
 def _should_include_public_line(line, quote_currency: str) -> bool:
-    if getattr(line, "is_informational", False):
-        return True
-    return _resolve_line_sell_value(line, quote_currency) > Decimal("0")
+    return should_display_quote_line(line, quote_currency)
 
 
 def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
@@ -145,7 +144,7 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
         }
 
         buckets[leg]['lines'].append(line_data)
-        if not line.is_informational:
+        if should_include_quote_line_in_subtotal(line, currency):
             buckets[leg]['subtotal'] += sell_value
 
     return [
