@@ -536,11 +536,7 @@ export default function QuoteDetailPage() {
         ) : (
           /* Full-width Layout for Finalized Quotes */
           <div className="space-y-6">
-            {computeResult ? (
-              <QuoteFinancialBreakdown result={computeResult} />
-            ) : (
-              <QuoteFinancialBreakdown result={quote} />
-            )}
+            <QuoteFinancialBreakdown result={quote} />
           </div>
         )}
       </div>
