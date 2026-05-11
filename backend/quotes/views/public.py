@@ -132,14 +132,11 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
             description = line.cost_source_description or line.service_component.description
         else:
             description = line.cost_source_description or 'Manual Charge'
-        source = line.cost_source or ''
-
         if leg not in buckets:
             leg = 'MAIN'
         sell_value = _resolve_line_sell_value(line, currency)
         line_data = {
             'description': description,
-            'source': source[:20] if source else '-',
             'sell': _format_decimal(sell_value),
             'is_informational': line.is_informational,
         }

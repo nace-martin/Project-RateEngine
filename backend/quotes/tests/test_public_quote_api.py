@@ -249,6 +249,38 @@ class QuotePublicDetailAPITest(APITestCase):
         self.assertEqual(len(origin_lines), 1)
         self.assertEqual(origin_lines[0]["description"], "AWB Fee")
 
+    def test_public_quote_charge_lines_do_not_expose_internal_source(self):
+        quote = self._create_quote(service_scope="D2D")
+        version = quote.versions.get(version_number=1)
+        component = ServiceComponent.objects.create(
+            code="EXP-FRT-AIR",
+            description="Export Air Freight",
+            mode="AIR",
+            leg="MAIN",
+            category="FREIGHT",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=component,
+            sell_pgk=Decimal("120.00"),
+            sell_fcy=Decimal("40.00"),
+            sell_fcy_currency="USD",
+            sell_fcy_incl_gst=Decimal("40.00"),
+            cost_source="Sensitive Supplier COGS Row",
+            cost_source_description="Export Air Freight",
+            leg="MAIN",
+            bucket="airfreight",
+        )
+
+        token = build_public_quote_token(str(quote.id))
+        response = self.client.get(self.url, {"token": token})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        line = payload["charge_buckets"][0]["lines"][0]
+        self.assertNotIn("source", line)
+        self.assertNotIn("Sensitive Supplier", str(line))
+
     def test_public_quote_includes_branding_payload(self):
         quote = self._create_quote(service_scope="D2D")
         token = build_public_quote_token(str(quote.id))

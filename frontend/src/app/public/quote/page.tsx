@@ -4,7 +4,6 @@ import { formatIncoterm, formatPaymentTerm, formatServiceScope } from "@/lib/dis
 
 type PublicQuoteLine = {
   description: string;
-  source: string;
   sell: string;
   is_informational: boolean;
 };
