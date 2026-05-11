@@ -129,7 +129,11 @@ def normalize_source_analysis_summary(value: Any) -> dict[str, Any]:
         "pdf_fallback_used": bool(raw.get("pdf_fallback_used", False)),
     }
     risk_flags, blocking_reasons, risk_level, requires_review_note = _derive_blocking_reasons(summary)
-    review_required = bool(risk_flags)
+    # Only high-risk extraction findings require explicit source review before
+    # acknowledgement/final quote creation. Medium-risk audit signals such as
+    # low-confidence lines or scanned-PDF fallback stay visible as warnings, but
+    # they must not turn a proceedable SPOT envelope into a dead final button.
+    review_required = bool(requires_review_note)
     reviewed_safe_to_quote = bool(raw.get("reviewed_safe_to_quote", False)) if review_required else False
     raw_review_status = str(raw.get("review_status") or "").strip().upper()
     if review_required:

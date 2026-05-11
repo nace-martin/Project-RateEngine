@@ -896,6 +896,7 @@ export default function SpotRateEntryPage() {
     const quoteSubmitDisabledReason = getSpotFinalizeDisabledReason({
         spe: state.spe,
         unresolvedReviewIssueCount,
+        unresolvedReviewIssueLabels: reviewLines.affected.map((line) => line.label),
     });
     const quoteSubmitDisabled = Boolean(quoteSubmitDisabledReason);
     const hasReviewActions =
@@ -918,7 +919,7 @@ export default function SpotRateEntryPage() {
             setFinalizeError(null);
             let spe = state.spe;
 
-            if (spe.status === "draft") {
+            if (spe.status === "draft" && charges.length > 0) {
                 const updatedSpe = await actions.updateSPE(spe.id, {
                     charges,
                     conditions: {
@@ -1483,6 +1484,7 @@ export default function SpotRateEntryPage() {
                                             submitLabel="Create Quote"
                                             submitDisabled={quoteSubmitDisabled}
                                             submitDisabledReason={quoteSubmitDisabledReason}
+                                            allowEmptySubmit={Boolean(state.spe?.can_proceed)}
                                             onSaveDraft={handleSaveDraft}
                                             onManualResolveChargeLine={actions.manuallyResolveChargeLine}
                                             productCodeDomain={resolvedShipmentType}

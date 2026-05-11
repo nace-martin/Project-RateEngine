@@ -399,6 +399,10 @@ def _existing_line_source_semantic_signature(line: SPEChargeLineDB) -> tuple[str
 
 
 def _should_preserve_existing_line_audit(existing_line: SPEChargeLineDB, charge: dict) -> bool:
+    incoming_charge_line_id = str(charge.get("charge_line_id") or "").strip()
+    if incoming_charge_line_id and incoming_charge_line_id == str(existing_line.id):
+        return True
+
     incoming_source_label = _incoming_charge_source_label(charge)
     incoming_bucket = str(charge.get("bucket") or "").strip().lower()
     return (
@@ -438,7 +442,9 @@ def _build_spe_charge_line_field_values(
 
     return {
         "envelope": spe_db,
-        "source_batch": source_batch,
+        "source_batch": source_batch if source_batch is not None else (
+            existing_line.source_batch if existing_line is not None else None
+        ),
         "code": charge["code"],
         "description": charge["description"],
         "amount": charge["amount"],

@@ -572,6 +572,69 @@ def test_spot_create_quote_blocks_risky_source_batch_until_reviewed(monkeypatch)
     assert response.json()["intake_safety"]["is_safe_to_quote"] is False
 
 
+def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+    )
+    SPESourceBatchDB.objects.create(
+        envelope=spe,
+        source_kind=SPESourceBatchDB.SourceKind.AGENT,
+        source_type=SPESourceBatchDB.SourceType.TEXT,
+        target_bucket=SPESourceBatchDB.TargetBucket.DESTINATION_CHARGES,
+        label="Uploaded rates",
+        source_reference="Uploaded rates",
+        raw_text="Destination fee USD 75",
+        analysis_summary_json={
+            "can_proceed": True,
+            "ai_used": True,
+            "imported_charge_count": 1,
+            "low_confidence_line_count": 1,
+        },
+        created_by=user,
+    )
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code="DESTINATION_LOCAL",
+        description="Destination fee",
+        amount=Decimal("75.00"),
+        currency="USD",
+        unit="flat",
+        bucket="destination_charges",
+        source_reference="Uploaded rates",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        entered_at=timezone.now(),
+    )
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["destination_charges"]),
+    )
+    customer = Company.objects.create(name="Low Confidence Customer", is_customer=True, company_type="CUSTOMER")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["intake_safety"]["is_safe_to_quote"] is True
+    assert detail_response.json()["sources"][0]["review_status"] == "NOT_REQUIRED"
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+
 def test_spot_create_quote_blocks_unacknowledged_conditional_matched_line(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_ready_spe(
