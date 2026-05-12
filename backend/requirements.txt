@@ -27,7 +27,7 @@ soupsieve==2.8
 sqlparse==0.5.3
 typing_extensions==4.15.0
 tzdata==2025.2
-urllib3==2.5.0
+urllib3==2.7.0
 pybreaker==1.1.0
 lxml==5.2.2; python_version < "3.13"
 lxml>=5.4,<6; python_version >= "3.13"
