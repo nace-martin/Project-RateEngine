@@ -135,3 +135,8 @@ backend/shipments/efm/
 
 # Codex temporary workspace snapshots
 .codex-temp-*/
+
+# Tool-specific metadata
+.agents/
+.codex/
+graphify-out/
