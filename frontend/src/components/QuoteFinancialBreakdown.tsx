@@ -198,7 +198,6 @@ function lineWarnings(line: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): str
     if (rawLine?.is_rate_missing) warnings.push("Missing buy rate");
     if (line.is_manual_override || rawLine?.is_manual_override) warnings.push("Manual override");
     if (line.rate_source === "FALLBACK_RULE") warnings.push("FX or rate fallback");
-    if (!line.calculation_notes && !rawLine?.calculation_notes) warnings.push("Missing calculation metadata");
     return warnings;
 }
 
@@ -383,79 +382,71 @@ function CalculationReviewPanel({
     displayCurrency: string;
 }) {
     const [isOpen, setIsOpen] = useState(false);
-    const taxTotal = quoteResult.tax_breakdown?.gst_amount || "0.00";
-    const grandTotal = quoteResult.sell_total || "0.00";
     const fx = quoteResult.fx_applied;
     const warnings = [
         ...(quoteResult.warnings || []),
         ...quoteResult.line_items.flatMap((line) => lineWarnings(line, findRawLine(rawLines, line))),
     ].filter((item, index, items) => item && items.indexOf(item) === index);
 
-    // Hide FX display if it's PGK to PGK with rate 1.0
-    const showFxSummary = fx?.applied && !(fx.currency === "PGK" && Number(fx.rate) === 1.0);
+    // Hide FX display if it's PGK to PGK with rate 1.0 or missing
+    const showFxSummary = fx?.applied && !(fx.currency === "PGK" && (Number(fx.rate) === 1.0 || !fx.rate));
 
     return (
-        <div className="border-t border-slate-200 bg-white">
+        <div className="border-t border-slate-200 bg-slate-50/50">
             <button
                 type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left hover:bg-slate-50 transition-colors"
+                className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left hover:bg-slate-100/80 transition-colors"
             >
-                <div className="flex items-start gap-3">
-                    <div className="mt-0.5 rounded-md bg-blue-50 p-2 text-blue-600">
-                        <Calculator className="h-4 w-4" />
-                    </div>
-                    <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-base font-semibold text-slate-900">Pricing Breakdown & Audit</h3>
-                            <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 border border-slate-200">
-                                Internal only
-                            </span>
-                        </div>
-                        <p className="mt-1 text-sm text-slate-500">
-                            Detailed calculation review, source flags, margins, and tax audit data.
-                        </p>
+                <div className="flex items-center gap-3">
+                    <Calculator className="h-4 w-4 text-slate-400" />
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-slate-700 uppercase tracking-tight">Internal Pricing Audit</span>
+                        <span className="rounded bg-slate-200/50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-500">
+                            Secure
+                        </span>
                     </div>
                 </div>
-                {isOpen ? (
-                    <ChevronDown className="h-5 w-5 shrink-0 text-slate-400" />
-                ) : (
-                    <ChevronRight className="h-5 w-5 shrink-0 text-slate-400" />
-                )}
+                <div className="flex items-center gap-2 text-slate-400">
+                    <span className="text-xs font-medium">{isOpen ? "Hide Details" : "Review Calculations"}</span>
+                    {isOpen ? (
+                        <ChevronDown className="h-4 w-4" />
+                    ) : (
+                        <ChevronRight className="h-4 w-4" />
+                    )}
+                </div>
             </button>
 
             {isOpen && (
-                <div className="space-y-6 border-t border-slate-100 bg-slate-50/30 px-6 py-6">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        <ReviewMetric label="Total buy cost" value={displayMoney(quoteResult.total_cost_pgk, "PGK")} />
-                        <ReviewMetric label="Total sell amount" value={displayMoney(quoteResult.total_sell_pgk, "PGK")} />
+                <div className="space-y-6 border-t border-slate-200/60 bg-white px-6 py-6 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <ReviewMetric label="Total cost (PGK)" value={displayMoney(quoteResult.total_cost_pgk, "PGK")} />
+                        <ReviewMetric label="Total sell (PGK)" value={displayMoney(quoteResult.total_sell_pgk, "PGK")} />
                         <ReviewMetric
-                            label="Overall Gross margin"
+                            label="Gross margin"
                             value={`${displayMoney(quoteResult.margin_amount, "PGK")} (${displayPercent(quoteResult.margin_percent)})`}
                             highlight={Number(quoteResult.margin_percent) < 0 ? "error" : "success"}
                         />
-                        <ReviewMetric label="GST/tax total" value={displayMoney(taxTotal, displayCurrency)} />
-                        <ReviewMetric label="Grand total" value={displayMoney(grandTotal, displayCurrency)} />
                         <ReviewMetric
-                            label="Base FX Conversion"
+                            label="FX Rate (Base)"
                             value={
                                 showFxSummary
-                                    ? `${displayValue(fx.currency)} → PGK at ${displayValue(fx.rate)}`
-                                    : "Not applicable (PGK)"
+                                    ? `${displayValue(fx.currency)} → PGK @ ${displayValue(fx.rate)}`
+                                    : "Not applicable"
                             }
                         />
                     </div>
 
                     {warnings.length > 0 && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
-                            <div className="flex items-center gap-2 text-sm font-bold text-amber-900 uppercase tracking-tight">
-                                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                                Warnings and exceptions
+                        <div className="rounded-md border border-amber-200 bg-amber-50/50 px-4 py-3">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                Audit Exceptions
                             </div>
-                            <ul className="mt-2 space-y-1 text-sm text-amber-800">
+                            <ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-amber-700">
                                 {warnings.map((warning) => (
-                                    <li key={warning} className="flex items-start gap-2">
-                                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                                    <li key={warning} className="flex items-center gap-2">
+                                        <span className="h-1 w-1 rounded-full bg-amber-400" />
                                         {warning}
                                     </li>
                                 ))}
@@ -463,8 +454,8 @@ function CalculationReviewPanel({
                         </div>
                     )}
 
-                    <div className="space-y-4">
-                        <div className="text-xs font-bold uppercase tracking-widest text-slate-400 px-1">Line Item Details</div>
+                    <div className="space-y-3">
+                        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Line Detail Audit</div>
                         {quoteResult.line_items.map((line) => (
                             <CalculationLineDetails
                                 key={line.line_id || `${line.product_code}-${line.sort_order}`}
@@ -476,10 +467,8 @@ function CalculationReviewPanel({
                         ))}
                     </div>
 
-                    <div className="rounded-md border border-slate-200 bg-white p-4 text-[11px] leading-relaxed text-slate-500 shadow-sm italic">
-                        <strong className="text-slate-700 not-italic uppercase tracking-tighter mr-1">Traceability Note:</strong>
-                        Fields marked &quot;Not available&quot; may not yet be persisted in a structured format by the V4 engine or legacy adapter. 
-                        Check &quot;Calculation notes&quot; for unstructured audit trails. Effective FX includes any applicable CAF adjustments.
+                    <div className="rounded border border-slate-100 bg-slate-50/50 p-3 text-[10px] text-slate-500 leading-relaxed italic">
+                        Internal use only. Margin is calculated against PGK equivalent buy costs. GST values are audit-only and must match the Financial Breakdown summary.
                     </div>
                 </div>
             )}
@@ -511,113 +500,71 @@ function CalculationLineDetails({
     displayCurrency: string;
     fx: CanonicalQuoteResult["fx_applied"];
 }) {
-    const warnings = lineWarnings(line, rawLine);
     const buyCurrency = rawLine?.cost_fcy_currency || line.cost_currency || "PGK";
     const buyAmount = rawLine?.cost_fcy_currency ? rawLine.cost_fcy : line.cost_amount;
     const sellCurrency = line.sell_currency || displayCurrency;
     
-    // Use new tax_rate field if available
     const gstRateRaw = line.tax_rate || rawLine?.gst_rate;
-    const gstPercentStr = isAvailable(gstRateRaw) ? displayPercent(Number(gstRateRaw) * 100) : "Not available";
-    const gstTreatment = `${displayValue(line.tax_code)} @ ${gstPercentStr}`;
+    const gstPercent = isAvailable(gstRateRaw) ? (Number(gstRateRaw) * 100).toFixed(1) : "0.0";
+    const sellInclTax = (Number(line.sell_amount || 0) + Number(line.tax_amount || 0)).toFixed(2);
 
     const isFcyLine = buyCurrency !== "PGK" || sellCurrency !== "PGK";
     const exchangeRate = line.exchange_rate || rawLine?.exchange_rate || fx?.rate;
     const cafPercent = fx?.caf_percent;
-
-    // Effective rate calculation if possible
-    let effectiveFx = "Not available";
-    if (isFcyLine && isAvailable(exchangeRate)) {
+    
+    let effectiveFx = "Not applicable";
+    if (isFcyLine && isAvailable(exchangeRate) && Number(exchangeRate) !== 1.0) {
         const rate = Number(exchangeRate);
         const caf = isAvailable(cafPercent) ? Number(cafPercent) / 100 : 0;
         effectiveFx = (rate * (1 + caf)).toFixed(6);
-    } else if (!isFcyLine) {
-        effectiveFx = "Not applicable (PGK)";
     }
 
     return (
-        <div className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div className="rounded border border-slate-200 bg-white overflow-hidden">
             <details className="group">
-                <summary className="flex cursor-pointer list-none items-center justify-between p-4 hover:bg-slate-50 transition-colors">
-                    <div className="flex flex-col gap-1 pr-4">
-                        <div className="font-bold text-slate-800 text-sm group-open:text-blue-700 transition-colors">{line.description}</div>
-                        <div className="flex items-center gap-2 text-[11px] text-slate-500 font-medium">
-                            <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{line.product_code || "MISC"}</span>
-                            <span>•</span>
-                            <span className="uppercase tracking-tight text-blue-600">{sourceLabel(line, rawLine)}</span>
-                            <span>•</span>
-                            <span>{line.is_manual_override || rawLine?.is_manual_override ? "Manual Override" : "System Calculated"}</span>
+                <summary className="flex cursor-pointer list-none items-center justify-between p-3 hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center gap-3">
+                        <ChevronRight className="h-3.5 w-3.5 text-slate-400 transition-transform group-open:rotate-90" />
+                        <div className="flex flex-col">
+                            <span className="text-xs font-bold text-slate-700">{line.description}</span>
+                            <span className="text-[10px] text-slate-400 font-medium uppercase tracking-tighter">
+                                {line.product_code || "MISC"} • {sourceLabel(line, rawLine)}
+                            </span>
                         </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                        <div className="text-right">
-                            <div className="text-sm font-bold text-slate-900">
-                                {displayMoney(line.sell_amount, sellCurrency)}
-                            </div>
-                            <div className="text-[10px] text-slate-400 font-bold uppercase">Sell Ex-GST</div>
+                    <div className="flex items-center gap-4 text-right">
+                        <div className="flex flex-col">
+                            <span className="text-xs font-bold text-slate-900">{displayMoney(line.sell_amount, sellCurrency)}</span>
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Sell Ex-GST</span>
                         </div>
-                        <ChevronRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
                     </div>
                 </summary>
                 
-                <div className="border-t border-slate-100 bg-slate-50/20">
-                    {warnings.length > 0 && (
-                        <div className="flex flex-wrap gap-2 px-4 py-2 bg-amber-50/50 border-b border-amber-100">
-                            {warnings.map((warning) => (
-                                <span key={warning} className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 uppercase tracking-tight">
-                                    {warning}
-                                </span>
-                            ))}
+                <div className="border-t border-slate-100 bg-slate-50/30 p-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-4">
+                        <ReviewField label="Buy Amount" value={displayMoney(buyAmount, buyCurrency)} />
+                        <ReviewField label="Sell Ex-GST" value={displayMoney(line.sell_amount, sellCurrency)} />
+                        <ReviewField label="GST" value={`${displayMoney(line.tax_amount, sellCurrency)} (${gstPercent}%)`} />
+                        <ReviewField label="Sell Inc-GST" value={displayMoney(sellInclTax, sellCurrency)} />
+                        
+                        <ReviewField 
+                            label="Margin (PGK)" 
+                            value={`${displayMoney(line.margin_amount, "PGK")} (${displayPercent(line.margin_percent)})`} 
+                            highlight={Number(line.margin_percent) < 0 ? "error" : "success"}
+                        />
+                        <ReviewField label="Pricing Source" value={sourceLabel(line, rawLine)} />
+                        <ReviewField label="Rate / Basis" value={isAvailable(line.rate) ? `${Number(line.rate).toFixed(4)} / ${line.unit_type}` : "Flat / N/A"} />
+                        <ReviewField label="Effective FX" value={effectiveFx} />
+                    </div>
+
+                    {(line.calculation_notes || rawLine?.calculation_notes) && (
+                        <div className="mt-4 pt-3 border-t border-slate-100">
+                            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Calculation Trace</div>
+                            <div className="text-[10px] text-slate-600 font-mono leading-relaxed bg-white/50 rounded p-2 border border-slate-100/50">
+                                {line.calculation_notes || rawLine?.calculation_notes}
+                            </div>
                         </div>
                     )}
-                    
-                    <div className="p-4 space-y-6">
-                        {/* Section: Core Commercials */}
-                        <div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-1">Line Core Metrics</div>
-                            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-                                <ReviewField label="Quantity" value={displayValue(line.quantity)} />
-                                <ReviewField label="Unit / Basis" value={`${displayValue(line.unit_type)} / ${displayValue(line.basis)}`} />
-                                <ReviewField label="Calculated Rate" value={isAvailable(line.rate) ? `${displayValue(line.rate)} / ${line.unit_type}` : "Not available"} />
-                                <ReviewField
-                                    label="Margin (vs PGK Cost)"
-                                    value={`${displayMoney(line.margin_amount, "PGK")} (${displayPercent(line.margin_percent)})`}
-                                    highlight={Number(line.margin_percent) < 0 ? "error" : "success"}
-                                />
-
-                            </div>
-                        </div>
-
-                        {/* Section: FX & Audit */}
-                        <div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-1">FX & Currency Audit</div>
-                            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-                                <ReviewField label="Buy Amount" value={displayMoney(buyAmount, buyCurrency)} />
-                                <ReviewField label="FX Rate Used" value={isFcyLine ? displayValue(exchangeRate) : "Not applicable"} />
-                                <ReviewField label="CAF applied" value={isFcyLine && isAvailable(cafPercent) ? displayPercent(cafPercent) : "Not applicable"} />
-                                <ReviewField label="Effective FX" value={effectiveFx} />
-                            </div>
-                        </div>
-
-                        {/* Section: Taxation & Final */}
-                        <div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 border-b border-slate-100 pb-1">Taxation & Fulfillment</div>
-                            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
-                                <ReviewField label="GST Treatment" value={gstTreatment} />
-                                <ReviewField label="GST Amount" value={displayMoney(line.tax_amount, sellCurrency)} />
-                                <ReviewField label="Total (Inc-GST)" value={displayMoney(Number(line.sell_amount || 0) + Number(line.tax_amount || 0), sellCurrency)} />
-                                <ReviewField label="Rule Family" value={displayValue(line.rule_family)} />
-                            </div>
-                        </div>
-
-                        {/* Calculation Notes */}
-                        <div className="bg-white rounded border border-slate-200 p-3">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Internal Calculation Notes</div>
-                            <div className="text-xs text-slate-700 leading-relaxed font-mono">
-                                {line.calculation_notes || rawLine?.calculation_notes || "No additional calculation notes recorded."}
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </details>
         </div>
