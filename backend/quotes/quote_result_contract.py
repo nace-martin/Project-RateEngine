@@ -733,6 +733,7 @@ def line_item_from_quote_line(
         "margin_amount": margin_amount_pgk,
         "margin_percent": margin_percent,
         "tax_code": getattr(line, "gst_category", None) or getattr(service_component, "tax_code", None) or "GST",
+        "tax_rate": decimal_or_none(getattr(line, "gst_rate", None)),
         "tax_amount": tax_amount,
         "included_in_total": included_in_total,
         "cost_source": cost_source,
@@ -741,6 +742,7 @@ def line_item_from_quote_line(
         "is_spot_sourced": is_spot_sourced,
         "is_manual_override": is_manual_override,
         "sort_order": sort_order,
+        "exchange_rate": decimal_or_none(getattr(line, "exchange_rate", None)),
     }
 
 

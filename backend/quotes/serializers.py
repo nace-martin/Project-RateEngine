@@ -296,6 +296,7 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     margin_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
     margin_percent = serializers.DecimalField(max_digits=18, decimal_places=2)
     tax_code = serializers.CharField()
+    tax_rate = serializers.DecimalField(max_digits=10, decimal_places=4, allow_null=True)
     tax_amount = serializers.DecimalField(max_digits=18, decimal_places=2)
     included_in_total = serializers.BooleanField()
     cost_source = serializers.CharField()
@@ -304,6 +305,7 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     is_spot_sourced = serializers.BooleanField()
     is_manual_override = serializers.BooleanField()
     sort_order = serializers.IntegerField()
+    exchange_rate = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True)
 
 
 class CanonicalQuoteResultSerializer(serializers.Serializer):

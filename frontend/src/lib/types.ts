@@ -464,6 +464,7 @@ export interface CanonicalQuoteLineItem {
   margin_amount: string;
   margin_percent: string;
   tax_code: string;
+  tax_rate: string | null;
   tax_amount: string;
   included_in_total: boolean;
   cost_source: string;
@@ -472,6 +473,7 @@ export interface CanonicalQuoteLineItem {
   is_spot_sourced: boolean;
   is_manual_override: boolean;
   sort_order: number;
+  exchange_rate: string | null;
 }
 
 export interface CanonicalQuoteResult {
