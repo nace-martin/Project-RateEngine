@@ -24,14 +24,21 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
-import { AlertTriangle, Calculator, ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane } from "lucide-react";
+import { AlertTriangle, Calculator, ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane, Landmark, Globe, Database, Edit3, ShoppingCart, TrendingUp, TrendingDown, Info } from "lucide-react";
 
 interface QuoteFinancialBreakdownProps {
     result: QuoteComputeResult | V3QuoteComputeResponse;
 }
 
 type LooseRecord = Record<string, unknown>;
-type BreakdownLine = SellLine & { sell_fcy_currency?: string };
+type BreakdownLine = SellLine & { 
+    sell_fcy_currency?: string;
+    margin_percent?: string;
+    margin_amount?: string;
+    exchange_rate?: string;
+    source?: string;
+    is_informational?: boolean;
+};
 type BreakdownDataShape = {
     status?: string;
     quote_result?: CanonicalQuoteResult | null;
@@ -84,8 +91,9 @@ function mapCanonicalLineItemToBreakdownLine(
         sell_fcy_incl_gst: currency !== "PGK" ? toMoneyString(sellInclTax) : toMoneyString(sellInclTax),
         sell_currency: currency,
         sell_fcy_currency: currency !== "PGK" ? currency : undefined,
-        margin_percent: "0",
-        exchange_rate: "0",
+        margin_percent: item.margin_percent || "0",
+        margin_amount: item.margin_amount || "0",
+        exchange_rate: item.exchange_rate || "0",
         source: item.cost_source,
         is_informational: !item.included_in_total,
     };
@@ -122,13 +130,23 @@ const formatAmount = (amountStr: string | number | undefined, currency: string) 
 };
 
 
-type BucketType = 'ORIGIN' | 'FREIGHT' | 'DESTINATION';
+type BucketType = 'ORIGIN' | 'FREIGHT' | 'DESTINATION' | 'CUSTOMS' | 'OTHER';
 
 // Get bucket for a line
-function getBucket(line: SellLine): BucketType {
-    if (line.leg === 'MAIN' || line.leg === 'FREIGHT') return 'FREIGHT';
-    if (line.leg === 'ORIGIN') return 'ORIGIN';
-    return 'DESTINATION';
+function getBucket(line: BreakdownLine): BucketType {
+    const leg = line.leg || '';
+    const code = (line.component || '').toUpperCase();
+    
+    // Customs / Regulatory logic
+    if (['CUS', 'DUTY', 'TAX', 'GST', 'VAT', 'ENTRY', 'ADMIN', 'PERMIT'].some(s => code.includes(s))) {
+        return 'CUSTOMS';
+    }
+    
+    if (leg === 'ORIGIN') return 'ORIGIN';
+    if (leg === 'DESTINATION') return 'DESTINATION';
+    if (leg === 'MAIN' || leg === 'FREIGHT' || ['AF', 'FSC', 'SSC', 'ISS', 'WRS'].includes(code)) return 'FREIGHT';
+    
+    return 'OTHER';
 }
 
 // Calculate bucket subtotal
@@ -193,22 +211,22 @@ function findRawLine(rawLines: RawQuoteLine[], canonicalLine: CanonicalQuoteLine
     });
 }
 
-function lineWarnings(line: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): string[] {
+function lineWarnings(line?: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): string[] {
     const warnings: string[] = [];
     if (rawLine?.is_rate_missing) warnings.push("Missing buy rate");
-    if (line.is_manual_override || rawLine?.is_manual_override) warnings.push("Manual override");
-    if (line.rate_source === "FALLBACK_RULE") warnings.push("FX or rate fallback");
+    if (line?.is_manual_override || rawLine?.is_manual_override) warnings.push("Manual override");
+    if (line?.rate_source === "FALLBACK_RULE") warnings.push("FX or rate fallback");
     return warnings;
 }
 
-function sourceLabel(line: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): string {
-    if (line.is_spot_sourced || rawLine?.is_spot_sourced) return "SPOT";
-    if (line.is_manual_override || rawLine?.is_manual_override) return "Manual entry";
-    if (line.rate_source === "MANUAL_OVERRIDE") return "Manual entry";
-    if (line.rate_source === "PARTNER_SPOT") return "SPOT";
-    if (line.rate_source === "DB_TARIFF") return "V4 rate card";
-    if (line.rate_source === "FALLBACK_RULE") return "Fallback rule";
-    return displayValue(line.rate_source);
+function sourceLabel(line?: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): string {
+    if (line?.is_spot_sourced || rawLine?.is_spot_sourced) return "SPOT";
+    if (line?.is_manual_override || rawLine?.is_manual_override) return "Manual entry";
+    if (line?.rate_source === "MANUAL_OVERRIDE") return "Manual entry";
+    if (line?.rate_source === "PARTNER_SPOT") return "SPOT";
+    if (line?.rate_source === "DB_TARIFF") return "V4 rate card";
+    if (line?.rate_source === "FALLBACK_RULE") return "Fallback rule";
+    return displayValue(line?.rate_source);
 }
 
 
@@ -244,6 +262,8 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
         ORIGIN: [],
         FREIGHT: [],
         DESTINATION: [],
+        CUSTOMS: [],
+        OTHER: [],
     };
 
     pricedLines.forEach((line) => {
@@ -262,8 +282,6 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
         ? parseFloat(String(readField(totals, 'total_quote_amount') ?? readField(totals, 'total_sell_fcy_incl_gst') ?? readField(totals, 'sell_fcy_incl_gst') ?? readField(totals, 'total_sell_fcy') ?? '0'))
         : parseFloat(String(readField(totals, 'total_sell_pgk_incl_gst') ?? readField(totals, 'sell_pgk_incl_gst') ?? readField(totals, 'sell_pgk') ?? '0'));
 
-
-
     return (
         <Card className="overflow-hidden border-slate-200">
             <CardHeader className="pb-4 border-b border-slate-100">
@@ -278,40 +296,64 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                 </div>
             </CardHeader>
             <CardContent className="p-0">
-                {/* ORIGIN CHARGES */}
-                {buckets.ORIGIN.length > 0 && (
-                    <BucketSection
-                        title="Origin Charges"
-                        lines={buckets.ORIGIN}
-                        displayCurrency={displayCurrency}
-                        isShowingFCY={isShowingFCY}
-                        icon={<Package className="w-4 h-4 text-blue-600" />}
-                        colorClass="blue"
-                    />
-                )}
-                {/* FREIGHT CHARGES */}
-                {buckets.FREIGHT.length > 0 && (
-                    <BucketSection
-                        title="Freight Charges"
-                        lines={buckets.FREIGHT}
-                        displayCurrency={displayCurrency}
-                        isShowingFCY={isShowingFCY}
-                        icon={<Plane className="w-4 h-4 text-blue-600" />}
-                        colorClass="blue"
-                    />
-                )}
-
-                {/* DESTINATION CHARGES */}
-                {buckets.DESTINATION.length > 0 && (
-                    <BucketSection
-                        title="Destination Charges"
-                        lines={buckets.DESTINATION}
-                        displayCurrency={displayCurrency}
-                        isShowingFCY={isShowingFCY}
-                        icon={<MapPin className="w-4 h-4 text-blue-600" />}
-                        colorClass="blue"
-                    />
-                )}
+                {/* COMMERCIAL SECTIONS */}
+                <div className="p-4 space-y-4">
+                    {buckets.ORIGIN.length > 0 && (
+                        <BucketSection
+                            title="Origin Charges"
+                            lines={buckets.ORIGIN}
+                            rawLines={rawQuoteLines}
+                            displayCurrency={displayCurrency}
+                            isShowingFCY={isShowingFCY}
+                            icon={<Package className="w-4 h-4 text-blue-600" />}
+                            isInternal={showCalculationReview}
+                        />
+                    )}
+                    {buckets.FREIGHT.length > 0 && (
+                        <BucketSection
+                            title="Freight / Carrier Charges"
+                            lines={buckets.FREIGHT}
+                            rawLines={rawQuoteLines}
+                            displayCurrency={displayCurrency}
+                            isShowingFCY={isShowingFCY}
+                            icon={<Plane className="h-4 w-4 text-blue-600" />}
+                            isInternal={showCalculationReview}
+                        />
+                    )}
+                    {buckets.DESTINATION.length > 0 && (
+                        <BucketSection
+                            title="Destination Charges"
+                            lines={buckets.DESTINATION}
+                            rawLines={rawQuoteLines}
+                            displayCurrency={displayCurrency}
+                            isShowingFCY={isShowingFCY}
+                            icon={<MapPin className="h-4 w-4 text-blue-600" />}
+                            isInternal={showCalculationReview}
+                        />
+                    )}
+                    {buckets.CUSTOMS.length > 0 && (
+                        <BucketSection
+                            title="Customs / Regulatory"
+                            lines={buckets.CUSTOMS}
+                            rawLines={rawQuoteLines}
+                            displayCurrency={displayCurrency}
+                            isShowingFCY={isShowingFCY}
+                            icon={<Landmark className="h-4 w-4 text-blue-600" />}
+                            isInternal={showCalculationReview}
+                        />
+                    )}
+                    {buckets.OTHER.length > 0 && (
+                        <BucketSection
+                            title="Other / Manual"
+                            lines={buckets.OTHER}
+                            rawLines={rawQuoteLines}
+                            displayCurrency={displayCurrency}
+                            isShowingFCY={isShowingFCY}
+                            icon={<Info className="h-4 w-4 text-blue-600" />}
+                            isInternal={showCalculationReview}
+                        />
+                    )}
+                </div>
 
                 {/* Totals Section */}
                 <div className="p-6 bg-slate-50 border-t border-slate-200">
@@ -372,6 +414,147 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
     );
 }
 
+function PricingHealthCheck({
+    quoteResult,
+    rawLines,
+}: {
+    quoteResult: CanonicalQuoteResult;
+    rawLines: RawQuoteLine[];
+    displayCurrency: string;
+}) {
+    const fx = quoteResult.fx_applied;
+    const margin = parseFloat(String(quoteResult.margin_percent || "0"));
+    const hasManual = quoteResult.line_items.some(l => l.is_manual_override);
+    const hasSpot = quoteResult.line_items.some(l => l.is_spot_sourced);
+    const hasMissingBuy = rawLines.some(l => l.is_rate_missing);
+    
+    // Margin Status
+    let marginStatus: "success" | "warning" | "error" = "success";
+    let marginLabel = "Healthy";
+    if (margin < 0) {
+        marginStatus = "error";
+        marginLabel = "Negative";
+    } else if (margin < 15) {
+        marginStatus = "warning";
+        marginLabel = "Low";
+    }
+
+    // GST Status
+    const hasTaxWarning = quoteResult.warnings.some(w => w.toLowerCase().includes("tax") || w.toLowerCase().includes("gst"));
+    const gstStatus = hasTaxWarning ? "warning" : "success";
+    const gstLabel = hasTaxWarning ? "Needs Review" : "OK";
+
+    // FX Status
+    const isPgkOnly = fx.currency === "PGK" && (Number(fx.rate) === 1.0 || !fx.rate);
+    const fxStatus = (fx.applied && !isPgkOnly) ? "success" : isPgkOnly ? "neutral" : "warning";
+    const fxLabel = (fx.applied && !isPgkOnly) ? "Applied" : isPgkOnly ? "N/A" : "Missing data";
+
+    // Source mix
+    let sourceLabelText = "V4 Tariff";
+    if (hasSpot && hasManual) sourceLabelText = "Mixed (SPOT/Manual)";
+    else if (hasSpot) sourceLabelText = "SPOT";
+    else if (hasManual) sourceLabelText = "Manual entry";
+
+    const exceptions = [
+        ...(quoteResult.warnings || []),
+        ...quoteResult.line_items.flatMap((line) => lineWarnings(line, findRawLine(rawLines, line))),
+    ].filter((item, index, items) => item && items.indexOf(item) === index)
+     .filter(w => !w.toLowerCase().includes("metadata")); // Filter noise
+
+    return (
+        <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                <HealthCard 
+                    label="Margin" 
+                    value={`${margin.toFixed(1)}%`} 
+                    subValue={marginLabel}
+                    status={marginStatus}
+                    icon={margin < 0 ? <TrendingDown className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />}
+                />
+                <HealthCard 
+                    label="GST/Tax" 
+                    value={gstLabel} 
+                    status={gstStatus}
+                    icon={<Landmark className="h-4 w-4" />}
+                />
+                <HealthCard 
+                    label="FX/CAF" 
+                    value={fxLabel} 
+                    status={fxStatus}
+                    icon={<Globe className="h-4 w-4" />}
+                />
+                <HealthCard 
+                    label="Source" 
+                    value={sourceLabelText} 
+                    status="neutral"
+                    icon={<Database className="h-4 w-4" />}
+                />
+                <HealthCard 
+                    label="Overrides" 
+                    value={hasManual ? "Present" : "None"} 
+                    status={hasManual ? "warning" : "success"}
+                    icon={<Edit3 className="h-4 w-4" />}
+                />
+                <HealthCard 
+                    label="Buy Rates" 
+                    value={hasMissingBuy ? "Missing" : "All Found"} 
+                    status={hasMissingBuy ? "error" : "success"}
+                    icon={<ShoppingCart className="h-4 w-4" />}
+                />
+            </div>
+
+            {exceptions.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <div className="flex items-center gap-2 text-sm font-bold text-amber-800 uppercase tracking-tight mb-2">
+                        <AlertTriangle className="h-4 w-4" />
+                        {exceptions.length} Pricing Exceptions Found
+                    </div>
+                    <ul className="space-y-1.5">
+                        {exceptions.map((ex, i) => (
+                            <li key={i} className="text-xs text-amber-700 flex items-center gap-2">
+                                <span className="h-1 w-1 rounded-full bg-amber-400" />
+                                {ex}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function HealthCard({ 
+    label, 
+    value, 
+    subValue, 
+    status, 
+    icon 
+}: { 
+    label: string; 
+    value: string; 
+    subValue?: string;
+    status: "success" | "warning" | "error" | "neutral";
+    icon: React.ReactNode;
+}) {
+    const statusClasses = {
+        success: "bg-emerald-50 text-emerald-700 border-emerald-100",
+        warning: "bg-amber-50 text-amber-700 border-amber-100",
+        error: "bg-rose-50 text-rose-700 border-rose-100",
+        neutral: "bg-slate-50 text-slate-600 border-slate-100",
+    };
+
+    return (
+        <div className={`rounded-lg border p-3 flex flex-col gap-1 ${statusClasses[status]}`}>
+            <div className="flex items-center justify-between opacity-80">
+                <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
+                {icon}
+            </div>
+            <div className="text-sm font-bold truncate">{value}</div>
+            {subValue && <div className="text-[9px] font-medium uppercase">{subValue}</div>}
+        </div>
+    );
+}
+
 function CalculationReviewPanel({
     quoteResult,
     rawLines,
@@ -382,15 +565,7 @@ function CalculationReviewPanel({
     displayCurrency: string;
 }) {
     const [isOpen, setIsOpen] = useState(false);
-    const fx = quoteResult.fx_applied;
-    const warnings = [
-        ...(quoteResult.warnings || []),
-        ...quoteResult.line_items.flatMap((line) => lineWarnings(line, findRawLine(rawLines, line))),
-    ].filter((item, index, items) => item && items.indexOf(item) === index);
-
-    // Hide FX display if it's PGK to PGK with rate 1.0 or missing
-    const showFxSummary = fx?.applied && !(fx.currency === "PGK" && (Number(fx.rate) === 1.0 || !fx.rate));
-
+    
     return (
         <div className="border-t border-slate-200 bg-slate-50/50">
             <button
@@ -401,14 +576,14 @@ function CalculationReviewPanel({
                 <div className="flex items-center gap-3">
                     <Calculator className="h-4 w-4 text-slate-400" />
                     <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-slate-700 uppercase tracking-tight">Internal Pricing Audit</span>
+                        <span className="text-sm font-bold text-slate-700 uppercase tracking-tight">Pricing Health Check</span>
                         <span className="rounded bg-slate-200/50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-500">
-                            Secure
+                            Internal Audit
                         </span>
                     </div>
                 </div>
                 <div className="flex items-center gap-2 text-slate-400">
-                    <span className="text-xs font-medium">{isOpen ? "Hide Details" : "Review Calculations"}</span>
+                    <span className="text-xs font-medium">{isOpen ? "Hide Audit" : "Show Audit Details"}</span>
                     {isOpen ? (
                         <ChevronDown className="h-4 w-4" />
                     ) : (
@@ -419,167 +594,18 @@ function CalculationReviewPanel({
 
             {isOpen && (
                 <div className="space-y-6 border-t border-slate-200/60 bg-white px-6 py-6 animate-in fade-in slide-in-from-top-1 duration-200">
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <ReviewMetric label="Total cost (PGK)" value={displayMoney(quoteResult.total_cost_pgk, "PGK")} />
-                        <ReviewMetric label="Total sell (PGK)" value={displayMoney(quoteResult.total_sell_pgk, "PGK")} />
-                        <ReviewMetric
-                            label="Gross margin"
-                            value={`${displayMoney(quoteResult.margin_amount, "PGK")} (${displayPercent(quoteResult.margin_percent)})`}
-                            highlight={Number(quoteResult.margin_percent) < 0 ? "error" : "success"}
-                        />
-                        <ReviewMetric
-                            label="FX Rate (Base)"
-                            value={
-                                showFxSummary
-                                    ? `${displayValue(fx.currency)} → PGK @ ${displayValue(fx.rate)}`
-                                    : "Not applicable"
-                            }
-                        />
-                    </div>
-
-                    {warnings.length > 0 && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50/50 px-4 py-3">
-                            <div className="flex items-center gap-2 text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                                <AlertTriangle className="h-3.5 w-3.5" />
-                                Audit Exceptions
-                            </div>
-                            <ul className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-amber-700">
-                                {warnings.map((warning) => (
-                                    <li key={warning} className="flex items-center gap-2">
-                                        <span className="h-1 w-1 rounded-full bg-amber-400" />
-                                        {warning}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-
-                    <div className="space-y-3">
-                        <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Line Detail Audit</div>
-                        {quoteResult.line_items.map((line) => (
-                            <CalculationLineDetails
-                                key={line.line_id || `${line.product_code}-${line.sort_order}`}
-                                line={line}
-                                rawLine={findRawLine(rawLines, line)}
-                                displayCurrency={displayCurrency}
-                                fx={fx}
-                            />
-                        ))}
-                    </div>
+                    <PricingHealthCheck 
+                        quoteResult={quoteResult} 
+                        rawLines={rawLines} 
+                        displayCurrency={displayCurrency} 
+                    />
 
                     <div className="rounded border border-slate-100 bg-slate-50/50 p-3 text-[10px] text-slate-500 leading-relaxed italic">
-                        Internal use only. Margin is calculated against PGK equivalent buy costs. GST values are audit-only and must match the Financial Breakdown summary.
+                        Internal use only. This section provides a commercial health check of the quote pricing logic. 
+                        Audit flags represent risks to margin, compliance, or data integrity.
                     </div>
                 </div>
             )}
-        </div>
-    );
-}
-
-function ReviewMetric({ label, value, highlight }: { label: string; value: string; highlight?: "success" | "error" }) {
-    let textClass = "text-slate-900";
-    if (highlight === "success") textClass = "text-emerald-700";
-    if (highlight === "error") textClass = "text-rose-700";
-
-    return (
-        <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-            <div className={`mt-1 text-sm font-bold ${textClass}`}>{value}</div>
-        </div>
-    );
-}
-
-function CalculationLineDetails({
-    line,
-    rawLine,
-    displayCurrency,
-    fx,
-}: {
-    line: CanonicalQuoteLineItem;
-    rawLine?: RawQuoteLine;
-    displayCurrency: string;
-    fx: CanonicalQuoteResult["fx_applied"];
-}) {
-    const buyCurrency = rawLine?.cost_fcy_currency || line.cost_currency || "PGK";
-    const buyAmount = rawLine?.cost_fcy_currency ? rawLine.cost_fcy : line.cost_amount;
-    const sellCurrency = line.sell_currency || displayCurrency;
-    
-    const gstRateRaw = line.tax_rate || rawLine?.gst_rate;
-    const gstPercent = isAvailable(gstRateRaw) ? (Number(gstRateRaw) * 100).toFixed(1) : "0.0";
-    const sellInclTax = (Number(line.sell_amount || 0) + Number(line.tax_amount || 0)).toFixed(2);
-
-    const isFcyLine = buyCurrency !== "PGK" || sellCurrency !== "PGK";
-    const exchangeRate = line.exchange_rate || rawLine?.exchange_rate || fx?.rate;
-    const cafPercent = fx?.caf_percent;
-    
-    let effectiveFx = "Not applicable";
-    if (isFcyLine && isAvailable(exchangeRate) && Number(exchangeRate) !== 1.0) {
-        const rate = Number(exchangeRate);
-        const caf = isAvailable(cafPercent) ? Number(cafPercent) / 100 : 0;
-        effectiveFx = (rate * (1 + caf)).toFixed(6);
-    }
-
-    return (
-        <div className="rounded border border-slate-200 bg-white overflow-hidden">
-            <details className="group">
-                <summary className="flex cursor-pointer list-none items-center justify-between p-3 hover:bg-slate-50 transition-colors">
-                    <div className="flex items-center gap-3">
-                        <ChevronRight className="h-3.5 w-3.5 text-slate-400 transition-transform group-open:rotate-90" />
-                        <div className="flex flex-col">
-                            <span className="text-xs font-bold text-slate-700">{line.description}</span>
-                            <span className="text-[10px] text-slate-400 font-medium uppercase tracking-tighter">
-                                {line.product_code || "MISC"} • {sourceLabel(line, rawLine)}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4 text-right">
-                        <div className="flex flex-col">
-                            <span className="text-xs font-bold text-slate-900">{displayMoney(line.sell_amount, sellCurrency)}</span>
-                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Sell Ex-GST</span>
-                        </div>
-                    </div>
-                </summary>
-                
-                <div className="border-t border-slate-100 bg-slate-50/30 p-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-4">
-                        <ReviewField label="Buy Amount" value={displayMoney(buyAmount, buyCurrency)} />
-                        <ReviewField label="Sell Ex-GST" value={displayMoney(line.sell_amount, sellCurrency)} />
-                        <ReviewField label="GST" value={`${displayMoney(line.tax_amount, sellCurrency)} (${gstPercent}%)`} />
-                        <ReviewField label="Sell Inc-GST" value={displayMoney(sellInclTax, sellCurrency)} />
-                        
-                        <ReviewField 
-                            label="Margin (PGK)" 
-                            value={`${displayMoney(line.margin_amount, "PGK")} (${displayPercent(line.margin_percent)})`} 
-                            highlight={Number(line.margin_percent) < 0 ? "error" : "success"}
-                        />
-                        <ReviewField label="Pricing Source" value={sourceLabel(line, rawLine)} />
-                        <ReviewField label="Rate / Basis" value={isAvailable(line.rate) ? `${Number(line.rate).toFixed(4)} / ${line.unit_type}` : "Flat / N/A"} />
-                        <ReviewField label="Effective FX" value={effectiveFx} />
-                    </div>
-
-                    {(line.calculation_notes || rawLine?.calculation_notes) && (
-                        <div className="mt-4 pt-3 border-t border-slate-100">
-                            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Calculation Trace</div>
-                            <div className="text-[10px] text-slate-600 font-mono leading-relaxed bg-white/50 rounded p-2 border border-slate-100/50">
-                                {line.calculation_notes || rawLine?.calculation_notes}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </details>
-        </div>
-    );
-}
-
-function ReviewField({ label, value, highlight }: { label: string; value: string; highlight?: "success" | "error" }) {
-    let textClass = "text-slate-900";
-    if (highlight === "success") textClass = "text-emerald-700";
-    if (highlight === "error") textClass = "text-rose-700";
-
-    return (
-        <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-            <div className={`mt-1 break-words text-xs font-semibold ${textClass}`}>{value}</div>
         </div>
     );
 }
@@ -599,20 +625,20 @@ function getSectionStyle() {
 function BucketSection({
     title,
     lines,
+    rawLines,
     displayCurrency,
     isShowingFCY,
     icon,
-    // colorClass prop is present in parent but ignored here to enforce standardized Blue theme
+    isInternal,
 }: {
     title: string;
     lines: BreakdownLine[];
+    rawLines: RawQuoteLine[];
     displayCurrency: string;
     isShowingFCY: boolean;
     icon: React.ReactNode;
-    colorClass?: string;
+    isInternal?: boolean;
 }) {
-    // Default to collapsed for Freight/Dest, maybe Expanded for Origin? 
-    // User requested default collapsed previously.
     const [isExpanded, setIsExpanded] = useState(false);
     const styles = getSectionStyle();
 
@@ -621,68 +647,100 @@ function BucketSection({
         ? calculateBucketTotal(lines, 'sell_fcy')
         : calculateBucketTotal(lines, 'sell_pgk');
 
+    // Calculate margin for this bucket if internal
+    let bucketMarginText = "";
+    let bucketMarginStatus: "success" | "warning" | "error" = "success";
+    let exceptionCount = 0;
+
+    if (isInternal) {
+        const totalSellPgk = lines.reduce((sum, l) => sum + parseFloat(String(l.sell_pgk || "0")), 0);
+        const totalMarginPgk = lines.reduce((sum, l) => sum + parseFloat(String(l.margin_amount || "0")), 0);
+        const marginPct = totalSellPgk > 0 ? (totalMarginPgk / totalSellPgk) * 100 : 0;
+        
+        bucketMarginText = `${marginPct.toFixed(1)}% margin`;
+        if (marginPct < 0) bucketMarginStatus = "error";
+        else if (marginPct < 15) bucketMarginStatus = "warning";
+
+        // Count exceptions in this bucket
+        lines.forEach(line => {
+            const raw = rawLines.find(r => (r.product_code || r.component) === line.component && r.description === line.description);
+            if (raw?.is_rate_missing) exceptionCount++;
+            if (raw?.is_manual_override) exceptionCount++;
+        });
+    }
+
     return (
         <div className={styles.wrapper}>
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
-                className={`w-full flex items-center justify-between p-5 ${styles.header} ${styles.borderLeft}`}
+                className={`w-full flex items-center justify-between p-4 ${styles.header} ${styles.borderLeft}`}
             >
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
                     <div className={`p-2 rounded-lg ${styles.iconBg}`}>
                         {icon}
                     </div>
                     <div className="text-left">
-                        <div className="flex items-center gap-3">
-                            <h3 className={`text-base font-bold tracking-tight ${styles.title}`}>
+                        <div className="flex items-center gap-2">
+                            <h3 className={`text-sm font-bold tracking-tight ${styles.title}`}>
                                 {title}
                             </h3>
-                            {!isExpanded && (
-                                <span className="flex items-center justify-center bg-slate-100 text-slate-500 text-[11px] font-semibold h-6 px-2 rounded-full">
-                                    {lines.length}
+                            {isInternal && bucketMarginText && (
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                    bucketMarginStatus === "error" ? "bg-rose-100 text-rose-700" :
+                                    bucketMarginStatus === "warning" ? "bg-amber-100 text-amber-700" :
+                                    "bg-emerald-100 text-emerald-700"
+                                }`}>
+                                    {bucketMarginText}
+                                </span>
+                            )}
+                            {exceptionCount > 0 && (
+                                <span className="flex items-center gap-1 bg-amber-100 text-amber-700 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    {exceptionCount}
                                 </span>
                             )}
                         </div>
                     </div>
                 </div>
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-4">
                     <div className="text-right">
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-0.5">Subtotal</p>
-                        <p className="text-base font-bold text-slate-900 mono-font">
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Subtotal</p>
+                        <p className="text-sm font-bold text-slate-900 mono-font">
                             {formatAmount(bucketTotal, displayCurrency)}
                         </p>
                     </div>
                     {isExpanded ? (
-                        <ChevronDown className="w-5 h-5 text-slate-400" />
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
                     ) : (
-                        <ChevronRight className="w-5 h-5 text-slate-400" />
+                        <ChevronRight className="w-4 h-4 text-slate-400" />
                     )}
                 </div>
             </button>
 
             {isExpanded && (
-                <div className="p-6 pt-2 bg-slate-50/30">
-                    <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
-                        <Table>
-                            <TableHeader className="bg-slate-50/80">
-                                <TableRow className="hover:bg-transparent border-b border-slate-100">
-                                    <TableHead className="w-[50%] h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500 pl-6">Description</TableHead>
-                                    <TableHead className="text-right h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500">Sell (Ex GST)</TableHead>
-                                    <TableHead className="text-center h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500 w-[120px]">GST</TableHead>
-                                    <TableHead className="text-right h-10 text-[11px] font-bold uppercase tracking-wider text-slate-500 pr-6">Total</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {lines.map((line, index: number) => (
-                                    <ChargeRow
-                                        key={index}
-                                        line={line}
-                                        displayCurrency={displayCurrency}
-                                        isShowingFCY={isShowingFCY}
-                                    />
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </div>
+                <div className="bg-slate-50/30 border-t border-slate-100">
+                    <Table>
+                        <TableHeader className="bg-slate-50/80">
+                            <TableRow className="hover:bg-transparent border-b border-slate-100">
+                                <TableHead className="w-[45%] h-8 text-[10px] font-bold uppercase tracking-wider text-slate-500 pl-4">Description</TableHead>
+                                <TableHead className="text-right h-8 text-[10px] font-bold uppercase tracking-wider text-slate-500">Sell (Ex GST)</TableHead>
+                                <TableHead className="text-center h-8 text-[10px] font-bold uppercase tracking-wider text-slate-500 w-[100px]">GST</TableHead>
+                                <TableHead className="text-right h-8 text-[10px] font-bold uppercase tracking-wider text-slate-500 pr-4">Total</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {lines.map((line, index: number) => (
+                                <ChargeRow
+                                    key={index}
+                                    line={line}
+                                    rawLine={rawLines.find(r => (r.product_code || r.component) === line.component && r.description === line.description)}
+                                    displayCurrency={displayCurrency}
+                                    isShowingFCY={isShowingFCY}
+                                    isInternal={isInternal}
+                                />
+                            ))}
+                        </TableBody>
+                    </Table>
                 </div>
             )}
         </div>
@@ -692,56 +750,133 @@ function BucketSection({
 // Individual Charge Row
 function ChargeRow({
     line,
+    rawLine,
     displayCurrency,
-    isShowingFCY
+    isShowingFCY,
+    isInternal
 }: {
     line: BreakdownLine;
+    rawLine?: RawQuoteLine;
     displayCurrency: string;
     isShowingFCY: boolean;
+    isInternal?: boolean;
 }) {
-    // Robust line mapping
+    const [isExpanded, setIsExpanded] = useState(false);
+    
     const sellExGst = isShowingFCY 
         ? (line.sell_fcy || line.sell_pgk) 
         : (line.sell_pgk || line.sell_fcy);
         
     const gstAmountVal = parseFloat(line.gst_amount || '0');
 
-    // Determine GST display text
     let gstDisplay: React.ReactNode = '—';
     if (gstAmountVal > 0) {
         gstDisplay = formatAmount(gstAmountVal, displayCurrency);
     } else {
-        // Updated to non-interactive muted text
-        gstDisplay = <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Exempt</span>;
+        gstDisplay = <span className="text-[9px] font-medium text-slate-400 uppercase">Exempt</span>;
     }
 
     const total = isShowingFCY
         ? (line.sell_fcy_incl_gst || line.sell_fcy)
         : (line.sell_pgk_incl_gst || line.sell_pgk || line.sell_fcy_incl_gst);
 
+    const hasWarning = isInternal && (rawLine?.is_rate_missing || rawLine?.is_manual_override);
+
     return (
-        <TableRow className="hover:bg-blue-50/30 border-b border-slate-50 last:border-0 transition-colors">
-            <TableCell className="py-4 pl-6">
-                <div className="font-medium text-slate-700 text-sm">
-                    {line.description}
-                </div>
-                {/* Reduced emphasis on line codes - secondary info */}
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider mt-1 font-mono opacity-80">
-                    {line.component || 'MISC'}
-                </div>
-            </TableCell>
-            <TableCell className="text-right font-mono text-sm text-slate-600 py-4">
-                {formatAmount(sellExGst, displayCurrency)}
-            </TableCell>
-            <TableCell className="text-center py-4">
-                {/* GST Column centered and clean */}
-                <div className="flex items-center justify-center">
+        <>
+            <TableRow 
+                className={`group border-b border-slate-50 last:border-0 transition-colors ${
+                    isExpanded ? "bg-blue-50/50" : "hover:bg-slate-50/80"
+                } ${hasWarning ? "bg-amber-50/30" : ""}`}
+            >
+                <TableCell className="py-3 pl-4">
+                    <div className="flex items-center gap-2">
+                        {isInternal && (
+                            <button 
+                                onClick={() => setIsExpanded(!isExpanded)}
+                                className="p-0.5 hover:bg-slate-200 rounded transition-colors"
+                            >
+                                {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                            </button>
+                        )}
+                        <div className="flex flex-col">
+                            <div className="font-medium text-slate-700 text-xs">
+                                {line.description}
+                                {hasWarning && <AlertTriangle className="h-3 w-3 text-amber-500 inline ml-1.5" />}
+                            </div>
+                            <div className="text-[9px] text-slate-400 uppercase tracking-wider mt-0.5 font-mono">
+                                {line.component || 'MISC'}
+                            </div>
+                        </div>
+                    </div>
+                </TableCell>
+                <TableCell className="text-right font-mono text-xs text-slate-600 py-3">
+                    {formatAmount(sellExGst, displayCurrency)}
+                </TableCell>
+                <TableCell className="text-center py-3">
                     {gstDisplay}
-                </div>
-            </TableCell>
-            <TableCell className="text-right font-mono text-sm font-bold text-slate-800 py-4 pr-6">
-                {formatAmount(total, displayCurrency)}
-            </TableCell>
-        </TableRow>
+                </TableCell>
+                <TableCell className="text-right font-mono text-xs font-bold text-slate-800 py-3 pr-4">
+                    {formatAmount(total, displayCurrency)}
+                </TableCell>
+            </TableRow>
+            
+            {isInternal && isExpanded && (
+                <TableRow className="bg-blue-50/30 border-b border-slate-100">
+                    <TableCell colSpan={4} className="py-4 px-8">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <AuditField 
+                                label="Buy Amount" 
+                                value={displayMoney(rawLine?.cost_fcy || rawLine?.cost_pgk, rawLine?.cost_fcy_currency || "PGK")} 
+                            />
+                            <AuditField 
+                                label="Margin" 
+                                value={`${displayMoney(line.margin_amount, "PGK")} (${displayPercent(line.margin_percent)})`}
+                                highlight={parseFloat(line.margin_percent || "0") < 0 ? "error" : "success"}
+                            />
+                            <AuditField 
+                                label="Source" 
+                                value={rawLine ? sourceLabel(undefined, rawLine) : "Unknown"} 
+                            />
+                            <AuditField 
+                                label="Rate / Basis" 
+                                value={rawLine?.rate ? `${parseFloat(rawLine.rate).toFixed(4)} / ${rawLine.unit_type || "unit"}` : "Flat"} 
+                            />
+                            <AuditField 
+                                label="GST Detail" 
+                                value={`${line.gst_amount} (${displayPercent(parseFloat(rawLine?.gst_rate || "0") * 100)})`} 
+                            />
+                            {rawLine?.exchange_rate && parseFloat(rawLine.exchange_rate) !== 1.0 && (
+                                <AuditField 
+                                    label="FX Rate" 
+                                    value={rawLine.exchange_rate} 
+                                />
+                            )}
+                        </div>
+                        {rawLine?.calculation_notes && (
+                            <div className="mt-3 pt-2 border-t border-blue-100/50">
+                                <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-1">Trace</div>
+                                <div className="text-[10px] text-slate-500 font-mono leading-relaxed bg-white/40 p-2 rounded border border-blue-100/30">
+                                    {rawLine.calculation_notes}
+                                </div>
+                            </div>
+                        )}
+                    </TableCell>
+                </TableRow>
+            )}
+        </>
+    );
+}
+
+function AuditField({ label, value, highlight }: { label: string; value: string; highlight?: "success" | "error" }) {
+    let textClass = "text-slate-700";
+    if (highlight === "success") textClass = "text-emerald-700";
+    if (highlight === "error") textClass = "text-rose-700";
+
+    return (
+        <div>
+            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
+            <div className={`mt-0.5 text-[11px] font-semibold ${textClass}`}>{value}</div>
+        </div>
     );
 }

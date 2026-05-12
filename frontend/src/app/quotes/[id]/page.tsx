@@ -21,7 +21,7 @@ import RoutingWarning from "@/components/RoutingWarning";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, ArrowLeft, CheckCircle, CheckCircle2, Pencil, ArrowRight } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, CheckCircle2, Pencil, ArrowRight, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
 import { formatServiceScope } from "@/lib/display";
 import { getCustomerName, getEffectiveQuoteStatus } from "@/lib/quote-helpers";
@@ -548,18 +548,51 @@ export default function QuoteDetailPage() {
         <div className="container mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <div>
-              <p className="text-xs text-slate-500 uppercase font-semibold">Total Quote Amount</p>
-              <p className="text-2xl font-bold text-slate-900">
+              <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tight">Total Quote Amount</p>
+              <p className="text-xl font-bold text-slate-900 leading-tight">
                 {displayCurrency} {displayAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
-              <p className="text-[10px] text-slate-400">
+              <p className="text-[10px] text-slate-400 uppercase font-medium">
                 Inc. GST
               </p>
             </div>
+
+            {/* Overall Margin */}
+            {quote.quote_result && (
+              <div className="hidden sm:block border-l border-slate-100 pl-6">
+                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tight">Overall Margin</p>
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-sm font-bold ${
+                    parseFloat(quote.quote_result.margin_percent || "0") < 0 ? "text-rose-600" :
+                    parseFloat(quote.quote_result.margin_percent || "0") < 15 ? "text-amber-600" :
+                    "text-emerald-600"
+                  }`}>
+                    {parseFloat(quote.quote_result.margin_percent || "0").toFixed(1)}%
+                  </span>
+                  {parseFloat(quote.quote_result.margin_percent || "0") >= 15 ? (
+                    <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
+                  ) : (
+                    <TrendingDown className="h-3.5 w-3.5 text-rose-500" />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Exceptions Count */}
+            {quote.quote_result && (quote.quote_result.warnings?.length || 0) > 0 && (
+              <div className="hidden md:flex flex-col border-l border-slate-100 pl-6">
+                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tight">Audit</p>
+                <div className="flex items-center gap-1.5 text-amber-600">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  <span className="text-xs font-bold">{quote.quote_result.warnings.length} Issues</span>
+                </div>
+              </div>
+            )}
+            
             {/* Currency Exchange Badge placeholder (future task) */}
             {quote.latest_version?.totals?.currency !== 'PGK' && (
-              <div className="hidden md:block px-3 py-1 bg-amber-50 rounded border border-amber-100 text-xs text-amber-700">
-                <strong>Note:</strong> Pricing in {quote.latest_version?.totals?.currency}
+              <div className="hidden lg:block px-3 py-1 bg-slate-50 rounded border border-slate-200 text-[10px] text-slate-500 font-bold uppercase">
+                {quote.latest_version?.totals?.currency} MODE
               </div>
             )}
           </div>
