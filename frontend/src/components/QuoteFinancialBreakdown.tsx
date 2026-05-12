@@ -24,7 +24,8 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
-import { AlertTriangle, Calculator, ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane, Landmark, Globe, Database, Edit3, ShoppingCart, TrendingUp, TrendingDown, Info } from "lucide-react";
+import { AlertTriangle, Calculator, ChevronDown, ChevronRight, Package, MapPin, ReceiptText, Plane, Landmark, Globe, Database, Edit3, ShoppingCart, TrendingUp, TrendingDown, Info, ShieldCheck, Tag, Zap } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface QuoteFinancialBreakdownProps {
     result: QuoteComputeResult | V3QuoteComputeResponse;
@@ -38,6 +39,10 @@ type BreakdownLine = SellLine & {
     exchange_rate?: string;
     source?: string;
     is_informational?: boolean;
+    tax_code?: string;
+    tax_rate?: string;
+    unit_type?: string;
+    rate?: string;
 };
 type BreakdownDataShape = {
     status?: string;
@@ -389,7 +394,6 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                     <CalculationReviewPanel
                         quoteResult={canonicalResult}
                         rawLines={rawQuoteLines}
-                        displayCurrency={displayCurrency}
                     />
                 )}
 
@@ -420,7 +424,6 @@ function PricingHealthCheck({
 }: {
     quoteResult: CanonicalQuoteResult;
     rawLines: RawQuoteLine[];
-    displayCurrency: string;
 }) {
     const fx = quoteResult.fx_applied;
     const margin = parseFloat(String(quoteResult.margin_percent || "0"));
@@ -439,8 +442,12 @@ function PricingHealthCheck({
         marginLabel = "Low";
     }
 
-    // GST Status
-    const hasTaxWarning = quoteResult.warnings.some(w => w.toLowerCase().includes("tax") || w.toLowerCase().includes("gst"));
+    // GST Status & Reconciliation
+    const summaryGst = parseFloat(quoteResult.tax_breakdown?.gst_amount || "0");
+    const lineGstTotal = quoteResult.line_items.reduce((sum, l) => sum + parseFloat(l.tax_amount || "0"), 0);
+    const gstDiff = Math.abs(summaryGst - lineGstTotal);
+    const hasTaxWarning = quoteResult.warnings.some(w => w.toLowerCase().includes("tax") || w.toLowerCase().includes("gst")) || gstDiff > 0.05;
+    
     const gstStatus = hasTaxWarning ? "warning" : "success";
     const gstLabel = hasTaxWarning ? "Needs Review" : "OK";
 
@@ -474,12 +481,14 @@ function PricingHealthCheck({
                 <HealthCard 
                     label="GST/Tax" 
                     value={gstLabel} 
+                    subValue={hasTaxWarning ? "Variance detected" : "Reconciled"}
                     status={gstStatus}
                     icon={<Landmark className="h-4 w-4" />}
                 />
                 <HealthCard 
                     label="FX/CAF" 
                     value={fxLabel} 
+                    subValue={fx.currency && !isPgkOnly ? `Base: ${fx.currency}` : undefined}
                     status={fxStatus}
                     icon={<Globe className="h-4 w-4" />}
                 />
@@ -558,11 +567,9 @@ function HealthCard({
 function CalculationReviewPanel({
     quoteResult,
     rawLines,
-    displayCurrency,
 }: {
     quoteResult: CanonicalQuoteResult;
     rawLines: RawQuoteLine[];
-    displayCurrency: string;
 }) {
     const [isOpen, setIsOpen] = useState(false);
     
@@ -597,7 +604,6 @@ function CalculationReviewPanel({
                     <PricingHealthCheck 
                         quoteResult={quoteResult} 
                         rawLines={rawLines} 
-                        displayCurrency={displayCurrency} 
                     />
 
                     <div className="rounded border border-slate-100 bg-slate-50/50 p-3 text-[10px] text-slate-500 leading-relaxed italic">
@@ -781,6 +787,14 @@ function ChargeRow({
         : (line.sell_pgk_incl_gst || line.sell_pgk || line.sell_fcy_incl_gst);
 
     const hasWarning = isInternal && (rawLine?.is_rate_missing || rawLine?.is_manual_override);
+    
+    // logic flags for compact badges in row
+    const source = sourceLabel(undefined, rawLine);
+    const buyCurrency = rawLine?.cost_fcy_currency || "PGK";
+    const exchangeRate = parseFloat(rawLine?.exchange_rate || "0");
+    const isFcy = buyCurrency !== "PGK" && exchangeRate !== 0 && exchangeRate !== 1;
+    const notes = (rawLine?.calculation_notes || "").toLowerCase();
+    const isGstExempt = parseFloat(rawLine?.gst_rate || "0") === 0;
 
     return (
         <>
@@ -790,77 +804,66 @@ function ChargeRow({
                 } ${hasWarning ? "bg-amber-50/30" : ""}`}
             >
                 <TableCell className="py-3 pl-4">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-start gap-2">
                         {isInternal && (
                             <button 
                                 onClick={() => setIsExpanded(!isExpanded)}
-                                className="p-0.5 hover:bg-slate-200 rounded transition-colors"
+                                className="mt-1 p-0.5 hover:bg-slate-200 rounded transition-colors text-slate-400"
+                                title="View Pricing Logic"
                             >
                                 {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                             </button>
                         )}
-                        <div className="flex flex-col">
-                            <div className="font-medium text-slate-700 text-xs">
+                        <div className="flex flex-col gap-1">
+                            <div className="font-medium text-slate-700 text-xs flex items-center gap-1.5 flex-wrap">
                                 {line.description}
-                                {hasWarning && <AlertTriangle className="h-3 w-3 text-amber-500 inline ml-1.5" />}
+                                {hasWarning && <AlertTriangle className="h-3 w-3 text-amber-500" />}
+                                
+                                {isInternal && (
+                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Badge variant="outline" className="px-1 py-0 text-[8px] h-3.5 bg-slate-50 text-slate-400 border-slate-200 font-medium uppercase">
+                                            {source}
+                                        </Badge>
+                                        {isFcy && <Globe className="h-2.5 w-2.5 text-blue-400" />}
+                                        {notes.includes("caf") && <Zap className="h-2.5 w-2.5 text-amber-400" />}
+                                        {isGstExempt ? <ShieldCheck className="h-2.5 w-2.5 text-slate-300" /> : <Landmark className="h-2.5 w-2.5 text-emerald-400" />}
+                                    </div>
+                                )}
                             </div>
-                            <div className="text-[9px] text-slate-400 uppercase tracking-wider mt-0.5 font-mono">
-                                {line.component || 'MISC'}
+                            <div className="flex items-center gap-2">
+                                <div className="text-[9px] text-slate-400 uppercase tracking-wider font-mono">
+                                    {line.component || 'MISC'}
+                                </div>
+                                {isInternal && (
+                                    <button 
+                                        onClick={() => setIsExpanded(!isExpanded)}
+                                        className="text-[9px] font-bold text-blue-600 hover:underline flex items-center gap-0.5"
+                                    >
+                                        {isExpanded ? "Hide Logic" : "View Pricing Logic"}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs text-slate-600 py-3">
+                <TableCell className="text-right font-mono text-xs text-slate-600 py-3 align-top">
                     {formatAmount(sellExGst, displayCurrency)}
                 </TableCell>
-                <TableCell className="text-center py-3">
+                <TableCell className="text-center py-3 align-top">
                     {gstDisplay}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs font-bold text-slate-800 py-3 pr-4">
+                <TableCell className="text-right font-mono text-xs font-bold text-slate-800 py-3 pr-4 align-top">
                     {formatAmount(total, displayCurrency)}
                 </TableCell>
             </TableRow>
             
             {isInternal && isExpanded && (
-                <TableRow className="bg-blue-50/30 border-b border-slate-100">
-                    <TableCell colSpan={4} className="py-4 px-8">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <AuditField 
-                                label="Buy Amount" 
-                                value={displayMoney(rawLine?.cost_fcy || rawLine?.cost_pgk, rawLine?.cost_fcy_currency || "PGK")} 
-                            />
-                            <AuditField 
-                                label="Margin" 
-                                value={`${displayMoney(line.margin_amount, "PGK")} (${displayPercent(line.margin_percent)})`}
-                                highlight={parseFloat(line.margin_percent || "0") < 0 ? "error" : "success"}
-                            />
-                            <AuditField 
-                                label="Source" 
-                                value={rawLine ? sourceLabel(undefined, rawLine) : "Unknown"} 
-                            />
-                            <AuditField 
-                                label="Rate / Basis" 
-                                value={rawLine?.rate ? `${parseFloat(rawLine.rate).toFixed(4)} / ${rawLine.unit_type || "unit"}` : "Flat"} 
-                            />
-                            <AuditField 
-                                label="GST Detail" 
-                                value={`${line.gst_amount} (${displayPercent(parseFloat(rawLine?.gst_rate || "0") * 100)})`} 
-                            />
-                            {rawLine?.exchange_rate && parseFloat(rawLine.exchange_rate) !== 1.0 && (
-                                <AuditField 
-                                    label="FX Rate" 
-                                    value={rawLine.exchange_rate} 
-                                />
-                            )}
-                        </div>
-                        {rawLine?.calculation_notes && (
-                            <div className="mt-3 pt-2 border-t border-blue-100/50">
-                                <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mb-1">Trace</div>
-                                <div className="text-[10px] text-slate-500 font-mono leading-relaxed bg-white/40 p-2 rounded border border-blue-100/30">
-                                    {rawLine.calculation_notes}
-                                </div>
-                            </div>
-                        )}
+                <TableRow className="bg-white border-b border-slate-200/60 shadow-inner">
+                    <TableCell colSpan={4} className="py-6 px-10">
+                        <PricingLogicTrace 
+                            line={line}
+                            rawLine={rawLine}
+                        />
                     </TableCell>
                 </TableRow>
             )}
@@ -868,15 +871,178 @@ function ChargeRow({
     );
 }
 
-function AuditField({ label, value, highlight }: { label: string; value: string; highlight?: "success" | "error" }) {
-    let textClass = "text-slate-700";
+function LogicBadge({ 
+    label, 
+    variant = "outline",
+    icon: Icon 
+}: { 
+    label: string; 
+    variant?: "outline" | "default" | "secondary" | "destructive" | "success" | "warning";
+    icon?: React.ElementType;
+}) {
+    const variantClasses = {
+        outline: "bg-white text-slate-600 border-slate-200",
+        default: "bg-slate-100 text-slate-700 border-transparent",
+        secondary: "bg-blue-50 text-blue-700 border-blue-100",
+        destructive: "bg-rose-50 text-rose-700 border-rose-100",
+        success: "bg-emerald-50 text-emerald-700 border-emerald-100",
+        warning: "bg-amber-50 text-amber-700 border-amber-100",
+    };
+
+    return (
+        <Badge variant="outline" className={`px-1.5 py-0 text-[9px] font-bold uppercase tracking-tight gap-1 flex items-center shadow-none ${variantClasses[variant as keyof typeof variantClasses] || variantClasses.outline}`}>
+            {Icon && <Icon className="h-2.5 w-2.5" />}
+            {label}
+        </Badge>
+    );
+}
+
+function PricingLogicTrace({
+    line,
+    rawLine,
+}: {
+    line: BreakdownLine;
+    rawLine?: RawQuoteLine;
+}) {
+    const source = sourceLabel(undefined, rawLine);
+    const buyCurrency = rawLine?.cost_fcy_currency || "PGK";
+    const buyAmount = rawLine?.cost_fcy || rawLine?.cost_pgk || "0";
+    const exchangeRate = parseFloat(rawLine?.exchange_rate || "0");
+    const isFcy = buyCurrency !== "PGK" && exchangeRate !== 0 && exchangeRate !== 1;
+    
+    // Attempt to detect logic from notes or rule families
+    const notes = (rawLine?.calculation_notes || "").toLowerCase();
+    const isMinMargin = notes.includes("minimum margin") || notes.includes("min margin");
+    const isDiscount = notes.includes("discount") || rawLine?.rule_family?.toLowerCase().includes("discount");
+    
+    const gstRate = parseFloat(rawLine?.gst_rate || "0");
+    const isGstExempt = gstRate === 0;
+
+    // Generate Human-Readable Explanation
+    let explanation = `RateEngine used the ${source}`;
+    if (isFcy) {
+        explanation += `, converted ${buyCurrency} buy cost to PGK`;
+        if (notes.includes("caf")) explanation += " (including CAF adjustment)";
+    }
+    
+    if (isDiscount) explanation += ", applied a customer discount";
+    if (isMinMargin) explanation += ", enforced the minimum margin rule";
+    else explanation += ", and applied standard margin";
+    
+    explanation += ` to calculate the final sell amount. ${isGstExempt ? "GST was not applicable for this line." : `GST was applied at ${displayPercent(gstRate * 100)}.`}`;
+
+    return (
+        <div className="space-y-5">
+            {/* Logic Badges */}
+            <div className="flex flex-wrap gap-1.5">
+                <LogicBadge label={source} icon={Database} variant="secondary" />
+                {isFcy && <LogicBadge label="FX Converted" icon={Globe} variant="outline" />}
+                {notes.includes("caf") && <LogicBadge label="CAF Applied" icon={Zap} variant="outline" />}
+                {isMinMargin && <LogicBadge label="Minimum Margin" icon={ShieldCheck} variant="warning" />}
+                {isDiscount && <LogicBadge label="Discount Applied" icon={Tag} variant="success" />}
+                {!isGstExempt ? <LogicBadge label="GST Applied" icon={Landmark} variant="outline" /> : <LogicBadge label="GST Exempt" icon={ShieldCheck} variant="default" />}
+            </div>
+
+            {/* Explanation Sentence */}
+            <div className="flex items-start gap-2.5 p-3 rounded-md bg-blue-50/50 border border-blue-100/50 text-xs text-blue-800 leading-relaxed italic">
+                <Info className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                <span>{explanation}</span>
+            </div>
+
+            {/* Step-by-Step Trace */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-5">
+                <TraceStep 
+                    label="Pricing Source" 
+                    value={source} 
+                    subValue={rawLine?.basis ? `Basis: ${rawLine.basis}` : undefined}
+                />
+                <TraceStep 
+                    label="Buy Rate / Cost" 
+                    value={displayMoney(buyAmount, buyCurrency)} 
+                    subValue={rawLine?.rate ? `${parseFloat(rawLine.rate).toFixed(4)} / ${rawLine.unit_type || "unit"}` : "Flat amount"}
+                />
+                
+                {isFcy && (
+                    <>
+                        <TraceStep 
+                            label="Currency Exchange" 
+                            value={`${buyCurrency} → PGK`} 
+                            subValue={`Base Rate: ${rawLine?.exchange_rate}`}
+                        />
+                        {notes.includes("caf") && (
+                            <TraceStep 
+                                label="Effective FX (Inc. CAF)" 
+                                value={rawLine?.exchange_rate || "1.000000"} 
+                                highlight="success"
+                            />
+                        )}
+                    </>
+                )}
+
+                <TraceStep 
+                    label="Margin Applied" 
+                    value={`${displayPercent(line.margin_percent)}`} 
+                    subValue={`${displayMoney(line.margin_amount, "PGK")} ${parseFloat(line.margin_percent || "0") < 0 ? "(Loss)" : "(Healthy)"}`}
+                    highlight={parseFloat(line.margin_percent || "0") < 0 ? "error" : "success"}
+                />
+
+                <TraceStep 
+                    label="Sell Ex-GST" 
+                    value={displayMoney(line.sell_pgk, "PGK")} 
+                />
+
+                <TraceStep 
+                    label="GST Treatment" 
+                    value={isGstExempt ? "Exempt" : `${displayPercent(gstRate * 100)} Rate`} 
+                    subValue={!isGstExempt ? `Amount: ${displayMoney(line.gst_amount, "PGK")}` : "No tax applied"}
+                    highlight={!isGstExempt ? "success" : undefined}
+                />
+
+                <TraceStep 
+                    label="Final Sell (Inc-GST)" 
+                    value={displayMoney(line.sell_pgk_incl_gst, "PGK")} 
+                    highlight="success"
+                    isBold
+                />
+            </div>
+
+            {rawLine?.calculation_notes && (
+                <div className="pt-3 border-t border-slate-100">
+                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                        <Database className="h-3 w-3" />
+                        System Trace (Debug)
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-mono leading-relaxed bg-slate-50/50 p-2.5 rounded border border-slate-200/50 overflow-x-auto whitespace-pre-wrap">
+                        {rawLine.calculation_notes}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function TraceStep({ 
+    label, 
+    value, 
+    subValue, 
+    highlight,
+    isBold
+}: { 
+    label: string; 
+    value: string; 
+    subValue?: string;
+    highlight?: "success" | "error";
+    isBold?: boolean;
+}) {
+    let textClass = "text-slate-800";
     if (highlight === "success") textClass = "text-emerald-700";
     if (highlight === "error") textClass = "text-rose-700";
 
     return (
-        <div>
+        <div className="flex flex-col gap-0.5">
             <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
-            <div className={`mt-0.5 text-[11px] font-semibold ${textClass}`}>{value}</div>
+            <div className={`text-xs ${isBold ? "font-bold" : "font-semibold"} ${textClass}`}>{value}</div>
+            {subValue && <div className="text-[10px] text-slate-500 font-medium">{subValue}</div>}
         </div>
     );
 }
