@@ -41,6 +41,7 @@ class QuoteLineItem:
     cost_currency: str = "PGK"
     cost_source: str = QuoteCostSource.UNKNOWN
     agent_name: Optional[str] = None
+    provider_name: Optional[str] = None
     sell_amount: Decimal = ZERO_DECIMAL
     sell_currency: str = "PGK"
     margin_amount: Decimal = ZERO_DECIMAL
@@ -54,6 +55,9 @@ class QuoteLineItem:
     included_in_total: bool = True
     rate_source: str = QuoteRateSource.UNKNOWN
     calculation_notes: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
+    base_exchange_rate: Optional[Decimal] = None
+    caf_percent: Optional[Decimal] = None
     is_spot_sourced: bool = False
     is_manual_override: bool = False
     sort_order: int = 0

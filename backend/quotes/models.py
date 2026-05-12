@@ -381,6 +381,14 @@ class QuoteLine(models.Model):
     sell_fcy_currency = models.CharField(max_length=3, null=True, blank=True)
 
     exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    base_exchange_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    caf_percent = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    provider_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Actual name of the agent or carrier providing the rate.",
+    )
 
     # --- V3 Categorization Fields ---
     description = models.CharField(

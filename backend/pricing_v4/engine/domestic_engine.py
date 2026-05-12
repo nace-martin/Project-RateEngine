@@ -36,10 +36,14 @@ class BillableCharge:
     product_code: str = ''
     is_gst_applicable: bool = True
     agent_name: Optional[str] = None
+    provider_name: Optional[str] = None
     rule_family: str = CALCULATION_LOOKUP_RATE
     is_rate_missing: bool = False
     cost_source: Optional[str] = None
     calculation_notes: Optional[str] = None
+    exchange_rate: Optional[Decimal] = None
+    base_exchange_rate: Optional[Decimal] = None
+    caf_percent: Optional[Decimal] = None
 
 class DomesticPricingEngine:
     """
@@ -360,8 +364,12 @@ class DomesticPricingEngine:
             item.cost_source = charge.cost_source or (QuoteCostSource.DB_TARIFF if not charge.is_rate_missing else 'N/A')
             item.rate_source = QuoteRateSource.DB_TARIFF if not charge.is_rate_missing else 'N/A'
             item.agent_name = charge.agent_name
+            item.provider_name = charge.agent_name
             item.rule_family = charge.rule_family
             item.calculation_notes = charge.calculation_notes or item.calculation_notes
+            item.exchange_rate = charge.exchange_rate
+            item.base_exchange_rate = charge.base_exchange_rate
+            item.caf_percent = charge.caf_percent
             if charge.is_rate_missing:
                 item.is_rate_missing = True
                 item.included_in_total = False

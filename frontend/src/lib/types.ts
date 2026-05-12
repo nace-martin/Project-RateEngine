@@ -362,6 +362,9 @@ export interface V3QuoteLine {
   sell_fcy_incl_gst: string;
   sell_fcy_currency?: string | null;
   exchange_rate?: string | null;
+  base_exchange_rate?: string | null;
+  caf_percent?: string | null;
+  provider_name?: string | null;
   cost_source?: string | null;
   cost_source_description?: string | null;
   basis?: string | null;
@@ -474,6 +477,9 @@ export interface CanonicalQuoteLineItem {
   is_manual_override: boolean;
   sort_order: number;
   exchange_rate: string | null;
+  base_exchange_rate?: string | null;
+  caf_percent?: string | null;
+  provider_name?: string | null;
 }
 
 export interface CanonicalQuoteResult {

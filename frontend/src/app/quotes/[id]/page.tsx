@@ -1127,7 +1127,6 @@ function buildFxEntries(
   }
 
   const sorted = visible.sort((a, b) => a[0].localeCompare(b[0]));
-  if (sorted.length > 0) return sorted;
-  return [["PGK/PGK", "1.000000"]];
+  return sorted;
 }
 

@@ -106,6 +106,9 @@ class CalculatedChargeLine(BaseModel):
     cost_fcy_currency: Optional[str] = None
     sell_fcy_currency: Optional[str] = None
     exchange_rate: Optional[Decimal] = None
+    base_exchange_rate: Optional[Decimal] = None
+    caf_percent: Optional[Decimal] = None
+    provider_name: Optional[str] = None
     cost_source_description: Optional[str] = None
     is_rate_missing: bool = False
     bucket: str = "origin_charges"
