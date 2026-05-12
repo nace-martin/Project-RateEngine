@@ -2359,6 +2359,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         # Ensure customer/contact logic
         cust_id = None
         cont_id = None
+        requested_contact_id = (
+            request.data.get('contact_id')
+            or quote_data.get('contact_id')
+        )
         
         if spe_db.quote:
             cust_id = spe_db.quote.customer_id
@@ -2395,6 +2399,26 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        if cont_id and not Contact.objects.filter(id=cont_id, company_id=cust_id).exists():
+            cont_id = None
+
+        if requested_contact_id:
+            try:
+                candidate_contact_id = UUID(str(requested_contact_id))
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': f'Invalid contact_id: {requested_contact_id}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not Contact.objects.filter(id=candidate_contact_id, company_id=cust_id).exists():
+                return Response(
+                    {'error': 'Selected contact does not belong to the selected customer.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            cont_id = candidate_contact_id
+
         # Create QuoteInput
         # Note: If QuoteInput enforces contact_id is not None, we might need to fake it if cont_id is None.
         # But generally, for Spot, we just need basic input.
@@ -2409,6 +2433,11 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             quote_date=date.today(),
             output_currency=resolved_output_currency,
         )
+        quote_request_payload = quote_input.model_dump(mode='json')
+        quote_request_payload['contact_id'] = str(cont_id) if cont_id else None
+        quote_request_payload['incoterm'] = shipment.incoterm
+        quote_request_payload['payment_term'] = shipment.payment_term
+        quote_request_payload['service_scope'] = shipment.service_scope
         
         adapter = PricingServiceV4Adapter(quote_input=quote_input, spot_envelope_id=UUID(str(spe_db.id)))
         
@@ -2469,6 +2498,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if spe_db.quote:
             quote = spe_db.quote
             quote.status = Quote.Status.DRAFT
+            quote.contact_id = cont_id
             quote.output_currency = quote_input.output_currency
             quote.incoterm = shipment.incoterm
             quote.payment_term = shipment.payment_term
@@ -2477,9 +2507,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             quote.opportunity = opportunity
             quote.origin_location = origin_loc
             quote.destination_location = dest_loc
-            quote.request_details_json = quote_input.model_dump(mode='json')
+            quote.request_details_json = quote_request_payload
             quote.save(update_fields=[
                 'status',
+                'contact_id',
                 'output_currency',
                 'incoterm',
                 'payment_term',
@@ -2507,7 +2538,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 created_by=request.user,
                 organization=getattr(request.user, 'organization', None),
                 status=Quote.Status.DRAFT,
-                request_details_json=quote_input.model_dump(mode='json'),
+                request_details_json=quote_request_payload,
             )
             spe_db.quote = quote
             spe_db.save()
@@ -2525,7 +2556,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             version_number=new_v_num,
             status=Quote.Status.DRAFT,
             created_by=request.user,
-            payload_json=quote_input.model_dump(mode='json'),
+            payload_json=quote_request_payload,
             reason="Created from SPOT Envelope"
         )
         

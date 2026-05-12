@@ -432,9 +432,18 @@ export interface V3QuoteVersion {
 export interface CanonicalQuoteFxApplied {
   applied: boolean;
   rate: string | null;
+  base_rate?: string | null;
+  base_rate_type?: string | null;
+  direction?: string | null;
+  from_currency?: string | null;
+  to_currency?: string | null;
   source: string | null;
   snapshot_date: string | null;
   caf_percent: string | null;
+  caf_operation?: string | null;
+  effective_fx_after_caf?: string | null;
+  fx_fallbacks?: Array<Record<string, unknown>>;
+  fx_defaults_used?: Array<Record<string, unknown>>;
   currency: string | null;
 }
 
@@ -471,6 +480,7 @@ export interface CanonicalQuoteLineItem {
   calculation_notes: string | null;
   is_spot_sourced: boolean;
   is_manual_override: boolean;
+  fx_applied?: boolean;
   sort_order: number;
 }
 

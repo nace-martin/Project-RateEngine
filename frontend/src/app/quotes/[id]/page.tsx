@@ -428,10 +428,10 @@ export default function QuoteDetailPage() {
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase">FX Rate</p>
                   <div className="font-medium text-slate-900 text-xs">
-                    {fxEntries.length > 0 ? (
-                      fxEntries.map(([currency, rate]) => (
-                        <div key={currency}>{currency}: {String(rate)}</div>
-                      ))
+                    {fxEntries.length > 1 ? (
+                      <span className="text-slate-600">Multiple FX rates used</span>
+                    ) : fxEntries.length === 1 ? (
+                      <div>{fxEntries[0][0]}: {String(fxEntries[0][1])}</div>
                     ) : (
                       <span className="text-slate-400 italic">Base (PGK)</span>
                     )}
@@ -1092,7 +1092,6 @@ function buildFxEntries(
   }
 
   const sorted = visible.sort((a, b) => a[0].localeCompare(b[0]));
-  if (sorted.length > 0) return sorted;
-  return [["PGK/PGK", "1.000000"]];
+  return sorted;
 }
 

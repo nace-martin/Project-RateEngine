@@ -10,12 +10,20 @@ type PublicQuoteLine = {
   source: string;
   sell: string;
   is_informational: boolean;
+  subcategory?: string;
+};
+
+type PublicQuoteGroup = {
+  name: string;
+  subtotal: string;
+  lines: PublicQuoteLine[];
 };
 
 type PublicQuoteBucket = {
   name: string;
   subtotal: string;
   lines: PublicQuoteLine[];
+  groups?: PublicQuoteGroup[];
 };
 
 type PublicQuoteResponse = {
@@ -37,6 +45,7 @@ type PublicQuoteResponse = {
   customer: {
     name: string;
     contact: string | null;
+    contact_id?: string | null;
   };
   shipment: {
     mode: string;
@@ -44,6 +53,7 @@ type PublicQuoteResponse = {
     service_scope: string | null;
     incoterm: string | null;
     payment_term: string | null;
+    chargeable_weight_kg?: string | null;
   };
   route: {
     origin_code: string;
@@ -84,6 +94,20 @@ const formatDate = (value: string | null) => {
     month: "short",
     day: "numeric",
   });
+};
+
+const formatWeight = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  const amount = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(amount)) {
+    return `${value} kg`;
+  }
+  return `${amount.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })} kg`;
 };
 
 const withAlpha = (hex: string, alphaHex: string) => {
@@ -308,7 +332,9 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
               <div className="mt-5 grid grid-cols-2 gap-5">
                 <DetailItem label="Customer" value={data.customer.name} />
                 <DetailItem label="Contact" value={data.customer.contact} />
-                <DetailItem label="Shipment" value={[data.shipment.mode, data.shipment.direction].filter(Boolean).join(" / ")} />
+                <DetailItem label="Mode" value={data.shipment.mode} />
+                <DetailItem label="Direction" value={data.shipment.direction} />
+                <DetailItem label="Charge Weight" value={formatWeight(data.shipment.chargeable_weight_kg)} />
                 <DetailItem label="Payment" value={formatPaymentTerm(data.shipment.payment_term)} />
                 <DetailItem label="Service Scope" value={formatServiceScope(data.shipment.service_scope)} />
                 <DetailItem label="Incoterm" value={data.shipment.incoterm ? formatIncoterm(data.shipment.incoterm) : "N/A"} />
@@ -355,53 +381,109 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
               <div className="text-sm text-slate-500">Shared quote link valid for 7 days</div>
             </div>
 
-            <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
-              {data.charge_buckets.map((bucket, bucketIndex) => (
-                <div key={bucket.name} className={bucketIndex > 0 ? "border-t border-slate-200" : ""}>
-                  <div className="flex flex-col gap-2 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="text-base font-semibold text-slate-950">{bucketLabel(bucket.name)}</div>
-                      <div className="text-sm text-slate-500">{bucket.lines.length} line{bucket.lines.length === 1 ? "" : "s"}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-semibold text-slate-500">Subtotal</div>
-                      <div className="text-lg font-semibold text-slate-950">{formatMoney(data.currency, bucket.subtotal)}</div>
-                    </div>
-                  </div>
+            <div className="mt-5 space-y-4">
+              {data.charge_buckets.map((bucket) => {
+                const groups = bucket.groups && bucket.groups.length > 0
+                  ? bucket.groups
+                  : [{ name: "Other Charges", subtotal: bucket.subtotal, lines: bucket.lines }];
 
-                  {!summaryOnly ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[560px] text-left text-sm">
-                        <thead className="border-y border-slate-200 bg-white text-slate-500">
-                          <tr>
-                            <th className="px-4 py-3 font-semibold">Description</th>
-                            <th className="px-4 py-3 text-right font-semibold">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 bg-white">
-                          {bucket.lines.map((line, index) => (
-                            <tr key={`${bucket.name}-${index}`} className={line.is_informational ? "bg-slate-50 text-slate-500" : "text-slate-700"}>
-                              <td className="px-4 py-3">
-                                <div className="font-medium text-slate-800">{line.description}</div>
-                                {line.is_informational ? (
-                                  <div className="mt-1 inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-500">
-                                    Not included in subtotal
-                                  </div>
-                                ) : null}
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-right font-semibold">
-                                {formatMoney(data.currency, line.sell)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                return (
+                  <div
+                    key={bucket.name}
+                    className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+                  >
+                    {/* ── Level 1: Main Bucket Header ── */}
+                    <div
+                      className="flex flex-col gap-2 border-l-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                      style={{ borderLeftColor: brandPrimary, backgroundColor: withAlpha(brandPrimary, "08") || "#f8fafc" }}
+                    >
+                      <div>
+                        <h3 className="text-base font-bold tracking-tight text-slate-950">
+                          {bucketLabel(bucket.name)}
+                        </h3>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {bucket.lines.length} line{bucket.lines.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                          Subtotal
+                        </div>
+                        <div className="mt-0.5 text-xl font-bold text-slate-950">
+                          {formatMoney(data.currency, bucket.subtotal)}
+                        </div>
+                      </div>
                     </div>
-                  ) : null}
-                </div>
-              ))}
+
+                    {!summaryOnly ? (
+                      <div>
+                        {/* Single table header per bucket */}
+                        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-5 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                          <span className="pl-4">Description</span>
+                          <span>Amount</span>
+                        </div>
+
+                        {groups.map((group, groupIndex) => (
+                          <div
+                            key={`${bucket.name}-${group.name}`}
+                            className={groupIndex > 0 ? "mt-0" : ""}
+                          >
+                            {/* ── Level 2: Sub-Category Header ── */}
+                            <div
+                              className={`flex items-center justify-between border-l-2 border-slate-300 px-5 py-2.5 ${groupIndex > 0 ? "border-t border-t-slate-100" : ""}`}
+                              style={{ backgroundColor: "#f8fafc" }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-[13px] font-semibold text-slate-700">
+                                  {group.name}
+                                </span>
+                                <span className="text-[11px] text-slate-400">
+                                  ({group.lines.length})
+                                </span>
+                              </div>
+                              <span className="text-[13px] font-semibold text-slate-700">
+                                {formatMoney(data.currency, group.subtotal)}
+                              </span>
+                            </div>
+
+                            {/* ── Level 3: Charge Lines ── */}
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[560px] text-left text-sm">
+                                <tbody>
+                                  {group.lines.map((line, index) => (
+                                    <tr
+                                      key={`${bucket.name}-${group.name}-${index}`}
+                                      className={`border-b border-slate-50 last:border-b-0 ${line.is_informational ? "bg-slate-50/50 text-slate-400" : "text-slate-600"}`}
+                                    >
+                                      <td className="py-2.5 pl-9 pr-4">
+                                        <span className={`text-[13px] ${line.is_informational ? "text-slate-400" : "font-medium text-slate-700"}`}>
+                                          {line.description}
+                                        </span>
+                                        {line.is_informational ? (
+                                          <span className="ml-2 inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                                            Not included in subtotal
+                                          </span>
+                                        ) : null}
+                                      </td>
+                                      <td className="whitespace-nowrap px-5 py-2.5 text-right text-[13px] font-medium text-slate-600">
+                                        {formatMoney(data.currency, line.sell)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
               {data.charge_buckets.length === 0 ? (
-                <div className="bg-white px-4 py-8 text-center text-sm text-slate-500">No charge lines available.</div>
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  No charge lines available.
+                </div>
               ) : null}
             </div>
           </section>

@@ -466,6 +466,26 @@ function ChargeCard({
     const hasWarnings = warnings.length > 0;
     const isCriticalWarning = warnings.some(w => w.level === 'critical');
 
+    const buyAmountNum = Number(buyAmount || 0);
+    const sellExGstNum = Number(sellExGst || 0);
+    
+    let finalMarginAmount = canonicalItem?.margin_amount ?? rawLine?.margin_amount;
+    let finalMarginPercent = canonicalItem?.margin_percent ?? rawLine?.margin_percent;
+    
+    if (finalMarginAmount === undefined || finalMarginAmount === null) {
+        finalMarginAmount = String(sellExGstNum - buyAmountNum);
+    }
+    
+    if (finalMarginPercent === undefined || finalMarginPercent === null || finalMarginPercent === "0" || finalMarginPercent === "0.00") {
+        if (buyAmountNum > 0) {
+            finalMarginPercent = String(((sellExGstNum - buyAmountNum) / buyAmountNum) * 100);
+        } else if (sellExGstNum > 0) {
+            finalMarginPercent = "100.00";
+        } else {
+            finalMarginPercent = "0.00";
+        }
+    }
+
     return (
         <div className={`rounded-lg border ${isExpanded ? 'border-blue-200 shadow-sm' : 'border-slate-200'} bg-white overflow-hidden transition-all`}>
             <div 
@@ -494,13 +514,13 @@ function ChargeCard({
                 <div className="flex flex-wrap items-center gap-4 md:gap-8 justify-between xl:justify-end">
                     <div className="flex flex-col xl:items-end min-w-[80px]">
                         <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Buy</span>
-                        <span className="text-sm font-medium text-slate-600">{canonicalItem ? displayMoney(buyAmount, buyCurrency) : "—"}</span>
+                        <span className="text-sm font-medium text-slate-600">{canonicalItem || rawLine ? displayMoney(buyAmount, buyCurrency) : "—"}</span>
                     </div>
                     <div className="flex flex-col xl:items-end min-w-[100px]">
                         <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Margin</span>
                         <div className="flex items-center gap-1 text-sm">
-                            <span className="font-medium text-emerald-600">{canonicalItem ? displayMoney(marginAmount, "PGK") : "—"}</span>
-                            {canonicalItem && <span className="text-[11px] font-medium text-emerald-600/70">({displayPercent(marginPercent)})</span>}
+                            <span className="font-medium text-emerald-600">{canonicalItem || rawLine ? displayMoney(finalMarginAmount, "PGK") : "—"}</span>
+                            {(canonicalItem || rawLine) && <span className="text-[11px] font-medium text-emerald-600/70">({displayPercent(finalMarginPercent)})</span>}
                         </div>
                     </div>
                     <div className="flex flex-col xl:items-end min-w-[100px]">
@@ -536,7 +556,22 @@ function ChargeCard({
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-y-5 gap-x-6 text-sm">
                         <DetailField label="Quantity" value={displayValue(canonicalItem.quantity)} />
                         <DetailField label="Unit / Basis" value={`${displayValue(canonicalItem.unit_type)} / ${displayValue(canonicalItem.basis)}`} />
-                        <DetailField label="GST Treatment" value={`${displayValue(canonicalItem.tax_code)} at ${displayPercent(rawLine?.gst_rate ? Number(rawLine.gst_rate) * 100 : undefined)}`} />
+                        <DetailField label="GST Treatment" value={(() => {
+                            let computedGstRate = rawLine?.gst_rate ? Number(rawLine.gst_rate) * 100 : 0;
+                            const taxAmtNum = Number(canonicalItem.tax_amount || 0);
+                            const sellAmtNum = Number(canonicalItem.sell_amount || 0);
+                            
+                            // If explicit rate missing but tax amount exists, compute it
+                            if (computedGstRate === 0 && taxAmtNum > 0 && sellAmtNum > 0) {
+                                computedGstRate = (taxAmtNum / sellAmtNum) * 100;
+                            }
+                            
+                            const rateDisplay = displayPercent(computedGstRate);
+                            if (taxAmtNum > 0) {
+                                return `${displayValue(canonicalItem.tax_code)} at ${rateDisplay} (${displayMoney(taxAmtNum, canonicalItem.sell_currency || displayCurrency)})`;
+                            }
+                            return `${displayValue(canonicalItem.tax_code)} at ${rateDisplay}`;
+                        })()} />
                         <DetailField label="Final Total (Inc GST)" value={displayMoney(Number(canonicalItem.sell_amount || 0) + Number(canonicalItem.tax_amount || 0), canonicalItem.sell_currency || displayCurrency)} />
                         
                         {(() => {

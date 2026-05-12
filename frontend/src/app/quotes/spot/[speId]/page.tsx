@@ -354,6 +354,8 @@ export default function SpotRateEntryPage() {
     const customerIdParam = searchParams.get("customer_id") || "";
     const customerNameParam = searchParams.get("customer_name") || "";
     const outputCurrency = searchParams.get("output_currency") || "PGK";
+    const contactIdParam = searchParams.get("contact_id") || "";
+    const incotermParam = searchParams.get("incoterm") || "";
     const shipmentTypeParam = searchParams.get("shipment_type") as "EXPORT" | "IMPORT" | "DOMESTIC" | null;
     const returnTo = searchParams.get("returnTo");
 
@@ -951,6 +953,8 @@ export default function SpotRateEntryPage() {
                 service_scope: resolvedScope,
                 output_currency: resolvedOutputCurrency,
                 customer_id: customerIdParam || undefined,
+                contact_id: contactIdParam || undefined,
+                incoterm: incotermParam || undefined,
             });
 
             if (result?.success && result.quote_id) {

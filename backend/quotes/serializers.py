@@ -264,9 +264,18 @@ class QuoteBrandingSerializer(serializers.Serializer):
 class CanonicalFxAppliedSerializer(serializers.Serializer):
     applied = serializers.BooleanField()
     rate = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True)
+    base_rate = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True, required=False)
+    base_rate_type = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    direction = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    from_currency = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    to_currency = serializers.CharField(allow_null=True, allow_blank=True, required=False)
     source = serializers.CharField(allow_null=True, allow_blank=True)
     snapshot_date = serializers.DateTimeField(allow_null=True)
     caf_percent = serializers.DecimalField(max_digits=10, decimal_places=4, allow_null=True)
+    caf_operation = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    effective_fx_after_caf = serializers.DecimalField(max_digits=18, decimal_places=6, allow_null=True, required=False)
+    fx_fallbacks = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
+    fx_defaults_used = serializers.ListField(child=serializers.DictField(), required=False, allow_empty=True)
     currency = serializers.CharField(allow_null=True, allow_blank=True)
 
 
@@ -303,6 +312,7 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     calculation_notes = serializers.CharField(allow_null=True, allow_blank=True)
     is_spot_sourced = serializers.BooleanField()
     is_manual_override = serializers.BooleanField()
+    fx_applied = serializers.BooleanField(required=False)
     sort_order = serializers.IntegerField()
 
 
