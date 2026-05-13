@@ -1,89 +1,29 @@
-# Project-RateEngine GEMINI.md
+# GEMINI.md
 
-## Project Overview
+## Gemini CLI Operating Rules
 
-This is a full-stack web application designed to streamline and automate the air freight quoting process.
+Gemini CLI must follow `AGENTS.md`. This file is Gemini-specific operating guidance only and must not duplicate the full constitution.
 
-*   **Backend:** The backend is built with Python using the Django framework and the Django REST Framework for creating APIs. It uses a SQLite database for development and PostgreSQL for production.
-*   **Frontend:** The frontend is a single-page application built with Next.js (a React framework) and TypeScript. It uses Tailwind CSS for styling.
-*   **Architecture:** The project follows a classic client-server architecture, with the frontend application consuming the backend's RESTful API.
+## Scope Control
 
-## Building and Running
+- Do not perform broad rewrites unless explicitly requested.
+- Do not refactor unrelated files.
+- Do not hide backend, frontend, UI, cleanup, or formatting changes inside an unrelated task.
+- Keep one PR focused on one concern.
 
-### Backend
+## Investigation Before Fixing
 
-1.  **Navigate to the backend directory:**
-    ```bash
-    cd backend
-    ```
-2.  **Activate the virtual environment:**
-    ```bash
-    # On Windows
-    .\venv\Scripts\activate
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **Run database migrations:**
-    ```bash
-    python manage.py migrate
-    ```
-5.  **Start the development server:**
-    ```bash
-    python manage.py runserver
-    ```
-    The backend API will be available at `http://127.0.0.1:8000`.
+- Explain the root cause before implementing a fix.
+- Do not revive deprecated, deleted, or legacy logic.
+- Do not reuse legacy Spot CRUD paths.
+- Stop and report ambiguity instead of guessing.
 
-### Frontend
+## Delivery Report
 
-1.  **Navigate to the frontend directory:**
-    ```bash
-    cd frontend
-    ```
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
-3.  **Start the development server:**
-    ```bash
-    npm run dev
-    ```
-    The frontend application will be available at `http://localhost:3000`.
+Every Gemini CLI handoff must include:
 
-## Development Conventions
-
-*   **Backend:**
-    *   The backend follows the standard Django project structure.
-    *   The `rate_engine` directory contains the project settings, while `accounts`, `core`, `pricing`, and `quotes` are individual Django apps.
-    *   The `requirements.txt` file lists all Python dependencies.
-*   **Frontend:**
-    *   The frontend uses Next.js with TypeScript.
-    *   The `src` directory contains the main application code.
-    *   The `package.json` file lists all JavaScript dependencies and defines scripts for running, building, and linting the application.
-    *   Styling is done with Tailwind CSS.
-*   **API:**
-    *   The API is built with the Django REST Framework.
-    *   Authentication is token-based.
-    *   The API is versioned.
-*   **Documentation:**
-    *   The `docs` directory contains important project documentation, including the product roadmap and architecture plans.
-*   **Pricing & Commodity Conventions:**
-    *   **`DOC` (Documents):** No commercial value, POM-LAE flat rates. These are low-risk, flat-fee shipments that do not require full audit.
-    *   **`CRG` (Cargo):** Full audit required. All standard COGS/Sell lookups, margin, FX, and GST calculations apply.
-    *   All pricing engines must filter by `commodity_code` (passed via `QuoteInput`) when it is a non-default value. The `CommodityChargeRule` table gates which `ProductCode` IDs are enabled per commodity.
-    *   Rate lookups must be deterministic: always use `.order_by('-valid_from', '-updated_at', '-id').first()` to select the latest effective rate.
-
-## Maintenance
-
-### Cleanup Tasks
-
-*   **Cleanup Stale Drafts:**
-    A management command is available to delete draft quotes (Standard and Spot) that are older than 7 days.
-    
-    ```bash
-    cd backend
-    python manage.py cleanup_stale_drafts
-    ```
-    This can be scheduled via Cron (Linux) or Task Scheduler (Windows) to run daily.
+- Files changed and why.
+- Tests run and results.
+- Manual workflow checks run and results, or why they were not applicable.
+- Any intentionally unchanged areas.
 
