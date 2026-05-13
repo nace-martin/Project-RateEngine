@@ -153,6 +153,16 @@ Frontend allowed origins are `http://localhost:3000` and `http://127.0.0.1:3000`
 
 ## Contributor Guidelines
 
+### AI Agent Contribution Rules
+
+AI-assisted changes must follow the shared governance docs:
+
+- [Agent constitution](AGENTS.md)
+- [Codex operating rules](CODEX.md)
+- [Gemini CLI operating rules](GEMINI.md)
+- [Pull request template](.github/pull_request_template.md)
+- [Architecture principles and review rules](docs/ARCHITECTURE_PRINCIPLES.md)
+
 ### Project Structure
 
 -   `backend/`: Django project `rate_engine` with apps `accounts`, `core`, `pricing_v2`, and `quotes`.

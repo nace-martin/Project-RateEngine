@@ -1,47 +1,53 @@
-# Pull Request Title
+# Summary
 
-Short, imperative summary (e.g., "feat(quotes): add sell mapping rules").
+-
 
-## Overview
-- Why: brief intent and problem statement.
-- Scope: what this PR includes/excludes.
+## Root Cause
 
-## Changes
-- Backend: models/migrations, endpoints, settings, pricing logic (e.g., `backend/rate_engine/engine.py`).
-- Frontend: UI flows, routes, state, API contracts.
-- Docs/Scripts: updates in `docs/` or `scripts/`.
+-
 
-## Testing
-- Automated: how to run tests
-  - Backend: `cd backend && python manage.py test`
-  - Frontend: `cd frontend && npm test` (if applicable)
-- Manual QA steps:
-  1. Start backend: `cd backend && python manage.py runserver`
-  2. Start frontend: `cd frontend && npm run dev`
-  3. Verify feature: include exact steps, inputs, and expected results.
+## Scope of Change
+
+-
+
+## What Was Intentionally NOT Changed
+
+-
+
+## Legacy / Dead Code Removed
+
+-
+
+## Risk Areas
+
+-
+
+## Manual Verification Steps
+
+-
+
+## Tests Run
+
+-
 
 ## Screenshots / Recordings
-- Before/After images or short clips for UI changes.
 
-## Security & Config
-- Auth/permissions touched? DRF TokenAuth usage?
-- Config/env changes (e.g., `DATABASE_URL`, CORS, `ALLOWED_HOSTS`).
+Required if UI changed.
 
-## Performance & Compatibility
-- Notable perf impact, queries, or payload sizes.
-- Browser/device or API compatibility considerations.
+-
 
-## Deployment Notes
-- Migrations, data backfills, feature flags, rollback plan.
+## Documentation Consolidation Check
 
-## Linked Items
-- Closes #123
-- RFC/Docs: link to relevant notes in `docs/`.
+- [ ] Existing docs were updated instead of duplicated.
+- [ ] No duplicate PR templates, governance files, or overlapping architecture docs were added.
+- [ ] `AGENTS.md`, `CODEX.md`, `GEMINI.md`, README links, or architecture docs were updated when relevant.
 
-## Checklist
-- [ ] Clear title using conventional commits (scope optional)
-- [ ] Tests added/updated or rationale provided
-- [ ] Docs updated (README/AGENTS/docs) if needed
-- [ ] No secrets committed; env/config documented
-- [ ] Screenshots/recordings for UI changes
-- [ ] Backward compatibility considered or migration steps noted
+## Reviewer Checklist
+
+- [ ] Does this PR solve one concern only?
+- [ ] Does it duplicate existing logic?
+- [ ] Does it revive legacy code?
+- [ ] Does it create another source of truth?
+- [ ] Does it affect quote creation, pricing, FX/CAF, GST, margin, SPOT, public quote display, charge grouping, or CRM quote logging?
+- [ ] Was the real user workflow manually tested?
+- [ ] Were existing docs updated instead of duplicated?

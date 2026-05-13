@@ -228,7 +228,72 @@ If validation fails:
 
 ---
 
-## 7. Summary
+## 7. AI-Generated PR Review Rules
+
+AI-generated PRs must preserve architectural trust by staying small, explicit, and reviewable.
+
+### Required Review Standard
+
+- Small PRs only: one PR must solve one concern.
+- No drive-by refactors.
+- No hidden scope expansion.
+- No unrelated formatting churn.
+- No duplicated logic or duplicate sources of truth.
+- Root cause must be identified before code changes are made.
+- Passing tests are insufficient without workflow verification for workflow-critical areas.
+
+### High-Scrutiny Areas
+
+Strict review is required for changes touching:
+
+- Pricing logic.
+- Quote creation.
+- Spot intake, SPE envelopes, or Spot overlays.
+- FX, CAF, GST, and margin handling.
+- Public quote pages.
+- Pricing breakdowns.
+- Charge bucket grouping.
+- Domestic quote selector logic.
+- CRM quote logging.
+
+---
+
+## 8. Deprecated and Dead-Code Policy
+
+Deprecated code must be visible, bounded, and temporary.
+
+- Deprecated code must be clearly marked with the replacement path.
+- Dead legacy paths should be removed once replaced.
+- Agents must not reuse deprecated code unless explicitly instructed.
+- Agents must not revive deleted behavior as a shortcut.
+- Prefer removing dead code over adding compatibility patches around it.
+- Any deleted legacy behavior must be listed in the PR.
+
+Legacy Spot-rate CRUD remains deprecated. The active Spot path is SPE envelope persistence plus `PricingServiceV4Adapter`.
+
+---
+
+## 9. Workflow-Critical Manual Verification
+
+The following areas require manual workflow verification when changed:
+
+- Standard quote creation.
+- Spot quote creation.
+- Quote finalization.
+- Public quote page.
+- Pricing breakdown.
+- FX/CAF display.
+- Margin display.
+- GST display.
+- Charge bucket grouping.
+- Domestic quote selector logic.
+- CRM logging from quotes.
+
+Manual verification must document the exact workflow, inputs, expected result, and observed result. If verification is not possible, the PR must explain why and describe the residual risk.
+
+---
+
+## 10. Summary
 
 ```
 RateEngine is:
@@ -253,3 +318,4 @@ RateEngine is NOT:
 |------|--------|--------|
 | 2024-12-14 | Initial locked principles | System |
 | 2026-04-19 | Updated AI intake and Spot architecture to SPE + V4 hybrid flow | Codex |
+| 2026-05-13 | Added AI-generated PR review rules, dead-code policy, and workflow verification governance | Codex |
