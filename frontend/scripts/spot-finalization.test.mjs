@@ -94,8 +94,48 @@ assert.match(
     },
     unresolvedReviewIssueCount: 0,
   }) || "",
-  /acknowledgement is required/,
-  "ready envelopes without acknowledgement should expose the invalid acknowledgement state first",
+  /currency/,
+  "real missing rate fields should block before acknowledgement flow",
+);
+
+assert.match(
+  getSpotFinalizeDisabledReason({
+    spe: {
+      ...baseSpe,
+      intake_safety: {
+        is_safe_to_quote: false,
+        blocking_issues: ["Uploaded rates: 1 extracted charge line(s) are conditional."],
+        pending_source_batch_ids: ["source-1"],
+        pending_source_labels: ["Uploaded rates"],
+        review_note_required_batch_ids: [],
+      },
+    },
+    unresolvedReviewIssueCount: 1,
+    conditionalAcknowledgementRequired: true,
+    conditionalAcknowledgementAccepted: false,
+  }) || "",
+  /Acknowledge the conditional SPOT rates/,
+  "conditional acknowledgement should expose a clear action blocker",
+);
+
+assert.equal(
+  getSpotFinalizeDisabledReason({
+    spe: {
+      ...baseSpe,
+      intake_safety: {
+        is_safe_to_quote: false,
+        blocking_issues: ["Uploaded rates: 1 extracted charge line(s) are conditional."],
+        pending_source_batch_ids: ["source-1"],
+        pending_source_labels: ["Uploaded rates"],
+        review_note_required_batch_ids: [],
+      },
+    },
+    unresolvedReviewIssueCount: 0,
+    conditionalAcknowledgementRequired: true,
+    conditionalAcknowledgementAccepted: true,
+  }),
+  null,
+  "accepted conditional-only blockers should allow submit so the UI can record acknowledgement then create quote",
 );
 
 assert.equal(

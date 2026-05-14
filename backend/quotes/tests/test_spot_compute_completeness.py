@@ -661,3 +661,119 @@ def test_spot_create_quote_allows_acknowledged_conditional_matched_line(monkeypa
 
     assert response.status_code == 200
     assert response.json()["success"] is True
+
+
+def test_spot_conditional_acknowledgement_flow_can_create_can_to_pom_import_collect(monkeypatch):
+    pgk = Currency.objects.create(code="PGK", name="Papua New Guinea Kina")
+    cad = Currency.objects.create(code="CAD", name="Canadian Dollar")
+    pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
+    ca = Country.objects.create(code="CA", name="Canada", currency=cad)
+
+    origin = _create_location("CAN", ca)
+    destination = _create_location("POM", pg)
+    user = get_user_model().objects.create_user(username="spotconditionalflow", password="testpass")
+    ctx = {
+        "origin_country": "CA",
+        "destination_country": "PG",
+        "origin_code": origin.code,
+        "destination_code": destination.code,
+        "commodity": "GCR",
+        "total_weight_kg": 100.0,
+        "pieces": 1,
+        "service_scope": "d2d",
+        "payment_term": "COLLECT",
+    }
+    spe = SpotPricingEnvelopeDB.objects.create(
+        status=SpotPricingEnvelopeDB.Status.DRAFT,
+        shipment_context_json=ctx,
+        conditions_json={},
+        spot_trigger_reason_code=SpotTriggerReason.MISSING_SCOPE_RATES,
+        spot_trigger_reason_text="Missing required rate components",
+        created_by=user,
+        expires_at=timezone.now() + timedelta(hours=72),
+    )
+    source_batch = SPESourceBatchDB.objects.create(
+        envelope=spe,
+        source_kind=SPESourceBatchDB.SourceKind.AGENT,
+        source_type=SPESourceBatchDB.SourceType.TEXT,
+        target_bucket=SPESourceBatchDB.TargetBucket.MIXED,
+        label="Uploaded rates",
+        source_reference="Uploaded rates",
+        raw_text="Import Air Freight USD 6.80/kg. Origin fee applies subject to carrier confirmation.",
+        analysis_summary_json={
+            "can_proceed": True,
+            "ai_used": True,
+            "imported_charge_count": 2,
+            "conditional_charge_count": 1,
+        },
+        created_by=user,
+    )
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        source_batch=source_batch,
+        code="IMP-FRT-AIR",
+        description="Import Air Freight",
+        amount=Decimal("6.80"),
+        currency="USD",
+        unit="per_kg",
+        bucket="airfreight",
+        is_primary_cost=True,
+        source_reference="Uploaded rates",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        entered_at=timezone.now(),
+    )
+    conditional_line = SPEChargeLineDB.objects.create(
+        envelope=spe,
+        source_batch=source_batch,
+        code="ORIGIN_LOCAL",
+        description="Pick-Up Fee (Origin)",
+        amount=Decimal("75.00"),
+        currency="USD",
+        unit="flat",
+        bucket="origin_charges",
+        conditional=True,
+        conditional_acknowledged=False,
+        source_reference="Uploaded rates",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        entered_at=timezone.now(),
+    )
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["airfreight", "origin_charges", "destination_charges"]),
+    )
+    customer = Company.objects.create(name="Seed Customer Pty Ltd", is_customer=True, company_type="CUSTOMER")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    acknowledge_response = client.post(f"/api/v3/spot/envelopes/{spe.id}/acknowledge/", format="json")
+    assert acknowledge_response.status_code == 400
+    assert "conditional" in str(acknowledge_response.json()).lower()
+
+    conditional_response = client.patch(
+        f"/api/v3/spot/envelopes/{spe.id}/charges/{conditional_line.id}/conditional-resolution/",
+        {"action": "KEEP"},
+        format="json",
+    )
+    assert conditional_response.status_code == 200
+
+    source_review_response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/sources/{source_batch.id}/review/",
+        {"reviewed_safe_to_quote": True},
+        format="json",
+    )
+    assert source_review_response.status_code == 200
+
+    acknowledge_response = client.post(f"/api/v3/spot/envelopes/{spe.id}/acknowledge/", format="json")
+    assert acknowledge_response.status_code == 200
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "D2D", "payment_term": "COLLECT", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True

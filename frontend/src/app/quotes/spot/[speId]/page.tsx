@@ -14,6 +14,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
     Sheet,
     SheetContent,
@@ -892,10 +893,41 @@ export default function SpotRateEntryPage() {
     const [activeIssueDetails, setActiveIssueDetails] = useState<ImportedReviewLine | null>(null);
     const [sourceComparisonOpen, setSourceComparisonOpen] = useState(false);
     const [selectedSourceChargeKey, setSelectedSourceChargeKey] = useState<string | null>(null);
+    const pendingConditionalReviewLines = useMemo(
+        () => reviewLines.affected.filter((line) => line.canResolveConditional),
+        [reviewLines.affected]
+    );
+    const conditionalIntakeSafetyBlocker = useMemo(() => {
+        const intakeSafety = state.spe?.intake_safety;
+        const blockingIssues = intakeSafety?.blocking_issues || [];
+        return (
+            !state.spe?.acknowledgement &&
+            blockingIssues.length > 0 &&
+            blockingIssues.every((issue) => issue.toLowerCase().includes("conditional")) &&
+            (intakeSafety?.review_note_required_batch_ids || []).length === 0
+        );
+    }, [state.spe?.acknowledgement, state.spe?.intake_safety]);
+    const conditionalAcknowledgementRequired =
+        pendingConditionalReviewLines.length > 0 || conditionalIntakeSafetyBlocker;
+    const [conditionalAcknowledgementAccepted, setConditionalAcknowledgementAccepted] = useState(false);
+    useEffect(() => {
+        if (!conditionalAcknowledgementRequired && conditionalAcknowledgementAccepted) {
+            setConditionalAcknowledgementAccepted(false);
+        }
+    }, [conditionalAcknowledgementAccepted, conditionalAcknowledgementRequired]);
+    const unresolvedBlockingReviewIssueCount = useMemo(
+        () =>
+            reviewLines.affected.filter(
+                (line) => !(line.canResolveConditional && conditionalAcknowledgementAccepted)
+            ).length,
+        [conditionalAcknowledgementAccepted, reviewLines.affected]
+    );
     const unresolvedReviewIssueCount = reviewLines.affected.length;
     const quoteSubmitDisabledReason = getSpotFinalizeDisabledReason({
         spe: state.spe,
-        unresolvedReviewIssueCount,
+        unresolvedReviewIssueCount: unresolvedBlockingReviewIssueCount,
+        conditionalAcknowledgementRequired,
+        conditionalAcknowledgementAccepted,
     });
     const quoteSubmitDisabled = Boolean(quoteSubmitDisabledReason);
     const hasReviewActions =
@@ -934,7 +966,31 @@ export default function SpotRateEntryPage() {
                 spe = updatedSpe;
             }
 
-            if (!spe.acknowledgement && spe.status !== "ready") {
+            if (conditionalAcknowledgementAccepted) {
+                for (const line of pendingConditionalReviewLines) {
+                    if (!line.chargeLineId) continue;
+                    const updatedSpe = await actions.resolveConditionalChargeLine(line.chargeLineId, "KEEP");
+                    if (!updatedSpe) {
+                        return;
+                    }
+                    spe = updatedSpe;
+                }
+
+                if (conditionalIntakeSafetyBlocker) {
+                    const sourceBatchIds = spe.intake_safety?.pending_source_batch_ids || [];
+                    for (const sourceBatchId of sourceBatchIds) {
+                        const updatedSpe = await actions.reviewSourceBatch(sourceBatchId, {
+                            reviewed_safe_to_quote: true,
+                        });
+                        if (!updatedSpe) {
+                            return;
+                        }
+                        spe = updatedSpe;
+                    }
+                }
+            }
+
+            if (!spe.acknowledgement) {
                 const success = await actions.submitAcknowledgement();
                 if (!success) {
                     return;
@@ -1488,6 +1544,25 @@ export default function SpotRateEntryPage() {
                                             productCodeDomain={resolvedShipmentType}
                                             reviewRequest={activeReviewRequest}
                                         />
+
+                                        {conditionalAcknowledgementRequired && (
+                                            <Card className="border-amber-200 bg-amber-50/70">
+                                                <CardContent className="flex gap-3 pt-4">
+                                                    <Checkbox
+                                                        id="spot-conditional-acknowledgement"
+                                                        checked={conditionalAcknowledgementAccepted}
+                                                        onCheckedChange={(checked) => setConditionalAcknowledgementAccepted(checked === true)}
+                                                        className="mt-0.5"
+                                                    />
+                                                    <label
+                                                        htmlFor="spot-conditional-acknowledgement"
+                                                        className="text-sm font-medium leading-6 text-amber-950"
+                                                    >
+                                                        I acknowledge these SPOT rates are conditional until carrier and space are confirmed.
+                                                    </label>
+                                                </CardContent>
+                                            </Card>
+                                        )}
 
                                         {importWideChecks.length > 0 ? (
                                             <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-5 py-4">

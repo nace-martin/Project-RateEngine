@@ -626,6 +626,11 @@ export function SpotRateEntryForm({
                     >
                         {submitLabel || "Save & Proceed"}
                     </Button>
+                    {submitDisabledReason && (
+                        <div className="max-w-sm text-sm font-medium text-amber-800">
+                            {submitDisabledReason}
+                        </div>
+                    )}
                 </PageActionBar>
             </form>
             <SpotChargeLineManualReviewSheet
