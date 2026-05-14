@@ -22,11 +22,19 @@ interface QuoteFinancialBreakdownProps {
 }
 
 type LooseRecord = Record<string, unknown>;
+
+type RawQuoteLine = V3QuoteLine & Partial<SellLine> & {
+    margin_amount?: string | null;
+};
+
 type BreakdownLine = SellLine & { 
     sell_fcy_currency?: string;
     canonical_item?: CanonicalQuoteLineItem;
     raw_line?: RawQuoteLine;
+    subcategory?: string;
+    margin_amount?: string | null;
 };
+
 type BreakdownDataShape = {
     status?: string;
     quote_result?: CanonicalQuoteResult | null;
@@ -39,7 +47,6 @@ type BreakdownDataShape = {
     lines?: BreakdownLine[];
     totals?: LooseRecord;
 };
-type RawQuoteLine = V3QuoteLine & BreakdownLine;
 
 function toMoneyString(value: number): string {
     return value.toFixed(2);
@@ -85,6 +92,7 @@ function mapCanonicalLineItemToBreakdownLine(
         subcategory: item.subcategory,
         source: item.cost_source,
         is_informational: !item.included_in_total,
+        margin_amount: item.margin_amount,
         canonical_item: item,
         raw_line: rawLine,
     };
@@ -190,7 +198,7 @@ function findRawLine(rawLines: RawQuoteLine[], canonicalLine: CanonicalQuoteLine
 
 type WarningDetails = { text: string; level: 'critical' | 'info' };
 
-function lineWarnings(line: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): WarningDetails[] {
+function lineWarnings(line: CanonicalQuoteLineItem, rawLine?: Partial<V3QuoteLine>): WarningDetails[] {
     const warnings: WarningDetails[] = [];
     if (rawLine?.is_rate_missing) warnings.push({ text: "Missing buy rate", level: 'critical' });
     if (line.is_manual_override || rawLine?.is_manual_override) warnings.push({ text: "Manual override", level: 'info' });
@@ -198,7 +206,7 @@ function lineWarnings(line: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): War
     return warnings;
 }
 
-function sourceLabel(line: CanonicalQuoteLineItem, rawLine?: RawQuoteLine): string {
+function sourceLabel(line: CanonicalQuoteLineItem, rawLine?: Partial<V3QuoteLine>): string {
     if (line.is_spot_sourced || rawLine?.is_spot_sourced) return "SPOT";
     if (line.is_manual_override || rawLine?.is_manual_override) return "Manual entry";
     if (line.rate_source === "MANUAL_OVERRIDE") return "Manual entry";
@@ -395,7 +403,7 @@ function BucketSection({
     // Grouping logic within the bucket
     const groups: Record<string, BreakdownLine[]> = {};
     lines.forEach(line => {
-        const sub = line.canonical_item?.subcategory || (line as any).subcategory || 'Other Charges';
+        const sub = line.canonical_item?.subcategory || line.subcategory || 'Other Charges';
         if (!groups[sub]) groups[sub] = [];
         groups[sub].push(line);
     });
@@ -496,8 +504,6 @@ function ChargeCard({
     const desc = line.description;
     const code = canonicalItem?.product_code || line.component || "MISC";
     const status = canonicalItem ? sourceLabel(canonicalItem, rawLine) : "Unknown";
-    const marginAmount = canonicalItem?.margin_amount;
-    const marginPercent = canonicalItem?.margin_percent;
     const warnings = canonicalItem ? lineWarnings(canonicalItem, rawLine) : [];
     
     const hasWarnings = warnings.length > 0;
@@ -506,8 +512,8 @@ function ChargeCard({
     const buyAmountNum = Number(buyAmount || 0);
     const sellExGstNum = Number(sellExGst || 0);
     
-    let finalMarginAmount = canonicalItem?.margin_amount ?? rawLine?.margin_amount;
-    let finalMarginPercent = canonicalItem?.margin_percent ?? rawLine?.margin_percent;
+    let finalMarginAmount = line.margin_amount || rawLine?.margin_amount;
+    let finalMarginPercent = line.margin_percent || rawLine?.margin_percent;
     
     if (finalMarginAmount === undefined || finalMarginAmount === null) {
         finalMarginAmount = String(sellExGstNum - buyAmountNum);

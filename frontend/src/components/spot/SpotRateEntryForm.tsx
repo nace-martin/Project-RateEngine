@@ -16,7 +16,6 @@ import { Form } from "@/components/ui/form";
 
 import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion } from "@/lib/spot-types";
 import { spotFormSchema, type SpotFormInputValues, type SpotFormSubmitValues } from "@/lib/schemas/spotSchema";
-import { getSpotFinalizeFormDisabledReason } from "@/lib/spot-finalization";
 import { ChargeBucketSection } from "./ChargeBucketSection";
 import { SpotChargeLineManualReviewSheet } from "./SpotChargeLineManualReviewSheet";
 import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
@@ -470,6 +469,16 @@ export function SpotRateEntryForm({
         }
     };
 
+    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
+    const formDisabledReason = getSpotChargeFormDisabledReason({
+        charges: watchedFormCharges,
+        isFormValid: form.formState.isValid,
+    });
+    const effectiveSubmitDisabledReason = submitDisabledReason || formDisabledReason;
+    const editableChargeCount = fields.length;
+    const canSubmitEmpty = editableChargeCount === 0 && allowEmptySubmit && !submitDisabled;
+    const canSubmit = !effectiveSubmitDisabledReason && !isSubmitBusy && !submitDisabled;
+
     const handleEmptySubmitClick = () => {
         if (!canSubmitEmpty || !canSubmit || submitLockRef.current) return;
         void handleFormSubmit({ charges: [] });
@@ -616,15 +625,6 @@ export function SpotRateEntryForm({
     const getFieldsByBucket = (bucket: SPEChargeBucket) =>
         fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
 
-    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
-    const formDisabledReason = getSpotChargeFormDisabledReason({
-        charges: watchedFormCharges,
-        isFormValid: form.formState.isValid,
-    });
-    const effectiveSubmitDisabledReason = submitDisabledReason || formDisabledReason;
-    const editableChargeCount = fields.length;
-    const canSubmitEmpty = editableChargeCount === 0 && allowEmptySubmit && !submitDisabled;
-    const canSubmit = !effectiveSubmitDisabledReason && !isSubmitBusy && !submitDisabled;
     return (
         <Form {...form}>
             <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-8">
