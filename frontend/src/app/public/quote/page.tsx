@@ -1,18 +1,29 @@
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
+import { ArrowRight, CalendarDays, Globe2, Mail, MapPin, Phone, Plane, ReceiptText, ShieldCheck } from "lucide-react";
 import { API_BASE_URL } from "@/lib/config";
 import { formatIncoterm, formatPaymentTerm, formatServiceScope } from "@/lib/display";
+import { PublicQuoteActions } from "./PublicQuoteActions";
 
 type PublicQuoteLine = {
   description: string;
   source: string;
   sell: string;
   is_informational: boolean;
+  subcategory?: string;
+};
+
+type PublicQuoteGroup = {
+  name: string;
+  subtotal: string;
+  lines: PublicQuoteLine[];
 };
 
 type PublicQuoteBucket = {
   name: string;
   subtotal: string;
   lines: PublicQuoteLine[];
+  groups?: PublicQuoteGroup[];
 };
 
 type PublicQuoteResponse = {
@@ -34,6 +45,7 @@ type PublicQuoteResponse = {
   customer: {
     name: string;
     contact: string | null;
+    contact_id?: string | null;
   };
   shipment: {
     mode: string;
@@ -41,6 +53,7 @@ type PublicQuoteResponse = {
     service_scope: string | null;
     incoterm: string | null;
     payment_term: string | null;
+    chargeable_weight_kg?: string | null;
   };
   route: {
     origin_code: string;
@@ -74,6 +87,29 @@ const formatMoney = (currency: string, value: string | number | null) => {
   })}`;
 };
 
+const formatDate = (value: string | null) => {
+  if (!value) return "N/A";
+  return new Date(value).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+const formatWeight = (value: string | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  const amount = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(amount)) {
+    return `${value} kg`;
+  }
+  return `${amount.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })} kg`;
+};
+
 const withAlpha = (hex: string, alphaHex: string) => {
   const value = (hex || "").trim();
   if (!/^#[0-9A-Fa-f]{6}$/.test(value)) {
@@ -81,6 +117,14 @@ const withAlpha = (hex: string, alphaHex: string) => {
   }
   return `${value}${alphaHex}`;
 };
+
+const statusLabel = (status: string) =>
+  status
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const bucketLabel = (name: string) => (name === "Freight" ? "International Freight" : name);
 
 type PublicQuoteSearchParams = {
   token?: string | string[];
@@ -91,6 +135,31 @@ type PublicQuoteSearchParams = {
 type PublicQuotePageProps = {
   searchParams?: Promise<PublicQuoteSearchParams>;
 };
+
+function DetailItem({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs font-semibold text-slate-500">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold text-slate-950">{value || "N/A"}</div>
+    </div>
+  );
+}
+
+function ContactItem({
+  icon,
+  value,
+}: {
+  icon: ReactNode;
+  value: string | null | undefined;
+}) {
+  if (!value) return null;
+  return (
+    <div className="inline-flex items-center gap-2 text-sm text-slate-600">
+      <span className="text-slate-400">{icon}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
 
 export default async function PublicQuotePage({ searchParams }: PublicQuotePageProps) {
   const resolvedSearchParams = await searchParams;
@@ -128,11 +197,11 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
         ? detail.detail
         : "This shared link is invalid or has expired.";
     return (
-      <main className="min-h-screen bg-slate-50">
+      <main className="min-h-screen bg-slate-100">
         <div className="mx-auto max-w-3xl px-4 py-12">
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Quote Share</p>
-            <h1 className="mt-2 text-2xl font-semibold text-slate-900">Link unavailable</h1>
+          <div className="rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
+            <p className="text-sm font-semibold text-slate-500">Quote Share</p>
+            <h1 className="mt-2 text-2xl font-semibold text-slate-950">Link unavailable</h1>
             <p className="mt-3 text-sm text-slate-600">{message}</p>
           </div>
         </div>
@@ -145,193 +214,295 @@ export default async function PublicQuotePage({ searchParams }: PublicQuotePageP
   const showAirportReferences = ["A2D", "D2A", "A2A", "P2P"].includes(normalizedScope);
   const brandPrimary = data.branding.primary_color || "#0F2A56";
   const brandAccent = data.branding.accent_color || "#D71920";
-  const mutedBrandBackground = withAlpha(brandPrimary, "12");
-  const accentBackground = withAlpha(brandAccent, "12");
+  const primarySoft = withAlpha(brandPrimary, "10") || "#eef2ff";
+  const primaryBorder = withAlpha(brandPrimary, "24") || "#cbd5e1";
+  const accentSoft = withAlpha(brandAccent, "12") || "#fff1f2";
+  const accentBorder = withAlpha(brandAccent, "33") || "#fecaca";
+  const statusText = statusLabel(data.status);
+  const chargeLineCount = data.charge_buckets.reduce((total, bucket) => total + bucket.lines.length, 0);
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-4xl px-4 py-10 space-y-6">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Quote</p>
-              <div className="mt-2 flex items-center gap-3">
-                {data.branding.logo_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={data.branding.logo_url}
-                    alt={data.branding.display_name}
-                    className="h-10 w-auto object-contain"
-                  />
-                ) : (
-                  <div
-                    className="flex h-10 w-10 items-center justify-center rounded-xl text-sm font-bold text-white"
-                    style={{ backgroundColor: brandPrimary }}
-                  >
-                    {data.branding.display_name.slice(0, 1).toUpperCase()}
+    <main className="min-h-screen bg-[#f3f6fa] text-slate-950">
+      <div className="h-3" style={{ backgroundColor: brandPrimary }} />
+
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-5 sm:px-8">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-4">
+                  {data.branding.logo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={data.branding.logo_url}
+                      alt={data.branding.display_name}
+                      className="h-12 w-auto max-w-[220px] object-contain"
+                    />
+                  ) : (
+                    <div
+                      className="flex h-12 w-12 items-center justify-center rounded-md text-base font-bold text-white"
+                      style={{ backgroundColor: brandPrimary }}
+                    >
+                      {data.branding.display_name.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-base font-semibold text-slate-950">{data.branding.display_name}</div>
+                    {data.branding.public_quote_tagline ? (
+                      <div className="text-sm text-slate-500">{data.branding.public_quote_tagline}</div>
+                    ) : null}
                   </div>
-                )}
-                <div>
-                  <p className="text-sm font-semibold" style={{ color: brandPrimary }}>
-                    {data.branding.display_name}
-                  </p>
-                  <p className="text-xs text-slate-500">{data.branding.public_quote_tagline}</p>
                 </div>
-              </div>
-              <h1 className="mt-2 text-3xl font-semibold text-slate-900">{data.quote_number}</h1>
-              <p className="mt-2 text-sm text-slate-500">
-                Created {new Date(data.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
-              </p>
-              <p className="text-sm text-slate-500">
-                Valid until {data.valid_until ? new Date(data.valid_until).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "N/A"}
-              </p>
-            </div>
-            <div
-              className="rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
-              style={{
-                borderColor: withAlpha(brandAccent, "33") || "#fecaca",
-                backgroundColor: accentBackground || "#fff1f2",
-                color: brandAccent,
-              }}
-            >
-              {data.status}
-            </div>
-          </div>
-          <div
-            className="mt-6 grid gap-4 rounded-xl border p-4 md:grid-cols-2"
-            style={{
-              borderColor: withAlpha(brandPrimary, "1f") || "#e2e8f0",
-              backgroundColor: mutedBrandBackground || "#f8fafc",
-            }}
-          >
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Customer</p>
-              <p className="mt-1 text-base font-semibold text-slate-800">{data.customer.name}</p>
-              {data.customer.contact && (
-                <p className="text-sm text-slate-500">Contact: {data.customer.contact}</p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Shipment</p>
-              <p className="mt-1 text-base font-semibold text-slate-800">
-                {[data.shipment.mode, data.shipment.direction].filter(Boolean).join(" • ")}
-              </p>
-              <p className="text-sm text-slate-500">
-                Payment: {formatPaymentTerm(data.shipment.payment_term)}
-              </p>
-              <p className="text-sm text-slate-500">
-                Service Scope: {formatServiceScope(data.shipment.service_scope)}
-              </p>
-              {data.shipment.incoterm && (
-                <p className="text-sm text-slate-500">Incoterm: {formatIncoterm(data.shipment.incoterm)}</p>
-              )}
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-4 text-sm text-slate-500">
-            {data.branding.support_email && <span>Email: {data.branding.support_email}</span>}
-            {data.branding.support_phone && <span>Phone: {data.branding.support_phone}</span>}
-            {data.branding.website_url && <span>{data.branding.website_url}</span>}
-          </div>
-          {data.branding.address_lines.length > 0 && (
-            <p className="mt-2 text-sm text-slate-500">{data.branding.address_lines.join(", ")}</p>
-          )}
-        </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Route</p>
-          <div className="mt-4 flex flex-col items-center gap-4 text-center md:flex-row md:justify-between">
-            <div>
-              <p className="text-3xl font-semibold text-slate-900">{data.route.origin_code}</p>
-              {showAirportReferences && (
-                <p className="text-sm text-slate-500">{data.route.origin_name}</p>
-              )}
-            </div>
-            <div className="text-sm font-semibold uppercase tracking-[0.3em] text-rose-500">to</div>
-            <div>
-              <p className="text-3xl font-semibold text-slate-900">{data.route.destination_code}</p>
-              {showAirportReferences && (
-                <p className="text-sm text-slate-500">{data.route.destination_name}</p>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Totals</p>
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Excl. GST</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {formatMoney(data.currency, data.totals.sell_excl_gst)}
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">GST (10%)</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {formatMoney(data.currency, data.totals.gst)}
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Grand Total</p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {formatMoney(data.currency, data.totals.sell_incl_gst)}
-              </p>
-            </div>
-          </div>
-          {data.totals.fcy && data.totals.fcy_currency && data.totals.fcy_amount && (
-            <p className="mt-3 text-sm text-slate-500">
-              Equivalent: {formatMoney(data.totals.fcy_currency, data.totals.fcy_amount)}
-            </p>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-              {summaryOnly ? "Pricing Summary" : "Charge Breakdown"}
-            </p>
-            <p className="text-xs text-slate-400">Link valid for 7 days</p>
-          </div>
-          <div className="mt-4 space-y-4">
-            {data.charge_buckets.map((bucket) => (
-              <div key={bucket.name} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                  <span className="text-sm font-semibold text-slate-900">{bucket.name}</span>
-                  <span className="text-sm font-semibold text-slate-700">
-                    {formatMoney(data.currency, bucket.subtotal)}
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-semibold text-slate-950 sm:text-4xl">{data.quote_number}</h1>
+                  <span
+                    className="inline-flex h-8 items-center rounded-full border px-3 text-xs font-semibold"
+                    style={{ borderColor: accentBorder, backgroundColor: accentSoft, color: brandAccent }}
+                  >
+                    {statusText}
                   </span>
                 </div>
-                {!summaryOnly && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm text-slate-600">
-                      <thead className="text-xs uppercase tracking-wide text-slate-400">
-                        <tr>
-                          <th className="pb-2">Description</th>
-                          <th className="pb-2 text-right">Amount ({data.currency})</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {bucket.lines.map((line, index) => (
-                          <tr key={`${bucket.name}-${index}`} className={line.is_informational ? "text-slate-400" : ""}>
-                            <td className="py-2 pr-4">{line.description}</td>
-                            <td className="py-2 text-right">{formatMoney(data.currency, line.sell)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+
+                <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate-600">
+                  <span className="inline-flex items-center gap-2">
+                    <CalendarDays className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                    Created {formatDate(data.created_at)}
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                    Valid until {formatDate(data.valid_until)}
+                  </span>
+                </div>
               </div>
-            ))}
-            {data.charge_buckets.length === 0 && (
-              <p className="text-sm text-slate-500">No charge lines available.</p>
-            )}
+
+              <div className="w-full rounded-lg border border-slate-200 bg-slate-50 p-5 lg:w-[340px]">
+                <div className="text-sm font-semibold text-slate-600">Grand Total</div>
+                <div className="mt-2 text-3xl font-semibold text-slate-950">
+                  {formatMoney(data.currency, data.totals.sell_incl_gst)}
+                </div>
+                <div className="mt-2 text-sm text-slate-500">
+                  Includes GST of {formatMoney(data.currency, data.totals.gst)}
+                </div>
+                <div className="mt-5">
+                  <PublicQuoteActions
+                    quoteNumber={data.quote_number}
+                    supportEmail={data.branding.support_email}
+                    brandPrimary={brandPrimary}
+                    brandAccent={brandAccent}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
+
+          <div className="grid border-b border-slate-200 lg:grid-cols-[1.15fr_0.85fr]">
+            <section className="border-b border-slate-200 px-5 py-6 sm:px-8 lg:border-b-0 lg:border-r">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <MapPin className="h-4 w-4" style={{ color: brandAccent }} aria-hidden="true" />
+                Route
+              </div>
+              <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+                <div>
+                  <div className="text-4xl font-semibold text-slate-950 sm:text-5xl">{data.route.origin_code}</div>
+                  <div className="mt-2 text-sm text-slate-600">{showAirportReferences ? data.route.origin_name : "Origin"}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="hidden h-px w-16 bg-slate-300 sm:block" />
+                  <span
+                    className="flex h-10 w-10 items-center justify-center rounded-full border bg-white"
+                    style={{ borderColor: primaryBorder }}
+                  >
+                    <Plane className="h-4 w-4" style={{ color: brandPrimary }} aria-hidden="true" />
+                  </span>
+                  <ArrowRight className="hidden h-4 w-4 text-slate-400 sm:block" aria-hidden="true" />
+                </div>
+                <div className="text-right">
+                  <div className="text-4xl font-semibold text-slate-950 sm:text-5xl">{data.route.destination_code}</div>
+                  <div className="mt-2 text-sm text-slate-600">{showAirportReferences ? data.route.destination_name : "Destination"}</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="px-5 py-6 sm:px-8">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <ReceiptText className="h-4 w-4" style={{ color: brandAccent }} aria-hidden="true" />
+                Quote Details
+              </div>
+              <div className="mt-5 grid grid-cols-2 gap-5">
+                <DetailItem label="Customer" value={data.customer.name} />
+                <DetailItem label="Contact" value={data.customer.contact} />
+                <DetailItem label="Mode" value={data.shipment.mode} />
+                <DetailItem label="Direction" value={data.shipment.direction} />
+                <DetailItem label="Charge Weight" value={formatWeight(data.shipment.chargeable_weight_kg)} />
+                <DetailItem label="Payment" value={formatPaymentTerm(data.shipment.payment_term)} />
+                <DetailItem label="Service Scope" value={formatServiceScope(data.shipment.service_scope)} />
+                <DetailItem label="Incoterm" value={data.shipment.incoterm ? formatIncoterm(data.shipment.incoterm) : "N/A"} />
+              </div>
+            </section>
+          </div>
+
+          <section className="border-b border-slate-200 px-5 py-6 sm:px-8">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950">Totals</h2>
+                <p className="mt-1 text-sm text-slate-500">{chargeLineCount} charge lines across {data.charge_buckets.length} categories</p>
+              </div>
+              {data.totals.fcy && data.totals.fcy_currency && data.totals.fcy_amount ? (
+                <div className="text-sm text-slate-500">
+                  Equivalent: <span className="font-semibold text-slate-800">{formatMoney(data.totals.fcy_currency, data.totals.fcy_amount)}</span>
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-500">Total Excl. GST</div>
+                <div className="mt-2 text-xl font-semibold text-slate-950">{formatMoney(data.currency, data.totals.sell_excl_gst)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-500">GST</div>
+                <div className="mt-2 text-xl font-semibold text-slate-950">{formatMoney(data.currency, data.totals.gst)}</div>
+              </div>
+              <div className="rounded-lg border p-4" style={{ borderColor: primaryBorder, backgroundColor: primarySoft }}>
+                <div className="text-sm font-semibold" style={{ color: brandPrimary }}>Amount Payable</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-950">{formatMoney(data.currency, data.totals.sell_incl_gst)}</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="px-5 py-6 sm:px-8">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-950">
+                  {summaryOnly ? "Pricing Summary" : "Charge Breakdown"}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">Amounts are shown in {data.currency}</p>
+              </div>
+              <div className="text-sm text-slate-500">Shared quote link valid for 7 days</div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {data.charge_buckets.map((bucket) => {
+                const groups = bucket.groups && bucket.groups.length > 0
+                  ? bucket.groups
+                  : [{ name: "Other Charges", subtotal: bucket.subtotal, lines: bucket.lines }];
+
+                return (
+                  <div
+                    key={bucket.name}
+                    className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+                  >
+                    {/* ── Level 1: Main Bucket Header ── */}
+                    <div
+                      className="flex flex-col gap-2 border-l-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                      style={{ borderLeftColor: brandPrimary, backgroundColor: withAlpha(brandPrimary, "08") || "#f8fafc" }}
+                    >
+                      <div>
+                        <h3 className="text-base font-bold tracking-tight text-slate-950">
+                          {bucketLabel(bucket.name)}
+                        </h3>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {bucket.lines.length} line{bucket.lines.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                          Subtotal
+                        </div>
+                        <div className="mt-0.5 text-xl font-bold text-slate-950">
+                          {formatMoney(data.currency, bucket.subtotal)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {!summaryOnly ? (
+                      <div>
+                        {/* Single table header per bucket */}
+                        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-5 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                          <span className="pl-4">Description</span>
+                          <span>Amount</span>
+                        </div>
+
+                        {groups.map((group, groupIndex) => (
+                          <div
+                            key={`${bucket.name}-${group.name}`}
+                            className={groupIndex > 0 ? "mt-0" : ""}
+                          >
+                            {/* ── Level 2: Sub-Category Header ── */}
+                            <div
+                              className={`flex items-center justify-between border-l-2 border-slate-300 px-5 py-2.5 ${groupIndex > 0 ? "border-t border-t-slate-100" : ""}`}
+                              style={{ backgroundColor: "#f8fafc" }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-[13px] font-semibold text-slate-700">
+                                  {group.name}
+                                </span>
+                                <span className="text-[11px] text-slate-400">
+                                  ({group.lines.length})
+                                </span>
+                              </div>
+                              <span className="text-[13px] font-semibold text-slate-700">
+                                {formatMoney(data.currency, group.subtotal)}
+                              </span>
+                            </div>
+
+                            {/* ── Level 3: Charge Lines ── */}
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[560px] text-left text-sm">
+                                <tbody>
+                                  {group.lines.map((line, index) => (
+                                    <tr
+                                      key={`${bucket.name}-${group.name}-${index}`}
+                                      className={`border-b border-slate-50 last:border-b-0 ${line.is_informational ? "bg-slate-50/50 text-slate-400" : "text-slate-600"}`}
+                                    >
+                                      <td className="py-2.5 pl-9 pr-4">
+                                        <span className={`text-[13px] ${line.is_informational ? "text-slate-400" : "font-medium text-slate-700"}`}>
+                                          {line.description}
+                                        </span>
+                                        {line.is_informational ? (
+                                          <span className="ml-2 inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                                            Not included in subtotal
+                                          </span>
+                                        ) : null}
+                                      </td>
+                                      <td className="whitespace-nowrap px-5 py-2.5 text-right text-[13px] font-medium text-slate-600">
+                                        {formatMoney(data.currency, line.sell)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {data.charge_buckets.length === 0 ? (
+                <div className="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  No charge lines available.
+                </div>
+              ) : null}
+            </div>
+          </section>
+
+          <footer className="border-t border-slate-200 bg-slate-50 px-5 py-5 sm:px-8">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                <ContactItem icon={<Mail className="h-4 w-4" aria-hidden="true" />} value={data.branding.support_email} />
+                <ContactItem icon={<Phone className="h-4 w-4" aria-hidden="true" />} value={data.branding.support_phone} />
+                <ContactItem icon={<Globe2 className="h-4 w-4" aria-hidden="true" />} value={data.branding.website_url} />
+              </div>
+              <div className="text-sm text-slate-500">
+                {data.branding.address_lines.length > 0 ? data.branding.address_lines.join(", ") : "Powered by RateEngine"}
+              </div>
+            </div>
+          </footer>
         </section>
 
-        <p className="text-center text-xs text-slate-400">
-          Powered by RateEngine
-        </p>
+        <div className="pb-4 text-center text-xs text-slate-500">Powered by RateEngine</div>
       </div>
     </main>
   );

@@ -401,6 +401,8 @@ export function useSpotMode() {
             service_scope: string;
             output_currency: string;
             customer_id?: string;
+            contact_id?: string;
+            incoterm?: string;
         }
     ): Promise<{ success: boolean; quote_id: string } | null> => {
         if (!state.spe) return null;

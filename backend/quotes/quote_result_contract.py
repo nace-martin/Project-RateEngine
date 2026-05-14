@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable, Optional
 
@@ -13,7 +15,10 @@ from core.charge_rules import (
     CALCULATION_TIERED_BREAK,
 )
 from core.commodity import DEFAULT_COMMODITY_CODE, commodity_label
-from quotes.buckets import resolve_quote_line_leg
+from quotes.buckets import (
+    classify_quote_line_public_subcategory,
+    resolve_quote_line_leg,
+)
 from quotes.completeness import (
     COMPONENT_DESTINATION_LOCAL,
     COMPONENT_FREIGHT,
@@ -598,23 +603,199 @@ def build_tax_breakdown_payload(lines: Iterable[Any], totals: Any, display_curre
     }
 
 
-def build_fx_applied_payload(version: Any, lines: Iterable[Any], display_currency: str) -> dict[str, Any]:
+def build_fx_applied_payload(
+    version: Any,
+    lines: Iterable[Any],
+    display_currency: str,
+    totals: Any = None,
+) -> dict[str, Any]:
     line_list = list(lines or [])
     fx_rate = None
+    fx_currency = None
     for line in line_list:
         exchange_rate = decimal_or_none(getattr(line, "exchange_rate", None))
-        line_currency = str(getattr(line, "sell_fcy_currency", None) or getattr(line, "cost_fcy_currency", None) or "").upper()
-        if exchange_rate is not None and line_currency and line_currency != "PGK":
+        sell_currency = str(getattr(line, "sell_fcy_currency", None) or "").upper()
+        cost_currency = str(getattr(line, "cost_fcy_currency", None) or "").upper()
+        # FX can be required even when the SELL currency is PGK (e.g. FCY buy cost -> PGK sell).
+        # Prefer the non-PGK currency involved in the conversion when present.
+        non_pgk_currency = None
+        for candidate in (cost_currency, sell_currency):
+            if candidate and candidate != "PGK":
+                non_pgk_currency = candidate
+                break
+        if exchange_rate is not None and non_pgk_currency:
             fx_rate = exchange_rate
+            fx_currency = non_pgk_currency
             break
 
     fx_snapshot = getattr(version, "fx_snapshot", None)
+    persisted_audit = getattr(totals, "audit_metadata_json", {}) if totals else {}
+    fx_audit = persisted_audit.get("fx_audit") if isinstance(persisted_audit, dict) else None
+
+    # Prefer calculation-time persisted FX audit metadata (adapter/engine inputs).
+    base_rate = None
+    base_rate_type = None
+    direction = None
+    from_currency = None
+    to_currency = None
+    caf_operation = None
+    effective_fx_after_caf = None
+    defaults_used = []
+    if isinstance(fx_audit, dict):
+        base_rate = decimal_or_none(fx_audit.get("base_rate"))
+        base_rate_type = fx_audit.get("base_rate_type")
+        direction = fx_audit.get("direction")
+        from_currency = fx_audit.get("from_currency")
+        to_currency = fx_audit.get("to_currency")
+        caf_operation = fx_audit.get("caf_operation")
+        effective_fx_after_caf = decimal_or_none(fx_audit.get("effective_rate_after_caf"))
+        defaults_used = fx_audit.get("defaults_used") if isinstance(fx_audit.get("defaults_used"), list) else []
+
+    # Legacy fallback: derive FX/CAF from stored Policy + FxSnapshot.
+    derived_caf_percent = None
+    policy = getattr(version, "policy", None)
+    shipment_type = str(getattr(getattr(version, "quote", None), "shipment_type", "") or "").upper()
+    payment_term = str(getattr(getattr(version, "quote", None), "payment_term", "") or "").upper()
+    if policy is not None:
+        if shipment_type == "EXPORT":
+            derived_caf_percent = decimal_or_none(getattr(policy, "caf_export_pct", None))
+        elif shipment_type == "IMPORT":
+            derived_caf_percent = decimal_or_none(getattr(policy, "caf_import_pct", None))
+
+    caf_percent_value = None
+    if isinstance(fx_audit, dict):
+        caf_percent_value = decimal_or_none(fx_audit.get("caf_percent"))
+    if caf_percent_value is None:
+        caf_percent_value = derived_caf_percent
+    if caf_percent_value is None:
+        caf_percent_value = decimal_or_none(getattr(fx_snapshot, "caf_percent", None))
+
+    derived_from_currency = None
+    derived_base_rate_type = None
+    derived_base_rate = None
+    derived_caf_operation = None
+    derived_effective_rate = None
+
+    if base_rate is None and fx_snapshot is not None:
+        # Choose the non-PGK currency involved in conversion-to-PGK audit.
+        if str(display_currency or "").upper() != "PGK":
+            derived_from_currency = str(display_currency or "").upper()
+        else:
+            # Prefer any persisted line-level FCY currency when present (covers legacy quotes
+            # where request payload did not include buy_currency).
+            if not derived_from_currency:
+                for line in line_list:
+                    for candidate in (
+                        getattr(line, "cost_fcy_currency", None),
+                        getattr(line, "sell_fcy_currency", None),
+                    ):
+                        curr = str(candidate or "").upper()
+                        if curr and curr != "PGK":
+                            derived_from_currency = curr
+                            break
+                    if derived_from_currency:
+                        break
+
+            payload_json = getattr(version, "payload_json", {}) or {}
+            if isinstance(payload_json, dict):
+                derived_from_currency = str(payload_json.get("buy_currency") or "").upper() or None
+
+        rates = getattr(fx_snapshot, "rates", None) or {}
+        if isinstance(rates, str):
+            try:
+                rates = json.loads(rates)
+            except Exception:
+                rates = {}
+        if derived_from_currency and derived_from_currency != "PGK" and isinstance(rates, dict):
+            info = rates.get(derived_from_currency, {}) or {}
+            if shipment_type == "IMPORT" and (payment_term == "COLLECT" or str(display_currency or "").upper() == "PGK"):
+                derived_base_rate_type = "TT_BUY"
+                derived_base_rate = decimal_or_none(info.get("tt_buy"))
+                derived_caf_operation = "DEDUCTED"
+                if derived_base_rate is not None and derived_caf_percent is not None:
+                    derived_effective_rate = derived_base_rate * (Decimal("1") - derived_caf_percent)
+            else:
+                derived_base_rate_type = "TT_SELL"
+                derived_base_rate = decimal_or_none(info.get("tt_sell"))
+                if shipment_type == "EXPORT":
+                    derived_caf_operation = "ADDED"
+                    if derived_base_rate is not None and derived_caf_percent is not None:
+                        derived_effective_rate = derived_base_rate * (Decimal("1") + derived_caf_percent)
+                else:
+                    derived_caf_operation = "DEDUCTED"
+                    if derived_base_rate is not None and derived_caf_percent is not None:
+                        derived_effective_rate = derived_base_rate * (Decimal("1") - derived_caf_percent)
+
+        if direction is None and derived_from_currency and derived_from_currency != "PGK":
+            direction = f"{derived_from_currency} -> PGK"
+        if from_currency is None:
+            from_currency = derived_from_currency
+        if to_currency is None and derived_from_currency:
+            to_currency = "PGK"
+        if base_rate_type is None:
+            base_rate_type = derived_base_rate_type
+        if base_rate is None:
+            base_rate = derived_base_rate
+        if caf_operation is None:
+            caf_operation = derived_caf_operation
+        if effective_fx_after_caf is None:
+            effective_fx_after_caf = derived_effective_rate
+
+    # If we detected a line-level FX rate but don't have a richer record yet, fill the gaps
+    # from the stored quote context so legacy/older versions remain traceable.
+    if fx_rate is not None:
+        shipment_type = str(getattr(getattr(version, "quote", None), "shipment_type", "") or "").upper()
+        payment_term = str(getattr(getattr(version, "quote", None), "payment_term", "") or "").upper()
+        if base_rate is None:
+            base_rate = fx_rate
+        if from_currency is None and fx_currency:
+            from_currency = fx_currency
+        if to_currency is None and fx_currency:
+            to_currency = "PGK"
+        if direction is None and from_currency and to_currency:
+            direction = f"{from_currency} -> {to_currency}"
+        if base_rate_type is None:
+            if shipment_type == "IMPORT":
+                base_rate_type = "TT_BUY" if payment_term == "COLLECT" else "TT_SELL"
+            elif shipment_type == "EXPORT":
+                base_rate_type = "TT_SELL"
+        if caf_operation is None:
+            if shipment_type == "EXPORT":
+                caf_operation = "ADDED"
+            elif shipment_type == "IMPORT":
+                caf_operation = "DEDUCTED"
+        if effective_fx_after_caf is None and base_rate is not None and caf_percent_value is not None:
+            if str(caf_operation or "").upper() == "ADDED":
+                effective_fx_after_caf = base_rate * (Decimal("1") + caf_percent_value)
+            elif str(caf_operation or "").upper() == "DEDUCTED":
+                effective_fx_after_caf = base_rate * (Decimal("1") - caf_percent_value)
+
+    fx_fallbacks = persisted_audit.get("fx_fallbacks") if isinstance(persisted_audit, dict) else None
+    applied_flag = fx_rate is not None
+    if isinstance(fx_audit, dict) and bool(fx_audit.get("applied")):
+        applied_flag = True
+    if not applied_flag and (base_rate is not None and (direction or (from_currency and to_currency))):
+        applied_flag = True
+
+    rate_value = fx_rate
+    if rate_value is None:
+        rate_value = base_rate
+
     return {
-        "applied": fx_rate is not None,
-        "rate": fx_rate,
+        "applied": applied_flag,
+        "rate": rate_value,
+        "base_rate": base_rate,
+        "base_rate_type": base_rate_type,
+        "direction": direction,
+        "from_currency": from_currency,
+        "to_currency": to_currency,
+        "caf_operation": caf_operation,
+        "effective_fx_after_caf": effective_fx_after_caf,
+        "fx_fallbacks": fx_fallbacks if isinstance(fx_fallbacks, list) else [],
+        "fx_defaults_used": defaults_used,
         "source": getattr(fx_snapshot, "source", None),
         "snapshot_date": getattr(fx_snapshot, "as_of_timestamp", None),
-        "caf_percent": decimal_or_none(getattr(fx_snapshot, "caf_percent", None)),
+        "caf_percent": caf_percent_value,
         "currency": display_currency,
     }
 
@@ -667,6 +848,19 @@ def line_item_from_quote_line(
     else:
         sell_amount = decimal_or_zero(getattr(line, "sell_fcy", None))
 
+    buy_currency = str(getattr(line, "cost_fcy_currency", None) or "PGK").upper()
+    fx_applied = buy_currency != "PGK" or customer_currency != "PGK"
+
+    cost_amount_pgk = decimal_or_zero(getattr(line, "cost_pgk", None))
+    sell_amount_pgk = decimal_or_zero(getattr(line, "sell_pgk", None))
+    margin_amount_pgk = sell_amount_pgk - cost_amount_pgk
+    margin_percent = ZERO_DECIMAL
+    if sell_amount_pgk > ZERO_DECIMAL:
+        margin_percent = ((margin_amount_pgk / sell_amount_pgk) * Decimal("100")).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+
     tax_amount = display_tax_amount(line, customer_currency)
     notes = _dedupe(
         [
@@ -718,8 +912,10 @@ def line_item_from_quote_line(
             quantity=quantity,
             sell_amount=sell_amount,
         ),
-        "cost_amount": decimal_or_zero(getattr(line, "cost_pgk", None)),
+        "cost_amount": cost_amount_pgk,
         "sell_amount": sell_amount,
+        "margin_amount": margin_amount_pgk,
+        "margin_percent": margin_percent,
         "tax_code": getattr(line, "gst_category", None) or getattr(service_component, "tax_code", None) or "GST",
         "tax_amount": tax_amount,
         "included_in_total": included_in_total,
@@ -728,6 +924,8 @@ def line_item_from_quote_line(
         "calculation_notes": calculation_notes,
         "is_spot_sourced": is_spot_sourced,
         "is_manual_override": is_manual_override,
+        "fx_applied": fx_applied,
+        "subcategory": classify_quote_line_public_subcategory(line),
         "sort_order": sort_order,
     }
 
@@ -809,7 +1007,7 @@ def build_quote_result_from_quote(quote: Any, version: Any = None) -> dict[str, 
         "total_sell_pgk": decimal_or_zero(getattr(totals, "total_sell_pgk", None)),
         "margin_amount": decimal_or_zero(getattr(totals, "gross_profit", None)),
         "margin_percent": decimal_or_zero(getattr(totals, "margin_percent", None)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
-        "fx_applied": build_fx_applied_payload(active_version, lines, display_currency),
+        "fx_applied": build_fx_applied_payload(active_version, lines, display_currency, totals),
         "tax_breakdown": build_tax_breakdown_payload(lines, totals, display_currency),
         "warnings": _dedupe(warnings),
         "missing_components": coverage.missing_required,

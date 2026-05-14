@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { CrmSubNav } from '@/components/crm/CrmSubNav';
+import { InteractionLogSheet } from '@/components/crm/InteractionLogSheet';
 import { TaskDialog } from '@/components/crm/TaskDialog';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import ProtectedRoute from '@/components/protected-route';
@@ -115,6 +116,7 @@ export default function CrmActivitiesPage() {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [completingTaskIds, setCompletingTaskIds] = useState<Set<string>>(() => new Set());
@@ -277,9 +279,14 @@ export default function CrmActivitiesPage() {
           title="Activities"
           description="Manage CRM follow-up tasks and recent customer activity."
           actions={
-            <Button type="button" onClick={openCreateDialog}>
-              Create Task
-            </Button>
+            <>
+              <Button type="button" variant="outline" onClick={() => setQuickLogOpen(true)}>
+                Log Activity
+              </Button>
+              <Button type="button" onClick={openCreateDialog}>
+                Create Task
+              </Button>
+            </>
           }
         />
 
@@ -529,6 +536,15 @@ export default function CrmActivitiesPage() {
           }}
           onSaved={() => {
             void loadData();
+          }}
+        />
+        <InteractionLogSheet
+          open={quickLogOpen}
+          onOpenChange={(nextOpen) => {
+            setQuickLogOpen(nextOpen);
+            if (!nextOpen) {
+              void loadData();
+            }
           }}
         />
       </StandardPageContainer>

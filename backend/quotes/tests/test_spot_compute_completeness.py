@@ -11,7 +11,7 @@ from core.dataclasses import CalculatedChargeLine, CalculatedTotals, QuoteCharge
 from core.models import Currency, Country, Location
 from core.tests.helpers import create_location
 from crm.models import Interaction, Opportunity
-from parties.models import Company
+from parties.models import Company, Contact
 from pricing_v4.adapter import PricingServiceV4Adapter, PricingMode
 from quotes.models import Quote
 from quotes.spot_models import SpotPricingEnvelopeDB, SPEAcknowledgementDB, SPEChargeLineDB, SPESourceBatchDB
@@ -293,6 +293,109 @@ def test_spot_create_quote_uses_export_prepaid_pgk_output_currency(monkeypatch):
     assert quote.output_currency == "PGK"
 
 
+def test_spot_create_quote_persists_selected_contact_and_incoterm(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+    )
+
+    def fake_calculate(self):
+        self.pricing_mode = PricingMode.SPOT
+        return _quote_charges_for_buckets(["origin_charges", "airfreight", "destination_charges"])
+
+    monkeypatch.setattr(PricingServiceV4Adapter, "calculate_charges", fake_calculate)
+
+    customer = Company.objects.create(
+        name="Spot Detail Customer",
+        is_customer=True,
+        company_type="CUSTOMER",
+    )
+    contact = Contact.objects.create(
+        company=customer,
+        first_name="Chris",
+        last_name="Im",
+        email="chris@example.com",
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {
+            "quote_request": {
+                "service_scope": "D2D",
+                "payment_term": "COLLECT",
+                "output_currency": "PGK",
+                "customer_id": str(customer.id),
+                "contact_id": str(contact.id),
+                "incoterm": "EXW",
+            }
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    quote = Quote.objects.get(id=response.json()["quote_id"])
+    version = quote.versions.get(version_number=1)
+
+    assert quote.customer_id == customer.id
+    assert quote.contact_id == contact.id
+    assert quote.incoterm == "EXW"
+    assert quote.payment_term == "COLLECT"
+    assert quote.service_scope == "D2D"
+    assert quote.request_details_json["contact_id"] == str(contact.id)
+    assert quote.request_details_json["incoterm"] == "EXW"
+    assert version.payload_json["contact_id"] == str(contact.id)
+    assert version.payload_json["incoterm"] == "EXW"
+
+
+def test_spot_create_quote_rejects_contact_from_another_customer(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+    )
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["origin_charges", "airfreight", "destination_charges"]),
+    )
+
+    customer = Company.objects.create(name="Spot Customer", is_customer=True, company_type="CUSTOMER")
+    other_customer = Company.objects.create(name="Other Customer", is_customer=True, company_type="CUSTOMER")
+    other_contact = Contact.objects.create(company=other_customer, first_name="Wrong", last_name="Contact")
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {
+            "quote_request": {
+                "service_scope": "D2D",
+                "payment_term": "COLLECT",
+                "customer_id": str(customer.id),
+                "contact_id": str(other_contact.id),
+                "incoterm": "EXW",
+            }
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "Selected contact does not belong to the selected customer."
+
+
 def test_spot_create_quote_auto_creates_and_links_opportunity(monkeypatch):
     user, origin, destination = _setup_user_and_locations()
     spe = _create_ready_spe(
@@ -570,6 +673,69 @@ def test_spot_create_quote_blocks_risky_source_batch_until_reviewed(monkeypatch)
 
     assert response.status_code == 400
     assert response.json()["intake_safety"]["is_safe_to_quote"] is False
+
+
+def test_spot_create_quote_allows_low_confidence_source_warning(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_ready_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="A2D",
+    )
+    SPESourceBatchDB.objects.create(
+        envelope=spe,
+        source_kind=SPESourceBatchDB.SourceKind.AGENT,
+        source_type=SPESourceBatchDB.SourceType.TEXT,
+        target_bucket=SPESourceBatchDB.TargetBucket.DESTINATION_CHARGES,
+        label="Uploaded rates",
+        source_reference="Uploaded rates",
+        raw_text="Destination fee USD 75",
+        analysis_summary_json={
+            "can_proceed": True,
+            "ai_used": True,
+            "imported_charge_count": 1,
+            "low_confidence_line_count": 1,
+        },
+        created_by=user,
+    )
+    SPEChargeLineDB.objects.create(
+        envelope=spe,
+        code="DESTINATION_LOCAL",
+        description="Destination fee",
+        amount=Decimal("75.00"),
+        currency="USD",
+        unit="flat",
+        bucket="destination_charges",
+        source_reference="Uploaded rates",
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        normalization_method=SPEChargeLineDB.NormalizationMethod.EXACT_ALIAS,
+        entered_at=timezone.now(),
+    )
+    monkeypatch.setattr(
+        PricingServiceV4Adapter,
+        "calculate_charges",
+        lambda self: _quote_charges_for_buckets(["destination_charges"]),
+    )
+    customer = Company.objects.create(name="Low Confidence Customer", is_customer=True, company_type="CUSTOMER")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    detail_response = client.get(f"/api/v3/spot/envelopes/{spe.id}/")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["intake_safety"]["is_safe_to_quote"] is True
+    assert detail_response.json()["sources"][0]["review_status"] == "NOT_REQUIRED"
+
+    response = client.post(
+        f"/api/v3/spot/envelopes/{spe.id}/create-quote/",
+        {"quote_request": {"service_scope": "A2D", "payment_term": "PREPAID", "customer_id": str(customer.id)}},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
 
 
 def test_spot_create_quote_blocks_unacknowledged_conditional_matched_line(monkeypatch):
