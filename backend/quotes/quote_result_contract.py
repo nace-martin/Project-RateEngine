@@ -15,7 +15,10 @@ from core.charge_rules import (
     CALCULATION_TIERED_BREAK,
 )
 from core.commodity import DEFAULT_COMMODITY_CODE, commodity_label
-from quotes.buckets import resolve_quote_line_leg
+from quotes.buckets import (
+    classify_quote_line_public_subcategory,
+    resolve_quote_line_leg,
+)
 from quotes.completeness import (
     COMPONENT_DESTINATION_LOCAL,
     COMPONENT_FREIGHT,
@@ -922,6 +925,7 @@ def line_item_from_quote_line(
         "is_spot_sourced": is_spot_sourced,
         "is_manual_override": is_manual_override,
         "fx_applied": fx_applied,
+        "subcategory": classify_quote_line_public_subcategory(line),
         "sort_order": sort_order,
     }
 

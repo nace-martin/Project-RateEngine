@@ -80,8 +80,9 @@ function mapCanonicalLineItemToBreakdownLine(
         sell_fcy_incl_gst: currency !== "PGK" ? toMoneyString(sellInclTax) : toMoneyString(sellInclTax),
         sell_currency: currency,
         sell_fcy_currency: currency !== "PGK" ? currency : undefined,
-        margin_percent: "0",
-        exchange_rate: "0",
+        margin_percent: item.margin_percent,
+        exchange_rate: item.rate || "0",
+        subcategory: item.subcategory,
         source: item.cost_source,
         is_informational: !item.included_in_total,
         canonical_item: item,
@@ -358,6 +359,17 @@ function getSectionStyle() {
     };
 }
 
+const SUBCATEGORY_ORDER = [
+    "Customs / Regulatory",
+    "Documentation",
+    "Local Transport / Cartage",
+    "Handling / Terminal",
+    "Freight / Carrier",
+    "Carrier Surcharges",
+    "Service / Agency Fees",
+    "Other Charges",
+];
+
 function BucketSection({
     title,
     lines,
@@ -379,6 +391,22 @@ function BucketSection({
     const bucketTotal = isShowingFCY
         ? calculateBucketTotal(lines, 'sell_fcy')
         : calculateBucketTotal(lines, 'sell_pgk');
+
+    // Grouping logic within the bucket
+    const groups: Record<string, BreakdownLine[]> = {};
+    lines.forEach(line => {
+        const sub = line.canonical_item?.subcategory || (line as any).subcategory || 'Other Charges';
+        if (!groups[sub]) groups[sub] = [];
+        groups[sub].push(line);
+    });
+
+    const sortedGroups = Object.keys(groups).sort((a, b) => {
+        const orderA = SUBCATEGORY_ORDER.indexOf(a);
+        const orderB = SUBCATEGORY_ORDER.indexOf(b);
+        const finalA = orderA === -1 ? 999 : orderA;
+        const finalB = orderB === -1 ? 999 : orderB;
+        return finalA - finalB;
+    });
 
     return (
         <div className={styles.wrapper}>
@@ -418,15 +446,24 @@ function BucketSection({
             </button>
 
             {isExpanded && (
-                <div className="p-4 bg-slate-50/30 flex flex-col gap-2">
-                    {lines.map((line, index) => (
-                        <ChargeCard
-                            key={index}
-                            line={line}
-                            displayCurrency={displayCurrency}
-                            isShowingFCY={isShowingFCY}
-                            globalFx={globalFx}
-                        />
+                <div className="p-4 bg-slate-50/30 flex flex-col gap-6">
+                    {sortedGroups.map(groupName => (
+                        <div key={groupName} className="space-y-3">
+                            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pl-1">
+                                {groupName}
+                            </h4>
+                            <div className="flex flex-col gap-2">
+                                {groups[groupName].map((line, index) => (
+                                    <ChargeCard
+                                        key={index}
+                                        line={line}
+                                        displayCurrency={displayCurrency}
+                                        isShowingFCY={isShowingFCY}
+                                        globalFx={globalFx}
+                                    />
+                                ))}
+                            </div>
+                        </div>
                     ))}
                 </div>
             )}

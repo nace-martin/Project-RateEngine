@@ -937,7 +937,7 @@ export default function SpotRateEntryPage() {
                 spe = updatedSpe;
             }
 
-            if (!spe.acknowledgement && spe.status !== "ready") {
+            if (!spe.acknowledgement) {
                 const success = await actions.submitAcknowledgement();
                 if (!success) {
                     return;
@@ -1253,6 +1253,10 @@ export default function SpotRateEntryPage() {
                     sourceLabel="Uploaded rates"
                     onAnalysisComplete={(result) => handleAnalysisComplete(result, "mixed")}
                     onDirtyChange={handleMixedIntakeDirtyChange}
+                    onSkipToManual={() => {
+                        userAdvancedToReviewRef.current = true;
+                        setCurrentStep("review");
+                    }}
                 />
             )}
 

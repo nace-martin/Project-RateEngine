@@ -481,6 +481,7 @@ export interface CanonicalQuoteLineItem {
   is_spot_sourced: boolean;
   is_manual_override: boolean;
   fx_applied?: boolean;
+  subcategory?: string;
   sort_order: number;
 }
 

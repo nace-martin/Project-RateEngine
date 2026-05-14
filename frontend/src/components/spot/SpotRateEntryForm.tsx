@@ -6,7 +6,7 @@
  */
 
 import { useMemo, useEffect, useRef, useState, useCallback } from "react";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import PageActionBar from "@/components/navigation/PageActionBar";
@@ -20,6 +20,7 @@ import { getSpotFinalizeFormDisabledReason } from "@/lib/spot-finalization";
 import { ChargeBucketSection } from "./ChargeBucketSection";
 import { SpotChargeLineManualReviewSheet } from "./SpotChargeLineManualReviewSheet";
 import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
+import { getSpotChargeFormDisabledReason } from "@/lib/spot-charge-readiness";
 
 type ReviewRequest = {
     chargeLineId: string;
@@ -276,6 +277,10 @@ export function SpotRateEntryForm({
     const formattedVisibleCharges = useMemo<SpotFormInputValues["charges"]>(() => {
         // Only visible buckets are editable in this form.
         const filteredCharges = mergedCharges.filter(c => visibleBuckets.includes(c.bucket));
+        const airfreightCount = filteredCharges.filter((charge) => charge.bucket === "airfreight").length;
+        const hasExplicitPrimaryAirfreight = filteredCharges.some(
+            (charge) => charge.bucket === "airfreight" && charge.is_primary_cost
+        );
 
         return filteredCharges.map((charge) => ({
             // Omit charge.id because react-hook-form useFieldArray conflicts with existing 'id' fields
@@ -286,7 +291,7 @@ export function SpotRateEntryForm({
             currency: charge.currency,
             unit: (charge.min_charge !== null && charge.min_charge !== undefined && charge.unit === 'per_kg') ? 'min_or_per_kg' : charge.unit,
             bucket: charge.bucket,
-            is_primary_cost: charge.is_primary_cost,
+            is_primary_cost: charge.is_primary_cost || (charge.bucket === "airfreight" && airfreightCount === 1 && !hasExplicitPrimaryAirfreight),
             conditional: charge.conditional,
             conditional_acknowledged: charge.conditional_acknowledged,
             conditional_acknowledged_by: charge.conditional_acknowledged_by,
@@ -343,6 +348,10 @@ export function SpotRateEntryForm({
         control: form.control,
         name: "charges",
     });
+    const watchedFormCharges = useWatch({
+        control: form.control,
+        name: "charges",
+    }) || [];
 
     const mapEditableLineToSubmitCharge = (
         line: SpotFormSubmitValues["charges"][number]
@@ -460,17 +469,6 @@ export function SpotRateEntryForm({
             draftLockRef.current = false;
         }
     };
-
-    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
-    const editableChargeCount = fields.length;
-    const effectiveSubmitDisabledReason = getSpotFinalizeFormDisabledReason({
-        finalizeDisabledReason: submitDisabledReason || (submitDisabled ? "Resolve SPOT blockers before creating quote." : null),
-        editableChargeCount,
-        isFormValid: form.formState.isValid,
-        allowEmptySubmit,
-    });
-    const canSubmitEmpty = editableChargeCount === 0 && allowEmptySubmit && !submitDisabled;
-    const canSubmit = !isSubmitBusy && !effectiveSubmitDisabledReason;
 
     const handleEmptySubmitClick = () => {
         if (!canSubmitEmpty || !canSubmit || submitLockRef.current) return;
@@ -618,6 +616,15 @@ export function SpotRateEntryForm({
     const getFieldsByBucket = (bucket: SPEChargeBucket) =>
         fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
 
+    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
+    const formDisabledReason = getSpotChargeFormDisabledReason({
+        charges: watchedFormCharges,
+        isFormValid: form.formState.isValid,
+    });
+    const effectiveSubmitDisabledReason = submitDisabledReason || formDisabledReason;
+    const editableChargeCount = fields.length;
+    const canSubmitEmpty = editableChargeCount === 0 && allowEmptySubmit && !submitDisabled;
+    const canSubmit = !effectiveSubmitDisabledReason && !isSubmitBusy && !submitDisabled;
     return (
         <Form {...form}>
             <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-8">

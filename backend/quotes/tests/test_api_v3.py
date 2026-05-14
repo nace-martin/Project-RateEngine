@@ -399,6 +399,16 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             service_code=freight_service_code,
         )
 
+        self.origin_component = ServiceComponent.objects.create(
+            code=f"PKP-{uuid4().hex[:6].upper()}",
+            description="Pickup",
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+            unit="SHIPMENT",
+            service_code=freight_service_code,
+        )
+
         QuoteLine.objects.create(
             quote_version=version,
             service_component=freight_component,
@@ -616,3 +626,28 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         )
         self.assertIn("Stored quote warning", quote_result["warnings"])
         self.assertIn("FX SELL rate missing for AUD; used 1.0 fallback.", quote_result["warnings"])
+
+    def test_quote_result_subcategory_classification(self):
+        """Verify that line items in quote_result have correct subcategories."""
+        quote = self.quote
+        # Create a line with a known component that should map to a subcategory
+        QuoteLine.objects.create(
+            quote_version=quote.latest_version,
+            service_component=self.origin_component,
+            description="Test Pickup",
+            bucket="origin_charges",
+            cost_pgk=Decimal("100"),
+            sell_pgk=Decimal("150"),
+        )
+        
+        url = reverse('quotes:quote-v3-compute-v3', kwargs={'pk': quote.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        quote_result = response.data['quote_result']
+        line_items = quote_result['line_items']
+        
+        # Find the pickup line
+        pickup_line = next((l for l in line_items if l['description'] == "Test Pickup"), None)
+        self.assertIsNotNone(pickup_line)
+        self.assertEqual(pickup_line['subcategory'], "Local Transport / Cartage")

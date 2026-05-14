@@ -33,6 +33,7 @@ interface ReplyPasteCardProps {
     sourceReference?: string;
     hideMissingMessage?: boolean;
     onDirtyChange?: (isDirty: boolean) => void;
+    onSkipToManual?: () => void;
     submitLabel?: string;
 }
 
@@ -50,6 +51,7 @@ export function ReplyPasteCard({
     sourceReference,
     hideMissingMessage = false,
     onDirtyChange,
+    onSkipToManual,
     submitLabel = "Analyze Intake",
 }: ReplyPasteCardProps) {
     const [text, setText] = useState("");
@@ -302,17 +304,28 @@ Agent Name`}
                                 : "No text pasted or file selected"}
                     </div>
 
-                    <Button
-                        onClick={handleSubmit}
-                        disabled={isLoading || (!text.trim() && !selectedFile)}
-                    >
-                        {isLoading ? "Analyzing..." : (
-                            <>
-                                {submitLabel}
-                                <ArrowRight className="h-4 w-4 ml-2" />
-                            </>
+                    <div className="flex items-center gap-3">
+                        {onSkipToManual && !text.trim() && !selectedFile && (
+                            <Button
+                                variant="outline"
+                                onClick={onSkipToManual}
+                                disabled={isLoading}
+                            >
+                                Enter rates manually
+                            </Button>
                         )}
-                    </Button>
+                        <Button
+                            onClick={handleSubmit}
+                            disabled={isLoading || (!text.trim() && !selectedFile)}
+                        >
+                            {isLoading ? "Analyzing..." : (
+                                <>
+                                    {submitLabel}
+                                    <ArrowRight className="h-4 w-4 ml-2" />
+                                </>
+                            )}
+                        </Button>
+                    </div>
                 </div>
 
                 {isLoading && (

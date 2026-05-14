@@ -13,9 +13,9 @@ BUCKET_TO_LEG = {
 PUBLIC_CHARGE_SUBCATEGORY_ORDER = [
     "Customs / Regulatory",
     "Documentation",
-    "Pickup / Delivery / Cartage",
+    "Local Transport / Cartage",
     "Handling / Terminal",
-    "Freight / Carrier Charges",
+    "Freight / Carrier",
     "Carrier Surcharges",
     "Service / Agency Fees",
     "Other Charges",
@@ -25,9 +25,9 @@ _CATEGORY_TO_PUBLIC_SUBCATEGORY = {
     "CUSTOMS": "Customs / Regulatory",
     "STATUTORY": "Customs / Regulatory",
     "DOCUMENTATION": "Documentation",
-    "LOCAL": "Pickup / Delivery / Cartage",
+    "LOCAL": "Local Transport / Cartage",
     "HANDLING": "Handling / Terminal",
-    "TRANSPORT": "Freight / Carrier Charges",
+    "TRANSPORT": "Freight / Carrier",
 }
 
 _CUSTOMS_TERMS = (
@@ -197,7 +197,7 @@ def classify_quote_line_public_subcategory(line) -> str:
 
     # EFM local cartage fuel must stay with cartage, not carrier surcharges.
     if "cartage" in searchable and "fuel surcharge" in searchable and leg in {"ORIGIN", "DESTINATION"}:
-        return "Pickup / Delivery / Cartage"
+        return "Local Transport / Cartage"
 
     # EFM destination agency fee is part of destination customs handling.
     if "agency fee" in searchable and ("dest" in searchable or leg == "DESTINATION"):
@@ -207,7 +207,7 @@ def classify_quote_line_public_subcategory(line) -> str:
     category = str(getattr(component, "category", "") or "").upper()
     if category in _CATEGORY_TO_PUBLIC_SUBCATEGORY:
         if category == "TRANSPORT" and leg in {"ORIGIN", "DESTINATION"}:
-            return "Pickup / Delivery / Cartage"
+            return "Local Transport / Cartage"
         return _CATEGORY_TO_PUBLIC_SUBCATEGORY[category]
 
     if _contains_term(searchable, _CUSTOMS_TERMS):
@@ -215,11 +215,11 @@ def classify_quote_line_public_subcategory(line) -> str:
     if _contains_term(searchable, _DOCUMENTATION_TERMS):
         return "Documentation"
     if _contains_term(searchable, _PICKUP_DELIVERY_TERMS):
-        return "Pickup / Delivery / Cartage"
+        return "Local Transport / Cartage"
     if _contains_term(searchable, _HANDLING_TERMS):
         return "Handling / Terminal"
     if _contains_term(searchable, _FREIGHT_TERMS):
-        return "Freight / Carrier Charges"
+        return "Freight / Carrier"
     if _contains_term(searchable, _SURCHARGE_TERMS):
         return "Carrier Surcharges"
     if _contains_term(searchable, _SERVICE_AGENCY_TERMS):

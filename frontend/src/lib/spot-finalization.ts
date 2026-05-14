@@ -40,15 +40,15 @@ export function getSpotFinalizeDisabledReason({
     return "This SPOT quote is no longer active.";
   }
 
-  if (!spe.acknowledgement && spe.status === "ready") {
-    return "SPOT acknowledgement is required before creating quote.";
-  }
-
   if (spe.status !== "draft" && !spe.can_proceed) {
     const missing = spe.missing_mandatory_fields?.length
       ? spe.missing_mandatory_fields.join(", ")
-      : "required rate fields";
+      : "required fields";
     return `Complete missing SPOT fields before creating quote: ${missing}.`;
+  }
+
+  if (!spe.acknowledgement && spe.status === "ready") {
+    return "SPOT acknowledgement is required before creating quote.";
   }
 
   if (unresolvedReviewIssueCount > 0) {

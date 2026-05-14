@@ -313,6 +313,7 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     is_spot_sourced = serializers.BooleanField()
     is_manual_override = serializers.BooleanField()
     fx_applied = serializers.BooleanField(required=False)
+    subcategory = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     sort_order = serializers.IntegerField()
 
 
