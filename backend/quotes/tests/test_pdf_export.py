@@ -13,6 +13,7 @@ from quotes.pdf_service import (
     _get_charge_buckets,
     _get_chargeable_weight,
     _get_location_country_code,
+    _get_totals,
     generate_quote_pdf,
 )
 from services.models import ServiceComponent
@@ -278,3 +279,86 @@ class QuotePDFExportTest(TestCase):
                 {"name": "Destination Charges", "subtotal": Decimal("75.00")},
             ],
         )
+
+    def test_pdf_charge_buckets_exclude_unapplied_conditional_quote_lines(self):
+        quote = Quote.objects.create(
+            customer=self.customer,
+            organization=self.organization,
+            origin_location=self.origin,
+            destination_location=self.dest,
+            quote_number="QT-2026-0001",
+            status="SENT",
+            mode="AIR",
+            shipment_type="IMPORT",
+            output_currency="PGK",
+        )
+        version = QuoteVersion.objects.create(quote=quote, version_number=1)
+
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Documentation Fee (Origin)",
+            sell_pgk=Decimal("159.02"),
+            leg="DESTINATION",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Origin Customs Clearance",
+            sell_pgk=Decimal("159.02"),
+            leg="ORIGIN",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Origin Permit / License",
+            sell_pgk=Decimal("265.04"),
+            leg="ORIGIN",
+            bucket="origin_charges",
+            conditional=True,
+            is_informational=True,
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Pick-Up Fee (Origin)",
+            sell_pgk=Decimal("689.09"),
+            leg="DESTINATION",
+            bucket="origin_charges",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Import Air Freight",
+            sell_pgk=Decimal("3975.53"),
+            leg="MAIN",
+            bucket="airfreight",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_source_description="Destination Charges",
+            sell_pgk=Decimal("1165.00"),
+            leg="DESTINATION",
+            bucket="destination_charges",
+        )
+        QuoteTotal.objects.create(
+            quote_version=version,
+            total_sell_pgk=Decimal("6147.66"),
+            total_sell_pgk_incl_gst=Decimal("6264.16"),
+        )
+
+        buckets = _get_charge_buckets(version)
+        totals = _get_totals(version)
+
+        self.assertEqual(
+            buckets,
+            [
+                {"name": "Origin Charges", "subtotal": Decimal("1007.13")},
+                {"name": "International Freight", "subtotal": Decimal("3975.53")},
+                {"name": "Destination Charges", "subtotal": Decimal("1165.00")},
+            ],
+        )
+        self.assertNotEqual(buckets[0]["subtotal"], Decimal("1272.17"))
+        self.assertEqual(totals["sell_excl_gst"], Decimal("6147.66"))
+        self.assertEqual(totals["gst"], Decimal("116.50"))
+        self.assertEqual(totals["sell_incl_gst"], Decimal("6264.16"))
+
+        pdf_bytes = generate_quote_pdf(str(quote.id))
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))

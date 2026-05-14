@@ -1393,6 +1393,8 @@ export async function createSpotQuote(
     service_scope: string;
     output_currency: string;
     customer_id?: string;
+    contact_id?: string;
+    incoterm?: string;
   }
 ): Promise<{ success: boolean; quote_id: string; quote_number: string }> {
   const url = API_BASE_URL + `/api/v3/spot/envelopes/${speId}/create-quote/`;

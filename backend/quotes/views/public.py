@@ -1,5 +1,6 @@
 import re
 from decimal import Decimal
+from uuid import UUID
 
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -9,7 +10,15 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from quotes.branding import get_quote_branding
-from quotes.buckets import resolve_quote_line_leg
+from quotes.buckets import (
+    PUBLIC_CHARGE_SUBCATEGORY_ORDER,
+    classify_quote_line_public_subcategory,
+    resolve_quote_line_leg,
+    resolve_quote_line_sell_value,
+    should_display_quote_line,
+    should_include_quote_line_in_subtotal,
+)
+from parties.models import Contact
 from quotes.models import Quote, QuoteLine, QuoteTotal
 from quotes.public_links import get_public_quote_id_from_token
 
@@ -103,25 +112,185 @@ def _resolve_service_scope(quote: Quote, version) -> str | None:
     )
 
 
+def _iter_payloads(quote: Quote, version):
+    for payload in (getattr(version, "payload_json", None), quote.request_details_json):
+        if isinstance(payload, dict):
+            yield payload
+
+
+def _coerce_uuid(value) -> UUID | None:
+    if not value:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _payload_get(payload: dict, *path):
+    current = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _extract_payload_contact_id(payload: dict) -> UUID | None:
+    for candidate in (
+        payload.get("contact_id"),
+        _payload_get(payload, "quote_request", "contact_id"),
+        _payload_get(payload, "customer", "contact_id"),
+    ):
+        contact_id = _coerce_uuid(candidate)
+        if contact_id:
+            return contact_id
+    return None
+
+
+def _resolve_public_contact(quote: Quote, version) -> Contact | None:
+    if quote.contact_id:
+        return quote.contact
+
+    for payload in _iter_payloads(quote, version):
+        contact_id = _extract_payload_contact_id(payload)
+        if not contact_id:
+            continue
+        contact = Contact.objects.filter(id=contact_id, company_id=quote.customer_id).first()
+        if contact:
+            return contact
+
+    return None
+
+
+def _format_contact_name(contact: Contact | None) -> str | None:
+    if not contact:
+        return None
+    name = f"{contact.first_name or ''} {contact.last_name or ''}".strip()
+    return name or contact.email or None
+
+
+def _to_decimal(value) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _extract_piece_list(payload: dict) -> list[dict]:
+    candidates = (
+        _payload_get(payload, "shipment", "pieces"),
+        payload.get("pieces"),
+        payload.get("dimensions"),
+        _payload_get(payload, "cargo", "pieces"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return [piece for piece in candidate if isinstance(piece, dict)]
+    return []
+
+
+def _piece_value(piece: dict, *keys) -> Decimal | None:
+    for key in keys:
+        value = _to_decimal(piece.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _calculate_chargeable_weight_from_pieces(pieces: list[dict]) -> Decimal | None:
+    if not pieces:
+        return None
+
+    gross_total = Decimal("0")
+    volumetric_total = Decimal("0")
+    has_weight = False
+    has_dimensions = False
+
+    for piece in pieces:
+        count = _piece_value(piece, "pieces", "quantity", "qty") or Decimal("1")
+        gross = _piece_value(piece, "gross_weight_kg", "weight_kg", "weight")
+        if gross is not None:
+            gross_total += gross * count
+            has_weight = True
+
+        length = _piece_value(piece, "length_cm", "length")
+        width = _piece_value(piece, "width_cm", "width")
+        height = _piece_value(piece, "height_cm", "height")
+        if length is not None and width is not None and height is not None and length > 0 and width > 0 and height > 0:
+            volumetric_total += (length * width * height * count) / Decimal("6000")
+            has_dimensions = True
+
+    if has_weight or has_dimensions:
+        return max(gross_total, volumetric_total)
+    return None
+
+
+def _resolve_chargeable_weight(quote: Quote, version) -> Decimal | None:
+    chargeable_paths = (
+        ("chargeable_weight_kg",),
+        ("chargeable_weight",),
+        ("total_chargeable_weight_kg",),
+        ("shipment", "chargeable_weight_kg"),
+        ("shipment", "chargeable_weight"),
+    )
+    gross_weight_fallback_paths = (
+        ("total_weight_kg",),
+        ("shipment", "total_weight_kg"),
+        ("shipment_context", "total_weight_kg"),
+    )
+
+    for payload in _iter_payloads(quote, version):
+        for path in chargeable_paths:
+            value = _to_decimal(_payload_get(payload, *path))
+            if value is not None:
+                return value
+        piece_weight = _calculate_chargeable_weight_from_pieces(_extract_piece_list(payload))
+        if piece_weight is not None:
+            return piece_weight
+        for path in gross_weight_fallback_paths:
+            value = _to_decimal(_payload_get(payload, *path))
+            if value is not None:
+                return value
+
+    return None
+
+
 def _resolve_line_sell_value(line, quote_currency: str) -> Decimal:
-    if quote_currency != "PGK":
-        line_currency = str(getattr(line, "sell_fcy_currency", "") or "").upper()
-        if line_currency == quote_currency and getattr(line, "sell_fcy", None) is not None:
-            return line.sell_fcy
-    return line.sell_pgk or Decimal("0")
+    return resolve_quote_line_sell_value(line, quote_currency)
 
 
 def _should_include_public_line(line, quote_currency: str) -> bool:
-    if getattr(line, "is_informational", False):
-        return True
-    return _resolve_line_sell_value(line, quote_currency) > Decimal("0")
+    return should_display_quote_line(line, quote_currency)
+
+
+def _public_group_line_sort_key(group_name: str, line_data: dict) -> tuple[int, str]:
+    description = str(line_data.get("description") or "").lower()
+    priority = 10
+
+    if group_name == "Customs / Regulatory":
+        if "customs" in description or "clearance" in description:
+            priority = 0
+        elif "agency fee" in description:
+            priority = 1
+    elif group_name == "Pickup / Delivery / Cartage":
+        if "cartage fuel surcharge" in description:
+            priority = 1
+        elif "fuel surcharge" in description:
+            priority = 2
+        else:
+            priority = 0
+
+    return priority, description
 
 
 def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
     buckets = {
-        'ORIGIN': {'name': 'Origin Charges', 'lines': [], 'subtotal': Decimal('0')},
-        'MAIN': {'name': 'Freight', 'lines': [], 'subtotal': Decimal('0')},
-        'DESTINATION': {'name': 'Destination Charges', 'lines': [], 'subtotal': Decimal('0')},
+        'ORIGIN': {'name': 'Origin Charges', 'lines': [], 'groups': {}, 'subtotal': Decimal('0')},
+        'MAIN': {'name': 'Freight', 'lines': [], 'groups': {}, 'subtotal': Decimal('0')},
+        'DESTINATION': {'name': 'Destination Charges', 'lines': [], 'groups': {}, 'subtotal': Decimal('0')},
     }
 
     for line in lines:
@@ -143,19 +312,56 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
             'sell': _format_decimal(sell_value),
             'is_informational': line.is_informational,
         }
+        subcategory = classify_quote_line_public_subcategory(line)
+        line_data['subcategory'] = subcategory
 
         buckets[leg]['lines'].append(line_data)
-        if not line.is_informational:
+        if should_include_quote_line_in_subtotal(line, currency):
             buckets[leg]['subtotal'] += sell_value
+            group = buckets[leg]['groups'].setdefault(
+                subcategory,
+                {'name': subcategory, 'lines': [], 'subtotal': Decimal('0')},
+            )
+            group['subtotal'] += sell_value
+            group['lines'].append(line_data)
+        else:
+            group = buckets[leg]['groups'].setdefault(
+                subcategory,
+                {'name': subcategory, 'lines': [], 'subtotal': Decimal('0')},
+            )
+            group['lines'].append(line_data)
 
-    return [
-        {
-            'name': bucket['name'],
-            'lines': bucket['lines'],
-            'subtotal': _format_decimal(bucket['subtotal']),
-        }
-        for bucket in buckets.values() if bucket['lines']
-    ]
+    response_buckets = []
+    for bucket in buckets.values():
+        if not bucket['lines']:
+            continue
+
+        groups = []
+        bucket_lines = []
+        for group_name in PUBLIC_CHARGE_SUBCATEGORY_ORDER:
+            group = bucket['groups'].get(group_name)
+            if not group:
+                continue
+            sorted_lines = sorted(group['lines'], key=lambda line: _public_group_line_sort_key(group_name, line))
+            bucket_lines.extend(sorted_lines)
+            groups.append(
+                {
+                    'name': group['name'],
+                    'lines': sorted_lines,
+                    'subtotal': _format_decimal(group['subtotal']),
+                }
+            )
+
+        response_buckets.append(
+            {
+                'name': bucket['name'],
+                'lines': bucket_lines,
+                'groups': groups,
+                'subtotal': _format_decimal(bucket['subtotal']),
+            }
+        )
+
+    return response_buckets
 
 
 def _calculate_public_totals(totals: QuoteTotal | None, currency: str) -> dict:
@@ -237,13 +443,15 @@ class QuotePublicDetailAPIView(APIView):
 
         lines = QuoteLine.objects.select_related('service_component').filter(
             quote_version=version
-        ).order_by('service_component__category', 'id')
+        ).order_by('id')
 
         totals = QuoteTotal.objects.filter(quote_version=version).first()
         currency = quote.output_currency or 'PGK'
         origin_code, origin_name = _parse_location_label(quote.origin_location)
         destination_code, destination_name = _parse_location_label(quote.destination_location)
         resolved_service_scope = _resolve_service_scope(quote, version)
+        selected_contact = _resolve_public_contact(quote, version)
+        chargeable_weight = _resolve_chargeable_weight(quote, version)
         branding = get_quote_branding(quote, request=request)
 
         response_data = {
@@ -253,7 +461,8 @@ class QuotePublicDetailAPIView(APIView):
             'valid_until': quote.valid_until.isoformat() if quote.valid_until else None,
             'customer': {
                 'name': quote.customer.name if quote.customer else 'Customer',
-                'contact': f"{quote.contact.first_name} {quote.contact.last_name}".strip() if quote.contact else None,
+                'contact': _format_contact_name(selected_contact),
+                'contact_id': str(selected_contact.id) if selected_contact else None,
             },
             'shipment': {
                 'mode': quote.mode,
@@ -261,6 +470,7 @@ class QuotePublicDetailAPIView(APIView):
                 'service_scope': resolved_service_scope,
                 'incoterm': quote.incoterm,
                 'payment_term': quote.payment_term,
+                'chargeable_weight_kg': _format_decimal(chargeable_weight) if chargeable_weight is not None else None,
             },
             'route': {
                 'origin_code': origin_code,

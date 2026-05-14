@@ -16,6 +16,7 @@ import { Form } from "@/components/ui/form";
 
 import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion } from "@/lib/spot-types";
 import { spotFormSchema, type SpotFormInputValues, type SpotFormSubmitValues } from "@/lib/schemas/spotSchema";
+import { getSpotFinalizeFormDisabledReason } from "@/lib/spot-finalization";
 import { ChargeBucketSection } from "./ChargeBucketSection";
 import { SpotChargeLineManualReviewSheet } from "./SpotChargeLineManualReviewSheet";
 import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
@@ -37,6 +38,7 @@ interface SpotRateEntryFormProps {
     submitLabel?: string;
     submitDisabled?: boolean;
     submitDisabledReason?: string | null;
+    allowEmptySubmit?: boolean;
     onSaveDraft?: (charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>) => Promise<void>;
     onManualResolveChargeLine?: (
         chargeLineId: string,
@@ -120,6 +122,7 @@ export function SpotRateEntryForm({
     submitLabel,
     submitDisabled = false,
     submitDisabledReason = null,
+    allowEmptySubmit = false,
     onSaveDraft,
     onManualResolveChargeLine,
     productCodeDomain,
@@ -360,6 +363,20 @@ export function SpotRateEntryForm({
             conditional_acknowledged_by: line.conditional_acknowledged_by,
             conditional_acknowledged_at: line.conditional_acknowledged_at,
             source_reference: normalizeSourceReference(line.source_reference),
+            source_label: line.source_label,
+            normalized_label: line.normalized_label,
+            normalization_status: line.normalization_status,
+            normalization_method: line.normalization_method,
+            matched_alias_id: line.matched_alias_id,
+            resolved_product_code: line.resolved_product_code,
+            effective_resolved_product_code: line.effective_resolved_product_code,
+            effective_resolution_status: line.effective_resolution_status,
+            requires_review: line.requires_review,
+            manual_resolution_status: line.manual_resolution_status,
+            manual_resolved_product_code: line.manual_resolved_product_code,
+            manual_resolution_by_user_id: line.manual_resolution_by_user_id,
+            manual_resolution_by_username: line.manual_resolution_by_username,
+            manual_resolution_at: line.manual_resolution_at,
             source_excerpt: line.source_excerpt,
             source_line_number: line.source_line_number,
             source_line_identity: line.source_line_identity,
@@ -383,6 +400,20 @@ export function SpotRateEntryForm({
         conditional_acknowledged_by: charge.conditional_acknowledged_by,
         conditional_acknowledged_at: charge.conditional_acknowledged_at,
         source_reference: normalizeSourceReference(charge.source_reference),
+        source_label: charge.source_label,
+        normalized_label: charge.normalized_label,
+        normalization_status: charge.normalization_status,
+        normalization_method: charge.normalization_method,
+        matched_alias_id: charge.matched_alias_id,
+        resolved_product_code: charge.resolved_product_code,
+        effective_resolved_product_code: charge.effective_resolved_product_code,
+        effective_resolution_status: charge.effective_resolution_status,
+        requires_review: charge.requires_review,
+        manual_resolution_status: charge.manual_resolution_status,
+        manual_resolved_product_code: charge.manual_resolved_product_code,
+        manual_resolution_by_user_id: charge.manual_resolution_by_user_id,
+        manual_resolution_by_username: charge.manual_resolution_by_username,
+        manual_resolution_at: charge.manual_resolution_at,
         source_excerpt: charge.source_excerpt,
         source_line_number: charge.source_line_number,
         source_line_identity: charge.source_line_identity,
@@ -430,20 +461,40 @@ export function SpotRateEntryForm({
         }
     };
 
+    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
+    const editableChargeCount = fields.length;
+    const effectiveSubmitDisabledReason = getSpotFinalizeFormDisabledReason({
+        finalizeDisabledReason: submitDisabledReason || (submitDisabled ? "Resolve SPOT blockers before creating quote." : null),
+        editableChargeCount,
+        isFormValid: form.formState.isValid,
+        allowEmptySubmit,
+    });
+    const canSubmitEmpty = editableChargeCount === 0 && allowEmptySubmit && !submitDisabled;
+    const canSubmit = !isSubmitBusy && !effectiveSubmitDisabledReason;
+
+    const handleEmptySubmitClick = () => {
+        if (!canSubmitEmpty || !canSubmit || submitLockRef.current) return;
+        void handleFormSubmit({ charges: [] });
+    };
+
     // Keyboard Shortcuts
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             // Ctrl/Cmd + Enter to submit
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                if (form.formState.isSubmitting || isLoading || isSavingDraft) return;
+                if (!canSubmit) return;
                 e.preventDefault();
+                if (canSubmitEmpty) {
+                    void handleFormSubmitRef.current({ charges: [] });
+                    return;
+                }
                 form.handleSubmit((data) => handleFormSubmitRef.current(data))();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [form, isLoading, isSavingDraft]);
+    }, [canSubmit, canSubmitEmpty, form]);
 
     const addLine = (bucket: SPEChargeBucket) => {
         append({
@@ -567,9 +618,6 @@ export function SpotRateEntryForm({
     const getFieldsByBucket = (bucket: SPEChargeBucket) =>
         fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
 
-    const isSubmitBusy = Boolean(isLoading || form.formState.isSubmitting || isSavingDraft);
-    const canSubmit = form.formState.isValid && !isSubmitBusy && !submitDisabled;
-
     return (
         <Form {...form}>
             <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-8">
@@ -579,9 +627,9 @@ export function SpotRateEntryForm({
                     </Alert>
                 )}
 
-                {submitDisabledReason && (
+                {effectiveSubmitDisabledReason && (
                     <Alert>
-                        <AlertDescription>{submitDisabledReason}</AlertDescription>
+                        <AlertDescription>{effectiveSubmitDisabledReason}</AlertDescription>
                     </Alert>
                 )}
 
@@ -618,7 +666,8 @@ export function SpotRateEntryForm({
                         </Button>
                     )}
                     <Button
-                        type="submit"
+                        type={canSubmitEmpty ? "button" : "submit"}
+                        onClick={canSubmitEmpty ? handleEmptySubmitClick : undefined}
                         disabled={!canSubmit}
                         size="lg"
                         loading={Boolean(isLoading || form.formState.isSubmitting)}

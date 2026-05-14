@@ -322,6 +322,8 @@ export function useQuoteLogic({
                         dest_code: destinationCode,
                         customer_id: data.customer_id,
                         customer_name: selectedCustomer?.name || "",
+                        contact_id: data.contact_id || "",
+                        incoterm: data.incoterm || "",
                         commodity,
                         weight: String(cargoMetrics.chargeableWeight),
                         pieces: String(cargoMetrics.pieces),

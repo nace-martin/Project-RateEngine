@@ -19,7 +19,11 @@ from fpdf import FPDF
 
 from core.commodity import COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE, commodity_label
 from core.storage_utils import materialize_file_field
-from .buckets import resolve_quote_line_leg
+from .buckets import (
+    resolve_quote_line_leg,
+    resolve_quote_line_sell_value,
+    should_include_quote_line_in_subtotal,
+)
 from .branding import QuoteBrandingContext, get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from .public_links import build_public_quote_url
@@ -144,8 +148,9 @@ def generate_quote_pdf(
         # Get data
         origin_code, origin_name = _extract_location_info(quote, 'origin')
         destination_code, destination_name = _extract_location_info(quote, 'destination')
-        charge_buckets = _get_charge_buckets(version)
-        totals = _get_totals(version)
+        quote_currency = quote.output_currency or "PGK"
+        charge_buckets = _get_charge_buckets(version, quote_currency)
+        totals = _get_totals(version, quote_currency)
         cargo_type = _get_cargo_type(quote, version)
         chargeable_weight = _get_chargeable_weight(quote, version)
         
@@ -655,7 +660,7 @@ def _build_terms_and_conditions(quote, valid_until_str: str, branding: Optional[
     return terms
 
 
-def _get_charge_buckets(version) -> list[dict]:
+def _get_charge_buckets(version, currency: str = "PGK") -> list[dict]:
     """Get charge summary grouped by the saved quote line bucket/leg."""
     buckets = {
         'Origin Charges': Decimal('0'),
@@ -664,6 +669,9 @@ def _get_charge_buckets(version) -> list[dict]:
     }
     
     for line in version.lines.select_related('service_component').all():
+        if not should_include_quote_line_in_subtotal(line, currency):
+            continue
+
         leg = resolve_quote_line_leg(line)
 
         if leg == 'ORIGIN':
@@ -675,7 +683,7 @@ def _get_charge_buckets(version) -> list[dict]:
         else:
             bucket_name = 'International Freight'
         
-        buckets[bucket_name] += line.sell_pgk or Decimal('0')
+        buckets[bucket_name] += resolve_quote_line_sell_value(line, currency)
     
     result = []
     for name in ['Origin Charges', 'International Freight', 'Destination Charges']:
@@ -685,13 +693,17 @@ def _get_charge_buckets(version) -> list[dict]:
     return result
 
 
-def _get_totals(version) -> dict:
+def _get_totals(version, currency: str = "PGK") -> dict:
     """Get totals for the version."""
     try:
         total = version.totals
         if total:
-            sell_excl = total.total_sell_pgk or Decimal('0')
-            sell_incl = total.total_sell_pgk_incl_gst or Decimal('0')
+            if str(currency or "PGK").upper() != "PGK" and total.total_sell_fcy:
+                sell_excl = total.total_sell_fcy or Decimal('0')
+                sell_incl = total.total_sell_fcy_incl_gst or Decimal('0')
+            else:
+                sell_excl = total.total_sell_pgk or Decimal('0')
+                sell_incl = total.total_sell_pgk_incl_gst or Decimal('0')
             gst = sell_incl - sell_excl
             return {
                 'sell_excl_gst': sell_excl,
@@ -701,7 +713,14 @@ def _get_totals(version) -> dict:
     except Exception:
         pass
     
-    sell_total = sum((line.sell_pgk or Decimal('0')) for line in version.lines.all())
+    sell_total = sum(
+        (
+            resolve_quote_line_sell_value(line, currency)
+            for line in version.lines.all()
+            if should_include_quote_line_in_subtotal(line, currency)
+        ),
+        Decimal('0'),
+    )
     gst = sell_total * Decimal('0.10')
     return {'sell_excl_gst': sell_total, 'gst': gst, 'sell_incl_gst': sell_total + gst}
 

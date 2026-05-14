@@ -150,6 +150,56 @@ class PricingServiceV4Adapter:
                 }
             )
 
+    def _capture_fx_audit(
+        self,
+        *,
+        applied: bool,
+        from_currency: Optional[str],
+        to_currency: Optional[str],
+        base_rate_type: Optional[str],
+        base_rate: Optional[Decimal],
+        caf_percent: Optional[Decimal],
+        caf_operation: Optional[str],
+        effective_rate_after_caf: Optional[Decimal],
+        defaults_used: Optional[list[dict[str, str]]] = None,
+        notes: Optional[str] = None,
+    ) -> None:
+        """
+        Persist a minimal, auditable FX/CAF record for the Pricing Breakdown.
+
+        This is intentionally quote-level metadata: it records the base rate and CAF
+        that the adapter supplied to the V4 engines (or used in SPOT overlay math),
+        plus the effective rate after CAF. Line-level FX can vary; this is the
+        canonical "engine inputs" view for internal audit.
+        """
+        fx_snapshot = getattr(self, "fx_snapshot", None)
+        payload: dict[str, object] = {
+            "applied": bool(applied),
+            "from_currency": (str(from_currency or "").upper() or None),
+            "to_currency": (str(to_currency or "").upper() or None),
+            "direction": (
+                f"{str(from_currency or '').upper()} -> {str(to_currency or '').upper()}"
+                if from_currency and to_currency
+                else None
+            ),
+            "base_rate_type": (str(base_rate_type or "").upper() or None),
+            "base_rate": (str(base_rate) if base_rate is not None else None),
+            "caf_percent": (str(caf_percent) if caf_percent is not None else None),
+            "caf_operation": (str(caf_operation or "").upper() or None),
+            "effective_rate_after_caf": (
+                str(effective_rate_after_caf) if effective_rate_after_caf is not None else None
+            ),
+            "fx_snapshot_source": getattr(fx_snapshot, "source", None),
+            "fx_snapshot_timestamp": (
+                getattr(fx_snapshot, "as_of_timestamp", None).isoformat()
+                if getattr(fx_snapshot, "as_of_timestamp", None)
+                else None
+            ),
+            "defaults_used": defaults_used or [],
+            "notes": notes,
+        }
+        self._audit_metadata["fx_audit"] = payload
+
     def get_fx_snapshot(self):
         return self.fx_snapshot
 
@@ -287,6 +337,14 @@ class PricingServiceV4Adapter:
             else:
                 line.sell_fcy = discounted_sell
                 line.sell_fcy_incl_gst = discounted_sell + new_gst
+
+            line.calculation_notes = (
+                f"{line.calculation_notes} | " if line.calculation_notes else ""
+            ) + (
+                f"Customer discount applied: {discount.discount_type} "
+                f"{discount.discount_value} {discount.currency or '%'}"
+            )
+            line.rate_source = line.rate_source or 'DB_TARIFF'
 
             logger.debug(
                 f"Applied {discount.discount_type} discount to {line.service_component_code}: "
@@ -428,8 +486,10 @@ class PricingServiceV4Adapter:
             
             # Get TT rates for the quote currency
             fx_info = fx_rates.get(quote_currency, {})
-            tt_buy = Decimal(str(fx_info.get('tt_buy', '2.50'))) if fx_info else Decimal('2.50')
-            tt_sell = Decimal(str(fx_info.get('tt_sell', '2.78'))) if fx_info else Decimal('2.78')
+            tt_buy_from_snapshot = bool(fx_info and fx_info.get('tt_buy') is not None)
+            tt_sell_from_snapshot = bool(fx_info and fx_info.get('tt_sell') is not None)
+            tt_buy = Decimal(str(fx_info.get('tt_buy'))) if tt_buy_from_snapshot else Decimal('2.50')
+            tt_sell = Decimal(str(fx_info.get('tt_sell'))) if tt_sell_from_snapshot else Decimal('2.78')
             
             # Get CAF and margin from policy or use defaults
             caf_rate = None
@@ -439,6 +499,29 @@ class PricingServiceV4Adapter:
                     caf_rate = Decimal(str(self.policy.caf_export_pct))
                 if self.policy.margin_pct is not None:
                     margin_rate = Decimal(str(self.policy.margin_pct))
+
+            caf_used = caf_rate if caf_rate is not None else ExportPricingEngine.DEFAULT_CAF
+            fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.PREPAID)
+            defaults_used: list[dict[str, str]] = []
+            if not tt_buy_from_snapshot:
+                defaults_used.append({"field": "tt_buy", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_buy)})
+            if not tt_sell_from_snapshot:
+                defaults_used.append({"field": "tt_sell", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_sell)})
+            if caf_rate is None:
+                defaults_used.append({"field": "caf_percent", "scope": "export", "default": str(caf_used)})
+
+            self._capture_fx_audit(
+                applied=fx_applied,
+                from_currency=(quote_currency if fx_applied else None),
+                to_currency=("PGK" if fx_applied else None),
+                base_rate_type=("TT_SELL" if fx_applied else None),
+                base_rate=(tt_sell if fx_applied else None),
+                caf_percent=(caf_used if fx_applied else None),
+                caf_operation=("ADDED" if fx_applied else None),
+                effective_rate_after_caf=(tt_sell * (Decimal("1") + caf_used) if fx_applied else None),
+                defaults_used=defaults_used,
+                notes=("Export PREPAID: CAF added to TT_SELL; conversion recorded for FCY -> PGK audit." if fx_applied else None),
+            )
             
             engine = ExportPricingEngine(
                 quote_date=self.quote_input.quote_date,
@@ -469,8 +552,10 @@ class PricingServiceV4Adapter:
             
             fx_info = fx_rates.get(quote_currency, {})
             # Use defaults if missing (same as Export)
-            tt_buy = Decimal(str(fx_info.get('tt_buy', '0.35'))) if fx_info else Decimal('0.35')
-            tt_sell = Decimal(str(fx_info.get('tt_sell', '0.36'))) if fx_info else Decimal('0.36')
+            tt_buy_from_snapshot = bool(fx_info and fx_info.get('tt_buy') is not None)
+            tt_sell_from_snapshot = bool(fx_info and fx_info.get('tt_sell') is not None)
+            tt_buy = Decimal(str(fx_info.get('tt_buy'))) if tt_buy_from_snapshot else Decimal('0.35')
+            tt_sell = Decimal(str(fx_info.get('tt_sell'))) if tt_sell_from_snapshot else Decimal('0.36')
             
             # Get specific policy overrides if any (reuse Export policy fields or define Import ones?)
             # Assuming shared policy margin/caf for now or defaults in engine
@@ -481,6 +566,40 @@ class PricingServiceV4Adapter:
                      caf_rate = Decimal(str(self.policy.caf_import_pct))
                 if self.policy.margin_pct is not None:
                      margin_rate = Decimal(str(self.policy.margin_pct))
+
+            caf_used = caf_rate if caf_rate is not None else ImportPricingEngine.DEFAULT_CAF
+            normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
+            normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
+            fx_applied = (normalized_quote_currency != "PGK") or (normalized_buy_currency not in (None, "", "PGK"))
+            defaults_used = []
+            if not tt_buy_from_snapshot:
+                defaults_used.append({"field": "tt_buy", "currency": normalized_quote_currency, "default": str(tt_buy)})
+            if not tt_sell_from_snapshot:
+                defaults_used.append({"field": "tt_sell", "currency": normalized_quote_currency, "default": str(tt_sell)})
+            if caf_rate is None:
+                defaults_used.append({"field": "caf_percent", "scope": "import", "default": str(caf_used)})
+
+            if fx_applied:
+                if normalized_quote_currency != "PGK":
+                    from_currency = normalized_quote_currency
+                    base_rate_type = "TT_SELL"
+                    base_rate = tt_sell
+                else:
+                    from_currency = normalized_buy_currency or "UNKNOWN"
+                    base_rate_type = "TT_BUY"
+                    base_rate = tt_buy
+                self._capture_fx_audit(
+                    applied=True,
+                    from_currency=from_currency,
+                    to_currency="PGK",
+                    base_rate_type=base_rate_type,
+                    base_rate=base_rate,
+                    caf_percent=caf_used,
+                    caf_operation="DEDUCTED",
+                    effective_rate_after_caf=(base_rate * (Decimal("1") - caf_used)) if base_rate is not None else None,
+                    defaults_used=defaults_used,
+                    notes="Import: CAF deducted from base TT rate; conversion recorded for audit.",
+                )
 
             engine = ImportPricingEngine(
                 quote_date=self.quote_input.quote_date,
@@ -769,6 +888,7 @@ class PricingServiceV4Adapter:
                     sell_fcy_currency=currency,
                     cost_fcy=cost_fcy,
                     cost_fcy_currency=cost_currency,
+                    exchange_rate=fx_sell_rate,
                     bucket=data.get('bucket', 'origin_charges'),
                     product_code=data.get('product_code') or code,
                     component=data.get('component'),
@@ -813,6 +933,7 @@ class PricingServiceV4Adapter:
                     sell_fcy_currency='PGK',
                     cost_fcy=cost_fcy,
                     cost_fcy_currency=cost_fcy_currency,
+                    exchange_rate=fx_buy_rate if cost_fcy_currency else None,
                     bucket=data.get('bucket', 'origin_charges'),
                     product_code=data.get('product_code') or code,
                     component=data.get('component'),
@@ -1263,6 +1384,41 @@ class PricingServiceV4Adapter:
                 elif shipment_type == 'EXPORT':
                     caf_pct = Decimal(str(self.policy.caf_export_pct))
 
+            # Capture quote-level FX audit for SPOT overlay conversion when the
+            # output currency is FCY (rare) or when FCY buy costs exist.
+            if "fx_audit" not in self._audit_metadata:
+                normalized_output_currency = str(output_currency or "").upper() or "PGK"
+                normalized_charge_currency = str(getattr(charge, "currency", None) or "").upper() or "PGK"
+                fx_applied = (normalized_output_currency != "PGK") or (normalized_charge_currency != "PGK")
+                if fx_applied:
+                    if normalized_output_currency != "PGK":
+                        from_currency = normalized_output_currency
+                        base_rate_type = "TT_SELL"
+                        base_rate = output_fx_sell
+                        caf_operation = "ADDED" if getattr(self.quote_input.shipment, "shipment_type", None) == "EXPORT" else "DEDUCTED"
+                        effective_rate = (
+                            output_fx_sell * (Decimal("1") + caf_pct)
+                            if caf_operation == "ADDED"
+                            else output_fx_sell * (Decimal("1") - caf_pct)
+                        )
+                    else:
+                        from_currency = normalized_charge_currency
+                        base_rate_type = "TT_BUY"
+                        base_rate = self._get_fx_buy_rate(normalized_charge_currency, fx_rates)
+                        caf_operation = "DEDUCTED"
+                        effective_rate = base_rate * (Decimal("1") - caf_pct) if base_rate is not None else None
+                    self._capture_fx_audit(
+                        applied=True,
+                        from_currency=from_currency,
+                        to_currency="PGK",
+                        base_rate_type=base_rate_type,
+                        base_rate=base_rate,
+                        caf_percent=caf_pct,
+                        caf_operation=caf_operation,
+                        effective_rate_after_caf=effective_rate,
+                        notes="SPOT overlay: adapter FX/CAF conversion captured for audit.",
+                    )
+
             fx_buy = self._get_fx_buy_rate(charge.currency, fx_rates)
             
             # Canonical rule evaluator (supports FLAT, PER_UNIT, MIN_OR_PER_UNIT, PERCENT_OF, etc.)
@@ -1408,6 +1564,7 @@ class PricingServiceV4Adapter:
                 cost_fcy=cost_fcy,
                 cost_fcy_currency=charge.currency,
                 sell_fcy_currency=output_currency,
+                exchange_rate=(output_fx_sell if str(output_currency or '').upper() != 'PGK' else (fx_buy if str(getattr(charge, 'currency', None) or '').upper() != 'PGK' else None)),
                 bucket=charge.bucket, # Ensure bucket is passed
                 product_code=charge.code,
                 component=canonical_component,

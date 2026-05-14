@@ -352,6 +352,7 @@ export interface V3QuoteLine {
   product_code?: string | null;
   description?: string | null;
   leg?: string;
+  bucket?: string | null;
   cost_pgk: string;
   cost_fcy?: string | null;
   cost_fcy_currency?: string | null;
@@ -363,6 +364,21 @@ export interface V3QuoteLine {
   exchange_rate?: string | null;
   cost_source?: string | null;
   cost_source_description?: string | null;
+  basis?: string | null;
+  rule_family?: string | null;
+  service_family?: string | null;
+  unit_type?: string | null;
+  rate?: string | null;
+  rate_source?: string | null;
+  canonical_cost_source?: string | null;
+  is_spot_sourced?: boolean | null;
+  is_manual_override?: boolean | null;
+  calculation_notes?: string | null;
+  is_informational?: boolean;
+  conditional?: boolean;
+  gst_category?: string | null;
+  gst_rate?: string | null;
+  gst_amount?: string | null;
   is_rate_missing: boolean;
 }
 
@@ -416,9 +432,18 @@ export interface V3QuoteVersion {
 export interface CanonicalQuoteFxApplied {
   applied: boolean;
   rate: string | null;
+  base_rate?: string | null;
+  base_rate_type?: string | null;
+  direction?: string | null;
+  from_currency?: string | null;
+  to_currency?: string | null;
   source: string | null;
   snapshot_date: string | null;
   caf_percent: string | null;
+  caf_operation?: string | null;
+  effective_fx_after_caf?: string | null;
+  fx_fallbacks?: Array<Record<string, unknown>>;
+  fx_defaults_used?: Array<Record<string, unknown>>;
   currency: string | null;
 }
 
@@ -445,6 +470,8 @@ export interface CanonicalQuoteLineItem {
   rate: string | null;
   cost_amount: string;
   sell_amount: string;
+  margin_amount: string;
+  margin_percent: string;
   tax_code: string;
   tax_amount: string;
   included_in_total: boolean;
@@ -453,6 +480,7 @@ export interface CanonicalQuoteLineItem {
   calculation_notes: string | null;
   is_spot_sourced: boolean;
   is_manual_override: boolean;
+  fx_applied?: boolean;
   sort_order: number;
 }
 

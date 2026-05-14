@@ -28,7 +28,10 @@ async function loadModule() {
   }
 }
 
-const { getSpotFinalizeDisabledReason } = await loadModule();
+const {
+  getSpotFinalizeDisabledReason,
+  getSpotFinalizeFormDisabledReason,
+} = await loadModule();
 
 const baseSpe = {
   acknowledgement: null,
@@ -66,9 +69,10 @@ assert.match(
   getSpotFinalizeDisabledReason({
     spe: baseSpe,
     unresolvedReviewIssueCount: 2,
+    unresolvedReviewIssueLabels: ["Import Air Freight", "Documentation Fee"],
   }) || "",
-  /Resolve 2 issues before creating quote/,
-  "unresolved charge blockers should expose a clear disabled reason",
+  /Resolve 2 issues before creating quote: Import Air Freight, Documentation Fee\./,
+  "unresolved charge blockers should name affected charges",
 );
 
 assert.equal(
@@ -140,4 +144,81 @@ assert.match(
   "unacknowledged source blockers should show the backend blocking issue",
 );
 
-console.log("spot finalization gating checks passed");
+assert.equal(
+  getSpotFinalizeDisabledReason({
+    spe: {
+      ...baseSpe,
+      intake_safety: {
+        is_safe_to_quote: false,
+        blocking_issues: ["Uploaded rates: 2 extracted charge line(s) were low-confidence."],
+        pending_source_batch_ids: ["source-1"],
+        pending_source_labels: ["Uploaded rates"],
+        review_note_required_batch_ids: [],
+      },
+    },
+    unresolvedReviewIssueCount: 0,
+  }),
+  null,
+  "low-confidence source warnings should stay visible but not disable final quote creation",
+);
+
+const readyAcknowledgedSpe = {
+  acknowledgement: { acknowledged_at: "2026-05-11T00:00:00Z" },
+  can_proceed: true,
+  intake_safety: { is_safe_to_quote: false, blocking_issues: ["AI audit flagged fallback extraction."] },
+  is_expired: false,
+  missing_mandatory_fields: [],
+  status: "ready",
+};
+
+assert.equal(
+  getSpotFinalizeDisabledReason({
+    spe: readyAcknowledgedSpe,
+    unresolvedReviewIssueCount: 0,
+  }),
+  null,
+  "acknowledged unsafe-audit fallback must not block when backend can proceed",
+);
+
+assert.equal(
+  getSpotFinalizeFormDisabledReason({
+    finalizeDisabledReason: null,
+    editableChargeCount: 0,
+    isFormValid: false,
+    allowEmptySubmit: true,
+  }),
+  null,
+  "ready SPEs with no editable manual rows must still be submittable",
+);
+
+assert.match(
+  getSpotFinalizeFormDisabledReason({
+    finalizeDisabledReason: null,
+    editableChargeCount: 0,
+    isFormValid: false,
+    allowEmptySubmit: false,
+  }),
+  /at least one SPOT charge line/,
+);
+
+assert.match(
+  getSpotFinalizeFormDisabledReason({
+    finalizeDisabledReason: null,
+    editableChargeCount: 2,
+    isFormValid: false,
+    allowEmptySubmit: true,
+  }),
+  /Complete the visible SPOT charge fields/,
+);
+
+assert.equal(
+  getSpotFinalizeFormDisabledReason({
+    finalizeDisabledReason: "Resolve 1 issue before creating quote.",
+    editableChargeCount: 0,
+    isFormValid: false,
+    allowEmptySubmit: true,
+  }),
+  "Resolve 1 issue before creating quote.",
+);
+
+console.log("spot finalization checks passed");

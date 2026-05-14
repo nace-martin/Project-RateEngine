@@ -354,6 +354,8 @@ export default function SpotRateEntryPage() {
     const customerIdParam = searchParams.get("customer_id") || "";
     const customerNameParam = searchParams.get("customer_name") || "";
     const outputCurrency = searchParams.get("output_currency") || "PGK";
+    const contactIdParam = searchParams.get("contact_id") || "";
+    const incotermParam = searchParams.get("incoterm") || "";
     const shipmentTypeParam = searchParams.get("shipment_type") as "EXPORT" | "IMPORT" | "DOMESTIC" | null;
     const returnTo = searchParams.get("returnTo");
 
@@ -896,6 +898,7 @@ export default function SpotRateEntryPage() {
     const quoteSubmitDisabledReason = getSpotFinalizeDisabledReason({
         spe: state.spe,
         unresolvedReviewIssueCount,
+        unresolvedReviewIssueLabels: reviewLines.affected.map((line) => line.label),
     });
     const quoteSubmitDisabled = Boolean(quoteSubmitDisabledReason);
     const hasReviewActions =
@@ -918,7 +921,7 @@ export default function SpotRateEntryPage() {
             setFinalizeError(null);
             let spe = state.spe;
 
-            if (spe.status === "draft") {
+            if (spe.status === "draft" && charges.length > 0) {
                 const updatedSpe = await actions.updateSPE(spe.id, {
                     charges,
                     conditions: {
@@ -950,6 +953,8 @@ export default function SpotRateEntryPage() {
                 service_scope: resolvedScope,
                 output_currency: resolvedOutputCurrency,
                 customer_id: customerIdParam || undefined,
+                contact_id: contactIdParam || undefined,
+                incoterm: incotermParam || undefined,
             });
 
             if (result?.success && result.quote_id) {
@@ -1483,6 +1488,7 @@ export default function SpotRateEntryPage() {
                                             submitLabel="Create Quote"
                                             submitDisabled={quoteSubmitDisabled}
                                             submitDisabledReason={quoteSubmitDisabledReason}
+                                            allowEmptySubmit={Boolean(state.spe?.can_proceed)}
                                             onSaveDraft={handleSaveDraft}
                                             onManualResolveChargeLine={actions.manuallyResolveChargeLine}
                                             productCodeDomain={resolvedShipmentType}

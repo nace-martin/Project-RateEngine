@@ -457,6 +457,37 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             calculation_notes="Stored fallback audit note",
         )
 
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=freight_component,
+            cost_pgk=Decimal("0.00"),
+            sell_pgk=Decimal("0.00"),
+            sell_pgk_incl_gst=Decimal("0.00"),
+            sell_fcy=Decimal("0.00"),
+            sell_fcy_incl_gst=Decimal("0.00"),
+            sell_fcy_currency="PGK",
+            bucket="destination_charges",
+            leg="DESTINATION",
+            cost_source="SYSTEM",
+            cost_source_description="Local PGK destination charge",
+            gst_category="GST",
+            gst_rate=Decimal("0.1000"),
+            gst_amount=Decimal("0.00"),
+            is_rate_missing=False,
+            product_code=freight_component.code,
+            component="DESTINATION_LOCAL",
+            basis="Per Shipment",
+            rule_family="FLAT",
+            service_family="PASSTHROUGH",
+            unit_type="SHIPMENT",
+            rate=None,
+            rate_source="DB_TARIFF",
+            canonical_cost_source="DB_TARIFF",
+            is_spot_sourced=False,
+            is_manual_override=False,
+            calculation_notes=None,
+        )
+
         QuoteTotal.objects.create(
             quote_version=version,
             total_cost_pgk=Decimal("120.00"),
@@ -502,7 +533,7 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertTrue(detail_quote_result["spot_required"])
         self.assertCountEqual(
             detail_quote_result["missing_components"],
-            ["ORIGIN_LOCAL", "DESTINATION_LOCAL"],
+            ["ORIGIN_LOCAL"],
         )
 
     def test_canonical_line_items_include_required_audit_fields_and_safe_defaults(self):
@@ -510,10 +541,11 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         line_items = response.json()["quote_result"]["line_items"]
-        self.assertEqual(len(line_items), 2)
+        self.assertEqual(len(line_items), 3)
 
-        freight_line = next(line for line in line_items if line["product_code"])
+        freight_line = next(line for line in line_items if line["component"] == "FREIGHT")
         fallback_line = next(line for line in line_items if not line["product_code"])
+        pgk_local_line = next(line for line in line_items if line["component"] == "DESTINATION_LOCAL")
 
         self.assertEqual(freight_line["component"], "FREIGHT")
         self.assertEqual(freight_line["unit_type"], "KG")
@@ -535,6 +567,8 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertEqual(fallback_line["calculation_notes"], "Stored fallback audit note")
         self.assertEqual(fallback_line["included_in_total"], False)
         self.assertEqual(fallback_line["quantity"], "1.00")
+        self.assertEqual(fallback_line["fx_applied"], True)
+        self.assertEqual(pgk_local_line["fx_applied"], False)
 
     def test_canonical_rule_family_uses_only_calculation_family_vocabulary(self):
         response = self.client.get(self.detail_url)
