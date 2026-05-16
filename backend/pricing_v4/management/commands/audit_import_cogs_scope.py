@@ -49,6 +49,7 @@ class Command(BaseCommand):
             row for row in rows
             if classify_import_cogs_scope(row) not in {ImportCOGSScope.LANE, ImportCOGSScope.UNKNOWN}
             and explicit_scope(row) == computed_transition_scope(row)
+            and not _is_already_normalized(row)
         ]
 
         self.stdout.write("ImportCOGS scope audit (dry run)")
@@ -64,15 +65,13 @@ class Command(BaseCommand):
         self.stdout.write("")
         self._write_rows("Rows ready for future consolidation review:", consolidation_ready_rows)
         self.stdout.write("")
-        self.stdout.write("Phase 2 direction:")
-        self.stdout.write("- Keep explicit scope nullable during transition.")
-        self.stdout.write("- Allow ORIGIN rows to have destination_airport = null.")
-        self.stdout.write("- Allow DESTINATION rows to have origin_airport = null.")
-        self.stdout.write("- Keep LANE rows requiring both origin_airport and destination_airport.")
-        self.stdout.write("- Do not enforce strict constraints until production data is proven clean.")
-        self.stdout.write("- Do not delete or merge duplicate rows in Phase 2.")
-        self.stdout.write("- Use duplicate and ready rows only as a dry-run consolidation report.")
-        self.stdout.write("- Preserve deterministic selector ordering and current quote output during migration.")
+        self.stdout.write("Phase 3 direction:")
+        self.stdout.write("- Use explicit scope (LANE, ORIGIN, DESTINATION) for all rows.")
+        self.stdout.write("- ORIGIN rows must have destination_airport = NULL.")
+        self.stdout.write("- DESTINATION rows must have origin_airport = NULL.")
+        self.stdout.write("- LANE rows require both origin_airport and destination_airport.")
+        self.stdout.write("- Use the consolidation planner to identify and merge duplicate commercial signatures.")
+        self.stdout.write("- Preserve deterministic selector ordering and current quote output.")
 
     def _duplicate_non_lane_groups(self, rows: Iterable[ImportCOGS]):
         groups = defaultdict(list)
@@ -113,7 +112,7 @@ class Command(BaseCommand):
             self.stdout.write("- none")
             return
         for signature, members in duplicate_groups.items():
-            destinations = ", ".join(sorted({row.destination_airport for row in members}))
+            destinations = ", ".join(sorted({str(row.destination_airport) for row in members}))
             ids = ", ".join(str(row.id) for row in members)
             self.stdout.write(
                 "- "
@@ -166,6 +165,15 @@ class Command(BaseCommand):
                 f"{signature.currency} amount={signature.amount_signature} origin={origin} "
                 f"missing_destinations={', '.join(missing_destinations)}"
             )
+
+
+def _is_already_normalized(row: ImportCOGS) -> bool:
+    scope = classify_import_cogs_scope(row)
+    if scope == ImportCOGSScope.ORIGIN:
+        return row.destination_airport is None or row.destination_airport == ""
+    if scope == ImportCOGSScope.DESTINATION:
+        return row.origin_airport is None or row.origin_airport == ""
+    return True
 
 
 def _row_signature(row: ImportCOGS) -> RowSignature:

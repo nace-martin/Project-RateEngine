@@ -771,6 +771,10 @@ class ImportPricingEngine:
         if leg == 'DESTINATION' and is_local_rate_category(pc.category):
             return self._get_local_cogs(pc, leg)
 
+        metadata = {}
+        if leg in {'ORIGIN', 'DESTINATION', 'LANE'}:
+            metadata['rate_scope'] = leg
+
         try:
             return select_import_cogs_rate(
                 RateSelectionContext(
@@ -781,6 +785,7 @@ class ImportPricingEngine:
                     currency=self.buy_currency,
                     agent_id=self.preferred_agent_id,
                     carrier_id=self.preferred_carrier_id,
+                    metadata=metadata,
                 )
             ).record
         except RateNotFoundError:

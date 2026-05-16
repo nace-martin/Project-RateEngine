@@ -365,14 +365,52 @@ def _apply_counterparty_filter(qs: QuerySet, context: RateSelectionContext) -> t
 def _lane_queryset(model_cls: type[models.Model], context: RateSelectionContext) -> QuerySet:
     context = context.normalized()
     qs = _active_queryset(model_cls, context.quote_date).filter(product_code_id=context.product_code_id)
+    
+    expected_scope = _normalize_text((context.metadata or {}).get('rate_scope'))
+
     if context.origin_airport is not None:
-        qs = qs.filter(origin_airport=context.origin_airport)
+        match_exact = models.Q(origin_airport=context.origin_airport)
+        match_null = models.Q(origin_airport__isnull=True) | models.Q(origin_airport='')
+        
+        if expected_scope == 'ORIGIN':
+            # For ORIGIN scope, we must match origin. 
+            qs = qs.filter(match_exact)
+        elif expected_scope == 'DESTINATION':
+            # For DESTINATION scope, origin should be NULL in normalized state.
+            # We also allow exact match during transition if it exists.
+            qs = qs.filter(match_exact | match_null)
+        else:
+            # Default/LANE: Match exact origin OR allow NULL (for non-lane rows)
+            qs = qs.filter(match_exact | match_null)
+
     if context.destination_airport is not None:
-        qs = qs.filter(destination_airport=context.destination_airport)
+        match_exact = models.Q(destination_airport=context.destination_airport)
+        match_null = models.Q(destination_airport__isnull=True) | models.Q(destination_airport='')
+
+        if expected_scope == 'DESTINATION':
+            # For DESTINATION scope, we must match destination.
+            qs = qs.filter(match_exact)
+        elif expected_scope == 'ORIGIN':
+            # For ORIGIN scope, we prefer NULL/Blank destination, 
+            # but allow exact match (transition) or any destination if explicitly scoped.
+            qs = qs.filter(match_exact | match_null | models.Q(scope='ORIGIN'))
+        else:
+            # Default/LANE: Match exact destination OR allow NULL (for non-lane rows)
+            qs = qs.filter(match_exact | match_null)
+
     if context.origin_zone is not None:
-        qs = qs.filter(origin_zone=context.origin_zone)
+        qs = qs.filter(
+            models.Q(origin_zone=context.origin_zone) |
+            models.Q(origin_zone__isnull=True) |
+            models.Q(origin_zone='')
+        )
     if context.destination_zone is not None:
-        qs = qs.filter(destination_zone=context.destination_zone)
+        qs = qs.filter(
+            models.Q(destination_zone=context.destination_zone) |
+            models.Q(destination_zone__isnull=True) |
+            models.Q(destination_zone='')
+        )
+
     qs = _apply_explicit_scope_preference(qs, model_cls, context)
     return qs
 

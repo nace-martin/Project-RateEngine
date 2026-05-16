@@ -105,6 +105,10 @@ class Command(BaseCommand):
             candidate_count = 0
             
             for sig, members in groups.items():
+                # Skip if already normalized (no redundant locations in ANY member)
+                if all(_is_normalized(m) for m in members):
+                    continue
+
                 candidate_count += 1
                 if len(members) > 1:
                     consolidated_count += 1
@@ -151,3 +155,12 @@ class Command(BaseCommand):
         self.stdout.write(f"  Target: {sig.origin_airport or '*' } -> {sig.destination_airport or '*'}")
         self.stdout.write("  Safe to normalize: YES")
         self.stdout.write("  Action: Update 1 row to be normalized (clear redundant location).")
+
+
+def _is_normalized(row: ImportCOGS) -> bool:
+    scope = classify_import_cogs_scope(row)
+    if scope == ImportCOGSScope.ORIGIN:
+        return row.destination_airport is None or row.destination_airport == ""
+    if scope == ImportCOGSScope.DESTINATION:
+        return row.origin_airport is None or row.origin_airport == ""
+    return True

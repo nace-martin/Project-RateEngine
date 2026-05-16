@@ -612,8 +612,8 @@ class ImportCOGS(models.Model):
         related_name='import_cogs_rates',
         limit_choices_to={'domain': ProductCode.DOMAIN_IMPORT}
     )
-    origin_airport = models.CharField(max_length=3, db_index=True)
-    destination_airport = models.CharField(max_length=3, db_index=True)
+    origin_airport = models.CharField(max_length=3, db_index=True, null=True, blank=True)
+    destination_airport = models.CharField(max_length=3, db_index=True, null=True, blank=True)
     scope = models.CharField(
         max_length=11,
         choices=RateScope.choices,
