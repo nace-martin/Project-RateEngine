@@ -275,7 +275,7 @@ def _public_group_line_sort_key(group_name: str, line_data: dict) -> tuple[int, 
             priority = 0
         elif "agency fee" in description:
             priority = 1
-    elif group_name == "Pickup / Delivery / Cartage":
+    elif group_name == "Local Transport / Cartage":
         if "cartage fuel surcharge" in description:
             priority = 1
         elif "fuel surcharge" in description:
