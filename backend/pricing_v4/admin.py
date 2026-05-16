@@ -4,6 +4,7 @@ Admin configuration for pricing_v4 models.
 """
 
 from django.contrib import admin
+from django.db.models import Q
 from .models import (
     Carrier,
     Agent,
@@ -18,6 +19,76 @@ from .models import (
     CustomerDiscount,
     CommodityChargeRule,
 )
+from .services.pricing_rate_scope import LOCAL_CATEGORIES, PricingRateScope, classify_pricing_rate_scope
+
+
+RATE_SCOPE_LANE_Q = (
+    Q(product_code__category='FREIGHT') |
+    Q(product_code__code__icontains='FRT') |
+    Q(product_code__code__icontains='FREIGHT') |
+    Q(product_code__description__icontains='Air Freight') |
+    Q(product_code__description__icontains='Linehaul') |
+    Q(product_code__description__icontains='Lane Freight')
+)
+RATE_SCOPE_DESTINATION_Q = (
+    Q(product_code__code__icontains='-DEST') |
+    Q(product_code__code__icontains='DELIVERY') |
+    Q(product_code__code__icontains='CARTAGE') |
+    Q(product_code__description__icontains='Destination') |
+    Q(product_code__description__icontains='Delivery') |
+    Q(product_code__description__icontains='Cartage') |
+    Q(product_code__description__icontains='Customs Clearance') |
+    Q(product_code__domain='IMPORT', product_code__category__in=LOCAL_CATEGORIES)
+)
+RATE_SCOPE_ORIGIN_Q = (
+    Q(product_code__code__icontains='-ORIGIN') |
+    Q(product_code__code__icontains='PICKUP') |
+    Q(product_code__description__icontains='Origin') |
+    Q(product_code__description__icontains='Pickup') |
+    Q(product_code__description__icontains='Pick Up') |
+    Q(product_code__description__icontains='Collection') |
+    Q(product_code__description__icontains='AWB') |
+    Q(product_code__description__icontains='Screen') |
+    Q(product_code__description__icontains='X-Ray') |
+    Q(product_code__description__icontains='Build Up') |
+    Q(product_code__domain='EXPORT', product_code__category__in=LOCAL_CATEGORIES)
+)
+RATE_SCOPE_LOCAL_Q = Q(product_code__domain='DOMESTIC', product_code__category__in=LOCAL_CATEGORIES)
+RATE_SCOPE_KNOWN_Q = (
+    RATE_SCOPE_LANE_Q |
+    RATE_SCOPE_ORIGIN_Q |
+    RATE_SCOPE_DESTINATION_Q |
+    RATE_SCOPE_LOCAL_Q
+)
+
+
+class PricingRateScopeFilter(admin.SimpleListFilter):
+    title = 'computed scope'
+    parameter_name = 'computed_scope'
+
+    def lookups(self, request, model_admin):
+        return tuple((scope.value, scope.value) for scope in PricingRateScope)
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == PricingRateScope.LANE:
+            return queryset.filter(RATE_SCOPE_LANE_Q)
+        if value == PricingRateScope.ORIGIN:
+            return queryset.filter(RATE_SCOPE_ORIGIN_Q)
+        if value == PricingRateScope.DESTINATION:
+            return queryset.filter(RATE_SCOPE_DESTINATION_Q)
+        if value == PricingRateScope.LOCAL:
+            return queryset.filter(RATE_SCOPE_LOCAL_Q)
+        if value == PricingRateScope.UNKNOWN:
+            return queryset.exclude(RATE_SCOPE_KNOWN_Q)
+        return queryset
+
+
+def computed_rate_scope(obj):
+    return classify_pricing_rate_scope(obj).value
+
+
+computed_rate_scope.short_description = 'Computed Scope'
 
 
 @admin.register(Carrier)
@@ -118,8 +189,9 @@ class ChargeAliasAdmin(admin.ModelAdmin):
 
 @admin.register(ExportCOGS)
 class ExportCOGSAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
-    list_filter = ['origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
+    list_display = ['product_code', computed_rate_scope, 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
+    list_select_related = ['product_code', 'carrier', 'agent']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
     
@@ -130,8 +202,9 @@ class ExportCOGSAdmin(admin.ModelAdmin):
 
 @admin.register(ExportSellRate)
 class ExportSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'valid_from', 'valid_until']
-    list_filter = ['origin_airport', 'destination_airport', 'currency']
+    list_display = ['product_code', computed_rate_scope, 'origin_airport', 'destination_airport', 'currency', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency']
+    list_select_related = ['product_code']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
 
@@ -150,8 +223,9 @@ class ImportCOGSAdmin(admin.ModelAdmin):
 
 @admin.register(ImportSellRate)
 class ImportSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'architecture_role', 'valid_from', 'valid_until']
-    list_filter = ['origin_airport', 'destination_airport', 'currency']
+    list_display = ['product_code', computed_rate_scope, 'origin_airport', 'destination_airport', 'currency', 'architecture_role', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency']
+    list_select_related = ['product_code']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
 
@@ -162,16 +236,18 @@ class ImportSellRateAdmin(admin.ModelAdmin):
 
 @admin.register(DomesticCOGS)
 class DomesticCOGSAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'origin_zone', 'destination_zone', 'currency', 'agent', 'valid_from', 'valid_until']
-    list_filter = ['origin_zone', 'destination_zone', 'agent']
+    list_display = ['product_code', computed_rate_scope, 'origin_zone', 'destination_zone', 'currency', 'agent', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'origin_zone', 'destination_zone', 'agent']
+    list_select_related = ['product_code', 'agent', 'carrier']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_zone', 'destination_zone']
 
 
 @admin.register(DomesticSellRate)
 class DomesticSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'origin_zone', 'destination_zone', 'currency', 'architecture_role', 'valid_from', 'valid_until']
-    list_filter = ['origin_zone', 'destination_zone']
+    list_display = ['product_code', computed_rate_scope, 'origin_zone', 'destination_zone', 'currency', 'architecture_role', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'origin_zone', 'destination_zone']
+    list_select_related = ['product_code']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_zone', 'destination_zone']
 
@@ -271,8 +347,9 @@ from .models import LocalSellRate, LocalCOGSRate
 
 @admin.register(LocalSellRate)
 class LocalSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'location', 'direction', 'payment_term', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
-    list_filter = ['location', 'direction', 'payment_term', 'currency', 'rate_type']
+    list_display = ['product_code', computed_rate_scope, 'location', 'direction', 'payment_term', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'location', 'direction', 'payment_term', 'currency', 'rate_type']
+    list_select_related = ['product_code', 'percent_of_product_code']
     search_fields = ['product_code__code', 'location']
     ordering = ['location', 'direction', 'product_code']
     autocomplete_fields = ['product_code', 'percent_of_product_code']
@@ -304,8 +381,9 @@ class LocalSellRateAdmin(admin.ModelAdmin):
 
 @admin.register(LocalCOGSRate)
 class LocalCOGSRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'location', 'direction', 'get_counterparty', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
-    list_filter = ['location', 'direction', 'currency', 'rate_type', 'agent', 'carrier']
+    list_display = ['product_code', computed_rate_scope, 'location', 'direction', 'get_counterparty', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
+    list_filter = [PricingRateScopeFilter, 'location', 'direction', 'currency', 'rate_type', 'agent', 'carrier']
+    list_select_related = ['product_code', 'agent', 'carrier', 'percent_of_product_code']
     search_fields = ['product_code__code', 'location']
     ordering = ['location', 'direction', 'product_code']
     autocomplete_fields = ['product_code', 'agent', 'carrier', 'percent_of_product_code']
