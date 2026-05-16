@@ -480,9 +480,9 @@ class QuotePublicDetailAPITest(APITestCase):
             [line["description"] for line in destination_groups["Customs / Regulatory"]["lines"]],
             ["Customs Clearance (Dest)", "Agency Fee (Dest)"],
         )
-        self.assertEqual(destination_groups["Pickup / Delivery / Cartage"]["subtotal"], "165.00")
+        self.assertEqual(destination_groups["Local Transport / Cartage"]["subtotal"], "165.00")
         self.assertEqual(
-            [line["description"] for line in destination_groups["Pickup / Delivery / Cartage"]["lines"]],
+            [line["description"] for line in destination_groups["Local Transport / Cartage"]["lines"]],
             ["Cartage & Delivery (Dest)", "Cartage Fuel Surcharge (V4)"],
         )
         self.assertEqual(destination_groups["Documentation"]["subtotal"], "150.00")
@@ -491,7 +491,7 @@ class QuotePublicDetailAPITest(APITestCase):
         self.assertEqual(destination_groups["Other Charges"]["subtotal"], "10.00")
 
         self.assertEqual(buckets["Freight"]["subtotal"], "4000.53")
-        self.assertEqual(freight_groups["Freight / Carrier Charges"]["subtotal"], "3975.53")
+        self.assertEqual(freight_groups["Freight / Carrier"]["subtotal"], "3975.53")
         self.assertEqual(freight_groups["Carrier Surcharges"]["subtotal"], "25.00")
 
     def test_public_quote_includes_branding_payload(self):

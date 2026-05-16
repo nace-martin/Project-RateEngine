@@ -4,6 +4,7 @@ Admin configuration for pricing_v4 models.
 """
 
 from django.contrib import admin
+from django.db.models import Q
 from .models import (
     Carrier,
     Agent,
@@ -18,6 +19,64 @@ from .models import (
     CustomerDiscount,
     CommodityChargeRule,
 )
+from .services.import_cogs_scope import ImportCOGSScope, classify_import_cogs_scope
+
+
+IMPORT_COGS_ORIGIN_SCOPE_Q = (
+    Q(product_code__code__icontains='-ORIGIN') |
+    Q(product_code__code__icontains='IMP-PICKUP') |
+    Q(product_code__code__icontains='IMP-FSC-PICKUP') |
+    Q(product_code__description__icontains='Origin') |
+    Q(product_code__description__icontains='Pickup') |
+    Q(product_code__description__icontains='AWB') |
+    Q(product_code__description__icontains='X-Ray') |
+    Q(product_code__description__icontains='Screen')
+)
+IMPORT_COGS_DESTINATION_SCOPE_Q = (
+    Q(product_code__code__icontains='-DEST') |
+    Q(product_code__code__icontains='IMP-CLEAR') |
+    Q(product_code__code__icontains='IMP-CARTAGE') |
+    Q(product_code__code__icontains='IMP-FSC-CARTAGE') |
+    Q(product_code__description__icontains='Destination') |
+    Q(product_code__description__icontains='Customs Clearance') |
+    Q(product_code__description__icontains='Cartage') |
+    Q(product_code__description__icontains='Delivery') |
+    Q(product_code__description__icontains='Handling') |
+    Q(product_code__description__icontains='Terminal')
+)
+IMPORT_COGS_LANE_SCOPE_Q = (
+    Q(product_code__category='FREIGHT') |
+    Q(product_code__code__icontains='IMP-FRT') |
+    Q(product_code__code__icontains='FRT-AIR') |
+    Q(product_code__description__icontains='Import Air Freight') |
+    Q(product_code__description__icontains='Linehaul') |
+    Q(product_code__description__icontains='Lane Freight')
+)
+IMPORT_COGS_KNOWN_SCOPE_Q = (
+    IMPORT_COGS_ORIGIN_SCOPE_Q |
+    IMPORT_COGS_DESTINATION_SCOPE_Q |
+    IMPORT_COGS_LANE_SCOPE_Q
+)
+
+
+class ImportCOGSScopeFilter(admin.SimpleListFilter):
+    title = 'computed scope'
+    parameter_name = 'computed_scope'
+
+    def lookups(self, request, model_admin):
+        return tuple((scope.value, scope.value) for scope in ImportCOGSScope)
+
+    def queryset(self, request, queryset):
+        value = self.value()
+        if value == ImportCOGSScope.ORIGIN:
+            return queryset.filter(IMPORT_COGS_ORIGIN_SCOPE_Q)
+        if value == ImportCOGSScope.DESTINATION:
+            return queryset.filter(IMPORT_COGS_DESTINATION_SCOPE_Q)
+        if value == ImportCOGSScope.LANE:
+            return queryset.filter(IMPORT_COGS_LANE_SCOPE_Q)
+        if value == ImportCOGSScope.UNKNOWN:
+            return queryset.exclude(IMPORT_COGS_KNOWN_SCOPE_Q)
+        return queryset
 
 
 @admin.register(Carrier)
@@ -138,14 +197,19 @@ class ExportSellRateAdmin(admin.ModelAdmin):
 
 @admin.register(ImportCOGS)
 class ImportCOGSAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
-    list_filter = ['origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
+    list_display = ['product_code', 'computed_scope', 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
+    list_filter = [ImportCOGSScopeFilter, 'origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
+    list_select_related = ['product_code', 'carrier', 'agent']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
     
     def get_counterparty(self, obj):
         return obj.carrier or obj.agent
     get_counterparty.short_description = 'Counterparty'
+
+    def computed_scope(self, obj):
+        return classify_import_cogs_scope(obj).value
+    computed_scope.short_description = 'Computed Scope'
 
 
 @admin.register(ImportSellRate)
