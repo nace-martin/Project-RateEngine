@@ -1293,7 +1293,14 @@ class SpotEnvelopeListCreateAPIView(APIView):
             quote = None
             quote_id = data.get('quote_id')
             if quote_id:
-                quote = get_quote_for_user(request.user, quote_id)
+                try:
+                    quote = get_quote_for_user(request.user, quote_id)
+                except (SpotPricingEnvelopeDB.DoesNotExist, ValueError, UUID.AttributeError):
+                     return Response(
+                        {'error': f"Invalid quote_id: {quote_id}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
                 from quotes.state_machine import is_quote_editable
                 if not is_quote_editable(quote):
                     return Response(
@@ -1309,7 +1316,18 @@ class SpotEnvelopeListCreateAPIView(APIView):
                         {'error': f'Missing required field: {field}'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
+                if data[field] is None:
+                    return Response(
+                        {'error': f'Field {field} cannot be null'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
+            if not isinstance(data['shipment_context'], dict):
+                return Response(
+                    {'error': 'shipment_context must be a dictionary'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             # Create DB record
             ctx = _normalize_shipment_context(data['shipment_context'])
             if (
@@ -1322,9 +1340,22 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 resolved_missing_components = _resolve_missing_components_for_context(ctx)
                 if resolved_missing_components is not None:
                     ctx["missing_components"] = resolved_missing_components
-            now = timezone.now()
-            validity_hours = data.get('validity_hours', 72)
             
+            now = timezone.now()
+            
+            # Safe validity_hours parsing
+            try:
+                raw_validity = data.get('validity_hours', 72)
+                if raw_validity is None:
+                    validity_hours = 72
+                else:
+                    validity_hours = int(raw_validity)
+            except (TypeError, ValueError):
+                 return Response(
+                    {'error': 'validity_hours must be an integer'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             spe_db = SpotPricingEnvelopeDB.objects.create(
                 status='draft',
                 shipment_context_json=ctx,
@@ -1338,24 +1369,36 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             # Create charge lines (optional)
             charges_data = data.get('charges', [])
-            for charge in charges_data:
-                rate_val = charge.get('rate') if charge.get('rate') not in ("", None) else None
-                min_amount_val = charge.get('min_amount') if charge.get('min_amount') not in ("", None) else None
-                max_amount_val = charge.get('max_amount') if charge.get('max_amount') not in ("", None) else None
-                percent_val = charge.get('percent') if charge.get('percent') not in ("", None) else None
-                _create_spe_charge_line(
-                    spe_db=spe_db,
-                    charge={
-                        **charge,
-                        'rate': rate_val,
-                        'min_amount': min_amount_val,
-                        'max_amount': max_amount_val,
-                        'percent': percent_val,
-                    },
-                    entered_by=request.user,
-                    entered_at=now,
-                    shipment_context=ctx,
+            if not isinstance(charges_data, list):
+                return Response(
+                    {'error': 'charges must be a list'},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
+
+            for i, charge in enumerate(charges_data):
+                try:
+                    rate_val = charge.get('rate') if charge.get('rate') not in ("", None) else None
+                    min_amount_val = charge.get('min_amount') if charge.get('min_amount') not in ("", None) else None
+                    max_amount_val = charge.get('max_amount') if charge.get('max_amount') not in ("", None) else None
+                    percent_val = charge.get('percent') if charge.get('percent') not in ("", None) else None
+                    _create_spe_charge_line(
+                        spe_db=spe_db,
+                        charge={
+                            **charge,
+                            'rate': rate_val,
+                            'min_amount': min_amount_val,
+                            'max_amount': max_amount_val,
+                            'percent': percent_val,
+                        },
+                        entered_by=request.user,
+                        entered_at=now,
+                        shipment_context=ctx,
+                    )
+                except KeyError as e:
+                    return Response(
+                        {'error': f"Missing required field {str(e)} in charge line at index {i}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             
             # Validate via Pydantic (will raise if invalid)
             try:
@@ -1372,7 +1415,14 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             serializer = SpotPricingEnvelopeSerializer(spe_db)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        except PermissionDenied as e:
+            raise e
         except Exception as e:
+            from django.http import Http404
+            if isinstance(e, Http404):
+                raise e
+            
             logger.exception("Unexpected error creating SPE")
             return Response(
                 {'error': "Internal server error while creating the SPOT envelope."},
