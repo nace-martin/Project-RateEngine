@@ -289,6 +289,21 @@ def _active_queryset(model_cls: type[models.Model], quote_date: date) -> QuerySe
     )
 
 
+def _has_scope_field(model_cls: type[models.Model]) -> bool:
+    return any(field.name == 'scope' for field in model_cls._meta.fields)
+
+
+def _apply_explicit_scope_preference(qs: QuerySet, model_cls: type[models.Model], context: RateSelectionContext) -> QuerySet:
+    expected_scope = _normalize_text((context.metadata or {}).get('rate_scope'))
+    if expected_scope not in {'LANE', 'ORIGIN', 'DESTINATION', 'LOCAL'} or not _has_scope_field(model_cls):
+        return qs
+
+    scoped_qs = qs.filter(scope=expected_scope)
+    if scoped_qs.exists():
+        return scoped_qs
+    return qs.filter(models.Q(scope__isnull=True) | models.Q(scope=''))
+
+
 def _resolve_stage(
     *,
     qs: QuerySet,
@@ -358,6 +373,7 @@ def _lane_queryset(model_cls: type[models.Model], context: RateSelectionContext)
         qs = qs.filter(origin_zone=context.origin_zone)
     if context.destination_zone is not None:
         qs = qs.filter(destination_zone=context.destination_zone)
+    qs = _apply_explicit_scope_preference(qs, model_cls, context)
     return qs
 
 
@@ -374,6 +390,7 @@ def _local_queryset(
         location=context.location,
         direction=context.direction,
     )
+    qs = _apply_explicit_scope_preference(qs, model_cls, context)
     return qs
 
 

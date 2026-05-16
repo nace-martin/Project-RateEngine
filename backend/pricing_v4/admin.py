@@ -21,6 +21,7 @@ from .models import (
 )
 from .services.pricing_rate_scope import LOCAL_CATEGORIES, PricingRateScope, classify_pricing_rate_scope
 from .services.import_cogs_scope import ImportCOGSScope, classify_import_cogs_scope
+from .services.rate_scope_transition import computed_transition_scope, scope_mismatch_label
 
 
 RATE_SCOPE_LANE_Q = (
@@ -86,10 +87,17 @@ class PricingRateScopeFilter(admin.SimpleListFilter):
 
 
 def computed_rate_scope(obj):
-    return classify_pricing_rate_scope(obj).value
+    return computed_transition_scope(obj)
 
 
 computed_rate_scope.short_description = 'Computed Scope'
+
+
+def scope_warning(obj):
+    return scope_mismatch_label(obj)
+
+
+scope_warning.short_description = 'Scope Warning'
 
 
 IMPORT_COGS_ORIGIN_SCOPE_Q = (
@@ -247,8 +255,8 @@ class ChargeAliasAdmin(admin.ModelAdmin):
 
 @admin.register(ExportCOGS)
 class ExportCOGSAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
     list_select_related = ['product_code', 'carrier', 'agent']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
@@ -260,8 +268,8 @@ class ExportCOGSAdmin(admin.ModelAdmin):
 
 @admin.register(ExportSellRate)
 class ExportSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'origin_airport', 'destination_airport', 'currency', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'origin_airport', 'destination_airport', 'currency', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency']
     list_select_related = ['product_code']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
@@ -269,8 +277,8 @@ class ExportSellRateAdmin(admin.ModelAdmin):
 
 @admin.register(ImportCOGS)
 class ImportCOGSAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'computed_scope', 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
-    list_filter = [ImportCOGSScopeFilter, 'origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
+    list_display = ['product_code', 'scope', 'computed_scope', scope_warning, 'origin_airport', 'destination_airport', 'currency', 'get_counterparty', 'valid_from', 'valid_until']
+    list_filter = ['scope', ImportCOGSScopeFilter, 'origin_airport', 'destination_airport', 'currency', 'carrier', 'agent']
     list_select_related = ['product_code', 'carrier', 'agent']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
@@ -280,14 +288,14 @@ class ImportCOGSAdmin(admin.ModelAdmin):
     get_counterparty.short_description = 'Counterparty'
 
     def computed_scope(self, obj):
-        return classify_import_cogs_scope(obj).value
+        return computed_transition_scope(obj)
     computed_scope.short_description = 'Computed Scope'
 
 
 @admin.register(ImportSellRate)
 class ImportSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'origin_airport', 'destination_airport', 'currency', 'architecture_role', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'origin_airport', 'destination_airport', 'currency', 'architecture_role', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'origin_airport', 'destination_airport', 'currency']
     list_select_related = ['product_code']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_airport', 'destination_airport']
@@ -299,8 +307,8 @@ class ImportSellRateAdmin(admin.ModelAdmin):
 
 @admin.register(DomesticCOGS)
 class DomesticCOGSAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'origin_zone', 'destination_zone', 'currency', 'agent', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'origin_zone', 'destination_zone', 'agent']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'origin_zone', 'destination_zone', 'currency', 'agent', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'origin_zone', 'destination_zone', 'agent']
     list_select_related = ['product_code', 'agent', 'carrier']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_zone', 'destination_zone']
@@ -308,8 +316,8 @@ class DomesticCOGSAdmin(admin.ModelAdmin):
 
 @admin.register(DomesticSellRate)
 class DomesticSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'origin_zone', 'destination_zone', 'currency', 'architecture_role', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'origin_zone', 'destination_zone']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'origin_zone', 'destination_zone', 'currency', 'architecture_role', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'origin_zone', 'destination_zone']
     list_select_related = ['product_code']
     search_fields = ['product_code__code']
     ordering = ['product_code', 'origin_zone', 'destination_zone']
@@ -410,8 +418,8 @@ from .models import LocalSellRate, LocalCOGSRate
 
 @admin.register(LocalSellRate)
 class LocalSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'location', 'direction', 'payment_term', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'location', 'direction', 'payment_term', 'currency', 'rate_type']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'location', 'direction', 'payment_term', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'location', 'direction', 'payment_term', 'currency', 'rate_type']
     list_select_related = ['product_code', 'percent_of_product_code']
     search_fields = ['product_code__code', 'location']
     ordering = ['location', 'direction', 'product_code']
@@ -419,7 +427,7 @@ class LocalSellRateAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Scope', {
-            'fields': ('product_code', 'location', 'direction', 'payment_term')
+            'fields': ('product_code', 'scope', 'location', 'direction', 'payment_term')
         }),
         ('Rate Configuration', {
             'fields': ('currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'min_charge', 'max_charge', 'weight_breaks')
@@ -444,8 +452,8 @@ class LocalSellRateAdmin(admin.ModelAdmin):
 
 @admin.register(LocalCOGSRate)
 class LocalCOGSRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', computed_rate_scope, 'location', 'direction', 'get_counterparty', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
-    list_filter = [PricingRateScopeFilter, 'location', 'direction', 'currency', 'rate_type', 'agent', 'carrier']
+    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'location', 'direction', 'get_counterparty', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
+    list_filter = ['scope', PricingRateScopeFilter, 'location', 'direction', 'currency', 'rate_type', 'agent', 'carrier']
     list_select_related = ['product_code', 'agent', 'carrier', 'percent_of_product_code']
     search_fields = ['product_code__code', 'location']
     ordering = ['location', 'direction', 'product_code']
@@ -457,7 +465,7 @@ class LocalCOGSRateAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Scope', {
-            'fields': ('product_code', 'location', 'direction')
+            'fields': ('product_code', 'scope', 'location', 'direction')
         }),
         ('Counterparty', {
             'fields': ('agent', 'carrier'),

@@ -423,6 +423,14 @@ class ChargeAlias(models.Model):
 # EXPORT RATE TABLES
 # =============================================================================
 
+class RateScope(models.TextChoices):
+    LANE = 'LANE', 'Lane'
+    ORIGIN = 'ORIGIN', 'Origin'
+    DESTINATION = 'DESTINATION', 'Destination'
+    LOCAL = 'LOCAL', 'Local'
+    UNKNOWN = 'UNKNOWN', 'Unknown'
+
+
 class ExportCOGS(models.Model):
     """
     What EFM PAYS for Export services (Cost of Goods Sold).
@@ -443,6 +451,14 @@ class ExportCOGS(models.Model):
 
     origin_airport = models.CharField(max_length=3, db_index=True)
     destination_airport = models.CharField(max_length=3, db_index=True)
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Nullable during Phase 2.',
+    )
 
     carrier = models.ForeignKey(
         Carrier,
@@ -536,6 +552,14 @@ class ExportSellRate(models.Model):
     )
     origin_airport = models.CharField(max_length=3, db_index=True)
     destination_airport = models.CharField(max_length=3, db_index=True)
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Nullable during Phase 2.',
+    )
 
     currency = models.CharField(max_length=3)
     rate_per_kg = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
@@ -590,6 +614,14 @@ class ImportCOGS(models.Model):
     )
     origin_airport = models.CharField(max_length=3, db_index=True)
     destination_airport = models.CharField(max_length=3, db_index=True)
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Nullable during Phase 2.',
+    )
 
     carrier = models.ForeignKey(
         Carrier,
@@ -670,6 +702,14 @@ class ImportSellRate(models.Model):
     )
     origin_airport = models.CharField(max_length=3, db_index=True)
     destination_airport = models.CharField(max_length=3, db_index=True)
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Nullable during Phase 2.',
+    )
 
     currency = models.CharField(max_length=3)
     rate_per_kg = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
@@ -724,6 +764,14 @@ class DomesticCOGS(models.Model):
     )
     origin_zone = models.CharField(max_length=20, db_index=True)
     destination_zone = models.CharField(max_length=20, db_index=True)
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Nullable during Phase 2.',
+    )
 
     carrier = models.ForeignKey(
         Carrier,
@@ -799,6 +847,14 @@ class DomesticSellRate(models.Model):
     )
     origin_zone = models.CharField(max_length=20, db_index=True)
     destination_zone = models.CharField(max_length=20, db_index=True)
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Nullable during Phase 2.',
+    )
 
     currency = models.CharField(max_length=3, default='PGK')
     rate_per_kg = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
@@ -1208,6 +1264,14 @@ class LocalSellRate(models.Model):
     location = models.CharField(max_length=3, db_index=True, help_text='IATA airport code (origin for EXPORT, destination for IMPORT)')
     direction = models.CharField(max_length=6, choices=DIRECTION_CHOICES, db_index=True, help_text='EXPORT = origin charges, IMPORT = destination charges')
     payment_term = models.CharField(max_length=7, choices=PAYMENT_TERM_CHOICES, default='ANY', db_index=True, help_text='PREPAID, COLLECT, or ANY (applies to both)')
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Local tables should resolve to LOCAL.',
+    )
 
     currency = models.CharField(max_length=3)
     rate_type = models.CharField(max_length=10, choices=RATE_TYPE_CHOICES, default='FIXED')
@@ -1288,6 +1352,14 @@ class LocalCOGSRate(models.Model):
     product_code = models.ForeignKey(ProductCode, on_delete=models.PROTECT, related_name='local_cogs_rates', help_text='The ProductCode this rate applies to')
     location = models.CharField(max_length=3, db_index=True, help_text='IATA airport code (origin for EXPORT, destination for IMPORT)')
     direction = models.CharField(max_length=6, choices=DIRECTION_CHOICES, db_index=True, help_text='EXPORT = origin costs, IMPORT = destination costs')
+    scope = models.CharField(
+        max_length=11,
+        choices=RateScope.choices,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Transition scope for future rate normalization. Local tables should resolve to LOCAL.',
+    )
     carrier = models.ForeignKey(Carrier, on_delete=models.PROTECT, null=True, blank=True, related_name='local_cogs_rates', help_text='For carrier-provided services')
     agent = models.ForeignKey(Agent, on_delete=models.PROTECT, null=True, blank=True, related_name='local_cogs_rates', help_text='For agent-provided services (typical for local charges)')
 

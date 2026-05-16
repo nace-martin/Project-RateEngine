@@ -541,7 +541,7 @@ class ExportSellRateSerializer(BaseLaneRateSerializer):
         model = ExportSellRate
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport', 'currency',
+            'origin_airport', 'destination_airport', 'scope', 'currency',
             'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
             'percent_rate', 'weight_breaks', 'is_additive',
             'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
@@ -558,7 +558,7 @@ class ImportSellRateSerializer(BaseLaneRateSerializer):
         model = ImportSellRate
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport', 'currency',
+            'origin_airport', 'destination_airport', 'scope', 'currency',
             'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
             'percent_rate', 'weight_breaks', 'is_additive',
             'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
@@ -578,7 +578,7 @@ class DomesticSellRateSerializer(BaseLaneRateSerializer):
         model = DomesticSellRate
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_zone', 'destination_zone', 'currency',
+            'origin_zone', 'destination_zone', 'scope', 'currency',
             'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
             'percent_rate', 'weight_breaks', 'is_additive',
             'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
@@ -606,7 +606,7 @@ class ExportCOGSSerializer(BaseLaneRateSerializer):
         model = ExportCOGS
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport',
+            'origin_airport', 'destination_airport', 'scope',
             'carrier', 'carrier_name', 'agent', 'agent_name',
             'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
             'weight_breaks', 'is_additive',
@@ -628,7 +628,7 @@ class ImportCOGSSerializer(BaseLaneRateSerializer):
         model = ImportCOGS
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport',
+            'origin_airport', 'destination_airport', 'scope',
             'carrier', 'carrier_name', 'agent', 'agent_name',
             'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
             'is_additive', 'percent_rate', 'weight_breaks',
@@ -651,7 +651,7 @@ class DomesticCOGSSerializer(BaseLaneRateSerializer):
         model = DomesticCOGS
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_zone', 'destination_zone',
+            'origin_zone', 'destination_zone', 'scope',
             'carrier', 'carrier_name', 'agent', 'agent_name',
             'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
             'weight_breaks', 'is_additive',
@@ -680,7 +680,7 @@ class LocalSellRateSerializer(BaseLocalRateSerializer):
         model = LocalSellRate
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'location', 'direction', 'payment_term', 'currency',
+            'location', 'direction', 'payment_term', 'scope', 'currency',
             'rate_type', 'amount', 'is_additive', 'additive_flat_amount',
             'min_charge', 'max_charge', 'weight_breaks',
             'percent_of_product_code', 'percent_of_product_code_code', 'percent_of_product_code_description',
@@ -705,7 +705,7 @@ class LocalCOGSRateSerializer(BaseLocalRateSerializer):
         model = LocalCOGSRate
         fields = [
             'id', 'product_code', 'product_code_code', 'product_code_description',
-            'location', 'direction', 'agent', 'agent_name', 'carrier', 'carrier_name',
+            'location', 'direction', 'scope', 'agent', 'agent_name', 'carrier', 'carrier_name',
             'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount',
             'min_charge', 'max_charge', 'weight_breaks',
             'percent_of_product_code', 'percent_of_product_code_code', 'percent_of_product_code_description',

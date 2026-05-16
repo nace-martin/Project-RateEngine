@@ -9,6 +9,7 @@ from django.core.management.base import BaseCommand
 
 from pricing_v4.models import ImportCOGS
 from pricing_v4.services.import_cogs_scope import ImportCOGSScope, classify_import_cogs_scope
+from pricing_v4.services.rate_scope_transition import computed_transition_scope, explicit_scope, scope_mismatch
 
 
 @dataclass(frozen=True)
@@ -42,10 +43,18 @@ class Command(BaseCommand):
 
         duplicate_groups = self._duplicate_non_lane_groups(rows)
         unknown_rows = [row for row in rows if classify_import_cogs_scope(row) == ImportCOGSScope.UNKNOWN]
+        mismatch_rows = [row for row in rows if scope_mismatch(row)]
         orphan_groups = self._possible_orphan_groups(rows)
+        consolidation_ready_rows = [
+            row for row in rows
+            if classify_import_cogs_scope(row) not in {ImportCOGSScope.LANE, ImportCOGSScope.UNKNOWN}
+            and explicit_scope(row) == computed_transition_scope(row)
+        ]
 
         self.stdout.write("ImportCOGS scope audit (dry run)")
         self.stdout.write("No rows were changed.")
+        self.stdout.write("")
+        self._write_rows("Scope mismatches:", mismatch_rows)
         self.stdout.write("")
         self._write_duplicate_groups(duplicate_groups)
         self.stdout.write("")
@@ -53,13 +62,16 @@ class Command(BaseCommand):
         self.stdout.write("")
         self._write_orphan_groups(orphan_groups)
         self.stdout.write("")
+        self._write_rows("Rows ready for future consolidation review:", consolidation_ready_rows)
+        self.stdout.write("")
         self.stdout.write("Phase 2 direction:")
-        self.stdout.write("- Add explicit scope field: LANE, ORIGIN, DESTINATION, UNKNOWN.")
+        self.stdout.write("- Keep explicit scope nullable during transition.")
         self.stdout.write("- Allow ORIGIN rows to have destination_airport = null.")
         self.stdout.write("- Allow DESTINATION rows to have origin_airport = null.")
         self.stdout.write("- Keep LANE rows requiring both origin_airport and destination_airport.")
-        self.stdout.write("- Add uniqueness constraints per scope.")
-        self.stdout.write("- Migrate duplicated origin/destination charges into normalized scoped rows.")
+        self.stdout.write("- Do not enforce strict constraints until production data is proven clean.")
+        self.stdout.write("- Do not delete or merge duplicate rows in Phase 2.")
+        self.stdout.write("- Use duplicate and ready rows only as a dry-run consolidation report.")
         self.stdout.write("- Preserve deterministic selector ordering and current quote output during migration.")
 
     def _duplicate_non_lane_groups(self, rows: Iterable[ImportCOGS]):
@@ -108,7 +120,8 @@ class Command(BaseCommand):
                 f"{signature.product_code} {signature.counterparty_type}:{signature.counterparty_code} "
                 f"{signature.currency} amount={signature.amount_signature} "
                 f"origin={signature.origin_airport} origin_country={signature.origin_country} "
-                f"destinations={destinations} row_ids={ids}"
+                f"destinations={destinations} row_ids={ids} "
+                f"computed_scope={computed_transition_scope(members[0])}"
             )
 
     def _write_unknown_rows(self, unknown_rows):
@@ -121,6 +134,22 @@ class Command(BaseCommand):
             self.stdout.write(
                 "- "
                 f"#{row.id} {row.product_code.code} {row.origin_airport}->{row.destination_airport} "
+                f"explicit_scope={explicit_scope(row)} computed_scope={computed_transition_scope(row)} "
+                f"{counterparty_type}:{counterparty_code} origin_country={origin_country} "
+                f"currency={row.currency} amount={_amount_signature(row)}"
+            )
+
+    def _write_rows(self, title, rows):
+        self.stdout.write(title)
+        if not rows:
+            self.stdout.write("- none")
+            return
+        for row in rows:
+            counterparty_type, counterparty_code, origin_country = _counterparty(row)
+            self.stdout.write(
+                "- "
+                f"#{row.id} {row.product_code.code} {row.origin_airport}->{row.destination_airport} "
+                f"explicit_scope={explicit_scope(row)} computed_scope={computed_transition_scope(row)} "
                 f"{counterparty_type}:{counterparty_code} origin_country={origin_country} "
                 f"currency={row.currency} amount={_amount_signature(row)}"
             )

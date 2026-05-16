@@ -17,6 +17,7 @@ from pricing_v4.models import (
     LocalSellRate,
 )
 from pricing_v4.services.pricing_rate_scope import PricingRateScope, classify_pricing_rate_scope
+from pricing_v4.services.rate_scope_transition import computed_transition_scope, explicit_scope, scope_mismatch
 
 
 LANE_TABLES = (
@@ -65,12 +66,22 @@ class Command(BaseCommand):
         ]
         unknown_rows = [
             row for row in [*lane_rows, *local_rows]
-            if classify_pricing_rate_scope(row) == PricingRateScope.UNKNOWN
+            if computed_transition_scope(row) == PricingRateScope.UNKNOWN
+        ]
+        mismatch_rows = [
+            row for row in [*lane_rows, *local_rows]
+            if scope_mismatch(row)
         ]
         duplicate_groups = _duplicate_non_lane_groups(non_lane_in_lane_tables)
+        consolidation_ready_rows = [
+            row for row in non_lane_in_lane_tables
+            if explicit_scope(row) == computed_transition_scope(row)
+        ]
 
         self.stdout.write("Pricing rate scope audit (dry run)")
         self.stdout.write("No rows were changed.")
+        self.stdout.write("")
+        _write_rows(self.stdout, "Scope mismatches:", mismatch_rows)
         self.stdout.write("")
         _write_rows(self.stdout, "Non-lane candidates stored in lane-shaped tables:", non_lane_in_lane_tables)
         self.stdout.write("")
@@ -80,11 +91,14 @@ class Command(BaseCommand):
         self.stdout.write("")
         _write_rows(self.stdout, "UNKNOWN scope rows:", unknown_rows)
         self.stdout.write("")
+        _write_rows(self.stdout, "Rows ready for future consolidation review:", consolidation_ready_rows)
+        self.stdout.write("")
         self.stdout.write("Phase 2 direction:")
-        self.stdout.write("- Add explicit scope only after table-specific data review.")
+        self.stdout.write("- Keep explicit scope nullable during transition.")
         self.stdout.write("- Keep lane rows requiring both route endpoints or zones.")
         self.stdout.write("- Keep local rows keyed by direction/location, not full lane.")
-        self.stdout.write("- Normalize duplicated non-lane lane-table rows into local tables or scoped rows.")
+        self.stdout.write("- Do not delete or merge duplicate rows in Phase 2.")
+        self.stdout.write("- Use duplicate and ready rows only as a dry-run consolidation report.")
         self.stdout.write("- Preserve current selector ordering and quote output while migrating.")
 
 
@@ -162,11 +176,11 @@ def _write_rows(stdout, title: str, rows: list[object]):
         stdout.write("- none")
         return
     for row in rows:
-        scope = classify_pricing_rate_scope(row)
         stdout.write(
             "- "
             f"{type(row).__name__} #{row.id} {row.product_code.code} "
-            f"scope={scope.value} endpoint={_endpoint_label(row)} "
+            f"explicit_scope={explicit_scope(row)} computed_scope={computed_transition_scope(row)} "
+            f"endpoint={_endpoint_label(row)} "
             f"counterparty={':'.join(_counterparty(row))} "
             f"currency={getattr(row, 'currency', '')} amount={_amount_signature(row)}"
         )
@@ -187,7 +201,8 @@ def _write_duplicate_groups(stdout, duplicate_groups):
             f"{signature.counterparty_type}:{signature.counterparty_code} "
             f"{signature.currency} amount={signature.amount_signature} "
             f"{signature.fixed_endpoint_name}={signature.fixed_endpoint_value} "
-            f"{variable_endpoint_name}s={variables} row_ids={ids}"
+            f"{variable_endpoint_name}s={variables} row_ids={ids} "
+            f"computed_scope={computed_transition_scope(members[0])}"
         )
 
 
