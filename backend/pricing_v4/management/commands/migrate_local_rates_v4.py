@@ -1,4 +1,4 @@
-from pricing_v4.utils import safe_save_v4_rate
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 # backend/pricing_v4/management/commands/migrate_local_rates_v4.py
 """
 Data Migration: Collapse local charges into LocalSellRate and LocalCOGSRate.

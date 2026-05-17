@@ -1,3 +1,4 @@
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -533,7 +534,7 @@ class BaseLocalRateSerializer(EffectiveDatedRateSerializer):
         # Model-level hardening (Phase 3D)
         temp_instance = self.Meta.model(**attrs)
         try:
-            temp_instance.full_clean()
+            PricingDomainService.validate_rate(temp_instance)
         except ValidationError as exc:
             # Re-wrap as DRF ValidationError
             raise serializers.ValidationError(exc.message_dict)

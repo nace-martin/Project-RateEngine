@@ -1,5 +1,5 @@
-from pricing_v4.utils import safe_update_or_create_v4_rate
 from __future__ import annotations
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 
 from dataclasses import dataclass
 from datetime import date

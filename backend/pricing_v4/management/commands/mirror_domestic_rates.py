@@ -1,3 +1,4 @@
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from pricing_v4.models import DomesticCOGS, DomesticSellRate, ProductCode, Agent
@@ -20,7 +21,7 @@ class Command(BaseCommand):
                 new_origin = cogs.destination_zone
                 new_dest = cogs.origin_zone
                 
-                DomesticCOGS.objects.update_or_create(
+                PricingDomainService.update_or_create_rate(DomesticCOGS, 
                     product_code=cogs.product_code,
                     origin_zone=new_origin,
                     destination_zone=new_dest,
@@ -47,7 +48,7 @@ class Command(BaseCommand):
                 new_origin = sell.destination_zone
                 new_dest = sell.origin_zone
                 
-                DomesticSellRate.objects.update_or_create(
+                PricingDomainService.update_or_create_rate(DomesticSellRate, 
                     product_code=sell.product_code,
                     origin_zone=new_origin,
                     destination_zone=new_dest,

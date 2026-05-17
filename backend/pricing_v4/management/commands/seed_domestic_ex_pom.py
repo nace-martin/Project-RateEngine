@@ -1,3 +1,4 @@
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
@@ -94,7 +95,7 @@ class Command(BaseCommand):
     def _seed_cogs(self, pc, origin, dest, agent,
                    flat=None, per_kg=None, min_charge=None, max_charge=None):
         """Seeds Domestic COGS record using zone fields."""
-        DomesticCOGS.objects.update_or_create(
+        PricingDomainService.update_or_create_rate(DomesticCOGS, 
             product_code=pc,
             origin_zone=origin,  # Uses zone, not airport
             destination_zone=dest,  # Uses zone, not airport

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 
 from copy import deepcopy
 from datetime import date, datetime, timedelta
@@ -67,7 +68,7 @@ def ensure_rate_lineage(instance) -> UUID | None:
     lineage_id = getattr(instance, 'lineage_id', None) or uuid4()
     if getattr(instance, 'lineage_id', None) != lineage_id:
         setattr(instance, 'lineage_id', lineage_id)
-        instance.save(update_fields=['lineage_id'])
+        PricingDomainService.save_rate(instance)
     return lineage_id
 
 
@@ -138,7 +139,7 @@ def revise_rate_row(
             if hasattr(source_instance, 'updated_by_id'):
                 source_instance.updated_by = actor
                 update_fields.insert(1, 'updated_by')
-            source_instance.save(update_fields=update_fields)
+            PricingDomainService.save_rate(source_instance)
 
             create_rate_change_log(
                 instance=source_instance,

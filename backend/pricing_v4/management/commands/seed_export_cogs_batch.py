@@ -1,3 +1,4 @@
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
@@ -146,7 +147,7 @@ class Command(BaseCommand):
         if 'is_additive' not in defaults:
             defaults['is_additive'] = False
 
-        obj, created = ExportCOGS.objects.update_or_create(
+        obj, created = PricingDomainService.update_or_create_rate(ExportCOGS, 
             product_code_id=product_id,
             origin_airport='POM',
             destination_airport=dest,

@@ -7,7 +7,7 @@ from rest_framework import serializers
 
 from pricing_v4.models import LocalSellRate, ProductCode
 from pricing_v4.serializers import LocalSellRateSerializer
-from pricing_v4.utils import safe_save_v4_rate, safe_update_or_create_v4_rate
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 
 class LocalSellHardenedTests(TestCase):
     def setUp(self):
@@ -85,7 +85,7 @@ class LocalSellHardenedTests(TestCase):
         self.assertTrue(len(serializer.errors) > 0)
 
     def test_safe_save_helper_blocks_overlap(self):
-        """safe_save_v4_rate helper blocks overlap."""
+        """PricingDomainService.save_rate blocks overlap."""
         LocalSellRate.objects.create(
             product_code=self.pc_export,
             location="POM",
@@ -108,10 +108,10 @@ class LocalSellHardenedTests(TestCase):
             valid_until=self.v_to + timedelta(days=5)
         )
         with self.assertRaises(ValidationError):
-            safe_save_v4_rate(rate2)
+            PricingDomainService.save_rate(rate2)
 
     def test_safe_update_or_create_helper_blocks_overlap(self):
-        """safe_update_or_create_v4_rate helper blocks overlap."""
+        """PricingDomainService.update_or_create_rate blocks overlap."""
         LocalSellRate.objects.create(
             product_code=self.pc_export,
             location="POM",
@@ -138,4 +138,4 @@ class LocalSellHardenedTests(TestCase):
         
         with self.assertRaises(ValidationError):
             # This should try to CREATE but fail on full_clean() due to overlap
-            safe_update_or_create_v4_rate(LocalSellRate, lookup, defaults)
+            PricingDomainService.update_or_create_rate(LocalSellRate, lookup, defaults)

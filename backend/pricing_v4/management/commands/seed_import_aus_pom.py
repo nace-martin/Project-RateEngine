@@ -1,3 +1,4 @@
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
@@ -135,7 +136,7 @@ class Command(BaseCommand):
             obj = matches.first()
             for field, value in seed_values.items():
                 setattr(obj, field, value)
-            obj.save(update_fields=list(seed_values.keys()) + ['updated_at'])
+            PricingDomainService.save_rate(obj)
         else:
-            ImportCOGS.objects.create(**lookup, **seed_values)
+            PricingDomainService.save_rate(ImportCOGS(**lookup, **seed_values))
         self.stdout.write(f"  - Seeded COGS {code} {org}->{dest} ({curr})")

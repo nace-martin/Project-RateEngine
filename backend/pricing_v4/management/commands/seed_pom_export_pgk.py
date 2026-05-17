@@ -1,4 +1,4 @@
-from pricing_v4.utils import safe_update_or_create_v4_rate
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 # backend/pricing_v4/management/commands/seed_pom_export_pgk.py
 """
 Seed POM Export Prepaid origin charges in PGK into LocalSellRate.
