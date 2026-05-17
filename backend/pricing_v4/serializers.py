@@ -1,11 +1,14 @@
-from pricing_v4.services.pricing_domain_service import PricingDomainService
+import copy
 from datetime import date
 from decimal import Decimal
 from typing import Any
 
 from django.db import models
+from django.core.exceptions import ValidationError
 from rest_framework import serializers
+
 from pricing_v4.category_rules import is_local_rate_category
+from pricing_v4.services.pricing_domain_service import PricingDomainService
 from .models import (
     Agent,
     Carrier,
@@ -38,10 +41,6 @@ RATE_AUDIT_FIELDS = [
 
 
 def _is_internal_pricing_field(field_name: str) -> bool:
-    """
-    Identify internal/commercial-sensitive pricing fields that must not be
-    exposed to Sales users (or any non-manager/admin caller).
-    """
     key = (field_name or "").lower()
     if not key:
         return False
@@ -49,20 +48,14 @@ def _is_internal_pricing_field(field_name: str) -> bool:
         return True
     if "cogs" in key or "margin" in key:
         return True
-    # V4 engine payloads primarily expose COGS via cost_* / total_cost fields.
     if key.startswith("cost") or "_cost" in key:
         return True
     return False
 
 
 def scrub_pricing_result_payload(payload: Any, include_internal_fields: bool = False) -> Any:
-    """
-    Recursively remove internal pricing fields (COGS / cost / buy / margin)
-    from a V4 pricing response unless explicitly allowed.
-    """
     if include_internal_fields:
         return payload
-
     if isinstance(payload, dict):
         sanitized = {}
         for key, value in payload.items():
@@ -70,13 +63,10 @@ def scrub_pricing_result_payload(payload: Any, include_internal_fields: bool = F
                 continue
             sanitized[key] = scrub_pricing_result_payload(value, include_internal_fields=False)
         return sanitized
-
     if isinstance(payload, list):
         return [scrub_pricing_result_payload(item, include_internal_fields=False) for item in payload]
-
     if isinstance(payload, tuple):
         return tuple(scrub_pricing_result_payload(item, include_internal_fields=False) for item in payload)
-
     return payload
 
 class ProductCodeSerializer(serializers.ModelSerializer):
@@ -102,28 +92,19 @@ def _validate_weight_breaks(value: Any) -> list[dict[str, str]] | None:
         return None
     if not isinstance(value, list):
         raise serializers.ValidationError("weight_breaks must be a JSON array.")
-
     normalized: list[dict[str, str]] = []
     seen_thresholds: set[Decimal] = set()
     last_threshold: Decimal | None = None
-
     for index, row in enumerate(value):
         if not isinstance(row, dict):
             raise serializers.ValidationError(f"weight_breaks[{index}] must be an object.")
-
         if 'min_kg' not in row or 'rate' not in row:
-            raise serializers.ValidationError(
-                f"weight_breaks[{index}] must include min_kg and rate."
-            )
-
+            raise serializers.ValidationError(f"weight_breaks[{index}] must include min_kg and rate.")
         try:
             min_kg = Decimal(str(row.get('min_kg')))
             rate = Decimal(str(row.get('rate')))
         except Exception as exc:
-            raise serializers.ValidationError(
-                f"weight_breaks[{index}] contains invalid numeric values."
-            ) from exc
-
+            raise serializers.ValidationError(f"weight_breaks[{index}] contains invalid numeric values.") from exc
         if min_kg < 0:
             raise serializers.ValidationError(f"weight_breaks[{index}].min_kg cannot be negative.")
         if rate < 0:
@@ -132,16 +113,9 @@ def _validate_weight_breaks(value: Any) -> list[dict[str, str]] | None:
             raise serializers.ValidationError("weight_breaks must use unique min_kg tiers.")
         if last_threshold is not None and min_kg <= last_threshold:
             raise serializers.ValidationError("weight_breaks must be sorted by ascending min_kg.")
-
         seen_thresholds.add(min_kg)
         last_threshold = min_kg
-        normalized.append(
-            {
-                "min_kg": format(min_kg.normalize(), 'f'),
-                "rate": format(rate.normalize(), 'f'),
-            }
-        )
-
+        normalized.append({"min_kg": format(min_kg.normalize(), 'f'), "rate": format(rate.normalize(), 'f')})
     return normalized
 
 
@@ -150,12 +124,7 @@ def _normalize_text(value: Any, uppercase: bool = True) -> str:
     return normalized.upper() if uppercase else normalized
 
 
-def _current_or_attr(
-    attrs: dict[str, Any],
-    instance: Any,
-    field_name: str,
-    default: Any = None,
-) -> Any:
+def _current_or_attr(attrs: dict[str, Any], instance: Any, field_name: str, default: Any = None) -> Any:
     if field_name in attrs:
         return attrs.get(field_name)
     if instance is not None:
@@ -189,79 +158,38 @@ def _normalize_weight_breaks(attrs: dict[str, Any], weight_breaks: Any) -> list[
     return normalized_breaks
 
 
-def _validate_lane_basis(
-    *,
-    rate_per_kg: Any,
-    rate_per_shipment: Any,
-    percent_rate: Any,
-    weight_breaks: Any,
-    is_additive: bool,
-    supports_percent_rate: bool,
-) -> None:
+def _validate_lane_basis(*, rate_per_kg: Any, rate_per_shipment: Any, percent_rate: Any, weight_breaks: Any, is_additive: bool, supports_percent_rate: bool) -> None:
     uses_percent = percent_rate is not None
     uses_tiers = bool(weight_breaks)
     uses_per_kg = rate_per_kg is not None
     uses_flat = rate_per_shipment is not None
-
     if not any([uses_percent, uses_tiers, uses_per_kg, uses_flat]):
         if supports_percent_rate:
-            raise serializers.ValidationError(
-                'Provide one pricing basis: rate_per_kg, rate_per_shipment, percent_rate, or weight_breaks.'
-            )
-        raise serializers.ValidationError(
-            'Provide one pricing basis: rate_per_kg, rate_per_shipment, or weight_breaks.'
-        )
-
+            raise serializers.ValidationError('Provide one pricing basis: rate_per_kg, rate_per_shipment, percent_rate, or weight_breaks.')
+        raise serializers.ValidationError('Provide one pricing basis: rate_per_kg, rate_per_shipment, or weight_breaks.')
     if not supports_percent_rate and uses_percent:
         raise serializers.ValidationError({'percent_rate': 'percent_rate is not supported for this table.'})
-
     if uses_percent and any([uses_tiers, uses_per_kg, uses_flat, bool(is_additive)]):
-        raise serializers.ValidationError(
-            {'percent_rate': 'percent_rate must be the only pricing basis on the row.'}
-        )
-
+        raise serializers.ValidationError({'percent_rate': 'percent_rate must be the only pricing basis on the row.'})
     if uses_tiers and any([uses_percent, uses_per_kg, uses_flat, bool(is_additive)]):
-        raise serializers.ValidationError(
-            {'weight_breaks': 'weight_breaks cannot be combined with other pricing bases.'}
-        )
-
+        raise serializers.ValidationError({'weight_breaks': 'weight_breaks cannot be combined with other pricing bases.'})
     if is_additive and not (uses_per_kg and uses_flat):
-        raise serializers.ValidationError(
-            {'is_additive': 'is_additive requires both rate_per_kg and rate_per_shipment.'}
-        )
+        raise serializers.ValidationError({'is_additive': 'is_additive requires both rate_per_kg and rate_per_shipment.'})
 
 
-def _validate_local_basis(
-    *,
-    rate_type: str,
-    amount: Any,
-    is_additive: bool,
-    additive_flat_amount: Any,
-    min_charge: Any,
-    max_charge: Any,
-    weight_breaks: Any,
-    percent_of_product_code: Any,
-) -> None:
+def _validate_local_basis(*, rate_type: str, amount: Any, is_additive: bool, additive_flat_amount: Any, min_charge: Any, max_charge: Any, weight_breaks: Any, percent_of_product_code: Any) -> None:
     if amount is None:
         raise serializers.ValidationError({'amount': 'amount is required.'})
-
     if rate_type == 'PERCENT':
         if not percent_of_product_code:
-            raise serializers.ValidationError(
-                {'percent_of_product_code': 'percent_of_product_code is required for PERCENT rates.'}
-            )
+            raise serializers.ValidationError({'percent_of_product_code': 'percent_of_product_code is required for PERCENT rates.'})
         if is_additive or additive_flat_amount is not None:
-            raise serializers.ValidationError(
-                {'is_additive': 'PERCENT rates cannot use additive flat amounts.'}
-            )
+            raise serializers.ValidationError({'is_additive': 'PERCENT rates cannot use additive flat amounts.'})
         if weight_breaks:
             raise serializers.ValidationError({'weight_breaks': 'PERCENT rates cannot use weight_breaks.'})
     else:
         if percent_of_product_code:
-            raise serializers.ValidationError(
-                {'percent_of_product_code': 'percent_of_product_code can only be set for PERCENT rates.'}
-            )
-
+            raise serializers.ValidationError({'percent_of_product_code': 'percent_of_product_code can only be set for PERCENT rates.'})
     if rate_type == 'FIXED':
         if is_additive or additive_flat_amount is not None:
             raise serializers.ValidationError({'is_additive': 'FIXED rates cannot be additive.'})
@@ -269,54 +197,26 @@ def _validate_local_basis(
             raise serializers.ValidationError({'weight_breaks': 'FIXED rates cannot use weight_breaks.'})
     elif rate_type == 'PER_KG':
         if weight_breaks and is_additive:
-            raise serializers.ValidationError(
-                {'weight_breaks': 'weight_breaks cannot be combined with additive per-kg pricing.'}
-            )
+            raise serializers.ValidationError({'weight_breaks': 'weight_breaks cannot be combined with additive per-kg pricing.'})
         if is_additive and additive_flat_amount is None:
-            raise serializers.ValidationError(
-                {'additive_flat_amount': 'additive_flat_amount is required when is_additive is true.'}
-            )
+            raise serializers.ValidationError({'additive_flat_amount': 'additive_flat_amount is required when is_additive is true.'})
         if not is_additive and additive_flat_amount is not None:
-            raise serializers.ValidationError(
-                {'additive_flat_amount': 'additive_flat_amount requires is_additive=true.'}
-            )
+            raise serializers.ValidationError({'additive_flat_amount': 'additive_flat_amount requires is_additive=true.'})
     else:
         if weight_breaks:
             raise serializers.ValidationError({'weight_breaks': 'weight_breaks require rate_type=PER_KG.'})
-
     _validate_charge_bounds(min_charge, max_charge)
 
 
-def _reject_overlap(
-    *,
-    model: type[models.Model],
-    instance: Any,
-    lookup: dict[str, Any],
-    valid_from: Any,
-    valid_until: Any,
-    message: str,
-    exclude_pks: list[Any] | None = None,
-) -> None:
-    overlap_qs = model.objects.filter(
-        valid_from__lte=valid_until,
-        valid_until__gte=valid_from,
-        **lookup,
-    )
+def _reject_overlap(*, model: type[models.Model], instance: Any, lookup: dict[str, Any], valid_from: Any, valid_until: Any, message: str, exclude_pks: list[Any] | None = None) -> None:
+    overlap_qs = model.objects.filter(valid_from__lte=valid_until, valid_until__gte=valid_from, **lookup)
     if instance is not None:
         overlap_qs = overlap_qs.exclude(pk=instance.pk)
     if exclude_pks:
         overlap_qs = overlap_qs.exclude(pk__in=exclude_pks)
     if overlap_qs.exists():
-        conflict_rows = [
-            f"#{row.pk} ({row.valid_from} to {row.valid_until})"
-            for row in overlap_qs.order_by('valid_from', 'valid_until', 'pk')[:5]
-        ]
-        raise serializers.ValidationError(
-            {
-                'valid_from': f"{message} Conflicts with {', '.join(conflict_rows)}.",
-                'conflicts': conflict_rows,
-            }
-        )
+        conflict_rows = [f"#{row.pk} ({row.valid_from} to {row.valid_until})" for row in overlap_qs.order_by('valid_from', 'valid_until', 'pk')[:5]]
+        raise serializers.ValidationError({'valid_from': f"{message} Conflicts with {', '.join(conflict_rows)}.", 'conflicts': conflict_rows})
 
 
 class EffectiveDatedRateSerializer(serializers.ModelSerializer):
@@ -325,7 +225,6 @@ class EffectiveDatedRateSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     updated_by_username = serializers.CharField(source='updated_by.username', read_only=True, allow_null=True)
     is_active = serializers.SerializerMethodField()
-
     def get_is_active(self, obj):
         today = date.today()
         return obj.valid_from <= today <= obj.valid_until
@@ -345,19 +244,12 @@ class BaseLaneRateSerializer(EffectiveDatedRateSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-
         product_code = _current_or_attr(attrs, self.instance, 'product_code')
         valid_from = _current_or_attr(attrs, self.instance, 'valid_from')
         valid_until = _current_or_attr(attrs, self.instance, 'valid_until')
         currency = _normalize_text(_current_or_attr(attrs, self.instance, 'currency'))
-        origin_value = _normalize_text(
-            _current_or_attr(attrs, self.instance, self.origin_field_name),
-            uppercase=self.normalize_route_upper,
-        )
-        destination_value = _normalize_text(
-            _current_or_attr(attrs, self.instance, self.destination_field_name),
-            uppercase=self.normalize_route_upper,
-        )
+        origin_value = _normalize_text(_current_or_attr(attrs, self.instance, self.origin_field_name), uppercase=self.normalize_route_upper)
+        destination_value = _normalize_text(_current_or_attr(attrs, self.instance, self.destination_field_name), uppercase=self.normalize_route_upper)
         rate_per_kg = _current_or_attr(attrs, self.instance, 'rate_per_kg')
         rate_per_shipment = _current_or_attr(attrs, self.instance, 'rate_per_shipment')
         min_charge = _current_or_attr(attrs, self.instance, 'min_charge')
@@ -369,62 +261,42 @@ class BaseLaneRateSerializer(EffectiveDatedRateSerializer):
         carrier = _current_or_attr(attrs, self.instance, 'carrier')
 
         if product_code and self.expected_domain and product_code.domain != self.expected_domain:
-            raise serializers.ValidationError(
-                {'product_code': f'This table requires {self.expected_domain.title()} ProductCodes.'}
-            )
+            raise serializers.ValidationError({'product_code': f'This table requires {self.expected_domain.title()} ProductCodes.'})
         if product_code and is_local_rate_category(product_code.category):
-            raise serializers.ValidationError(
-                {'product_code': f"{product_code.code} is a local charge and must be created in {self.local_table_label}."}
-            )
+            raise serializers.ValidationError({'product_code': f"{product_code.code} is a local charge and must be created in {self.local_table_label}."})
         if self.require_counterparty and bool(agent) == bool(carrier):
             raise serializers.ValidationError({'agent': 'Select exactly one counterparty: either agent or carrier.'})
 
         _validate_effective_date_window(valid_from, valid_until)
-        _validate_non_negative_fields([
-            ('rate_per_kg', rate_per_kg),
-            ('rate_per_shipment', rate_per_shipment),
-            ('min_charge', min_charge),
-            ('max_charge', max_charge),
-            ('percent_rate', percent_rate),
-        ])
+        _validate_non_negative_fields([('rate_per_kg', rate_per_kg), ('rate_per_shipment', rate_per_shipment), ('min_charge', min_charge), ('max_charge', max_charge), ('percent_rate', percent_rate)])
         _validate_charge_bounds(min_charge, max_charge)
-
         normalized_breaks = _normalize_weight_breaks(attrs, weight_breaks)
         if normalized_breaks is not None:
             weight_breaks = normalized_breaks
+        _validate_lane_basis(rate_per_kg=rate_per_kg, rate_per_shipment=rate_per_shipment, percent_rate=percent_rate, weight_breaks=weight_breaks, is_additive=is_additive, supports_percent_rate=self.supports_percent_rate)
 
-        _validate_lane_basis(
-            rate_per_kg=rate_per_kg,
-            rate_per_shipment=rate_per_shipment,
-            percent_rate=percent_rate,
-            weight_breaks=weight_breaks,
-            is_additive=is_additive,
-            supports_percent_rate=self.supports_percent_rate,
-        )
-
-        lookup = {
-            'product_code': product_code,
-            self.origin_field_name: origin_value,
-            self.destination_field_name: destination_value,
-            'currency': currency,
-        }
+        lookup = {'product_code': product_code, self.origin_field_name: origin_value, self.destination_field_name: destination_value, 'currency': currency}
         if self.require_counterparty:
             lookup['agent'] = agent
             lookup['carrier'] = carrier
 
-        _reject_overlap(
-            model=self.Meta.model,
-            instance=self.instance,
-            lookup=lookup,
-            valid_from=valid_from,
-            valid_until=valid_until,
-            message=self.overlap_message,
-            exclude_pks=self.context.get('overlap_exclude_pks'),
-        )
+        _reject_overlap(model=self.Meta.model, instance=self.instance, lookup=lookup, valid_from=valid_from, valid_until=valid_until, message=self.overlap_message, exclude_pks=self.context.get('overlap_exclude_pks'))
 
         attrs[self.origin_field_name] = origin_value
         attrs[self.destination_field_name] = destination_value
         attrs['currency'] = currency
+
+        # Model-level hardening (PATCH compatible)
+        if self.instance:
+            temp_instance = copy.copy(self.instance)
+            for key, value in attrs.items():
+                setattr(temp_instance, key, value)
+        else:
+            temp_instance = self.Meta.model(**attrs)
+        try:
+            PricingDomainService.validate_rate(temp_instance)
+        except ValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict)
         return attrs
 
 
@@ -436,7 +308,6 @@ class BaseLocalRateSerializer(EffectiveDatedRateSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-
         product_code = _current_or_attr(attrs, self.instance, 'product_code')
         direction = _normalize_text(_current_or_attr(attrs, self.instance, 'direction'))
         location = _normalize_text(_current_or_attr(attrs, self.instance, 'location'))
@@ -457,73 +328,32 @@ class BaseLocalRateSerializer(EffectiveDatedRateSerializer):
 
         if self.require_counterparty and bool(agent) == bool(carrier):
             raise serializers.ValidationError({'agent': 'Select exactly one counterparty: either agent or carrier.'})
-
         if product_code and not is_local_rate_category(product_code.category):
-            raise serializers.ValidationError(
-                {'product_code': f"{product_code.code} is lane-based and must be created in lane rate tables."}
-            )
-
+            raise serializers.ValidationError({'product_code': f"{product_code.code} is lane-based and must be created in lane rate tables."})
         expected_domain = self.expected_domain_by_direction.get(direction)
         if product_code and expected_domain and product_code.domain != expected_domain:
-            raise serializers.ValidationError(
-                {'product_code': f'{direction} local rates require {expected_domain.title()} ProductCodes.'}
-            )
-
+            raise serializers.ValidationError({'product_code': f'{direction} local rates require {expected_domain.title()} ProductCodes.'})
         if percent_of_product_code:
             if not is_local_rate_category(percent_of_product_code.category):
-                raise serializers.ValidationError(
-                    {'percent_of_product_code': 'percent_of_product_code must reference a local ProductCode.'}
-                )
+                raise serializers.ValidationError({'percent_of_product_code': 'percent_of_product_code must reference a local ProductCode.'})
             if expected_domain and percent_of_product_code.domain != expected_domain:
-                raise serializers.ValidationError(
-                    {'percent_of_product_code': f'percent_of_product_code must also be in the {expected_domain.title()} domain.'}
-                )
+                raise serializers.ValidationError({'percent_of_product_code': f'percent_of_product_code must also be in the {expected_domain.title()} domain.'})
 
         _validate_effective_date_window(valid_from, valid_until)
-        _validate_non_negative_fields([
-            ('amount', amount),
-            ('additive_flat_amount', additive_flat_amount),
-            ('min_charge', min_charge),
-            ('max_charge', max_charge),
-        ])
-
+        _validate_non_negative_fields([('amount', amount), ('additive_flat_amount', additive_flat_amount), ('min_charge', min_charge), ('max_charge', max_charge)])
         normalized_breaks = _normalize_weight_breaks(attrs, weight_breaks)
         if normalized_breaks is not None:
             weight_breaks = normalized_breaks
+        _validate_local_basis(rate_type=rate_type, amount=amount, is_additive=is_additive, additive_flat_amount=additive_flat_amount, min_charge=min_charge, max_charge=max_charge, weight_breaks=weight_breaks, percent_of_product_code=percent_of_product_code)
 
-        _validate_local_basis(
-            rate_type=rate_type,
-            amount=amount,
-            is_additive=is_additive,
-            additive_flat_amount=additive_flat_amount,
-            min_charge=min_charge,
-            max_charge=max_charge,
-            weight_breaks=weight_breaks,
-            percent_of_product_code=percent_of_product_code,
-        )
-
-        lookup = {
-            'product_code': product_code,
-            'location': location,
-            'direction': direction,
-            'currency': currency,
-        }
+        lookup = {'product_code': product_code, 'location': location, 'direction': direction, 'currency': currency}
         if hasattr(self.Meta.model, 'payment_term'):
             conflicting_payment_terms = ['ANY', payment_term] if payment_term != 'ANY' else ['ANY', 'PREPAID', 'COLLECT']
             lookup['payment_term__in'] = conflicting_payment_terms
         if self.require_counterparty:
             lookup['agent'] = agent
             lookup['carrier'] = carrier
-
-        _reject_overlap(
-            model=self.Meta.model,
-            instance=self.instance,
-            lookup=lookup,
-            valid_from=valid_from,
-            valid_until=valid_until,
-            message=self.overlap_message,
-            exclude_pks=self.context.get('overlap_exclude_pks'),
-        )
+        _reject_overlap(model=self.Meta.model, instance=self.instance, lookup=lookup, valid_from=valid_from, valid_until=valid_until, message=self.overlap_message, exclude_pks=self.context.get('overlap_exclude_pks'))
 
         attrs['location'] = location
         attrs['direction'] = direction
@@ -531,14 +361,17 @@ class BaseLocalRateSerializer(EffectiveDatedRateSerializer):
         if 'payment_term' in attrs or hasattr(self.Meta.model, 'payment_term'):
             attrs['payment_term'] = payment_term
 
-        # Model-level hardening (Phase 3D)
-        temp_instance = self.Meta.model(**attrs)
+        # Model-level hardening (PATCH compatible)
+        if self.instance:
+            temp_instance = copy.copy(self.instance)
+            for key, value in attrs.items():
+                setattr(temp_instance, key, value)
+        else:
+            temp_instance = self.Meta.model(**attrs)
         try:
             PricingDomainService.validate_rate(temp_instance)
         except ValidationError as exc:
-            # Re-wrap as DRF ValidationError
             raise serializers.ValidationError(exc.message_dict)
-
         return attrs
 
 
@@ -546,16 +379,9 @@ class ExportSellRateSerializer(BaseLaneRateSerializer):
     expected_domain = ProductCode.DOMAIN_EXPORT
     local_table_label = 'Local Sell Rates'
     overlap_message = 'Overlapping effective-date rows already exist for this Export Sell key.'
-
     class Meta:
         model = ExportSellRate
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport', 'scope', 'currency',
-            'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
-            'percent_rate', 'weight_breaks', 'is_additive',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'origin_airport', 'destination_airport', 'scope', 'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge', 'percent_rate', 'weight_breaks', 'is_additive', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
 
 
@@ -563,16 +389,9 @@ class ImportSellRateSerializer(BaseLaneRateSerializer):
     expected_domain = ProductCode.DOMAIN_IMPORT
     local_table_label = 'Local Sell Rates'
     overlap_message = 'Overlapping effective-date rows already exist for this Import Sell key.'
-
     class Meta:
         model = ImportSellRate
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport', 'scope', 'currency',
-            'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
-            'percent_rate', 'weight_breaks', 'is_additive',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'origin_airport', 'destination_airport', 'scope', 'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge', 'percent_rate', 'weight_breaks', 'is_additive', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
 
 
@@ -583,18 +402,10 @@ class DomesticSellRateSerializer(BaseLaneRateSerializer):
     supports_percent_rate = True
     normalize_route_upper = True
     overlap_message = 'Overlapping effective-date rows already exist for this Domestic Sell key.'
-
     class Meta:
         model = DomesticSellRate
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_zone', 'destination_zone', 'scope', 'currency',
-            'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
-            'percent_rate', 'weight_breaks', 'is_additive',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'origin_zone', 'destination_zone', 'scope', 'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge', 'percent_rate', 'weight_breaks', 'is_additive', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
-
     def validate(self, attrs):
         attrs = super().validate(attrs)
         currency = attrs.get('currency') or getattr(self.instance, 'currency', None)
@@ -611,17 +422,9 @@ class ExportCOGSSerializer(BaseLaneRateSerializer):
     overlap_message = 'Overlapping effective-date rows already exist for this Export COGS key.'
     require_counterparty = True
     supports_percent_rate = False
-
     class Meta:
         model = ExportCOGS
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport', 'scope',
-            'carrier', 'carrier_name', 'agent', 'agent_name',
-            'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
-            'weight_breaks', 'is_additive',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'origin_airport', 'destination_airport', 'scope', 'carrier', 'carrier_name', 'agent', 'agent_name', 'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge', 'weight_breaks', 'is_additive', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
 
 
@@ -633,17 +436,9 @@ class ImportCOGSSerializer(BaseLaneRateSerializer):
     overlap_message = 'Overlapping effective-date rows already exist for this Import COGS key.'
     require_counterparty = True
     supports_percent_rate = True
-
     class Meta:
         model = ImportCOGS
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_airport', 'destination_airport', 'scope',
-            'carrier', 'carrier_name', 'agent', 'agent_name',
-            'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
-            'is_additive', 'percent_rate', 'weight_breaks',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'origin_airport', 'destination_airport', 'scope', 'carrier', 'carrier_name', 'agent', 'agent_name', 'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge', 'is_additive', 'percent_rate', 'weight_breaks', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
 
 
@@ -656,19 +451,10 @@ class DomesticCOGSSerializer(BaseLaneRateSerializer):
     overlap_message = 'Overlapping effective-date rows already exist for this Domestic COGS key.'
     require_counterparty = True
     supports_percent_rate = False
-
     class Meta:
         model = DomesticCOGS
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'origin_zone', 'destination_zone', 'scope',
-            'carrier', 'carrier_name', 'agent', 'agent_name',
-            'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge',
-            'weight_breaks', 'is_additive',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'origin_zone', 'destination_zone', 'scope', 'carrier', 'carrier_name', 'agent', 'agent_name', 'currency', 'rate_per_kg', 'rate_per_shipment', 'min_charge', 'max_charge', 'weight_breaks', 'is_additive', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
-
     def validate(self, attrs):
         attrs = super().validate(attrs)
         currency = attrs.get('currency') or getattr(self.instance, 'currency', None)
@@ -678,69 +464,35 @@ class DomesticCOGSSerializer(BaseLaneRateSerializer):
 
 
 class LocalSellRateSerializer(BaseLocalRateSerializer):
-    expected_domain_by_direction = {
-        'EXPORT': ProductCode.DOMAIN_EXPORT,
-        'IMPORT': ProductCode.DOMAIN_IMPORT,
-    }
+    expected_domain_by_direction = {'EXPORT': ProductCode.DOMAIN_EXPORT, 'IMPORT': ProductCode.DOMAIN_IMPORT}
     percent_of_product_code_code = serializers.CharField(source='percent_of_product_code.code', read_only=True, allow_null=True)
     percent_of_product_code_description = serializers.CharField(source='percent_of_product_code.description', read_only=True, allow_null=True)
     overlap_message = 'Overlapping effective-date rows already exist for this Local Sell key.'
-
     class Meta:
         model = LocalSellRate
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'location', 'direction', 'payment_term', 'scope', 'currency',
-            'rate_type', 'amount', 'is_additive', 'additive_flat_amount',
-            'min_charge', 'max_charge', 'weight_breaks',
-            'percent_of_product_code', 'percent_of_product_code_code', 'percent_of_product_code_description',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'location', 'direction', 'payment_term', 'scope', 'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'min_charge', 'max_charge', 'weight_breaks', 'percent_of_product_code', 'percent_of_product_code_code', 'percent_of_product_code_description', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
 
 
 class LocalCOGSRateSerializer(BaseLocalRateSerializer):
-    expected_domain_by_direction = {
-        'EXPORT': ProductCode.DOMAIN_EXPORT,
-        'IMPORT': ProductCode.DOMAIN_IMPORT,
-    }
+    expected_domain_by_direction = {'EXPORT': ProductCode.DOMAIN_EXPORT, 'IMPORT': ProductCode.DOMAIN_IMPORT}
     require_counterparty = True
     agent_name = serializers.CharField(source='agent.name', read_only=True, allow_null=True)
     carrier_name = serializers.CharField(source='carrier.name', read_only=True, allow_null=True)
     percent_of_product_code_code = serializers.CharField(source='percent_of_product_code.code', read_only=True, allow_null=True)
     percent_of_product_code_description = serializers.CharField(source='percent_of_product_code.description', read_only=True, allow_null=True)
     overlap_message = 'Overlapping effective-date rows already exist for this Local COGS key.'
-
     class Meta:
         model = LocalCOGSRate
-        fields = [
-            'id', 'product_code', 'product_code_code', 'product_code_description',
-            'location', 'direction', 'scope', 'agent', 'agent_name', 'carrier', 'carrier_name',
-            'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount',
-            'min_charge', 'max_charge', 'weight_breaks',
-            'percent_of_product_code', 'percent_of_product_code_code', 'percent_of_product_code_description',
-            'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active',
-        ]
+        fields = ['id', 'product_code', 'product_code_code', 'product_code_description', 'location', 'direction', 'scope', 'agent', 'agent_name', 'carrier', 'carrier_name', 'currency', 'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 'min_charge', 'max_charge', 'weight_breaks', 'percent_of_product_code', 'percent_of_product_code_code', 'percent_of_product_code_description', 'valid_from', 'valid_until', *RATE_AUDIT_FIELDS, 'is_active']
         read_only_fields = ['id', *RATE_AUDIT_FIELDS, 'is_active']
 
 
 class RateChangeLogSerializer(serializers.ModelSerializer):
     actor_username = serializers.CharField(source='actor.username', read_only=True, allow_null=True)
-
     class Meta:
         model = RateChangeLog
-        fields = [
-            'id',
-            'table_name',
-            'object_pk',
-            'actor',
-            'actor_username',
-            'action',
-            'lineage_id',
-            'before_snapshot',
-            'after_snapshot',
-            'created_at',
-        ]
+        fields = ['id', 'table_name', 'object_pk', 'actor', 'actor_username', 'action', 'lineage_id', 'before_snapshot', 'after_snapshot', 'created_at']
         read_only_fields = fields
 
 
@@ -753,23 +505,15 @@ class ComponentMarginSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class CustomerDiscountSerializer(serializers.ModelSerializer):
-    """Full serializer for create/update operations."""
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     product_code_display = serializers.SerializerMethodField()
     notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     min_charge = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     max_charge = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
-    
     class Meta:
         model = CustomerDiscount
-        fields = [
-            'id', 'customer', 'customer_name', 'product_code', 'product_code_display',
-            'discount_type', 'discount_value', 'currency', 'min_charge', 'max_charge',
-            'valid_from', 'valid_until', 'notes',
-            'created_at', 'updated_at', 'created_by'
-        ]
+        fields = ['id', 'customer', 'customer_name', 'product_code', 'product_code_display', 'discount_type', 'discount_value', 'currency', 'min_charge', 'max_charge', 'valid_from', 'valid_until', 'notes', 'created_at', 'updated_at', 'created_by']
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by']
-    
     def get_product_code_display(self, obj):
         if obj.product_code:
             return f"{obj.product_code.code} - {obj.product_code.description}"
@@ -777,25 +521,15 @@ class CustomerDiscountSerializer(serializers.ModelSerializer):
 
 
 class CustomerDiscountListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for list view with expanded relations."""
     customer_name = serializers.CharField(source='customer.name', read_only=True)
     product_code_code = serializers.CharField(source='product_code.code', read_only=True)
     product_code_description = serializers.CharField(source='product_code.description', read_only=True)
     product_code_domain = serializers.CharField(source='product_code.domain', read_only=True)
     discount_type_display = serializers.CharField(source='get_discount_type_display', read_only=True)
     is_active = serializers.SerializerMethodField()
-    
     class Meta:
         model = CustomerDiscount
-        fields = [
-            'id', 'customer', 'customer_name',
-            'product_code', 'product_code_code', 'product_code_description', 'product_code_domain',
-            'discount_type', 'discount_type_display', 'discount_value', 'currency',
-            'min_charge', 'max_charge',
-            'valid_from', 'valid_until', 'is_active', 'notes',
-            'created_at'
-        ]
-    
+        fields = ['id', 'customer', 'customer_name', 'product_code', 'product_code_code', 'product_code_description', 'product_code_domain', 'discount_type', 'discount_type_display', 'discount_value', 'currency', 'min_charge', 'max_charge', 'valid_from', 'valid_until', 'is_active', 'notes', 'created_at']
     def get_is_active(self, obj):
         from datetime import date
         today = date.today()
@@ -817,13 +551,10 @@ class CustomerDiscountBulkLineSerializer(serializers.Serializer):
     valid_from = serializers.DateField(required=False, allow_null=True)
     valid_until = serializers.DateField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-
     def validate(self, attrs):
         discount_type = attrs.get('discount_type')
         discount_value = attrs.get('discount_value')
-        if discount_type == CustomerDiscount.TYPE_PERCENTAGE and (
-            discount_value < 0 or discount_value > 100
-        ):
+        if discount_type == CustomerDiscount.TYPE_PERCENTAGE and (discount_value < 0 or discount_value > 100):
             raise serializers.ValidationError({'discount_value': 'Percentage discount must be between 0 and 100.'})
         if discount_value < 0:
             raise serializers.ValidationError({'discount_value': 'Discount value cannot be negative.'})
@@ -831,84 +562,27 @@ class CustomerDiscountBulkLineSerializer(serializers.Serializer):
 
 
 class CustomerDiscountBulkUpsertSerializer(serializers.Serializer):
-    customer = serializers.PrimaryKeyRelatedField(
-        queryset=Company.objects.filter(models.Q(is_customer=True) | models.Q(company_type='CUSTOMER'))
-    )
+    customer = serializers.PrimaryKeyRelatedField(queryset=Company.objects.filter(models.Q(is_customer=True) | models.Q(company_type='CUSTOMER')))
     lines = CustomerDiscountBulkLineSerializer(many=True)
 
-# =============================================================================
-# V4 QUOTE REQUEST SERIALIZER
-# =============================================================================
 
 class CargoDetailsSerializer(serializers.Serializer):
     weight_kg = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0.01)
     volume_m3 = serializers.DecimalField(max_digits=10, decimal_places=3, min_value=0.001)
     quantity = serializers.IntegerField(min_value=1, default=1)
-    # Optional: dims? For now simple weight/volume is enough for engine
     
 class QuoteRequestSerializerV4(serializers.Serializer):
-    """
-    Strictly typed request payload for V4 Pricing Engine.
-    """
-    SERVICE_TYPE_CHOICES = [
-        ('DOMESTIC', 'Domestic'),
-        ('EXPORT', 'Export'),
-        ('IMPORT', 'Import'),
-    ]
-    
-    INCOTERMS_CHOICES = [
-        ('EXW', 'Ex Works (EXW)'),
-        ('FCA', 'Free Carrier (FCA)'),
-        ('FOB', 'Free on Board (FOB)'),
-        ('CFR', 'Cost and Freight (CFR)'),
-        ('CIF', 'Cost, Insurance & Freight (CIF)'),
-        ('DAP', 'Delivered at Place (DAP)'),
-        ('DPU', 'Delivered at Place Unloaded (DPU)'),
-        ('DDP', 'Delivered Duty Paid (DDP)'),
-    ]
-    
-    # Context
-    customer_id = serializers.PrimaryKeyRelatedField(
-        queryset=Company.objects.filter(company_type='CUSTOMER'),
-        source='customer',
-        help_text="UUID of the customer company"
-    )
-    
-    # Route
+    SERVICE_TYPE_CHOICES = [('DOMESTIC', 'Domestic'), ('EXPORT', 'Export'), ('IMPORT', 'Import'),]
+    INCOTERMS_CHOICES = [('EXW', 'Ex Works (EXW)'), ('FCA', 'Free Carrier (FCA)'), ('FOB', 'Free on Board (FOB)'), ('CFR', 'Cost and Freight (CFR)'), ('CIF', 'Cost, Insurance & Freight (CIF)'), ('DAP', 'Delivered at Place (DAP)'), ('DPU', 'Delivered at Place Unloaded (DPU)'), ('DDP', 'Delivered Duty Paid (DDP)'),]
+    customer_id = serializers.PrimaryKeyRelatedField(queryset=Company.objects.filter(company_type='CUSTOMER'), source='customer', help_text="UUID of the customer company")
     origin = serializers.CharField(max_length=5, help_text="IATA Airport Code (e.g. POM) or Zone ID")
     destination = serializers.CharField(max_length=5, help_text="IATA Airport Code (e.g. BNE) or Zone ID")
-    
-    # Service
     service_type = serializers.ChoiceField(choices=SERVICE_TYPE_CHOICES)
     incoterms = serializers.ChoiceField(choices=INCOTERMS_CHOICES, required=False, allow_null=True)
-    service_scope = serializers.ChoiceField(
-        choices=['A2A', 'A2D', 'D2A', 'D2D', 'P2P'],
-        default='A2A',
-        help_text="Service Scope (e.g. A2A=Airport-to-Airport)"
-    )
-    is_dg = serializers.BooleanField(
-        required=False,
-        default=False,
-        help_text="Set true for dangerous goods shipments."
-    )
-    
-    # Cargo
+    service_scope = serializers.ChoiceField(choices=['A2A', 'A2D', 'D2A', 'D2D', 'P2P'], default='A2A', help_text="Service Scope (e.g. A2A=Airport-to-Airport)")
+    is_dg = serializers.BooleanField(required=False, default=False, help_text="Set true for dangerous goods shipments.")
     cargo_details = CargoDetailsSerializer()
-    
-    # Optional overrides
     quote_date = serializers.DateField(required=False, help_text="Defaults to today")
-    
     def validate(self, data):
-        """
-        Cross-field validation.
-        """
-        service_type = data.get('service_type')
-        origin = data.get('origin')
-        destination = data.get('destination')
-        
-        # Validations for specific service types could go here.
-        # e.g. If DOMESTIC, ensure origin/dest are within PNG (logic might be in engine though)
-        
         return data
-
 
