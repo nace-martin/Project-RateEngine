@@ -1,3 +1,4 @@
+from pricing_v4.utils import safe_save_v4_rate
 from __future__ import annotations
 
 from copy import deepcopy

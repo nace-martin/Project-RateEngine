@@ -529,6 +529,15 @@ class BaseLocalRateSerializer(EffectiveDatedRateSerializer):
         attrs['currency'] = currency
         if 'payment_term' in attrs or hasattr(self.Meta.model, 'payment_term'):
             attrs['payment_term'] = payment_term
+
+        # Model-level hardening (Phase 3D)
+        temp_instance = self.Meta.model(**attrs)
+        try:
+            temp_instance.full_clean()
+        except ValidationError as exc:
+            # Re-wrap as DRF ValidationError
+            raise serializers.ValidationError(exc.message_dict)
+
         return attrs
 
 

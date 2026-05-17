@@ -1313,6 +1313,24 @@ class LocalSellRate(models.Model):
         if self.product_code and self.direction == 'IMPORT' and self.product_code.domain != ProductCode.DOMAIN_IMPORT:
             raise ValidationError('IMPORT local rates must reference Import ProductCodes (2xxx).')
 
+        # Overlap prevention (Phase 3D)
+        overlaps = self.__class__.objects.filter(
+            product_code=self.product_code,
+            location=self.location,
+            direction=self.direction,
+            payment_term=self.payment_term,
+            currency=self.currency,
+            valid_from__lte=self.valid_until,
+            valid_until__gte=self.valid_from
+        ).exclude(id=self.id)
+
+        if overlaps.exists():
+            conflicting = overlaps.first()
+            raise ValidationError(
+                f'Overlapping active row exists (ID #{conflicting.id}) for this commercial identity. '
+                f'Validity: {conflicting.valid_from} to {conflicting.valid_until}.'
+            )
+
     @property
     def rate_per_kg(self):
         if self.rate_type == 'PER_KG':

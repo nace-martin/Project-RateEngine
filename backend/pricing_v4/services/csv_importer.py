@@ -1,3 +1,4 @@
+from pricing_v4.utils import safe_update_or_create_v4_rate
 import csv
 import io
 import json
@@ -115,10 +116,7 @@ def import_v4_rate_cards_csv(uploaded_file, dry_run: bool = False) -> V4RateCSVI
             )
 
         for prepared in prepared_rows:
-            prepared.model_cls.objects.update_or_create(
-                **prepared.lookup,
-                defaults=prepared.defaults,
-            )
+            safe_update_or_create_v4_rate(prepared.model_cls, prepared.lookup, prepared.defaults)
 
         return V4RateCSVImportResult(
             dry_run=False,

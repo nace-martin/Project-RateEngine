@@ -1,3 +1,4 @@
+from pricing_v4.utils import safe_update_or_create_v4_rate
 from __future__ import annotations
 
 from dataclasses import dataclass

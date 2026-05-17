@@ -8,6 +8,37 @@ from uuid import UUID
 from django.db import models
 from django.db.models import QuerySet
 
+import logging
+logger = logging.getLogger(__name__)
+
+def _check_for_local_sell_redundancy_conflict(specific_rate, base_qs, context):
+    """
+    If a specific rate (e.g. PREPAID) is matched, check if an ANY rate 
+    is also active for the same date/currency. If so, log a warning 
+    if their commercial values differ.
+    """
+    any_rate_match = base_qs.filter(
+        payment_term='ANY',
+        currency=specific_rate.currency
+    ).first()
+
+    if any_rate_match and any_rate_match.id != specific_rate.id:
+        # Compare commercial values
+        diffs = {}
+        fields_to_compare = ['amount', 'min_charge', 'max_charge', 'rate_type', 'is_additive', 'additive_flat_amount']
+        for field in fields_to_compare:
+            v1 = getattr(specific_rate, field)
+            v2 = getattr(any_rate_match, field)
+            if v1 != v2:
+                diffs[field] = (str(v1), str(v2))
+        
+        if diffs:
+            logger.warning(
+                "REDUNDANCY_CONFLICT: LocalSellRate specific match differs from ANY match for %s. "
+                "Specific ID: %s, ANY ID: %s. Diffs: %s",
+                specific_rate, specific_rate.id, any_rate_match.id, diffs
+            )
+
 from pricing_v4.models import (
     DomesticCOGS,
     DomesticSellRate,
@@ -655,6 +686,8 @@ def select_local_sell_rate(
                 fallback_applied=payment_term_value == 'ANY',
             )
             if result is not None:
+                if payment_term_value != 'ANY':
+                    _check_for_local_sell_redundancy_conflict(result.record, base_qs, context)
                 return result
 
     if allow_pgk_fallback and context.currency != 'PGK':
@@ -668,6 +701,8 @@ def select_local_sell_rate(
                 fallback_applied=True,
             )
             if result is not None:
+                if payment_term_value != 'ANY':
+                    _check_for_local_sell_redundancy_conflict(result.record, base_qs, context)
                 return result
 
     if context.currency is None:
@@ -682,6 +717,8 @@ def select_local_sell_rate(
                 unresolved_dimensions=('currency',),
             )
             if result is not None:
+                if payment_term_value != 'ANY':
+                    _check_for_local_sell_redundancy_conflict(result.record, base_qs, context)
                 return result
 
     raise RateNotFoundError('LocalSellRate', context)
