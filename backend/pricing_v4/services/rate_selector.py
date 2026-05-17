@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Iterable, Sequence
@@ -622,6 +625,43 @@ def select_local_cogs_rate(
     return _select_counterparty_rate(LocalCOGSRate, context, queryset_override=base_qs)
 
 
+
+def _check_for_local_sell_redundancy_conflict(specific_rate: Any, base_qs: QuerySet, context: Any):
+    """
+    Harden selector: If both a specific match and an ANY match are active,
+    log a warning if their commercial values differ.
+    """
+    any_rate_qs = base_qs.filter(payment_term='ANY')
+    if context.currency:
+        any_rate_qs = any_rate_qs.filter(currency=context.currency)
+    
+    any_rate_match = any_rate_qs.first()
+    if not any_rate_match:
+        return
+
+    # Compare commercial values
+    commercial_fields = [
+        'rate_type', 'amount', 'is_additive', 'additive_flat_amount', 
+        'min_charge', 'max_charge', 'weight_breaks', 'percent_of_product_code_id'
+    ]
+    
+    differs = False
+    diff_details = {}
+    for field in commercial_fields:
+        val_spec = getattr(specific_rate, field)
+        val_any = getattr(any_rate_match, field)
+        if val_spec != val_any:
+            differs = True
+            diff_details[field] = (str(val_spec), str(val_any))
+    
+    if differs:
+        logger.warning(
+            "REDUNDANCY_CONFLICT: LocalSellRate specific match differs from ANY match for %s. "
+            "Specific ID: %s, ANY ID: %s. Diffs: %s",
+            specific_rate, specific_rate.id, any_rate_match.id, diff_details
+        )
+
+
 def select_local_sell_rate(
     context: RateSelectionContext,
     *,
@@ -655,6 +695,8 @@ def select_local_sell_rate(
                 fallback_applied=payment_term_value == 'ANY',
             )
             if result is not None:
+                if payment_term_value != 'ANY':
+                    _check_for_local_sell_redundancy_conflict(result.record, base_qs, context)
                 return result
 
     if allow_pgk_fallback and context.currency != 'PGK':
@@ -668,6 +710,8 @@ def select_local_sell_rate(
                 fallback_applied=True,
             )
             if result is not None:
+                if payment_term_value != 'ANY':
+                    _check_for_local_sell_redundancy_conflict(result.record, base_qs, context)
                 return result
 
     if context.currency is None:
@@ -682,6 +726,8 @@ def select_local_sell_rate(
                 unresolved_dimensions=('currency',),
             )
             if result is not None:
+                if payment_term_value != 'ANY':
+                    _check_for_local_sell_redundancy_conflict(result.record, base_qs, context)
                 return result
 
     raise RateNotFoundError('LocalSellRate', context)

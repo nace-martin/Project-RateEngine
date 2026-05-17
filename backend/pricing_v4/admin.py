@@ -418,8 +418,8 @@ from .models import LocalSellRate, LocalCOGSRate
 
 @admin.register(LocalSellRate)
 class LocalSellRateAdmin(admin.ModelAdmin):
-    list_display = ['product_code', 'scope', computed_rate_scope, scope_warning, 'location', 'direction', 'payment_term', 'currency', 'architecture_role', 'rate_type', 'amount', 'valid_from', 'valid_until']
-    list_filter = ['scope', PricingRateScopeFilter, 'location', 'direction', 'payment_term', 'currency', 'rate_type']
+    list_display = ['product_code', 'location', 'direction', 'payment_term', 'currency', 'rate_type', 'amount', 'valid_from', 'valid_until', 'scope', 'supersedes_rate', 'lineage_id']
+    list_filter = ['payment_term', 'direction', 'currency', 'rate_type', 'location', 'valid_from', 'scope', PricingRateScopeFilter]
     list_select_related = ['product_code', 'percent_of_product_code']
     search_fields = ['product_code__code', 'location']
     ordering = ['location', 'direction', 'product_code']
