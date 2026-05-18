@@ -13,6 +13,12 @@ from pricing_v4.services.rate_selector import (
     select_import_cogs_rate,
     select_local_sell_rate,
 )
+from pricing_v4.tests.validated_factories import (
+    create_validated_import_cogs,
+    create_validated_export_sell,
+    create_validated_local_sell,
+    get_or_create_test_product
+)
 
 
 class RateSelectorTestCase(TestCase):
@@ -40,45 +46,30 @@ class RateSelectorTestCase(TestCase):
             carrier_type='AIRLINE',
         )
 
-        cls.pc_import_freight = ProductCode.objects.create(
+        cls.pc_import_freight = get_or_create_test_product(
             id=2601,
             code='IMP-FRT-SELECTOR',
-            description='Import Freight Selector',
             domain='IMPORT',
             category='FREIGHT',
             is_gst_applicable=True,
-            gst_rate=Decimal('0.10'),
-            gl_revenue_code='4100',
-            gl_cost_code='5100',
-            default_unit='KG',
         )
-        cls.pc_export_freight = ProductCode.objects.create(
+        cls.pc_export_freight = get_or_create_test_product(
             id=1601,
             code='EXP-FRT-SELECTOR',
-            description='Export Freight Selector',
             domain='EXPORT',
             category='FREIGHT',
             is_gst_applicable=False,
-            gst_rate=Decimal('0.00'),
-            gl_revenue_code='4200',
-            gl_cost_code='5200',
-            default_unit='KG',
         )
-        cls.pc_import_local = ProductCode.objects.create(
+        cls.pc_import_local = get_or_create_test_product(
             id=2602,
             code='IMP-CLEAR-SELECTOR',
-            description='Import Clearance Selector',
             domain='IMPORT',
             category='CLEARANCE',
             is_gst_applicable=True,
-            gst_rate=Decimal('0.10'),
-            gl_revenue_code='4300',
-            gl_cost_code='5300',
-            default_unit='SHIPMENT',
         )
 
     def test_import_cogs_prefers_exact_counterparty_and_currency(self):
-        row_a = ImportCOGS.objects.create(
+        row_a = create_validated_import_cogs(
             product_code=self.pc_import_freight,
             origin_airport='SYD',
             destination_airport='POM',
@@ -88,7 +79,7 @@ class RateSelectorTestCase(TestCase):
             valid_from=self.valid_from,
             valid_until=self.valid_until,
         )
-        ImportCOGS.objects.create(
+        create_validated_import_cogs(
             product_code=self.pc_import_freight,
             origin_airport='SYD',
             destination_airport='POM',
@@ -114,7 +105,7 @@ class RateSelectorTestCase(TestCase):
         self.assertEqual(result.match_type, 'exact_currency')
 
     def test_import_cogs_raises_ambiguity_without_counterparty_when_multiple_match(self):
-        ImportCOGS.objects.create(
+        create_validated_import_cogs(
             product_code=self.pc_import_freight,
             origin_airport='SYD',
             destination_airport='POM',
@@ -124,7 +115,7 @@ class RateSelectorTestCase(TestCase):
             valid_from=self.valid_from,
             valid_until=self.valid_until,
         )
-        ImportCOGS.objects.create(
+        create_validated_import_cogs(
             product_code=self.pc_import_freight,
             origin_airport='SYD',
             destination_airport='POM',
@@ -147,7 +138,7 @@ class RateSelectorTestCase(TestCase):
             )
 
     def test_local_sell_uses_pgk_fallback_when_explicit_currency_missing(self):
-        LocalSellRate.objects.create(
+        create_validated_local_sell(
             product_code=self.pc_import_local,
             location='POM',
             direction='IMPORT',
@@ -175,6 +166,16 @@ class RateSelectorTestCase(TestCase):
         self.assertTrue(result.fallback_applied)
 
     def test_export_sell_uses_latest_valid_from_tiebreak(self):
+        """
+        Tiebreak test needs overlapping rows. 
+        Since our validator now BLOCKS overlaps, we must use raw ORM to create this specific test scenario
+        OR adjust the test to use sequential non-overlapping rows if tiebreak logic is still applicable there.
+        Actually, tiebreak is for when multiple valid rows match a date. 
+        If we enforce no overlaps, tiebreak is only relevant during migrations or for specific exceptions.
+        
+        For this test, I will INTENTIONALLY bypass validation to test the selector's fallback behavior
+        for any existing legacy data or edge cases.
+        """
         older = ExportSellRate.objects.create(
             product_code=self.pc_export_freight,
             origin_airport='POM',
@@ -220,7 +221,7 @@ class RateSelectorTestCase(TestCase):
             )
 
     def test_import_engine_raises_ambiguity_when_multiple_counterparties_exist(self):
-        ImportCOGS.objects.create(
+        create_validated_import_cogs(
             product_code=self.pc_import_freight,
             origin_airport='SYD',
             destination_airport='POM',
@@ -230,7 +231,7 @@ class RateSelectorTestCase(TestCase):
             valid_from=self.valid_from,
             valid_until=self.valid_until,
         )
-        ImportCOGS.objects.create(
+        create_validated_import_cogs(
             product_code=self.pc_import_freight,
             origin_airport='SYD',
             destination_airport='POM',
