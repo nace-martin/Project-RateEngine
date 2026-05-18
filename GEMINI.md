@@ -11,6 +11,7 @@ Gemini CLI must follow `AGENTS.md`. This file is Gemini-specific operating guida
 - Development DB: SQLite.
 - Production DB: Cloud SQL PostgreSQL.
 - Deployment: Google Cloud Run (Stateless Containers).
+- Migrations: Cloud Run Jobs (Separate from Web Service).
 - Storage: Google Cloud Storage (Media) + WhiteNoise (Static).
 - Secrets: Google Secret Manager (Transitioning).
 - Main backend area: `backend/`.

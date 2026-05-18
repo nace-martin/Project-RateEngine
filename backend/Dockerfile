@@ -50,7 +50,7 @@ COPY . /app/
 # Ensure appuser owns the /app directory for runtime operations (like collectstatic)
 RUN mkdir -p /app/staticfiles /app/media && \
     chown -R appuser:appgroup /app && \
-    chmod +x /app/entrypoint.prod.sh
+    chmod +x /app/entrypoint.prod.sh /app/entrypoint.migrate.sh
 
 # Switch to non-root user
 USER appuser
