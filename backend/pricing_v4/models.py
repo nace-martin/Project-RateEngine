@@ -1,3 +1,4 @@
+from .mixins import OverlapPreventionMixin
 # backend/pricing_v4/models.py
 """
 Greenfield Pricing Engine Models - V4
@@ -222,6 +223,7 @@ class ProductCode(models.Model):
         return f"{self.id} - {self.code}: {self.description}"
     
     def clean(self):
+        super().clean()
         """Validate ID range matches domain."""
         if self.domain == self.DOMAIN_EXPORT and not (1000 <= self.id < 2000):
             raise ValidationError(f"Export ProductCode ID must be 1xxx, got {self.id}")
@@ -349,6 +351,7 @@ class ChargeAlias(models.Model):
         return str(value or '').strip().casefold()
 
     def clean(self):
+        super().clean()
         self.normalized_alias_text = self.normalize_alias_text_value(
             self.normalized_alias_text or self.alias_text
         )
@@ -431,7 +434,10 @@ class RateScope(models.TextChoices):
     UNKNOWN = 'UNKNOWN', 'Unknown'
 
 
-class ExportCOGS(models.Model):
+class ExportCOGS(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'agent', 'carrier']
+
+
     """
     What EFM PAYS for Export services (Cost of Goods Sold).
 
@@ -525,6 +531,7 @@ class ExportCOGS(models.Model):
         ]
 
     def clean(self):
+        super().clean()
         if self.carrier and self.agent:
             raise ValidationError('Cannot set both carrier and agent. Choose one.')
         if not self.carrier and not self.agent:
@@ -539,7 +546,10 @@ class ExportCOGS(models.Model):
         return f'COGS: {self.product_code.code} {self.origin_airport}->{self.destination_airport} ({counterparty})'
 
 
-class ExportSellRate(models.Model):
+class ExportSellRate(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'origin_airport', 'destination_airport', 'currency']
+
+
     """
     What EFM CHARGES for Export services (Sell Rate).
     """
@@ -588,6 +598,7 @@ class ExportSellRate(models.Model):
         verbose_name_plural = 'Export Sell Rates'
 
     def clean(self):
+        super().clean()
         if self.product_code and is_local_rate_category(self.product_code.category):
             raise ValidationError(
                 f'{self.product_code.code} is a local charge and must be stored in LocalSellRate, not ExportSellRate.'
@@ -601,7 +612,9 @@ class ExportSellRate(models.Model):
 # IMPORT RATE TABLES
 # =============================================================================
 
-class ImportCOGS(models.Model):
+class ImportCOGS(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'origin_airport', 'destination_airport', 'currency', 'agent', 'carrier']
+
     """
     What EFM PAYS for Import services (Cost of Goods Sold).
     """
@@ -675,6 +688,7 @@ class ImportCOGS(models.Model):
         ]
 
     def clean(self):
+        super().clean()
         if self.carrier and self.agent:
             raise ValidationError('Cannot set both carrier and agent. Choose one.')
         if not self.carrier and not self.agent:
@@ -689,7 +703,9 @@ class ImportCOGS(models.Model):
         return f'COGS: {self.product_code.code} {self.origin_airport}->{self.destination_airport} ({counterparty})'
 
 
-class ImportSellRate(models.Model):
+class ImportSellRate(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'origin_airport', 'destination_airport', 'currency']
+
     """
     What EFM CHARGES for Import services (Sell Rate).
     """
@@ -738,6 +754,7 @@ class ImportSellRate(models.Model):
         verbose_name_plural = 'Import Sell Rates'
 
     def clean(self):
+        super().clean()
         if self.product_code and is_local_rate_category(self.product_code.category):
             raise ValidationError(
                 f'{self.product_code.code} is a local charge and must be stored in LocalSellRate, not ImportSellRate.'
@@ -751,7 +768,10 @@ class ImportSellRate(models.Model):
 # DOMESTIC RATE TABLES
 # =============================================================================
 
-class DomesticCOGS(models.Model):
+class DomesticCOGS(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'origin_zone', 'destination_zone', 'currency', 'agent', 'carrier']
+
+
     """
     What EFM PAYS for Domestic services (Cost of Goods Sold).
     """
@@ -824,6 +844,7 @@ class DomesticCOGS(models.Model):
         verbose_name_plural = 'Domestic COGS'
 
     def clean(self):
+        super().clean()
         if self.carrier and self.agent:
             raise ValidationError('Cannot set both carrier and agent.')
         if not self.carrier and not self.agent:
@@ -834,7 +855,10 @@ class DomesticCOGS(models.Model):
         return f'COGS: {self.product_code.code} {self.origin_zone}->{self.destination_zone} ({cp})'
 
 
-class DomesticSellRate(models.Model):
+class DomesticSellRate(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'origin_zone', 'destination_zone', 'currency']
+
+
     """
     What EFM CHARGES for Domestic services (Sell Rate).
     """
@@ -893,7 +917,10 @@ class DomesticSellRate(models.Model):
 # GLOBAL SURCHARGES (Normalized Design)
 # =============================================================================
 
-class Surcharge(models.Model):
+class Surcharge(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'service_type', 'rate_side', 'currency', 'origin_filter', 'destination_filter']
+
+
     """
     Global surcharges that apply to service types, not individual routes.
     
@@ -1072,6 +1099,7 @@ class ComponentMargin(models.Model):
         verbose_name_plural = 'Component Margins'
     
     def clean(self):
+        super().clean()
         if not self.product_code and not self.service_type:
             raise ValidationError("Must specify either Product Code or Service Type.")
         if self.product_code and self.service_type:
@@ -1224,6 +1252,7 @@ class CustomerDiscount(models.Model):
         return f"{self.customer.name}: {self.product_code.code}"
     
     def clean(self):
+        super().clean()
         """Validate discount value based on type."""
         if self.discount_value is None:
             raise ValidationError("Discount value is required.")
@@ -1240,7 +1269,7 @@ class CustomerDiscount(models.Model):
 # LOCAL RATE TABLES (One Commercial Truth for Origin/Destination Services)
 # =============================================================================
 
-class LocalSellRate(models.Model):
+class LocalSellRate(OverlapPreventionMixin, models.Model):
     """
     Centralized local sell rates - "One Commercial Truth" for origin/destination services.
     """
@@ -1293,6 +1322,8 @@ class LocalSellRate(models.Model):
     lineage_id = models.UUIDField(default=uuid.uuid4, null=True, blank=True, db_index=True)
     supersedes_rate = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='superseded_by_rates')
 
+    overlap_identity_fields = ['product_code', 'location', 'direction', 'payment_term', 'currency']
+
     class Meta:
         db_table = 'local_sell_rates'
         unique_together = ['product_code', 'location', 'direction', 'payment_term', 'currency', 'valid_from']
@@ -1304,6 +1335,7 @@ class LocalSellRate(models.Model):
         return f'SELL: {self.product_code.code} @ {self.location} ({self.direction}, {self.payment_term})'
 
     def clean(self):
+        super().clean()
         if self.product_code and not is_local_rate_category(self.product_code.category):
             raise ValidationError(
                 f'{self.product_code.code} is lane-based and must be stored in ExportSellRate/ImportSellRate.'
@@ -1313,23 +1345,7 @@ class LocalSellRate(models.Model):
         if self.product_code and self.direction == 'IMPORT' and self.product_code.domain != ProductCode.DOMAIN_IMPORT:
             raise ValidationError('IMPORT local rates must reference Import ProductCodes (2xxx).')
 
-        # Overlap prevention (Phase 3D)
-        overlaps = self.__class__.objects.filter(
-            product_code=self.product_code,
-            location=self.location,
-            direction=self.direction,
-            payment_term=self.payment_term,
-            currency=self.currency,
-            valid_from__lte=self.valid_until,
-            valid_until__gte=self.valid_from
-        ).exclude(id=self.id)
-
-        if overlaps.exists():
-            conflicting = overlaps.first()
-            raise ValidationError(
-                f'Overlapping active row exists (ID #{conflicting.id}) for this commercial identity. '
-                f'Validity: {conflicting.valid_from} to {conflicting.valid_until}.'
-            )
+        super().clean()
 
     @property
     def rate_per_kg(self):
@@ -1352,7 +1368,10 @@ class LocalSellRate(models.Model):
         return None
 
 
-class LocalCOGSRate(models.Model):
+class LocalCOGSRate(OverlapPreventionMixin, models.Model):
+    overlap_identity_fields = ['product_code', 'location', 'direction', 'currency', 'agent', 'carrier']
+
+
     """
     Centralized local COGS rates - "One Commercial Truth" for origin/destination costs.
     """
@@ -1417,6 +1436,7 @@ class LocalCOGSRate(models.Model):
         ]
 
     def clean(self):
+        super().clean()
         if self.carrier and self.agent:
             raise ValidationError('Cannot set both carrier and agent. Choose one.')
         if not self.carrier and not self.agent:
@@ -1591,6 +1611,7 @@ class CommodityChargeRule(models.Model):
         ]
 
     def clean(self):
+        super().clean()
         if self.product_code and self.product_code.domain != self.shipment_type:
             raise ValidationError(
                 {

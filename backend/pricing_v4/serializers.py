@@ -104,7 +104,7 @@ def _validate_weight_breaks(value: Any) -> list[dict[str, str]] | None:
             min_kg = Decimal(str(row.get('min_kg')))
             rate = Decimal(str(row.get('rate')))
         except Exception as exc:
-            raise serializers.ValidationError(f"weight_breaks[{index}] contains invalid numeric values.") from exc
+            raise serializers.ValidationError(f"weight_breaks[{index}].contains invalid numeric values.") from exc
         if min_kg < 0:
             raise serializers.ValidationError(f"weight_breaks[{index}].min_kg cannot be negative.")
         if rate < 0:
@@ -286,13 +286,17 @@ class BaseLaneRateSerializer(EffectiveDatedRateSerializer):
         attrs[self.destination_field_name] = destination_value
         attrs['currency'] = currency
 
-        # Model-level hardening (PATCH compatible)
         if self.instance:
             temp_instance = copy.copy(self.instance)
             for key, value in attrs.items():
                 setattr(temp_instance, key, value)
         else:
             temp_instance = self.Meta.model(**attrs)
+
+        exclude_pks = self.context.get('overlap_exclude_pks')
+        if exclude_pks and len(exclude_pks) == 1 and hasattr(temp_instance, 'supersedes_rate_id'):
+            temp_instance.supersedes_rate_id = exclude_pks[0]
+
         try:
             PricingDomainService.validate_rate(temp_instance)
         except ValidationError as exc:
@@ -361,13 +365,17 @@ class BaseLocalRateSerializer(EffectiveDatedRateSerializer):
         if 'payment_term' in attrs or hasattr(self.Meta.model, 'payment_term'):
             attrs['payment_term'] = payment_term
 
-        # Model-level hardening (PATCH compatible)
         if self.instance:
             temp_instance = copy.copy(self.instance)
             for key, value in attrs.items():
                 setattr(temp_instance, key, value)
         else:
             temp_instance = self.Meta.model(**attrs)
+
+        exclude_pks = self.context.get('overlap_exclude_pks')
+        if exclude_pks and len(exclude_pks) == 1 and hasattr(temp_instance, 'supersedes_rate_id'):
+            temp_instance.supersedes_rate_id = exclude_pks[0]
+
         try:
             PricingDomainService.validate_rate(temp_instance)
         except ValidationError as exc:
@@ -585,4 +593,3 @@ class QuoteRequestSerializerV4(serializers.Serializer):
     quote_date = serializers.DateField(required=False, help_text="Defaults to today")
     def validate(self, data):
         return data
-
