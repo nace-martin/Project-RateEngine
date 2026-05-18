@@ -82,4 +82,3 @@ Every Gemini CLI handoff must include:
 - DOC vs CRG commodity behavior matters.
 - Legacy Spot CRUD is deprecated; use the SPE envelope + V4 adapter.
 - Refer to `AGENTS.md` for the authoritative rules.
-
