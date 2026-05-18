@@ -6,10 +6,13 @@ Gemini CLI must follow `AGENTS.md`. This file is Gemini-specific operating guida
 
 ## Project Context
 
-- Backend: Django + Django REST Framework.
-- Frontend: Next.js + TypeScript + Tailwind.
+- Backend: Django 5.x + Django REST Framework.
+- Frontend: Next.js 14+ + TypeScript + Tailwind.
 - Development DB: SQLite.
-- Production DB: PostgreSQL.
+- Production DB: Cloud SQL PostgreSQL.
+- Deployment: Google Cloud Run (Stateless Containers).
+- Storage: Google Cloud Storage (Media) + WhiteNoise (Static).
+- Secrets: Google Secret Manager (Transitioning).
 - Main backend area: `backend/`.
 - Main frontend area: `frontend/`.
 - API is versioned and served through DRF.
