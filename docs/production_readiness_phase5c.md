@@ -30,6 +30,8 @@
 | `USE_X_FORWARDED_PROTO`| Optional | Set `True` for Cloud Run HTTPS awareness. |
 | `USE_GCS` | Optional | Set `True` to enable Google Cloud Storage. |
 | `GS_BUCKET_NAME` | Required if GCS | GCS bucket for media uploads. |
+| `SERVE_STATIC_FILES`| Optional | Toggle for legacy static serving (default: False in prod). |
+| `SERVE_MEDIA_FILES` | Optional | Toggle for legacy media serving (default: False in prod). |
 
 ## 3. Risks & Compatibility
 - **CORS/CSRF**: Correct origins must be configured in `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` once the Cloud Run URLs are known.

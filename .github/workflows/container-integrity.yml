@@ -27,11 +27,31 @@ jobs:
 
       - name: Smoke Test Backend
         run: |
-          docker run -d --name backend-smoke -e PORT=8080 -p 8080:8080 rateengine-backend:test
-          sleep 10
-          docker ps | grep backend-smoke
+          docker run -d --name backend-smoke \
+            -e PORT=8080 \
+            -e DJANGO_SECRET_KEY=ci-smoke-test-only-not-for-production-12345678901234567890 \
+            -e ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0 \
+            -e DATABASE_URL=postgres://user:pass@localhost:5432/db \
+            -e DJANGO_DEBUG=False \
+            -p 8080:8080 rateengine-backend:test
+          
+          # Wait for it to initialize
+          sleep 15
+          
+          # Check if it's still running
+          if ! docker ps | grep backend-smoke; then
+            echo "Error: Backend container exited prematurely."
+            docker logs backend-smoke
+            docker inspect backend-smoke | grep ExitCode
+            exit 1
+          fi
+          
+          # Verify specific logs
+          echo "Verifying logs..."
+          docker logs backend-smoke
           docker logs backend-smoke | grep "Binding Gunicorn to port 8080"
           docker logs backend-smoke | grep "Skipping startup migrations"
+          
           docker stop backend-smoke
           docker rm backend-smoke
 

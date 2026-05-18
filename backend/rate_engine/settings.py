@@ -238,6 +238,10 @@ if not DEBUG:
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Backward compatibility for legacy deployment patterns
+SERVE_STATIC_FILES = _env_bool('SERVE_STATIC_FILES', DEBUG)
+SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', DEBUG)
+
 # Cloud Storage / Media Settings
 # In production, we use django-storages with GCS.
 USE_GCS = _env_bool('USE_GCS', False)
@@ -408,7 +412,7 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'json': {
-            '()': 'pythonjsonlogger.jsonlogger.JsonFormatter',
+            '()': 'pythonjsonlogger.json.JsonFormatter',
             'format': '%(levelname)s %(asctime)s %(module)s %(message)s',
         },
         'verbose': {
