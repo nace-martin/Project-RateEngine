@@ -1,25 +1,61 @@
-# Use an official Python runtime as a parent image
-FROM python:3.11-slim
+# Stage 1: Builder
+# ---------------------------------------
+FROM python:3.11-slim AS builder
 
-# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Install system dependencies needed for building Python packages
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+# Generate wheels for all dependencies to avoid re-compiling in final stage
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
 
-# Copy the rest of the application's code
+
+# Stage 2: Final
+# ---------------------------------------
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+# Default port for local testing, Cloud Run will override this with $PORT
+ENV PORT 8000
+
+# Install runtime-only dependencies (libpq5 for PostgreSQL)
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security
+RUN addgroup --system appgroup && \
+    adduser --system --group appuser
+
+WORKDIR /app
+
+# Install dependencies from wheels built in the builder stage
+COPY --from=builder /app/wheels /wheels
+RUN pip install --no-cache-dir /wheels/* && \
+    rm -rf /wheels
+
+# Copy the application code
 COPY . /app/
 
-# Production startup wrapper (collectstatic + migrate + gunicorn)
-RUN chmod +x /app/entrypoint.prod.sh
+# Create directories for static and media files
+# Ensure appuser owns the /app directory for runtime operations (like collectstatic)
+RUN mkdir -p /app/staticfiles /app/media && \
+    chown -R appuser:appgroup /app && \
+    chmod +x /app/entrypoint.prod.sh
+
+# Switch to non-root user
+USER appuser
+
+# Expose port (informational, Cloud Run ignores this but good for local dev)
+EXPOSE 8000
+
+ENTRYPOINT ["/app/entrypoint.prod.sh"]

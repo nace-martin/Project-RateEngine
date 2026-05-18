@@ -16,6 +16,7 @@ Codex must follow `AGENTS.md`. This file is Codex-specific operating guidance on
 - Explain the root cause before implementing a fix.
 - Do not patch symptoms while leaving dead or deprecated paths alive.
 - Do not reuse deprecated code, deleted code paths, or legacy Spot CRUD.
+- Follow Cloud Run statelessness and security rules defined in `AGENTS.md`.
 - Stop and report ambiguity instead of guessing.
 
 ## Delivery Report

@@ -9,10 +9,12 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   images: {
     remotePatterns: [
       {
         protocol: "https",
+        // TODO: Replace with Cloud Run backend URL in Phase 5F
         hostname: "projectrateengine-backend.onrender.com",
       },
       {

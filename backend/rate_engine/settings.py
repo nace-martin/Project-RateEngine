@@ -136,6 +136,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # WhiteNoise for static files
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -228,25 +229,44 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']  # Project-level static files
 STATIC_ROOT = BASE_DIR / 'staticfiles'  # Collected static files for production
+
+# WhiteNoise settings for production static file serving
+# http://whitenoise.evans.io/en/stable/django.html#add-compression-and-caching-support
+if not DEBUG:
+    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 MEDIA_URL = '/media/'
-# Uploaded files are stored under a dedicated media root so branding assets and
-# shipment documents can share the same persistent storage target in production.
-# We still serve branding logos and shipment documents through explicit
-# application endpoints instead of a generic production /media route.
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Backward compatibility for legacy deployment patterns
 SERVE_STATIC_FILES = _env_bool('SERVE_STATIC_FILES', DEBUG)
 SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', DEBUG)
 
+# Cloud Storage / Media Settings
+# In production, we use django-storages with GCS.
+USE_GCS = _env_bool('USE_GCS', False)
+
+if USE_GCS:
+    GS_BUCKET_NAME = os.environ.get('GS_BUCKET_NAME')
+    if not GS_BUCKET_NAME:
+        raise ImproperlyConfigured("GS_BUCKET_NAME is required when USE_GCS is True")
+    
+    DEFAULT_FILE_STORAGE = 'storages.backends.gcloud.GoogleCloudStorage'
+    # GCS storage doesn't need MEDIA_ROOT/MEDIA_URL in the same way, 
+    # but we keep them for application logic consistency.
+else:
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+
 STORAGES = {
     "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "BACKEND": DEFAULT_FILE_STORAGE,
         "OPTIONS": {
-            "location": str(MEDIA_ROOT),
-            "base_url": MEDIA_URL,
+            "location": str(MEDIA_ROOT) if not USE_GCS else None,
+            "base_url": MEDIA_URL if not USE_GCS else None,
         },
     },
     "staticfiles": {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage" if not DEBUG else "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
 
@@ -391,6 +411,10 @@ LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
+        'json': {
+            '()': 'pythonjsonlogger.json.JsonFormatter',
+            'format': '%(levelname)s %(asctime)s %(module)s %(message)s',
+        },
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
@@ -410,15 +434,9 @@ LOGGING = {
     },
     'handlers': {
         'console': {
-            'level': 'INFO',
+            'level': 'DEBUG' if DEBUG else 'INFO',
             'class': 'logging.StreamHandler',
-            'formatter': 'simple',
-        },
-        'console_debug': {
-            'level': 'DEBUG',
-            'filters': ['require_debug_true'],
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+            'formatter': 'simple' if DEBUG else 'json',
         },
     },
     'loggers': {
@@ -434,37 +452,25 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
-        # Dev server access logs (avoid duplicate emission via parent/root loggers)
+        # Dev server access logs
         'django.server': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
-        # Security-related logs (bad host headers, CSRF failures, etc.)
+        # Security-related logs
         'django.security': {
             'handlers': ['console'],
             'level': 'WARNING',
             'propagate': False,
         },
         # Application-specific loggers
-        'accounts': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'quotes': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'pricing_v4': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
+        'accounts': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'quotes': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'pricing_v4': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
     },
     'root': {
         'handlers': ['console'],
-        'level': 'INFO',
+        'level': os.environ.get('LOG_LEVEL', 'INFO'),
     },
 }

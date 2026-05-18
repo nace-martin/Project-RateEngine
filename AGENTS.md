@@ -71,6 +71,16 @@ Tests passing is not enough.
 - The live AI intake pipeline is `Raw -> Normalized -> Audit -> Quote Input`.
 - AI extraction supports Spot intake, but final quote pricing still belongs to the deterministic V4 engine.
 
+## Deployment Rules
+
+RateEngine is deployed as stateless containers on Google Cloud Run.
+
+- **Statelessness**: Do not assume local persistent storage for files. Use Google Cloud Storage (GCS) for media and WhiteNoise for static assets.
+- **Port Handling**: Applications must listen on the dynamic `$PORT` environment variable provided by the platform.
+- **Migrations**: Database migrations are handled via Cloud Run Jobs, not at container startup. Never run `python manage.py migrate` in a production web service entrypoint.
+- **Security**: Strict SSL/HSTS and proxy awareness are mandatory for production environments.
+- **Secrets**: Production secrets must be managed via Google Secret Manager, never committed to the repo or baked into images.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
