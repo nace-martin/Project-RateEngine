@@ -59,7 +59,7 @@ jobs:
         run: |
           # Start container with the migration entrypoint
           docker run --rm --name migration-test \
-            -e DJANGO_SECRET_KEY=ci-migration-test-secret-1234567890 \
+            -e DJANGO_SECRET_KEY=ci-migration-test-only-not-for-production-123456789012345 \
             -e ALLOWED_HOSTS=localhost \
             -e DATABASE_URL=sqlite:////tmp/smoke.sqlite3 \
             --entrypoint /app/entrypoint.migrate.sh \

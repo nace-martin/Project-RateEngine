@@ -34,7 +34,8 @@ RUN apt-get update && apt-get install -y \
 
 # Create a non-root user for security
 RUN addgroup --system appgroup && \
-    adduser --system --group appuser
+    adduser --system --group --home /home/appuser appuser
+ENV HOME=/home/appuser
 
 WORKDIR /app
 
