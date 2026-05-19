@@ -440,12 +440,16 @@ LOGGING = {
         'require_debug_true': {
             '()': 'django.utils.log.RequireDebugTrue',
         },
+        'request_context': {
+            '()': 'core.middleware.RequestContextFilter',
+        },
     },
     'handlers': {
         'console': {
             'level': 'DEBUG' if DEBUG else 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'simple' if DEBUG else 'json',
+            'filters': ['request_context'],
         },
     },
     'loggers': {
