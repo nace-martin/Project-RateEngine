@@ -41,7 +41,7 @@
 
 ## Architecture Plan: "Observability Foundation"
 
-### 5G-B: Request Correlation & Log Enrichment
+### 5G-B: Request Correlation & Log Enrichment (Implemented)
 - **Middleware:** Implement a `CorrelationMiddleware` that:
     - Generates a unique `request_id`.
     - Supports incoming `X-Request-ID` or `X-Cloud-Trace-Context`.
