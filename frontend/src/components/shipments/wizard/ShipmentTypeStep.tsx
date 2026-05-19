@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SHIPMENT_TYPE_OPTIONS } from "@/lib/shipment-types";
+import { BranchSelect } from "@/components/BranchSelect";
 
 import type { ShipmentTypeStepProps } from "./shipment-wizard-types";
 
@@ -42,7 +43,7 @@ export default function ShipmentTypeStep({ form, updateField }: ShipmentTypeStep
           ))}
         </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <Input placeholder="Branch" value={form.branch} onChange={(event) => updateField("branch", event.target.value.toUpperCase())} />
+          <BranchSelect value={form.branch} onChange={(value) => updateField("branch", value)} />
           <Input type="date" value={form.shipment_date} onChange={(event) => updateField("shipment_date", event.target.value)} />
         </div>
       </CardContent>

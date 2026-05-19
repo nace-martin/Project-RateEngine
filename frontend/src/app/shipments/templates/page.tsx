@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { createShipmentTemplate, deleteShipmentTemplate, listShipmentTemplates, updateShipmentTemplate } from "@/lib/api/shipments";
+import { BranchSelect } from "@/components/BranchSelect";
 import {
   SHIPMENT_CARGO_TYPE_OPTIONS,
   SHIPMENT_PAYMENT_TYPE_OPTIONS,
@@ -175,14 +176,13 @@ export default function ShipmentTemplatesPage() {
                 </select>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                <Input
-                  placeholder="Default branch"
+                <BranchSelect
                   value={(form.shipment_defaults as Partial<ShipmentFormData>).branch || ""}
-                  onChange={(event) => setForm((current) => ({
+                  onChange={(value) => setForm((current) => ({
                     ...current,
                     shipment_defaults: {
                       ...current.shipment_defaults,
-                      branch: event.target.value.toUpperCase(),
+                      branch: value,
                     },
                   }))}
                 />

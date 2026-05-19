@@ -10,6 +10,7 @@ import ProtectedRoute from '@/components/protected-route';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PlusCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -304,12 +305,23 @@ export default function OpportunityDetailPage() {
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" asChild>
-                <Link href="/crm/opportunities">Back to Opportunities</Link>
+                <Link href="/crm">Back to CRM</Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link href="/crm/opportunities">Browse All</Link>
               </Button>
               {opportunity && !isClosed && (
-                <Button variant="outline" asChild>
-                  <Link href={`/crm/opportunities/${opportunity.id}/edit`}>Edit</Link>
-                </Button>
+                <>
+                  <Button variant="outline" asChild>
+                    <Link href={`/crm/opportunities/${opportunity.id}/edit`}>Edit</Link>
+                  </Button>
+                  <Button asChild>
+                    <Link href={createQuoteHref}>
+                      <PlusCircle className="mr-2 h-4 w-4" />
+                      Create Quote
+                    </Link>
+                  </Button>
+                </>
               )}
               {opportunity && (
                 <Button type="button" onClick={() => setQuickLogOpen(true)}>

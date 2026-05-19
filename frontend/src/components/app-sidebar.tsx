@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/context/auth-context';
+import { Badge } from '@/components/ui/badge';
 import {
     LayoutDashboard,
     FileText,
@@ -61,14 +62,15 @@ export function AppSidebar() {
             icon: FileText,
             href: '/crm/opportunities',
             color: 'text-slate-600',
-            role: ['sales', 'manager', 'admin']
+            role: ['sales', 'manager', 'admin'],
+            badge: 'CRM'
         },
         {
             label: 'Settings',
             icon: Settings,
             href: '/settings',
             color: 'text-gray-500',
-            role: ['manager', 'finance']
+            role: ['manager', 'finance', 'admin']
         },
     ];
 
@@ -131,7 +133,16 @@ export function AppSidebar() {
                         >
                             <div className="flex items-center flex-1">
                                 <route.icon className={cn("h-5 w-5 mr-3", route.color)} />
-                                {!collapsed && route.label}
+                                {!collapsed && (
+                                    <div className="flex flex-1 items-center justify-between">
+                                        <span>{route.label}</span>
+                                        {route.badge && (
+                                            <Badge variant="secondary" className="ml-auto bg-slate-100 text-[10px] text-slate-500 hover:bg-slate-100">
+                                                {route.badge}
+                                            </Badge>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </Link>
                     );

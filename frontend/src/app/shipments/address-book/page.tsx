@@ -15,6 +15,7 @@ import { useToast } from "@/context/toast-context";
 import { useConfirm } from "@/hooks/useConfirm";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { Badge } from "@/components/ui/badge";
 import {
   createShipmentAddressBookEntry,
   deleteShipmentAddressBookEntry,
@@ -340,6 +341,11 @@ export default function ShipmentAddressBookPage() {
         <PageHeader
           title="Shipment Address Book"
           description="Save repeat shipper and consignee details to speed up the wizard."
+          actions={
+            <Badge variant="secondary" className="bg-slate-100 text-slate-500 hover:bg-slate-100">
+              COMING SOON
+            </Badge>
+          }
         />
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.9fr]">
           <Card className="border-slate-200 shadow-sm">
