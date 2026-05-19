@@ -136,6 +136,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'core.middleware.CorrelationIdMiddleware',  # Ensure request context is set early
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  # WhiteNoise for static files
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -421,7 +422,7 @@ LOGGING = {
     'formatters': {
         'json': {
             '()': 'pythonjsonlogger.json.JsonFormatter',
-            'format': '%(levelname)s %(asctime)s %(module)s %(message)s',
+            'format': '%(levelname)s %(asctime)s %(module)s %(request_id)s %(trace_id)s %(user_id)s %(message)s',
         },
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
@@ -439,12 +440,16 @@ LOGGING = {
         'require_debug_true': {
             '()': 'django.utils.log.RequireDebugTrue',
         },
+        'request_context': {
+            '()': 'core.middleware.RequestContextFilter',
+        },
     },
     'handlers': {
         'console': {
             'level': 'DEBUG' if DEBUG else 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'simple' if DEBUG else 'json',
+            'filters': ['request_context'],
         },
     },
     'loggers': {
