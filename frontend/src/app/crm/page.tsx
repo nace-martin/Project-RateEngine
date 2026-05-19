@@ -11,6 +11,7 @@ import { PageHeader, StandardPageContainer } from '@/components/layout/standard-
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PlusCircle } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -365,18 +366,19 @@ export default function CrmOverviewPage() {
                       <TableHead className="text-right">Est. Revenue</TableHead>
                       <TableHead>Next Action</TableHead>
                       <TableHead>Last Activity</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                        <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
                           Loading opportunities...
                         </TableCell>
                       </TableRow>
                     ) : priorityOpportunities.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                        <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
                           No open opportunities.
                         </TableCell>
                       </TableRow>
@@ -400,6 +402,18 @@ export default function CrmOverviewPage() {
                           </TableCell>
                           <TableCell>{formatDate(opportunity.next_action_date)}</TableCell>
                           <TableCell>{formatDateTime(opportunity.last_activity_at)}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button variant="ghost" size="sm" asChild title="Create Quote">
+                                <Link href={`/quotes/new?company=${opportunity.company}&opportunity=${opportunity.id}&service_type=${opportunity.service_type}&origin=${opportunity.origin}&destination=${opportunity.destination}`}>
+                                  <PlusCircle className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                              <Button variant="ghost" size="sm" asChild>
+                                <Link href={`/crm/opportunities/${opportunity.id}`}>View</Link>
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))
                     )}
