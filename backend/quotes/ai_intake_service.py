@@ -366,9 +366,10 @@ def _merge_pattern_fallback_charges(
 
 def get_gemini_client():
     """Get configured Gemini client. Returns None if not configured."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+    from django.conf import settings
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
     if not api_key:
-        logger.error("GEMINI_API_KEY environment variable not set")
+        logger.error("GEMINI_API_KEY not configured in settings")
         return None
 
     try:
@@ -514,9 +515,10 @@ def _call_gemini_structured(model, prompt: str, response_schema: type[BaseModel]
 
 def _extract_pdf_text_with_gemini(pdf_content: bytes, context: Optional[dict] = None) -> str:
     """Use Gemini multimodal input to transcribe a PDF when text extraction is insufficient."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+    from django.conf import settings
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        raise RuntimeError("GEMINI_API_KEY not configured in settings")
 
     try:
         from google import genai as genai_sdk
@@ -549,9 +551,10 @@ def _extract_pdf_text_with_gemini(pdf_content: bytes, context: Optional[dict] = 
 
 def _extract_pdf_text_from_page_images_with_gemini(pdf_content: bytes, context: Optional[dict] = None) -> str:
     """Render PDF pages to images and use Gemini to transcribe layout-heavy or scanned documents."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+    from django.conf import settings
+    api_key = getattr(settings, "GEMINI_API_KEY", None)
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        raise RuntimeError("GEMINI_API_KEY not configured in settings")
 
     try:
         from google import genai as genai_sdk

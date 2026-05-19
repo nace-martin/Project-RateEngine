@@ -79,7 +79,7 @@ RateEngine is deployed as stateless containers on Google Cloud Run.
 - **Port Handling**: Applications must listen on the dynamic `$PORT` environment variable provided by the platform.
 - **Migrations**: Database migrations are handled via Cloud Run Jobs, not at container startup. Never run `python manage.py migrate` in a production web service entrypoint. Use `backend/entrypoint.migrate.sh` for all automated migration executions.
 - **Security**: Strict SSL/HSTS and proxy awareness are mandatory for production environments.
-- **Secrets**: Production secrets must be managed via Google Secret Manager, never committed to the repo or baked into images.
+- **Secrets**: Production secrets must be managed via Google Secret Manager, never committed to the repo or baked into images. Use the `sm://SECRET_NAME` URI convention in environment variables for resolution.
 
 ## graphify
 

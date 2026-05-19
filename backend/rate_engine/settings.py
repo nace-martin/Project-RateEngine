@@ -15,6 +15,7 @@ import os
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
+from core.secrets import get_secret
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,15 +25,15 @@ load_dotenv(BASE_DIR / '.env')
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
+    value = get_secret(name)
     if value is None:
         return default
-    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 def _env_list(name: str) -> list[str]:
-    raw = os.environ.get(name, '')
-    return [item.strip() for item in raw.split(',') if item.strip()]
+    raw = get_secret(name, '')
+    return [item.strip() for item in str(raw).split(',') if item.strip()]
 
 
 
@@ -47,7 +48,7 @@ DEBUG = _env_bool('DJANGO_DEBUG', False)
 
 # SECURITY: SECRET_KEY must be set in environment (no fallback in production)
 _dev_secret_key = 'django-insecure-dev-only-key-do-not-use-in-production'
-_secret_key = os.environ.get('DJANGO_SECRET_KEY', '').strip()
+_secret_key = get_secret('DJANGO_SECRET_KEY', '').strip()
 if not _secret_key:
     # Only allow insecure default in explicit development mode
     if DEBUG:
@@ -170,7 +171,7 @@ WSGI_APPLICATION = 'rate_engine.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 # Development may fall back to SQLite, but production must provide DATABASE_URL.
-_database_url = os.environ.get('DATABASE_URL', '').strip()
+_database_url = get_secret('DATABASE_URL', '').strip()
 if not DEBUG and not _database_url:
     raise ImproperlyConfigured("DATABASE_URL must be set in production")
 
@@ -183,7 +184,7 @@ if _database_url:
     
     # Cloud SQL support: Use Unix sockets if INSTANCE_CONNECTION_NAME is provided
     # This is the standard pattern for Cloud Run -> Cloud SQL connectivity.
-    _instance_connection_name = os.environ.get('INSTANCE_CONNECTION_NAME')
+    _instance_connection_name = get_secret('INSTANCE_CONNECTION_NAME')
     if _instance_connection_name and _default_db['ENGINE'] == 'django.db.backends.postgresql':
         _default_db['HOST'] = f'/cloudsql/{_instance_connection_name}'
 else:
@@ -253,7 +254,7 @@ SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', DEBUG)
 USE_GCS = _env_bool('USE_GCS', False)
 
 if USE_GCS:
-    GS_BUCKET_NAME = os.environ.get('GS_BUCKET_NAME')
+    GS_BUCKET_NAME = get_secret('GS_BUCKET_NAME')
     if not GS_BUCKET_NAME:
         raise ImproperlyConfigured("GS_BUCKET_NAME is required when USE_GCS is True")
     
@@ -360,9 +361,10 @@ except ValueError:
 
 # AI intake model configuration (Gemini)
 GEMINI_MODEL_NAME = (
-    os.environ.get('GEMINI_MODEL_NAME', 'gemini-2.5-flash-lite').strip()
+    get_secret('GEMINI_MODEL_NAME', 'gemini-2.5-flash-lite').strip()
     or 'gemini-2.5-flash-lite'
 )
+GEMINI_API_KEY = get_secret('GEMINI_API_KEY')
 
 # Explicit SPOT coverage overrides for known lanes.
 SPOT_ROUTE_COVERAGE = {
