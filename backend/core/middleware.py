@@ -1,46 +1,10 @@
 import uuid
 import logging
-from threading import local
 from typing import Optional
-
-# Thread-local storage for request-specific context
-_context = local()
-
-logger = logging.getLogger(__name__)
-
-def set_request_id(request_id: str):
-    """Store the request ID in the current thread's context."""
-    _context.request_id = request_id
-
-def get_request_id() -> Optional[str]:
-    """Retrieve the request ID from the current thread's context."""
-    return getattr(_context, 'request_id', None)
-
-def set_trace_id(trace_id: str):
-    """Store the GCP trace ID in the current thread's context."""
-    _context.trace_id = trace_id
-
-def get_trace_id() -> Optional[str]:
-    """Retrieve the GCP trace ID from the current thread's context."""
-    return getattr(_context, 'trace_id', None)
-
-def set_user_id(user_id: str):
-    """Store the authenticated user ID in the current thread's context."""
-    _context.user_id = user_id
-
-def get_user_id() -> Optional[str]:
-    """Retrieve the user ID from the current thread's context."""
-    return getattr(_context, 'user_id', None)
-
-def clear_request_context():
-    """Clear all request-specific data from thread-local storage."""
-    if hasattr(_context, 'request_id'):
-        del _context.request_id
-    if hasattr(_context, 'trace_id'):
-        del _context.trace_id
-    if hasattr(_context, 'user_id'):
-        del _context.user_id
-
+from .middleware_utils import (
+    set_request_id, set_trace_id, set_user_id, clear_request_context,
+    get_request_id, get_trace_id, get_user_id
+)
 
 class RequestContextFilter(logging.Filter):
     """
@@ -51,6 +15,20 @@ class RequestContextFilter(logging.Filter):
         record.trace_id = get_trace_id()
         record.user_id = get_user_id()
         return True
+
+class UserContextMiddleware:
+    """
+    Middleware that captures user ID after authentication has occurred.
+    Should be placed AFTER AuthenticationMiddleware.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if hasattr(request, 'user') and request.user.is_authenticated:
+            set_user_id(str(request.user.id))
+        
+        return self.get_response(request)
 
 
 class CorrelationIdMiddleware:
@@ -84,18 +62,13 @@ class CorrelationIdMiddleware:
 
         # 5. Process request
         try:
-            # We can't set user_id here yet because authentication happens later in the middleware chain
             response = self.get_response(request)
             
-            # 6. Inject user_id if authenticated
-            if hasattr(request, 'user') and request.user.is_authenticated:
-                set_user_id(str(request.user.id))
-            
-            # 7. Return ID in response headers
+            # 6. Return ID in response headers
             response['X-Request-ID'] = request_id
             return response
         finally:
-            # 8. Always clear context to avoid leak between requests in threaded workers
+            # 7. Always clear context to avoid leak between requests in threaded workers
             clear_request_context()
 
     def _is_valid_uuid(self, val: str) -> bool:

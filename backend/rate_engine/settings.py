@@ -144,6 +144,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.UserContextMiddleware', # Capture user ID for logging context
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -416,12 +417,16 @@ SPOT_ALLOWED_NON_PNG_LANES = [
 # =============================================================================
 # Structured logging for production environments (outputs to console for containers)
 
+# Google Cloud Operations Configuration
+GCP_PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', '')
+APP_VERSION = os.environ.get('APP_VERSION', '1.0.0')
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
         'json': {
-            '()': 'pythonjsonlogger.json.JsonFormatter',
+            '()': 'core.logging_utils.GCPJSONFormatter',
             'format': '%(levelname)s %(asctime)s %(module)s %(request_id)s %(trace_id)s %(user_id)s %(message)s',
         },
         'verbose': {
