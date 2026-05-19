@@ -3,6 +3,8 @@
 from django.urls import path
 from .views import (
     HealthCheckAPIView,
+    LivenessCheckAPIView,
+    ReadinessCheckAPIView,
     LocationV3SearchView,
     LocationV3DetailView,
     AirportSearchAPIView,
@@ -15,6 +17,8 @@ app_name = 'core'
 
 urlpatterns = [
     path('health/', HealthCheckAPIView.as_view(), name='health-check'),
+    path('health/liveness/', LivenessCheckAPIView.as_view(), name='health-liveness'),
+    path('health/readiness/', ReadinessCheckAPIView.as_view(), name='health-readiness'),
     # --- V3 ENDPOINT ---
     path('v3/locations/search/', LocationV3SearchView.as_view(), name='location-search-v3'),
     path('v3/locations/<uuid:location_id>/', LocationV3DetailView.as_view(), name='location-detail-v3'),

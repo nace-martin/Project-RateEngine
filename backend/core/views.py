@@ -122,11 +122,33 @@ class LocationV3DetailView(APIView):
         return Response(data)
 
 
-class HealthCheckAPIView(APIView):
-    """
-    Lightweight unauthenticated health endpoint for load balancers and Cloud Run.
-    """
+from django.utils import timezone
 
+class LivenessCheckAPIView(APIView):
+    """
+    Process-only health check for Cloud Run liveness probe.
+    Does NOT check dependencies like database.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, *args, **kwargs):
+        return Response(
+            {
+                "status": "ok",
+                "service": "rateengine-backend",
+                "check_type": "liveness",
+                "timestamp": timezone.now().isoformat(),
+            },
+            status=200,
+        )
+
+
+class ReadinessCheckAPIView(APIView):
+    """
+    Dependency-aware health check for Cloud Run readiness/startup probe.
+    Confirms database connectivity.
+    """
     permission_classes = [AllowAny]
     authentication_classes = []
 
@@ -142,7 +164,42 @@ class HealthCheckAPIView(APIView):
         status_code = 200 if database_ok else 503
         return Response(
             {
+                "status": "ok" if database_ok else "unavailable",
+                "service": "rateengine-backend",
+                "check_type": "readiness",
+                "timestamp": timezone.now().isoformat(),
+                "dependencies": {
+                    "database": "ok" if database_ok else "unavailable"
+                }
+            },
+            status=status_code,
+        )
+
+
+class HealthCheckAPIView(APIView):
+    """
+    Legacy combined health endpoint kept for backward compatibility.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, *args, **kwargs):
+        # Delegate to readiness logic for backward compatibility (DB check included)
+        database_ok = True
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+        except OperationalError:
+            database_ok = False
+
+        status_code = 200 if database_ok else 503
+        return Response(
+            {
                 "status": "ok" if database_ok else "degraded",
+                "service": "rateengine-backend",
+                "check_type": "combined",
+                "timestamp": timezone.now().isoformat(),
                 "database": "ok" if database_ok else "unavailable",
             },
             status=status_code,
