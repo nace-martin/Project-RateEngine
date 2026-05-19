@@ -14,8 +14,8 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        // TODO: Replace with Cloud Run backend URL in Phase 5F
-        hostname: "projectrateengine-backend.onrender.com",
+        // Dynamically configured in Phase 5F for Cloud Run
+        hostname: process.env.NEXT_PUBLIC_BACKEND_HOSTNAME || "projectrateengine-backend.onrender.com",
       },
       {
         protocol: "http",

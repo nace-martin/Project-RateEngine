@@ -124,7 +124,7 @@ class LocationV3DetailView(APIView):
 
 class HealthCheckAPIView(APIView):
     """
-    Lightweight unauthenticated health endpoint for load balancers and Render.
+    Lightweight unauthenticated health endpoint for load balancers and Cloud Run.
     """
 
     permission_classes = [AllowAny]

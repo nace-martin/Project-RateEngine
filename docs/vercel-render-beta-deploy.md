@@ -1,4 +1,6 @@
-# Vercel + Render Beta Deploy
+# [DEPRECATED] Vercel + Render Beta Deploy
+
+> **NOTICE:** This deployment architecture is deprecated as of Phase 5F. RateEngine now uses **Google Cloud Run** for both Backend and Frontend. Refer to [cloud_run_deployment.md](./cloud_run_deployment.md) for the active production architecture.
 
 Last updated: 2026-03-20
 

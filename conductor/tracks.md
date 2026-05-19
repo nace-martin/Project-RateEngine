@@ -6,3 +6,6 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ## [ ] Track: Improve the accuracy and efficiency of the V3 quote computation for air freight.
 *Link: [./conductor/tracks/improve_v3_quote_20260108/](./conductor/tracks/improve_v3_quote_20260108/)*
+
+## [/] Track: [Phase 5F: Cloud Run Deployment Automation & Hardening](./tracks/phase5f_cloud_run.md)
+Fully automate deployment to GCP via GitHub Actions.
