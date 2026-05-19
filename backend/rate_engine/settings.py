@@ -180,6 +180,12 @@ if _database_url:
         conn_max_age=600,
         conn_health_checks=True,
     )
+    
+    # Cloud SQL support: Use Unix sockets if INSTANCE_CONNECTION_NAME is provided
+    # This is the standard pattern for Cloud Run -> Cloud SQL connectivity.
+    _instance_connection_name = os.environ.get('INSTANCE_CONNECTION_NAME')
+    if _instance_connection_name and _default_db['ENGINE'] == 'django.db.backends.postgresql':
+        _default_db['HOST'] = f'/cloudsql/{_instance_connection_name}'
 else:
     _default_db = dj_database_url.parse(
         f'sqlite:///{BASE_DIR / "db.sqlite3"}',

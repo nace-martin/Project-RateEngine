@@ -34,7 +34,8 @@ RUN apt-get update && apt-get install -y \
 
 # Create a non-root user for security
 RUN addgroup --system appgroup && \
-    adduser --system --group appuser
+    adduser --system --group --home /home/appuser appuser
+ENV HOME=/home/appuser
 
 WORKDIR /app
 
@@ -50,7 +51,7 @@ COPY . /app/
 # Ensure appuser owns the /app directory for runtime operations (like collectstatic)
 RUN mkdir -p /app/staticfiles /app/media && \
     chown -R appuser:appgroup /app && \
-    chmod +x /app/entrypoint.prod.sh
+    chmod +x /app/entrypoint.prod.sh /app/entrypoint.migrate.sh
 
 # Switch to non-root user
 USER appuser
