@@ -41,7 +41,7 @@
 
 ## Architecture Plan: "Observability Foundation"
 
-### 5G-B: Request Correlation & Log Enrichment
+### 5G-B: Request Correlation & Log Enrichment (Implemented)
 - **Middleware:** Implement a `CorrelationMiddleware` that:
     - Generates a unique `request_id`.
     - Supports incoming `X-Request-ID` or `X-Cloud-Trace-Context`.
@@ -49,7 +49,7 @@
 - **Logger Context:** Add a filter to the Django logging configuration that automatically injects `request_id`, `user_id`, and `trace_id` into all log records.
 - **API Response:** Include `X-Request-ID` in headers to allow frontend/support to report specific IDs.
 
-### 5G-C: Health & Readiness Optimization
+### 5G-C: Health & Readiness Optimization (Implemented)
 - **New Pattern:** Split health checks into two endpoints:
     - `/api/health/liveness/`: Returns 200 OK immediately if the process is running (no DB check).
     - `/api/health/readiness/`: Performs the DB check (current logic).

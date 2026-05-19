@@ -104,8 +104,8 @@ jobs:
           flags: |
             --add-cloudsql-instances=${{ env.INSTANCE_CONNECTION_NAME }}
             --set-env-vars=INSTANCE_CONNECTION_NAME=${{ env.INSTANCE_CONNECTION_NAME }},DJANGO_DEBUG=False
-            --liveness-probe-path=/api/health/
-            --startup-probe-path=/api/health/
+            --liveness-probe-path=/api/health/liveness/
+            --startup-probe-path=/api/health/readiness/
     outputs:
       url: ${{ steps.deploy.outputs.url }}
 
