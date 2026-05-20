@@ -27,11 +27,17 @@ class LocationTestUsageGuardrails(SimpleTestCase):
         backend_root = Path(__file__).resolve().parents[2]
         offenders = []
 
+        # Check all .py files in any tests/ directory
         for path in sorted(backend_root.rglob("tests/test*.py")):
             if path.name == "test_location_guardrails.py":
                 continue
-            if "Location.objects.create(" in path.read_text(encoding="utf-8"):
+            if "venv" in str(path):
+                continue
+
+            content = path.read_text(encoding="utf-8")
+            if "Location.objects.create(" in content:
                 offenders.append(path.relative_to(backend_root).as_posix())
+
 
         self.assertEqual(
             offenders,
