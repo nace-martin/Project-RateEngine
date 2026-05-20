@@ -79,6 +79,15 @@ class OpportunityAutoBuilderService:
         service_type = cls._map_mode_to_service_type(quote.mode)
         name = cls._generate_name(quote)
         
+        # Get revenue from latest version if available
+        estimated_revenue = None
+        try:
+            latest_version = quote.versions.order_by("-version_number").first()
+            if latest_version and hasattr(latest_version, "totals"):
+                estimated_revenue = latest_version.totals.total_sell_pgk
+        except Exception:
+            pass
+
         opportunity = Opportunity.objects.create(
             company=quote.customer,
             title=name,
@@ -87,8 +96,8 @@ class OpportunityAutoBuilderService:
             origin=cls._get_location_label(quote.origin_location),
             destination=cls._get_location_label(quote.destination_location),
             status=cls._map_quote_status_to_opp(quote.status),
-            owner=actor if (actor and actor.is_authenticated) else getattr(quote, "created_by", None),
-            estimated_revenue=getattr(quote, "total_revenue_base", None),
+            owner=actor if (actor and actor.is_authenticated) else (quote.created_by or quote.finalized_by or quote.sent_by),
+            estimated_revenue=estimated_revenue,
             estimated_currency="PGK" # Base system currency
         )
         return opportunity
@@ -101,12 +110,10 @@ class OpportunityAutoBuilderService:
         new_status = cls._map_quote_status_to_opp(quote.status)
         
         # Don't downgrade status automatically (e.g. if one quote is LOST but another is WON)
-        # However, for WON/LOST we need to be careful.
-        
         if new_status == Opportunity.Status.WON:
             opportunity.status = Opportunity.Status.WON
             opportunity.won_at = timezone.now()
-            opportunity.won_by = actor if (actor and actor.is_authenticated) else None
+            opportunity.won_by = actor if (actor and actor.is_authenticated) else (quote.finalized_by or quote.sent_by or quote.created_by)
             opportunity.save(update_fields=["status", "won_at", "won_by", "updated_at"])
         elif new_status == Opportunity.Status.LOST:
             # Only mark LOST if no other active quotes exist for this opportunity
@@ -126,7 +133,11 @@ class OpportunityAutoBuilderService:
         """
         Record a system interaction for the quote event. Idempotent.
         """
-        event_type = f"AUTO_{event}".upper()
+        # Align with existing QUOTE_ prefix naming
+        event_type = str(event).upper()
+        if not event_type.startswith("QUOTE_"):
+            event_type = f"QUOTE_{event_type}"
+            
         quote_id_tag = f"quote_id={quote.id}"
         
         existing = Interaction.objects.filter(
@@ -142,7 +153,7 @@ class OpportunityAutoBuilderService:
         Interaction.objects.create(
             company=opportunity.company,
             opportunity=opportunity,
-            author=actor if (actor and actor.is_authenticated) else None,
+            author=actor if (actor and actor.is_authenticated) else (quote.sent_by or quote.finalized_by or quote.created_by),
             interaction_type=Interaction.InteractionType.SYSTEM,
             is_system_generated=True,
             system_event_type=event_type,
@@ -182,11 +193,23 @@ class OpportunityAutoBuilderService:
 
         due_date = cls._add_business_days(timezone.now().date(), 3)
         
+        # Ensure owner is NEVER None (Postgres required field)
+        owner = opportunity.owner or quote.created_by or quote.sent_by or quote.finalized_by
+        if not owner:
+            # Last resort: find first admin or active user
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            owner = User.objects.filter(is_superuser=True).first() or User.objects.filter(is_active=True).first()
+        
+        if not owner:
+            logger.warning(f"Could not create follow-up task for quote {quote.id}: No owner available.")
+            return
+
         Task.objects.create(
             company=opportunity.company,
             opportunity=opportunity,
             description=description,
-            owner=opportunity.owner or quote.created_by,
+            owner=owner,
             due_date=due_date,
             status=Task.Status.PENDING
         )
