@@ -4,7 +4,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 
 from parties.models import Company
-from core.models import Location
+from core.tests.helpers import create_location
 from quotes.models import Quote
 from crm.models import Opportunity, Interaction, Task
 from crm.opportunity_auto_builder import OpportunityAutoBuilderService
@@ -15,8 +15,8 @@ class OpportunityAutoBuilderTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="testuser", email="test@example.com")
         self.customer = Company.objects.create(name="Daikin PNG", is_active=True)
-        self.origin = Location.objects.create(code="POM", name="Port Moresby")
-        self.destination = Location.objects.create(code="BNE", name="Brisbane")
+        self.origin = create_location(code="POM", name="Port Moresby")
+        self.destination = create_location(code="BNE", name="Brisbane")
         
         self.quote = Quote.objects.create(
             customer=self.customer,
