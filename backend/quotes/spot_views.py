@@ -1293,13 +1293,22 @@ class SpotEnvelopeListCreateAPIView(APIView):
             quote = None
             quote_id = data.get('quote_id')
             if quote_id:
+                from django.core.exceptions import ValidationError as DjangoValidationError
                 try:
                     quote = get_quote_for_user(request.user, quote_id)
-                except (SpotPricingEnvelopeDB.DoesNotExist, ValueError, UUID.AttributeError):
+                except (ValueError, AttributeError, TypeError, DjangoValidationError):
                      return Response(
-                        {'error': f"Invalid quote_id: {quote_id}"},
+                        {'error': f"Invalid quote_id format: {quote_id}"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
+                except Exception as e:
+                    from django.http import Http404
+                    if isinstance(e, Http404):
+                        return Response(
+                            {'error': f"Quote not found: {quote_id}"},
+                            status=status.HTTP_404_NOT_FOUND
+                        )
+                    raise e
 
                 from quotes.state_machine import is_quote_editable
                 if not is_quote_editable(quote):
@@ -1476,8 +1485,8 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 origin_code=ctx.get('origin_code', 'XXX'),
                 destination_code=ctx.get('destination_code', 'XXX'),
                 commodity=ctx.get('commodity', 'GCR'),
-                total_weight_kg=ctx.get('total_weight_kg', 1.0),
-                pieces=ctx.get('pieces', 1),
+                total_weight_kg=float(ctx.get('total_weight_kg') if ctx.get('total_weight_kg') is not None else 1.0),
+                pieces=int(ctx.get('pieces') if ctx.get('pieces') is not None else 1),
                 service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
                 payment_term=(str(ctx.get('payment_term')).lower() if ctx.get('payment_term') else None),
                 missing_components=resolved_missing_components,

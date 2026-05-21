@@ -138,7 +138,9 @@ class Interaction(models.Model):
         is_create = self._state.adding
         super().save(*args, **kwargs)
         if is_create:
-            interaction_time = self.created_at
+            # Defensive: ensure interaction_time is never None
+            interaction_time = self.created_at or timezone.now()
+            
             update_fields = ["last_interaction_at", "updated_at"]
             self.company.last_interaction_at = interaction_time
             self.company.save(update_fields=update_fields)
