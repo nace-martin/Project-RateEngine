@@ -864,6 +864,24 @@ class RateAvailabilityService:
                 valid_until__gte=today,
             ).select_related('product_code')
         )
+
+        # Include origin-scoped rows (destination is NULL) for availability check
+        import_origin_rows = list(
+            ImportCOGS.objects.filter(
+                Q(origin_airport=origin_airport),
+                Q(destination_airport__isnull=True) | Q(destination_airport=''),
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).select_related('product_code')
+        ) + list(
+            ImportSellRate.objects.filter(
+                Q(origin_airport=origin_airport),
+                Q(destination_airport__isnull=True) | Q(destination_airport=''),
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).select_related('product_code')
+        )
+
         import_destination_rows = list(
             LocalCOGSRate.objects.filter(
                 location=destination_airport,
@@ -887,7 +905,7 @@ class RateAvailabilityService:
         ]
         origin_candidates = [
             evaluate_row(COMPONENT_ORIGIN_LOCAL, row)
-            for row in import_lane_rows
+            for row in import_lane_rows + import_origin_rows
             if classify_import_component(row.product_code.code, row.product_code.category) == COMPONENT_ORIGIN_LOCAL
         ]
         destination_candidates = [
@@ -1425,8 +1443,9 @@ class StandardChargeService:
                 cogs_model = ExportCOGS if direction == "EXPORT" else ImportCOGS
                 active_cogs = (
                     cogs_model.objects.filter(
-                        origin_airport=origin_code,
-                        destination_airport=destination_code,
+                        Q(origin_airport=origin_code, destination_airport=destination_code) |
+                        Q(origin_airport=origin_code, destination_airport__in=[None, '']) |
+                        Q(destination_airport=destination_code, origin_airport__in=[None, '']),
                         valid_from__lte=date.today(),
                         valid_until__gte=date.today(),
                         product_code__code__in=[l.service_component_code for l in standard_lines],
