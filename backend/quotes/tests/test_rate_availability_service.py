@@ -907,3 +907,197 @@ def test_export_d2a_requires_manual_rule_triggers_spot_with_manual_reason():
     assert is_spot is True
     assert trigger.code == SpotTriggerReason.COMMODITY_REQUIRES_MANUAL
     assert trigger.manual_required_product_codes == ["EXP-AVI-MANUAL-ONLY"]
+
+
+def test_import_bne_pom_d2d_collect_availability_regression():
+    """
+    REGRESSION TEST:
+    BNE -> POM IMPORT D2D COLLECT should have all components covered
+    when rates exist in LocalCOGSRate for the origin (BNE).
+    """
+    from datetime import date
+
+    agent = Agent.objects.create(code="BNEAGT", name="BNE Agent", country_code="AU")
+
+    # 1. Product Codes
+    pc_frt = ProductCode.objects.create(id=2101, code="IMP-FRT-AIR", category="FREIGHT", description="Air Freight", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+    pc_origin = ProductCode.objects.create(id=2102, code="IMP-PICKUP", category="CARTAGE", description="Pickup", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+    pc_dest = ProductCode.objects.create(id=2103, code="IMP-CLEAR", category="CLEARANCE", description="Clearance", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+
+    # 2. Rates
+    today = date.today()
+    valid_from = today - timedelta(days=10)
+    valid_until = today + timedelta(days=10)
+
+    # Freight (Lane-based)
+    ImportCOGS.objects.create(
+        origin_airport="BNE",
+        destination_airport="POM",
+        product_code=pc_frt,
+        currency="USD",
+        rate_per_kg=5.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    # Origin Local (BNE) - This was being missed
+    LocalCOGSRate.objects.create(
+        location="BNE",
+        direction="IMPORT",
+        product_code=pc_origin,
+        currency="AUD",
+        amount=100.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    # Destination Local (POM)
+    LocalCOGSRate.objects.create(
+        location="POM",
+        direction="IMPORT",
+        product_code=pc_dest,
+        currency="PGK",
+        amount=200.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        origin_airport="BNE",
+        destination_airport="POM",
+        direction="IMPORT",
+        service_scope="D2D",
+        payment_term="COLLECT"
+    )
+
+    assert availability[COMPONENT_FREIGHT] is True
+    assert availability[COMPONENT_DESTINATION_LOCAL] is True
+    # This is the core of the fix:
+    assert availability[COMPONENT_ORIGIN_LOCAL] is True
+
+
+def test_import_bne_pom_d2d_collect_availability_regression_v2():
+    """
+    REGRESSION TEST:
+    BNE -> POM IMPORT D2D COLLECT should have all components covered
+    when rates exist in LocalCOGSRate for the origin (BNE).
+    """
+    from datetime import date
+
+    agent = Agent.objects.create(code="BNEAGT2", name="BNE Agent 2", country_code="AU")
+
+    # 1. Product Codes
+    pc_frt = ProductCode.objects.create(id=2201, code="IMP-FRT-AIR-V2", category="FREIGHT", description="Air Freight", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+    pc_origin = ProductCode.objects.create(id=2202, code="IMP-PICKUP-V2", category="CARTAGE", description="Pickup", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+    pc_dest = ProductCode.objects.create(id=2203, code="IMP-CLEAR-V2", category="CLEARANCE", description="Clearance", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+
+    # 2. Rates
+    today = date.today()
+    valid_from = today - timedelta(days=10)
+    valid_until = today + timedelta(days=10)
+
+    # Freight (Lane-based)
+    ImportCOGS.objects.create(
+        origin_airport="BNE",
+        destination_airport="POM",
+        product_code=pc_frt,
+        currency="USD",
+        rate_per_kg=5.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    # Origin Local (BNE)
+    LocalCOGSRate.objects.create(
+        location="BNE",
+        direction="IMPORT",
+        product_code=pc_origin,
+        currency="AUD",
+        amount=100.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    # Destination Local (POM)
+    LocalCOGSRate.objects.create(
+        location="POM",
+        direction="IMPORT",
+        product_code=pc_dest,
+        currency="PGK",
+        amount=200.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        origin_airport="BNE",
+        destination_airport="POM",
+        direction="IMPORT",
+        service_scope="D2D",
+        payment_term="COLLECT"
+    )
+
+    assert availability[COMPONENT_FREIGHT] is True
+    assert availability[COMPONENT_DESTINATION_LOCAL] is True
+    assert availability[COMPONENT_ORIGIN_LOCAL] is True
+
+
+def test_import_bne_pom_d2d_collect_missing_origin_negative():
+    """
+    NEGATIVE TEST:
+    Same lane but without BNE origin local row.
+    """
+    from datetime import date
+
+    agent = Agent.objects.create(code="BNEAGT3", name="BNE Agent 3", country_code="AU")
+
+    # 1. Product Codes
+    pc_frt = ProductCode.objects.create(id=2301, code="IMP-FRT-AIR-V3", category="FREIGHT", description="Air Freight", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+    pc_dest = ProductCode.objects.create(id=2303, code="IMP-CLEAR-V3", category="CLEARANCE", description="Clearance", is_gst_applicable=False, domain="IMPORT", gl_revenue_code="R", gl_cost_code="C")
+
+    # 2. Rates
+    today = date.today()
+    valid_from = today - timedelta(days=10)
+    valid_until = today + timedelta(days=10)
+
+    # Freight (Lane-based)
+    ImportCOGS.objects.create(
+        origin_airport="BNE",
+        destination_airport="POM",
+        product_code=pc_frt,
+        currency="USD",
+        rate_per_kg=5.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    # Destination Local (POM)
+    LocalCOGSRate.objects.create(
+        location="POM",
+        direction="IMPORT",
+        product_code=pc_dest,
+        currency="PGK",
+        amount=200.0,
+        valid_from=valid_from,
+        valid_until=valid_until,
+        agent=agent
+    )
+
+    availability = RateAvailabilityService.get_availability(
+        origin_airport="BNE",
+        destination_airport="POM",
+        direction="IMPORT",
+        service_scope="D2D",
+        payment_term="COLLECT"
+    )
+
+    assert availability[COMPONENT_FREIGHT] is True
+    assert availability[COMPONENT_DESTINATION_LOCAL] is True
+    assert availability[COMPONENT_ORIGIN_LOCAL] is False

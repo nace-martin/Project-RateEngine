@@ -602,137 +602,131 @@ class RateAvailabilityService:
             return best_sell_outcome
 
         def evaluate_row(component: str, row) -> dict:
-            if isinstance(row, DomesticCOGS):
-                return cls._run_selector(
+            def _evaluate_with_context(context: RateSelectionContext, selector_func, **kwargs) -> dict:
+                # Try strict match first
+                outcome = cls._run_selector(
                     component=component,
-                    selector=lambda: select_domestic_cogs_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            origin_zone=origin_airport,
-                            destination_zone=destination_airport,
-                            currency=buy_currency or 'PGK',
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
-                        )
-                    ),
+                    selector=lambda: selector_func(context, **kwargs),
                     success_outcome=success_outcome,
                     error_outcome=selection_outcome,
+                )
+                if outcome['status'] in {cls.STATUS_COVERED_EXACT, cls.STATUS_COVERED_FALLBACK}:
+                    return outcome
+                
+                # If currency was provided and failed, try again without currency to see if ANY rate exists (FX fallback)
+                if context.currency:
+                    lenient_context = RateSelectionContext(**{**context.__dict__, 'currency': None})
+                    lenient_outcome = cls._run_selector(
+                        component=component,
+                        selector=lambda: selector_func(lenient_context, **kwargs),
+                        success_outcome=success_outcome,
+                        error_outcome=selection_outcome,
+                    )
+                    if lenient_outcome['status'] in {cls.STATUS_COVERED_EXACT, cls.STATUS_COVERED_FALLBACK}:
+                        lenient_outcome['detail'] += f" (Note: Strict match for {context.currency} failed, but rate exists in {lenient_outcome.get('selector_context', {}).get('currency') or 'another currency'})"
+                        return lenient_outcome
+                
+                return outcome
+
+            if isinstance(row, DomesticCOGS):
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        origin_zone=origin_airport,
+                        destination_zone=destination_airport,
+                        currency=buy_currency or 'PGK',
+                        agent_id=agent_id,
+                        carrier_id=carrier_id,
+                    ),
+                    select_domestic_cogs_rate
                 )
             if isinstance(row, DomesticSellRate):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_domestic_sell_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            origin_zone=origin_airport,
-                            destination_zone=destination_airport,
-                            currency='PGK',
-                        )
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        origin_zone=origin_airport,
+                        destination_zone=destination_airport,
+                        currency='PGK',
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_domestic_sell_rate
                 )
             if isinstance(row, ExportCOGS):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_export_cogs_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            origin_airport=origin_airport,
-                            destination_airport=destination_airport,
-                            currency=buy_currency,
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
-                        )
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        origin_airport=origin_airport,
+                        destination_airport=destination_airport,
+                        currency=buy_currency,
+                        agent_id=agent_id,
+                        carrier_id=carrier_id,
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_export_cogs_rate
                 )
             if isinstance(row, ExportSellRate):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_export_sell_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            origin_airport=origin_airport,
-                            destination_airport=destination_airport,
-                            currency=quote_currency,
-                        ),
-                        allow_pgk_fallback=payment_term_normalized == 'PREPAID' and quote_currency not in {None, 'PGK'},
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        origin_airport=origin_airport,
+                        destination_airport=destination_airport,
+                        currency=quote_currency,
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_export_sell_rate,
+                    allow_pgk_fallback=payment_term_normalized == 'PREPAID' and quote_currency not in {None, 'PGK'}
                 )
             if isinstance(row, ImportCOGS):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_import_cogs_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            origin_airport=origin_airport,
-                            destination_airport=destination_airport,
-                            currency=buy_currency,
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
-                        )
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        origin_airport=origin_airport,
+                        destination_airport=destination_airport,
+                        currency=buy_currency,
+                        agent_id=agent_id,
+                        carrier_id=carrier_id,
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_import_cogs_rate
                 )
             if isinstance(row, ImportSellRate):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_import_sell_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            origin_airport=origin_airport,
-                            destination_airport=destination_airport,
-                            currency=quote_currency,
-                        ),
-                        allow_pgk_fallback=payment_term_normalized == 'PREPAID' and quote_currency not in {None, 'PGK'},
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        origin_airport=origin_airport,
+                        destination_airport=destination_airport,
+                        currency=quote_currency,
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_import_sell_rate,
+                    allow_pgk_fallback=payment_term_normalized == 'PREPAID' and quote_currency not in {None, 'PGK'}
                 )
             if isinstance(row, LocalCOGSRate):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_local_cogs_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            location=row.location,
-                            direction=row.direction,
-                            currency=buy_currency,
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
-                        )
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        location=row.location,
+                        direction=row.direction,
+                        currency=buy_currency,
+                        agent_id=agent_id,
+                        carrier_id=carrier_id,
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_local_cogs_rate
                 )
             if isinstance(row, LocalSellRate):
-                return cls._run_selector(
-                    component=component,
-                    selector=lambda: select_local_sell_rate(
-                        RateSelectionContext(
-                            product_code_id=row.product_code_id,
-                            quote_date=today,
-                            location=row.location,
-                            direction=row.direction,
-                            payment_term=(payment_term_normalized or row.payment_term),
-                            currency=quote_currency,
-                        ),
-                        allow_pgk_fallback=payment_term_normalized == 'PREPAID' and quote_currency not in {None, 'PGK'},
+                return _evaluate_with_context(
+                    RateSelectionContext(
+                        product_code_id=row.product_code_id,
+                        quote_date=today,
+                        location=row.location,
+                        direction=row.direction,
+                        payment_term=(payment_term_normalized or row.payment_term),
+                        currency=quote_currency,
                     ),
-                    success_outcome=success_outcome,
-                    error_outcome=selection_outcome,
+                    select_local_sell_rate,
+                    allow_pgk_fallback=payment_term_normalized == 'PREPAID' and quote_currency not in {None, 'PGK'}
                 )
             return cls._missing_rate_outcome(component)
 
@@ -849,6 +843,7 @@ class RateAvailabilityService:
             )
             return outcomes
 
+        # IMPORT direction
         import_lane_rows = list(
             ImportCOGS.objects.filter(
                 origin_airport=origin_airport,
@@ -860,6 +855,21 @@ class RateAvailabilityService:
             ImportSellRate.objects.filter(
                 origin_airport=origin_airport,
                 destination_airport=destination_airport,
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).select_related('product_code')
+        )
+        import_origin_rows = list(
+            LocalCOGSRate.objects.filter(
+                location=origin_airport,
+                direction='IMPORT',
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).select_related('product_code')
+        ) + list(
+            LocalSellRate.objects.filter(
+                location=origin_airport,
+                direction='IMPORT',
                 valid_from__lte=today,
                 valid_until__gte=today,
             ).select_related('product_code')
@@ -887,7 +897,7 @@ class RateAvailabilityService:
         ]
         origin_candidates = [
             evaluate_row(COMPONENT_ORIGIN_LOCAL, row)
-            for row in import_lane_rows
+            for row in import_lane_rows + import_origin_rows
             if classify_import_component(row.product_code.code, row.product_code.category) == COMPONENT_ORIGIN_LOCAL
         ]
         destination_candidates = [
@@ -896,12 +906,24 @@ class RateAvailabilityService:
             if classify_import_component(row.product_code.code, row.product_code.category) == COMPONENT_DESTINATION_LOCAL
         ]
 
+        if surcharge := matching_surcharge(COMPONENT_ORIGIN_LOCAL, 'IMPORT_ORIGIN', origin=origin_airport):
+            origin_candidates.append(surcharge)
         if surcharge := matching_surcharge(COMPONENT_DESTINATION_LOCAL, 'IMPORT_DEST', destination=destination_airport):
             destination_candidates.append(surcharge)
 
         outcomes[COMPONENT_FREIGHT] = choose_best(COMPONENT_FREIGHT, freight_candidates)
         outcomes[COMPONENT_ORIGIN_LOCAL] = choose_best(COMPONENT_ORIGIN_LOCAL, origin_candidates)
         outcomes[COMPONENT_DESTINATION_LOCAL] = choose_best(COMPONENT_DESTINATION_LOCAL, destination_candidates)
+
+        outcomes[COMPONENT_ORIGIN_LOCAL] = apply_payment_term_gate(
+            outcomes[COMPONENT_ORIGIN_LOCAL],
+            COMPONENT_ORIGIN_LOCAL,
+            [
+                row for row in import_origin_rows
+                if isinstance(row, LocalSellRate)
+                and classify_import_component(row.product_code.code, row.product_code.category) == COMPONENT_ORIGIN_LOCAL
+            ],
+        )
         outcomes[COMPONENT_DESTINATION_LOCAL] = apply_payment_term_gate(
             outcomes[COMPONENT_DESTINATION_LOCAL],
             COMPONENT_DESTINATION_LOCAL,
@@ -1417,6 +1439,10 @@ class StandardChargeService:
             # Run V4 adapter to get standard lines
             adapter = PricingServiceV4Adapter(quote_input)
             standard_lines = adapter._calculate_standard_lines()
+            
+            logger.info(f"DEBUG: StandardChargeService found {len(standard_lines)} lines for {origin_code}->{destination_code}")
+            for line in standard_lines:
+                logger.info(f"DEBUG: Line: code={line.service_component_code} leg={line.leg} component={line.component} amount={line.sell_amount}")
 
             # Enrich with raw COGS rows where available so we can preserve rule metadata
             # such as min_charge for MIN_OR_PER_KG rows.

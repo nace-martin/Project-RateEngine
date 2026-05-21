@@ -305,7 +305,7 @@ class ImportPricingEngine:
         """Determine which leg a ProductCode belongs to."""
         code = pc.code.upper()
         description = pc.description.upper()
-        
+
         if 'FRT' in code or 'FREIGHT' in code:
             return 'FREIGHT'
         elif is_import_origin_local_code(code, description):
@@ -317,9 +317,10 @@ class ImportPricingEngine:
         else:
             # Default based on category
             if pc.category in ['CARTAGE', 'CLEARANCE']:
+                # For imports, CARTAGE/CLEARANCE on lane usually means destination,
+                # BUT if it matched origin keywords above it would have returned ORIGIN.
                 return 'DESTINATION'
             return 'ORIGIN'
-    
     def calculate_quote(self, commodity_code: str = DEFAULT_COMMODITY_CODE) -> QuoteResult:
         """
         Calculate complete import quote.
@@ -383,17 +384,20 @@ class ImportPricingEngine:
                 continue
             
             try:
-                cogs = select_import_cogs_rate(
-                    RateSelectionContext(
-                        product_code_id=pc.id,
-                        quote_date=self.quote_date,
-                        origin_airport=self.origin,
-                        destination_airport=self.destination,
-                        currency=self.buy_currency,
-                        agent_id=self.preferred_agent_id,
-                        carrier_id=self.preferred_carrier_id,
-                    )
-                ).record
+                if is_local_rate_category(pc.category):
+                    cogs = self._get_local_cogs(pc, leg)
+                else:
+                    cogs = select_import_cogs_rate(
+                        RateSelectionContext(
+                            product_code_id=pc.id,
+                            quote_date=self.quote_date,
+                            origin_airport=self.origin,
+                            destination_airport=self.destination,
+                            currency=self.buy_currency,
+                            agent_id=self.preferred_agent_id,
+                            carrier_id=self.preferred_carrier_id,
+                        )
+                    ).record
             except RateNotFoundError:
                 cogs = None
 

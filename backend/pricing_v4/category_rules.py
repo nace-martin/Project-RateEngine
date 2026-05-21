@@ -51,6 +51,7 @@ def is_import_origin_local_code(code: Optional[str], description: Optional[str] 
         or "ORIGIN" in normalized_code
         or "(ORIGIN" in normalized_description
         or " ORIGIN" in normalized_description
+        or "PICKUP" in normalized_code
         or "PICK-UP" in normalized_description
         or "PICK UP" in normalized_description
     )
