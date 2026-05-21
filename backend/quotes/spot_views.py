@@ -68,6 +68,7 @@ from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
 )
+from quotes.lifecycle import QuoteLifecycleService
 from quotes.selectors import get_quote_for_user
 from quotes.currency_rules import determine_quote_currency
 from quotes.services.charge_normalization import resolve_charge_alias
@@ -2760,7 +2761,8 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         return Response({
             'success': True,
             'quote_id': str(quote.id),
-            'quote_number': quote.quote_number
+            'quote_number': quote.quote_number,
+            'lifecycle': QuoteLifecycleService.evaluate(quote).to_dict(),
         })
 
 

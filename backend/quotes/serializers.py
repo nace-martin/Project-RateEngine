@@ -20,6 +20,7 @@ from quotes.intake_safety import (
     normalize_source_analysis_summary,
 )
 from quotes.quote_result_contract import build_quote_result_from_quote
+from quotes.lifecycle import QuoteLifecycleService
 # --- END IMPORTS ---
 
 # --- V3 Serializers ---
@@ -377,6 +378,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
     spot_negotiation = serializers.SerializerMethodField()
     branding = serializers.SerializerMethodField()
     quote_result = serializers.SerializerMethodField()
+    lifecycle = serializers.SerializerMethodField()
     
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -450,6 +452,9 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         payload = build_quote_result_from_quote(obj, obj.latest_version)
         return CanonicalQuoteResultSerializer(payload).data
 
+    def get_lifecycle(self, obj):
+        return QuoteLifecycleService.evaluate(obj).to_dict()
+
     class Meta:
         model = Quote
         fields = (
@@ -458,7 +463,8 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
             'origin_location', 'destination_location', 'opportunity',
             'status', 'valid_until', 'created_at',
             'latest_version', 'request_details_json', 'spot_negotiation',
-            'created_by', 'rate_provider', 'branding', 'quote_result'
+            'created_by', 'rate_provider', 'branding', 'quote_result',
+            'lifecycle',
         )
 
 class QuoteListSerializerV3(serializers.ModelSerializer):
@@ -474,6 +480,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
     created_by = serializers.SerializerMethodField()
     spot_negotiation = serializers.SerializerMethodField()
     branding = serializers.SerializerMethodField()
+    lifecycle = serializers.SerializerMethodField()
 
     def get_created_by(self, obj):
         if not obj.created_by:
@@ -496,6 +503,9 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
         branding = get_quote_branding(obj, request=request)
         return QuoteBrandingSerializer(branding).data
 
+    def get_lifecycle(self, obj):
+        return QuoteLifecycleService.evaluate(obj).to_dict()
+
     class Meta:
         model = Quote
         fields = (
@@ -504,7 +514,7 @@ class QuoteListSerializerV3(serializers.ModelSerializer):
             'origin_location', 'destination_location', 'opportunity',
             'status', 'valid_until', 'created_at',
             'latest_version', 'created_by', 'branding',
-            'spot_negotiation'
+            'spot_negotiation', 'lifecycle',
         )
 
 

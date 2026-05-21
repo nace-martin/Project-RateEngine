@@ -355,7 +355,7 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             output_currency="USD",
             origin_location=origin_location,
             destination_location=destination_location,
-            status=Quote.Status.INCOMPLETE,
+            status=Quote.Status.DRAFT,
             created_by=self.user,
             request_details_json={
                 "dimensions": [
@@ -374,7 +374,7 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         version = QuoteVersion.objects.create(
             quote=self.quote,
             version_number=1,
-            status=Quote.Status.INCOMPLETE,
+            status=Quote.Status.DRAFT,
             created_by=self.user,
             engine_version="V4",
             payload_json=self.quote.request_details_json,

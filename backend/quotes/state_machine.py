@@ -24,12 +24,13 @@ User = get_user_model()
 # Valid state transitions
 VALID_TRANSITIONS = {
     Quote.Status.DRAFT: [Quote.Status.FINALIZED],
-    Quote.Status.INCOMPLETE: [Quote.Status.DRAFT],  # Must complete before finalizing
+    Quote.Status.READY: [Quote.Status.FINALIZED],
     Quote.Status.FINALIZED: [Quote.Status.SENT, Quote.Status.EXPIRED],
     Quote.Status.SENT: [Quote.Status.ACCEPTED, Quote.Status.LOST, Quote.Status.EXPIRED],  # Outcome tracking
     Quote.Status.ACCEPTED: [],  # Terminal state (won)
     Quote.Status.LOST: [],      # Terminal state (lost)
     Quote.Status.EXPIRED: [],   # Terminal state
+    Quote.Status.CANCELLED: [],  # Terminal state
 }
 
 # Terminal quote outcome states (schema uses LOST as the "rejected" equivalent)
@@ -37,12 +38,13 @@ TERMINAL_STATES = (
     Quote.Status.ACCEPTED,
     Quote.Status.LOST,
     Quote.Status.EXPIRED,
+    Quote.Status.CANCELLED,
 )
 
 # Non-terminal workflow states that remain mutable/transitional
 ACTIVE_STATES = (
     Quote.Status.DRAFT,
-    Quote.Status.INCOMPLETE,
+    Quote.Status.READY,
     Quote.Status.FINALIZED,
     Quote.Status.SENT,
 )
@@ -54,6 +56,7 @@ LOCKED_STATES = (
     Quote.Status.ACCEPTED,
     Quote.Status.LOST,
     Quote.Status.EXPIRED,
+    Quote.Status.CANCELLED,
 )
 
 
@@ -274,10 +277,10 @@ def get_status_display_info(status: str) -> dict:
             'description': 'Quote is being prepared',
             'editable': True,
         },
-        Quote.Status.INCOMPLETE: {
-            'label': 'Incomplete',
-            'color': 'red',
-            'description': 'Missing required data',
+        Quote.Status.READY: {
+            'label': 'Ready',
+            'color': 'emerald',
+            'description': 'Quote is ready to finalize',
             'editable': True,
         },
         Quote.Status.FINALIZED: {
@@ -309,6 +312,12 @@ def get_status_display_info(status: str) -> dict:
             'label': 'Expired',
             'color': 'amber',
             'description': 'Quote validity period ended',
+            'editable': False,
+        },
+        Quote.Status.CANCELLED: {
+            'label': 'Cancelled',
+            'color': 'gray',
+            'description': 'Quote was cancelled',
             'editable': False,
         },
     }

@@ -155,7 +155,7 @@ def generate_quote_pdf(
         chargeable_weight = _get_chargeable_weight(quote, version)
         
         # Determine if watermark should be shown
-        show_watermark = quote.status in ['DRAFT', 'INCOMPLETE']
+        show_watermark = quote.status == 'DRAFT'
         
         logger.info(f"Generating PDF for quote {quote.quote_number}")
         
@@ -237,7 +237,7 @@ def _build_header(pdf: QuotePDF, quote):
     
     # Status
     pdf.set_font('Helvetica', 'B', 9)
-    if quote.status in ['DRAFT', 'INCOMPLETE']:
+    if quote.status == 'DRAFT':
         pdf.set_text_color(217, 119, 6)
     else:
         pdf.set_text_color(5, 150, 105)

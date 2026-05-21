@@ -26,6 +26,7 @@ from quotes.quote_result_contract import (
     build_persisted_quote_total_metadata,
     build_quote_result_from_quote,
 )
+from quotes.lifecycle import QuoteLifecycleService
 from services.models import ServiceComponent
 from pricing_v4.adapter import PricingServiceV4Adapter
 from core.dataclasses import QuoteInput, ManualOverride
@@ -307,8 +308,8 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_archived=is_archived)
 
         if self.action == 'list':
-            # List view only needs totals for the latest version
-            return qs.prefetch_related('versions__totals')
+            # List view exposes lifecycle metadata derived from version lines.
+            return qs.prefetch_related('versions__lines', 'versions__totals')
         
         # Detail view needs lines for the latest version
         return qs.prefetch_related(
@@ -318,12 +319,16 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Delete a quote. Only allowed if the quote implies DRAFT status.
+        Delete a quote if lifecycle rules allow draft deletion.
         """
         instance = self.get_object()
-        if instance.status != Quote.Status.DRAFT:
+        lifecycle = QuoteLifecycleService.evaluate(instance)
+        if not lifecycle.can_delete:
             return Response(
-                {'detail': f'Cannot delete quote with status "{instance.status}". Only DRAFT quotes can be deleted.'},
+                {
+                    'detail': f'Cannot delete quote with status "{instance.status}". Only draft quotes without finalized records can be deleted.',
+                    'lifecycle': lifecycle.to_dict(),
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
         self.perform_destroy(instance)
@@ -366,7 +371,7 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         """
         PATCH endpoint - only allows updating specific fields.
-        Used for auto-rated quote finalization (INCOMPLETE → DRAFT).
+        Direct completeness patching is no longer supported.
         """
         instance = self.get_object()
         
@@ -381,24 +386,13 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validate status transition
-        new_status = request.data.get('status')
-        if new_status:
-            # For INCOMPLETE quotes, allow transition to DRAFT
-            if instance.status == Quote.Status.INCOMPLETE and new_status == 'DRAFT':
-                instance.status = Quote.Status.DRAFT
-                instance.save(update_fields=['status'])
-                
-                # Re-fetch with latest version
-                latest_version = instance.versions.order_by('-version_number').first()
-                instance.latest_version = latest_version
-                serializer = self.get_serializer(instance)
-                return Response(serializer.data)
-            else:
-                return Response(
-                    {'detail': f'Invalid status transition from {instance.status} to {new_status}. Use /transition/ endpoint for other transitions.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        return Response(
+            {
+                'detail': 'Quote completeness is derived from lifecycle metadata. Use /transition/ endpoint for workflow status changes.',
+                'lifecycle': QuoteLifecycleService.evaluate(instance).to_dict(),
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     @action(detail=True, methods=['get'], url_path='compute_v3')
     def compute_v3(self, request, *args, **kwargs):
@@ -464,6 +458,7 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         if totals and totals.has_missing_rates and not notes:
             notes.append("Quote contains missing rates and may be incomplete.")
 
+        lifecycle = QuoteLifecycleService.evaluate(quote)
         payload = {
             'quote_id': str(quote.id),
             'quote_number': quote.quote_number,
@@ -502,6 +497,7 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             'quote_result': CanonicalQuoteResultSerializer(
                 build_quote_result_from_quote(quote, latest_version)
             ).data,
+            'lifecycle': lifecycle.to_dict(),
         }
         return Response(payload)
 
@@ -519,6 +515,7 @@ class QuoteTransitionAPIView(APIView):
         # SECURITY FIX: Enforce IDOR protection
         quote = get_quote_for_user(request.user, quote_id)
         machine = QuoteStateMachine(quote)
+        lifecycle = QuoteLifecycleService.evaluate(quote)
         
         return Response({
             'quote_id': str(quote.id),
@@ -526,6 +523,7 @@ class QuoteTransitionAPIView(APIView):
             'status_info': get_status_display_info(quote.status),
             'available_transitions': machine.available_transitions,
             'is_editable': machine.is_editable,
+            'lifecycle': lifecycle.to_dict(),
             'finalized_at': quote.finalized_at.isoformat() if quote.finalized_at else None,
             'finalized_by': quote.finalized_by.username if quote.finalized_by else None,
             'sent_at': quote.sent_at.isoformat() if quote.sent_at else None,
@@ -539,19 +537,19 @@ class QuoteTransitionAPIView(APIView):
         # SECURITY FIX: Enforce IDOR protection
         quote = get_quote_for_user(request.user, quote_id)
         machine = QuoteStateMachine(quote)
+        lifecycle = QuoteLifecycleService.evaluate(quote)
         
         action = request.data.get('action', '').lower()
         
         if action == 'finalize':
-            # Check for missing rates before finalizing
-            latest_version = quote.versions.order_by('-version_number').first()
-            if latest_version:
-                totals = getattr(latest_version, 'totals', None)
-                if totals and totals.has_missing_rates:
-                    return Response(
-                        {'detail': 'Cannot finalize quote with missing rates. Complete all required rates first.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            if not lifecycle.can_finalize:
+                return Response(
+                    {
+                        'detail': 'Cannot finalize quote until lifecycle requirements are satisfied.',
+                        'lifecycle': lifecycle.to_dict(),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             success, error = machine.finalize(user=request.user)
             
@@ -559,7 +557,14 @@ class QuoteTransitionAPIView(APIView):
             success, error = machine.mark_sent(user=request.user)
         
         elif action == 'cancel':
-            # Cancel a draft quote (permanent delete)
+            if not lifecycle.can_delete:
+                return Response(
+                    {
+                        'detail': 'Cannot delete this quote because lifecycle rules protect it.',
+                        'lifecycle': lifecycle.to_dict(),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             success, error = machine.cancel(user=request.user)
             
         elif action == 'mark_won':
@@ -596,6 +601,7 @@ class QuoteTransitionAPIView(APIView):
             'status': quote.status,
             'is_archived': quote.is_archived,
             'action': action,
+            'lifecycle': QuoteLifecycleService.evaluate(quote).to_dict(),
             'transitioned_at': timezone.now().isoformat(),
             'transitioned_by': request.user.username,
         })

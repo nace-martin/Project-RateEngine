@@ -120,7 +120,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 )
              
             if existing_quote.is_archived:
-                if existing_quote.status in (Quote.Status.DRAFT, Quote.Status.INCOMPLETE):
+                if existing_quote.status == Quote.Status.DRAFT:
                     return Response(
                         {"detail": "Draft quote was deleted and can no longer be edited."},
                         status=status.HTTP_410_GONE,
@@ -251,10 +251,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             adapter = PricingServiceV4Adapter(quote_input)
             derived_output_currency = adapter.get_output_currency()
             
-            has_missing_rates = calculated_charges.totals.has_missing_rates
-            quote_status = (
-                Quote.Status.INCOMPLETE if has_missing_rates else Quote.Status.DRAFT
-            )
+            quote_status = Quote.Status.DRAFT
 
             # 4. Save to DB with engine version from dispatcher
             quote = self._save_quote_v3(

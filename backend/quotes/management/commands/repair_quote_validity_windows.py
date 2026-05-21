@@ -11,7 +11,7 @@ class Command(BaseCommand):
     help = (
         "Normalize quote valid_until windows: finalized/sent/terminal quotes "
         "to finalized(or created)+QUOTE_VALIDITY_DAYS (default 7), and clear "
-        "valid_until on DRAFT/INCOMPLETE quotes."
+        "valid_until on DRAFT quotes."
     )
 
     def add_arguments(self, parser):
@@ -45,7 +45,7 @@ class Command(BaseCommand):
         )
         drafts_with_expiry = list(
             Quote.objects.filter(
-                status__in=[Quote.Status.DRAFT, Quote.Status.INCOMPLETE]
+                status=Quote.Status.DRAFT
             )
             .exclude(valid_until__isnull=True)
             .only("id", "quote_number", "status", "valid_until")
@@ -70,7 +70,7 @@ class Command(BaseCommand):
             f"Finalized/sent/terminal quotes scanned: {len(finalized_like)}"
         )
         self.stdout.write(
-            f"Draft/incomplete quotes with expiry scanned: {len(drafts_with_expiry)}"
+            f"Draft quotes with expiry scanned: {len(drafts_with_expiry)}"
         )
         self.stdout.write(f"Quotes requiring update: {len(updates)}")
 

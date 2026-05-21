@@ -31,10 +31,9 @@ class Command(BaseCommand):
         self.stdout.write(f"Archived {count_closed} closed quotes (> 1 year old).")
 
         # 3. 90-Day Retention for Stale Drafts
-        # (Draft, Incomplete)
         ninety_days_ago = now - timezone.timedelta(days=90)
         draft_qs = Quote.objects.filter(
-            status__in=[Quote.Status.DRAFT, Quote.Status.INCOMPLETE],
+            status=Quote.Status.DRAFT,
             updated_at__lt=ninety_days_ago,
             is_archived=False
         )

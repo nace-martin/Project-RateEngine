@@ -153,7 +153,7 @@ class QuoteDetailResponse(BaseModel):
     quote_number: str
     
     # Status
-    status: str = Field(..., description="DRAFT, FINALIZED, SENT, INCOMPLETE")
+    status: str = Field(..., description="DRAFT, READY, FINALIZED, SENT, ACCEPTED, LOST, EXPIRED, CANCELLED")
     
     # Parties
     customer: CustomerResponse

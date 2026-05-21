@@ -32,12 +32,13 @@ class Quote(models.Model):
 
     class Status(models.TextChoices):
         DRAFT = 'DRAFT', _('Draft')
+        READY = 'READY', _('Ready')
         FINALIZED = 'FINALIZED', _('Finalized')  # Renamed from FINAL for consistency
         SENT = 'SENT', _('Sent to Customer')
         ACCEPTED = 'ACCEPTED', _('Accepted')  # Post-MVP
         LOST = 'LOST', _('Lost')  # Post-MVP
         EXPIRED = 'EXPIRED', _('Expired')  # Post-MVP
-        INCOMPLETE = 'INCOMPLETE', _('Incomplete (Missing Data)')
+        CANCELLED = 'CANCELLED', _('Cancelled')
 
     class ShipmentType(models.TextChoices):
         IMPORT = 'IMPORT', _('Import')

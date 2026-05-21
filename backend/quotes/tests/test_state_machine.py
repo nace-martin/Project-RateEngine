@@ -120,7 +120,7 @@ def setup_basic_data():
 @pytest.fixture
 def draft_quote(user, setup_basic_data):
     """Create a DRAFT quote for testing."""
-    return Quote.objects.create(
+    quote = Quote.objects.create(
         customer=setup_basic_data['customer'],
         contact=setup_basic_data['contact'],
         mode='AIR',
@@ -134,6 +134,39 @@ def draft_quote(user, setup_basic_data):
         status=Quote.Status.DRAFT,
         created_by=user,
     )
+    version = QuoteVersion.objects.create(
+        quote=quote,
+        version_number=1,
+        status=Quote.Status.DRAFT,
+        created_by=user,
+    )
+    for bucket, component in [
+        ('origin_charges', 'ORIGIN_LOCAL'),
+        ('airfreight', 'FREIGHT'),
+        ('destination_charges', 'DESTINATION_LOCAL'),
+    ]:
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=None,
+            bucket=bucket,
+            component=component,
+            sell_pgk=Decimal('100.00'),
+            sell_pgk_incl_gst=Decimal('100.00'),
+            sell_fcy=Decimal('100.00'),
+            sell_fcy_incl_gst=Decimal('100.00'),
+            sell_fcy_currency='PGK',
+            is_rate_missing=False,
+        )
+    QuoteTotal.objects.create(
+        quote_version=version,
+        total_sell_pgk=Decimal('300.00'),
+        total_sell_pgk_incl_gst=Decimal('300.00'),
+        total_sell_fcy=Decimal('300.00'),
+        total_sell_fcy_incl_gst=Decimal('300.00'),
+        total_sell_fcy_currency='PGK',
+        has_missing_rates=False,
+    )
+    return quote
 
 
 @pytest.fixture
