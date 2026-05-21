@@ -581,8 +581,10 @@ class SpotPricingEnvelope(BaseModel):
                 for component in (self.shipment.missing_components or [])
                 if component
             }
-            if self.shipment.missing_components is not None and COMPONENT_FREIGHT not in missing:
-                # We are not quoting airfreight in this SPE, so it's okay to have no airfreight
+            if COMPONENT_FREIGHT not in missing:
+                # If freight is NOT in missing_components, it means it's either COVERED in DB 
+                # or the user chose not to include it in this SPOT request. 
+                # In either case, we don't force an airfreight charge line.
                 return self
 
             shipment_type = "IMPORT"

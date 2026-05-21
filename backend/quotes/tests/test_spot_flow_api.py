@@ -915,7 +915,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
     @patch("quotes.spot_services.RateAvailabilityService.get_component_outcomes")
     def test_evaluate_trigger_passes_payment_term_to_availability(self, mock_outcomes):
         mock_outcomes.return_value = self._component_outcomes(
-            freight=False,
+            freight=True,
             origin=False,
             destination=True,
         )
@@ -1167,6 +1167,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
                 "total_weight_kg": 100,
                 "pieces": 1,
                 "service_scope": "a2d",
+                "missing_components": ["DESTINATION_LOCAL"],
             },
             "charges": [
                 {
@@ -1300,6 +1301,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
                 "total_weight_kg": 100,
                 "pieces": 1,
                 "service_scope": "a2d",
+                "missing_components": ["DESTINATION_LOCAL"],
             },
             "charges": [
                 {

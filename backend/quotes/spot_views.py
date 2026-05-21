@@ -155,21 +155,54 @@ def _normalize_shipment_context(ctx: dict) -> dict:
     normalized = dict(ctx or {})
     origin_code = str(normalized.get("origin_code") or "").upper()
     destination_code = str(normalized.get("destination_code") or "").upper()
-    origin_country, destination_country = _resolve_country_pair(
-        normalized.get("origin_country"),
-        normalized.get("destination_country"),
-        origin_code=origin_code,
-        destination_code=destination_code,
-    )
+    
+    # Ensure countries are resolved robustly
+    try:
+        origin_country, destination_country = _resolve_country_pair(
+            normalized.get("origin_country"),
+            normalized.get("destination_country"),
+            origin_code=origin_code,
+            destination_code=destination_code,
+        )
+    except Exception:
+        logger.warning("Failed resolving country pair for context: %s", normalized)
+        origin_country = str(normalized.get("origin_country") or "OTHER").upper()
+        destination_country = str(normalized.get("destination_country") or "OTHER").upper()
+
     normalized["origin_code"] = origin_code
     normalized["destination_code"] = destination_code
     normalized["origin_country"] = origin_country
     normalized["destination_country"] = destination_country
+    
+    # Normalize Enum-like fields
+    normalized["service_scope"] = str(normalized.get("service_scope") or "P2P").upper()
+    normalized["commodity"] = str(normalized.get("commodity") or "GCR").upper()
+    
     payment_term = str(normalized.get("payment_term") or "").strip().upper()
     if payment_term in {"PREPAID", "COLLECT"}:
         normalized["payment_term"] = payment_term
     elif "payment_term" in normalized:
         normalized.pop("payment_term", None)
+        
+    # Ensure numeric fields are safe for Pydantic float/int
+    try:
+        raw_weight = normalized.get("total_weight_kg")
+        if raw_weight in (None, ""):
+            normalized["total_weight_kg"] = 1.0
+        else:
+            normalized["total_weight_kg"] = float(raw_weight)
+    except (TypeError, ValueError):
+        normalized["total_weight_kg"] = 1.0
+        
+    try:
+        raw_pieces = normalized.get("pieces")
+        if raw_pieces in (None, ""):
+            normalized["pieces"] = 1
+        else:
+            normalized["pieces"] = int(raw_pieces)
+    except (TypeError, ValueError):
+        normalized["pieces"] = 1
+        
     return normalized
 
 
@@ -1338,13 +1371,21 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 )
 
             # Create DB record
-            ctx = _normalize_shipment_context(data['shipment_context'])
+            try:
+                ctx = _normalize_shipment_context(data['shipment_context'])
+            except Exception as e:
+                return Response(
+                    {'error': f"Failed to normalize shipment context: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             if (
                 not ctx.get("payment_term")
                 and quote is not None
                 and getattr(quote, "payment_term", None)
             ):
                 ctx["payment_term"] = str(quote.payment_term).upper()
+            
             if "missing_components" not in ctx:
                 resolved_missing_components = _resolve_missing_components_for_context(ctx)
                 if resolved_missing_components is not None:
@@ -1365,16 +1406,23 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            spe_db = SpotPricingEnvelopeDB.objects.create(
-                status='draft',
-                shipment_context_json=ctx,
-                conditions_json=data.get('conditions', {}),
-                spot_trigger_reason_code=data['trigger_code'],
-                spot_trigger_reason_text=data['trigger_text'],
-                created_by=request.user,
-                expires_at=now + timedelta(hours=validity_hours),
-                quote=quote,
-            )
+            try:
+                spe_db = SpotPricingEnvelopeDB.objects.create(
+                    status='draft',
+                    shipment_context_json=ctx,
+                    conditions_json=data.get('conditions', {}),
+                    spot_trigger_reason_code=data['trigger_code'],
+                    spot_trigger_reason_text=data['trigger_text'],
+                    created_by=request.user,
+                    expires_at=now + timedelta(hours=validity_hours),
+                    quote=quote,
+                )
+            except Exception as e:
+                logger.error("Database error creating SPE: %s", str(e), exc_info=True)
+                return Response(
+                    {'error': f"Failed to save SPOT envelope to database: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Create charge lines (optional)
             charges_data = data.get('charges', [])
