@@ -1916,15 +1916,6 @@ class SpotEnvelopeComputeAPIView(APIView):
             envelope_id,
             _spe_queryset(),
         )
-        
-        # Build Pydantic SPE for validation
-        try:
-            spe = _build_spe_from_db(spe_db)
-        except ValueError as e:
-            return Response(
-                {'error': f'Invalid SPE: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
@@ -1933,6 +1924,15 @@ class SpotEnvelopeComputeAPIView(APIView):
         exception_review_error = _exception_review_error_response(spe_db)
         if exception_review_error is not None:
             return exception_review_error
+
+        # Build Pydantic SPE for validation after review blockers have been reported.
+        try:
+            spe = _build_spe_from_db(spe_db)
+        except ValueError as e:
+            return Response(
+                {'error': f'Invalid SPE: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Validate SPE is ready for pricing
         from quotes.spot_services import SpotEnvelopeService
@@ -2393,11 +2393,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         
         # --- 1. Re-run Computation (Same as ComputeView) ---
         # Note: Ideally this setup logic should be shared, but duplicating for safety now.
-        
-        try:
-            spe = _build_spe_from_db(spe_db)
-        except ValueError as e:
-            return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
@@ -2406,6 +2401,11 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         exception_review_error = _exception_review_error_response(spe_db)
         if exception_review_error is not None:
             return exception_review_error
+
+        try:
+            spe = _build_spe_from_db(spe_db)
+        except ValueError as e:
+            return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
         if not is_valid:

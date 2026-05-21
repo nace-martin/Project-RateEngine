@@ -40,20 +40,12 @@ def required_components(shipment_type: Optional[str], service_scope: Optional[st
     if shipment_type == "DOMESTIC":
         return {COMPONENT_FREIGHT}
 
-    # Common scope rules for IMPORT/EXPORT
-    # A2A: Airport to Airport - Always needs freight
     if scope == "A2A":
         return {COMPONENT_FREIGHT}
-
-    # A2D: Airport to Door - Needs freight and destination local
-    if scope == "A2D":
-        return {COMPONENT_FREIGHT, COMPONENT_DESTINATION_LOCAL}
-
-    # D2A: Door to Airport - Needs origin local and freight
     if scope == "D2A":
         return {COMPONENT_ORIGIN_LOCAL, COMPONENT_FREIGHT}
-
-    # D2D: Door to Door - Needs all three
+    if scope == "A2D":
+        return {COMPONENT_DESTINATION_LOCAL}
     if scope == "D2D":
         return {COMPONENT_ORIGIN_LOCAL, COMPONENT_FREIGHT, COMPONENT_DESTINATION_LOCAL}
 
