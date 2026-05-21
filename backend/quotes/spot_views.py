@@ -155,21 +155,54 @@ def _normalize_shipment_context(ctx: dict) -> dict:
     normalized = dict(ctx or {})
     origin_code = str(normalized.get("origin_code") or "").upper()
     destination_code = str(normalized.get("destination_code") or "").upper()
-    origin_country, destination_country = _resolve_country_pair(
-        normalized.get("origin_country"),
-        normalized.get("destination_country"),
-        origin_code=origin_code,
-        destination_code=destination_code,
-    )
+    
+    # Ensure countries are resolved robustly
+    try:
+        origin_country, destination_country = _resolve_country_pair(
+            normalized.get("origin_country"),
+            normalized.get("destination_country"),
+            origin_code=origin_code,
+            destination_code=destination_code,
+        )
+    except Exception:
+        logger.warning("Failed resolving country pair for context: %s", normalized)
+        origin_country = str(normalized.get("origin_country") or "OTHER").upper()
+        destination_country = str(normalized.get("destination_country") or "OTHER").upper()
+
     normalized["origin_code"] = origin_code
     normalized["destination_code"] = destination_code
     normalized["origin_country"] = origin_country
     normalized["destination_country"] = destination_country
+    
+    # Normalize Enum-like fields
+    normalized["service_scope"] = str(normalized.get("service_scope") or "P2P").upper()
+    normalized["commodity"] = str(normalized.get("commodity") or "GCR").upper()
+    
     payment_term = str(normalized.get("payment_term") or "").strip().upper()
     if payment_term in {"PREPAID", "COLLECT"}:
         normalized["payment_term"] = payment_term
     elif "payment_term" in normalized:
         normalized.pop("payment_term", None)
+        
+    # Ensure numeric fields are safe for Pydantic float/int
+    try:
+        raw_weight = normalized.get("total_weight_kg")
+        if raw_weight in (None, ""):
+            normalized["total_weight_kg"] = 1.0
+        else:
+            normalized["total_weight_kg"] = float(raw_weight)
+    except (TypeError, ValueError):
+        normalized["total_weight_kg"] = 1.0
+        
+    try:
+        raw_pieces = normalized.get("pieces")
+        if raw_pieces in (None, ""):
+            normalized["pieces"] = 1
+        else:
+            normalized["pieces"] = int(raw_pieces)
+    except (TypeError, ValueError):
+        normalized["pieces"] = 1
+        
     return normalized
 
 
@@ -1293,13 +1326,22 @@ class SpotEnvelopeListCreateAPIView(APIView):
             quote = None
             quote_id = data.get('quote_id')
             if quote_id:
+                from django.core.exceptions import ValidationError as DjangoValidationError
                 try:
                     quote = get_quote_for_user(request.user, quote_id)
-                except (SpotPricingEnvelopeDB.DoesNotExist, ValueError, UUID.AttributeError):
+                except (ValueError, AttributeError, TypeError, DjangoValidationError):
                      return Response(
-                        {'error': f"Invalid quote_id: {quote_id}"},
+                        {'error': f"Invalid quote_id format: {quote_id}"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
+                except Exception as e:
+                    from django.http import Http404
+                    if isinstance(e, Http404):
+                        return Response(
+                            {'error': f"Quote not found: {quote_id}"},
+                            status=status.HTTP_404_NOT_FOUND
+                        )
+                    raise e
 
                 from quotes.state_machine import is_quote_editable
                 if not is_quote_editable(quote):
@@ -1329,13 +1371,21 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 )
 
             # Create DB record
-            ctx = _normalize_shipment_context(data['shipment_context'])
+            try:
+                ctx = _normalize_shipment_context(data['shipment_context'])
+            except Exception as e:
+                return Response(
+                    {'error': f"Failed to normalize shipment context: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             if (
                 not ctx.get("payment_term")
                 and quote is not None
                 and getattr(quote, "payment_term", None)
             ):
                 ctx["payment_term"] = str(quote.payment_term).upper()
+            
             if "missing_components" not in ctx:
                 resolved_missing_components = _resolve_missing_components_for_context(ctx)
                 if resolved_missing_components is not None:
@@ -1356,16 +1406,23 @@ class SpotEnvelopeListCreateAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            spe_db = SpotPricingEnvelopeDB.objects.create(
-                status='draft',
-                shipment_context_json=ctx,
-                conditions_json=data.get('conditions', {}),
-                spot_trigger_reason_code=data['trigger_code'],
-                spot_trigger_reason_text=data['trigger_text'],
-                created_by=request.user,
-                expires_at=now + timedelta(hours=validity_hours),
-                quote=quote,
-            )
+            try:
+                spe_db = SpotPricingEnvelopeDB.objects.create(
+                    status='draft',
+                    shipment_context_json=ctx,
+                    conditions_json=data.get('conditions', {}),
+                    spot_trigger_reason_code=data['trigger_code'],
+                    spot_trigger_reason_text=data['trigger_text'],
+                    created_by=request.user,
+                    expires_at=now + timedelta(hours=validity_hours),
+                    quote=quote,
+                )
+            except Exception as e:
+                logger.error("Database error creating SPE: %s", str(e), exc_info=True)
+                return Response(
+                    {'error': f"Failed to save SPOT envelope to database: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Create charge lines (optional)
             charges_data = data.get('charges', [])
@@ -1476,8 +1533,8 @@ class SpotEnvelopeListCreateAPIView(APIView):
                 origin_code=ctx.get('origin_code', 'XXX'),
                 destination_code=ctx.get('destination_code', 'XXX'),
                 commodity=ctx.get('commodity', 'GCR'),
-                total_weight_kg=ctx.get('total_weight_kg', 1.0),
-                pieces=ctx.get('pieces', 1),
+                total_weight_kg=float(ctx.get('total_weight_kg') if ctx.get('total_weight_kg') is not None else 1.0),
+                pieces=int(ctx.get('pieces') if ctx.get('pieces') is not None else 1),
                 service_scope=str(ctx.get('service_scope', 'p2p')).lower(),
                 payment_term=(str(ctx.get('payment_term')).lower() if ctx.get('payment_term') else None),
                 missing_components=resolved_missing_components,
@@ -1859,15 +1916,6 @@ class SpotEnvelopeComputeAPIView(APIView):
             envelope_id,
             _spe_queryset(),
         )
-        
-        # Build Pydantic SPE for validation
-        try:
-            spe = _build_spe_from_db(spe_db)
-        except ValueError as e:
-            return Response(
-                {'error': f'Invalid SPE: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
@@ -1876,6 +1924,15 @@ class SpotEnvelopeComputeAPIView(APIView):
         exception_review_error = _exception_review_error_response(spe_db)
         if exception_review_error is not None:
             return exception_review_error
+
+        # Build Pydantic SPE for validation after review blockers have been reported.
+        try:
+            spe = _build_spe_from_db(spe_db)
+        except ValueError as e:
+            return Response(
+                {'error': f'Invalid SPE: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Validate SPE is ready for pricing
         from quotes.spot_services import SpotEnvelopeService
@@ -2336,11 +2393,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         
         # --- 1. Re-run Computation (Same as ComputeView) ---
         # Note: Ideally this setup logic should be shared, but duplicating for safety now.
-        
-        try:
-            spe = _build_spe_from_db(spe_db)
-        except ValueError as e:
-            return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         intake_safety_error = _intake_safety_error_response(spe_db)
         if intake_safety_error is not None:
@@ -2349,6 +2401,11 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         exception_review_error = _exception_review_error_response(spe_db)
         if exception_review_error is not None:
             return exception_review_error
+
+        try:
+            spe = _build_spe_from_db(spe_db)
+        except ValueError as e:
+            return Response({'error': f'Invalid SPE: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         is_valid, error = SpotEnvelopeService.validate_for_pricing(spe)
         if not is_valid:

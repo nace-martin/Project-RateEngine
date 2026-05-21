@@ -40,7 +40,6 @@ def required_components(shipment_type: Optional[str], service_scope: Optional[st
     if shipment_type == "DOMESTIC":
         return {COMPONENT_FREIGHT}
 
-    # Common scope rules for IMPORT/EXPORT
     if scope == "A2A":
         return {COMPONENT_FREIGHT}
     if scope == "D2A":

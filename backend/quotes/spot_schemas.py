@@ -582,7 +582,7 @@ class SpotPricingEnvelope(BaseModel):
                 if component
             }
             if self.shipment.missing_components is not None and COMPONENT_FREIGHT not in missing:
-                # We are not quoting airfreight in this SPE, so it's okay to have no airfreight
+                # Explicitly local-only SPOT requests can carry local charges without airfreight.
                 return self
 
             shipment_type = "IMPORT"
