@@ -57,8 +57,7 @@ export default function QuoteDetailPage() {
   const redirectingSpotRef = useRef(false);
   const spotWorkflowHref = (() => {
     if (!quote) return null;
-    const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
-    if (currentStatus !== "INCOMPLETE") return null;
+    if (!quote.lifecycle?.requires_spot) return null;
     const existingSpotEnvelopeId = quote.spot_negotiation?.id;
     if (!existingSpotEnvelopeId) return null;
     const params = buildSpotWorkflowParams(quote);
@@ -113,8 +112,7 @@ export default function QuoteDetailPage() {
       return;
     }
 
-    const currentStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
-    if (currentStatus !== "INCOMPLETE" || quote.spot_negotiation?.id) {
+    if (!quote.lifecycle?.requires_spot || quote.spot_negotiation?.id) {
       setSpotTriggerResult(null);
       setSpotTriggerChecking(false);
       setSpotTriggerChecked(false);
@@ -238,7 +236,8 @@ export default function QuoteDetailPage() {
   }
 
   const effectiveStatus = getEffectiveQuoteStatus(quote.status, quote.valid_until);
-  const isIncomplete = effectiveStatus === "INCOMPLETE";
+  const lifecycle = quote.lifecycle ?? computeResult?.lifecycle ?? null;
+  const isIncomplete = Boolean(lifecycle?.missing_components?.length);
   const isSpotRequired = Boolean(spotTriggerResult);
   const isArchived = quote.is_archived;
   const canDownloadPDF = (effectiveStatus === "FINALIZED" || effectiveStatus === "SENT");
@@ -285,7 +284,7 @@ export default function QuoteDetailPage() {
           <CardHeader>
             <CardTitle className="text-lg">Continuing SPOT Workflow</CardTitle>
             <CardDescription>
-              This incomplete quote already has an active SPOT envelope. Redirecting you to the live SPOT workflow now.
+              This draft requires SPOT coverage and already has an active SPOT envelope. Redirecting you to the live SPOT workflow now.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex items-center justify-between gap-4">
@@ -341,7 +340,7 @@ export default function QuoteDetailPage() {
             <h1 className="text-2xl font-bold text-slate-900">
               {quote.quote_number}
             </h1>
-            <QuoteStatusBadge status={effectiveStatus} size="default" />
+            <QuoteStatusBadge status={effectiveStatus} lifecycle={lifecycle} size="default" />
             {isArchived && <span className="px-2 py-1 text-xs font-semibold bg-gray-100 text-gray-600 rounded">ARCHIVED</span>}
           </div>
           <p className="text-sm text-slate-500">
@@ -354,7 +353,7 @@ export default function QuoteDetailPage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Only show Back to Edit for editable quotes */}
-          {(!isArchived && (effectiveStatus === "DRAFT" || effectiveStatus === "INCOMPLETE")) && (
+          {(!isArchived && effectiveStatus === "DRAFT") && (
             <Button
               variant="outline"
               onClick={() => router.push(buildQuoteEditHref(quote))}
@@ -369,6 +368,7 @@ export default function QuoteDetailPage() {
             status={quote.status}
             validUntil={quote.valid_until}
             hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+            lifecycle={lifecycle}
             onStatusChange={() => {
               getQuoteV3(id).then((data) => setQuote(data));
             }}
@@ -641,6 +641,7 @@ export default function QuoteDetailPage() {
                   status={quote.status}
                   validUntil={quote.valid_until}
                   hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+                  lifecycle={lifecycle}
                   showDelete={false}
                   onStatusChange={() => {
                     getQuoteV3(id).then((data) => setQuote(data));
@@ -673,7 +674,7 @@ function SpotWorkflowRequiredCard({
       <CardHeader>
         <CardTitle className="text-lg text-amber-800">SPOT Workflow Required</CardTitle>
         <CardDescription>
-          This quote is incomplete and is not linked to an active SPOT envelope yet.
+          This draft is missing required rate coverage and is not linked to an active SPOT envelope yet.
           Launch the current SPOT workflow from here, or return to edit if you need to refresh the quote inputs.
         </CardDescription>
       </CardHeader>
@@ -718,7 +719,7 @@ function SpotTriggerCheckingCard({
       <CardHeader>
         <CardTitle className="text-lg text-slate-900">Checking Quote Completion</CardTitle>
         <CardDescription>
-          This quote is currently marked incomplete. Verifying the latest SPOT trigger before deciding whether the SPOT workflow is still required.
+          This draft is missing required rate coverage. Verifying the latest SPOT trigger before deciding whether the SPOT workflow is still required.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex items-center gap-3 text-sm text-slate-600">
@@ -743,9 +744,9 @@ function IncompleteQuoteCard({
   return (
     <Card className="border-slate-200 bg-slate-50/60">
       <CardHeader>
-        <CardTitle className="text-lg text-slate-900">Incomplete Quote</CardTitle>
+        <CardTitle className="text-lg text-slate-900">Missing Rates</CardTitle>
         <CardDescription>
-          The latest SPOT trigger check does not require the SPOT workflow for this quote. The quote is still incomplete, so return to edit and refresh the missing rate inputs.
+          The latest SPOT trigger check does not require the SPOT workflow for this quote. Return to edit and refresh the missing rate inputs.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex items-center justify-between gap-4">

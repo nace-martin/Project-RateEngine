@@ -518,6 +518,7 @@ function mapQuoteDetailToComputeResult(quote: V3QuoteComputeResponse): QuoteComp
     computation_date: canonicalResult?.calculated_at || version?.created_at || quote.updated_at || quote.created_at,
     notes: canonicalResult?.warnings?.length ? canonicalResult.warnings : (totals?.notes ? [totals.notes] : []),
     quote_result: canonicalResult,
+    lifecycle: quote.lifecycle ?? null,
   };
 }
 

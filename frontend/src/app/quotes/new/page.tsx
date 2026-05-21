@@ -141,7 +141,8 @@ function NewQuoteContent() {
       const response = await computeQuoteV3(payload);
 
       // Check for missing rates
-      const hasMissingRates = response.latest_version?.totals?.has_missing_rates ?? false;
+      const hasMissingRates = Boolean(response.lifecycle?.missing_components?.length)
+        || (response.latest_version?.totals?.has_missing_rates ?? false);
       if (hasMissingRates) {
         const { carrier: missingCarrier, agent: missingAgent } = getQuoteMissingRateFlags(response);
 

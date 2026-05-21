@@ -98,7 +98,7 @@ export default function QuotesPage() {
     if (item.type === "SPOT_DRAFT") {
       return <Badge variant="secondary" className="bg-amber-500 text-white border-amber-600 hover:bg-amber-500">Draft (SPOT)</Badge>;
     }
-    return <QuoteStatusBadge status={item.rawStatus} />;
+    return <QuoteStatusBadge status={item.rawStatus} lifecycle={item.lifecycle} />;
   };
 
   // Unified Data
@@ -122,6 +122,7 @@ export default function QuotesPage() {
         weight: getWeight(q),
         status: q.status,
         rawStatus: getEffectiveQuoteStatus(q.status, q.valid_until),
+        lifecycle: q.lifecycle,
         total: formatCurrency(totalAmt, currency),
         actionLink: `/quotes/${q.id}`,
         mode: q.mode || "AIR",
@@ -193,7 +194,7 @@ export default function QuotesPage() {
       cell: (item: UnifiedQuote) => {
         // Requirement:
         // 1. Finalized/Sent quotes MUST display expiry.
-        // 2. Draft/Incomplete must NOT display expiry.
+        // 2. Drafts with derived missing-rate metadata must NOT display expiry.
         const isFinalized = ["FINALIZED", "SENT", "ACCEPTED"].includes(item.rawStatus);
         const showExpiry = isFinalized && item.expiry;
         const createdTime = new Date(item.date).getTime();

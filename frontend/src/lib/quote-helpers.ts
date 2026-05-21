@@ -1,4 +1,4 @@
-import { V3QuoteComputeResponse } from "@/lib/types";
+import type { QuoteLifecycleMetadata, V3QuoteComputeResponse } from "@/lib/types";
 import { SpotPricingEnvelope } from "./spot-types";
 
 // ... (UnifiedQuote interface)
@@ -70,6 +70,7 @@ export interface UnifiedQuote {
     total: string; // Formatted currency string or "-"
     actionLink: string;
     rawStatus: string; // For filtering
+    lifecycle?: QuoteLifecycleMetadata | null;
     mode: string;
     serviceType?: string;
     incoterms?: string;

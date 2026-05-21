@@ -19,6 +19,7 @@ import { cloneQuote } from "@/lib/api";
 import { API_BASE_URL } from "@/lib/config";
 import { useToast } from "@/context/toast-context";
 import { getEffectiveQuoteStatus } from "@/lib/quote-helpers";
+import type { QuoteLifecycleMetadata } from "@/lib/types";
 
 // Status color configuration
 const STATUS_CONFIG: Record<string, {
@@ -33,8 +34,20 @@ const STATUS_CONFIG: Record<string, {
         textColor: "text-white",
         borderColor: "border-amber-600",
     },
-    INCOMPLETE: {
-        label: "Incomplete",
+    READY: {
+        label: "Ready to finalize",
+        bgColor: "bg-emerald-50",
+        textColor: "text-emerald-700",
+        borderColor: "border-emerald-200",
+    },
+    SPOT_REQUIRED: {
+        label: "SPOT required",
+        bgColor: "bg-orange-50",
+        textColor: "text-orange-700",
+        borderColor: "border-orange-200",
+    },
+    MISSING_RATES: {
+        label: "Missing rates",
         bgColor: "bg-red-50",
         textColor: "text-red-700",
         borderColor: "border-red-200",
@@ -74,11 +87,23 @@ const STATUS_CONFIG: Record<string, {
 
 interface QuoteStatusBadgeProps {
     status: string;
+    lifecycle?: QuoteLifecycleMetadata | null;
     size?: "sm" | "default" | "lg";
 }
 
-export function QuoteStatusBadge({ status, size = "default" }: QuoteStatusBadgeProps) {
+const getLifecycleDisplayStatus = (status: string, lifecycle?: QuoteLifecycleMetadata | null): string => {
+    if (!lifecycle) return status;
     const normalizedStatus = status?.toUpperCase?.() ?? "";
+    if (normalizedStatus !== "DRAFT") return normalizedStatus || status;
+    if (lifecycle.requires_spot) return "SPOT_REQUIRED";
+    if (lifecycle.missing_components?.length) return "MISSING_RATES";
+    if (lifecycle.can_finalize || lifecycle.status_recommendation === "READY") return "READY";
+    return "DRAFT";
+};
+
+export function QuoteStatusBadge({ status, lifecycle, size = "default" }: QuoteStatusBadgeProps) {
+    const displayStatus = getLifecycleDisplayStatus(status, lifecycle);
+    const normalizedStatus = displayStatus?.toUpperCase?.() ?? "";
     const config = STATUS_CONFIG[normalizedStatus] || {
         label: status,
         bgColor: "bg-gray-100",
@@ -101,7 +126,7 @@ export function QuoteStatusBadge({ status, size = "default" }: QuoteStatusBadgeP
         ${sizeClasses[size]}
         font-medium
       `}
-            title={status === "INCOMPLETE" ? "Missing required rates. Click to resolve." : undefined}
+            title={lifecycle?.validation_errors?.join(" ") || undefined}
         >
             {config.label}
         </Badge>
@@ -137,6 +162,7 @@ interface QuoteStatusActionsProps {
     status: string;
     validUntil?: string | null;
     hasMissingRates?: boolean;
+    lifecycle?: QuoteLifecycleMetadata | null;
     onStatusChange?: () => void;
 }
 
@@ -145,11 +171,17 @@ export function QuoteStatusActions({
     status,
     validUntil,
     hasMissingRates = false,
+    lifecycle = null,
     showDelete = true,
     onStatusChange
 }: QuoteStatusActionsProps & { showDelete?: boolean }) {
     const normalizedStatus = status?.toUpperCase?.() ?? "";
     const effectiveStatus = getEffectiveQuoteStatus(normalizedStatus, validUntil);
+    const canFinalize = lifecycle?.can_finalize ?? !hasMissingRates;
+    const canDelete = lifecycle?.can_delete ?? effectiveStatus === "DRAFT";
+    const lifecycleBlockReason =
+        lifecycle?.requires_spot ? "Resolve SPOT required coverage before finalizing." :
+        (lifecycle?.missing_components?.length ? `Missing rates: ${lifecycle.missing_components.join(", ")}` : null);
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [cloning, setCloning] = useState(false);
@@ -295,15 +327,6 @@ export function QuoteStatusActions({
         );
     }
 
-    // INCOMPLETE quotes need to be completed first
-    if (effectiveStatus === "INCOMPLETE") {
-        return (
-            <div className="text-sm text-slate-400">
-                Complete all required rates to finalize
-            </div>
-        );
-    }
-
     return (
         <div className="flex items-center gap-3">
             {error && (
@@ -314,7 +337,7 @@ export function QuoteStatusActions({
             {effectiveStatus === "DRAFT" && (
                 <>
                     {/* Delete Draft Button */}
-                    {showDelete && (
+                    {showDelete && canDelete && (
                         <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
                             <DialogTrigger asChild>
                                 <Button
@@ -357,7 +380,7 @@ export function QuoteStatusActions({
                             <Button
                                 variant="default"
                                 size="sm"
-                                disabled={loading || hasMissingRates}
+                                disabled={loading || !canFinalize}
                                 className="bg-green-600 hover:bg-green-700"
                             >
                                 {loading ? (
@@ -368,6 +391,9 @@ export function QuoteStatusActions({
                                 Finalize Quote
                             </Button>
                         </DialogTrigger>
+                        {lifecycleBlockReason && (
+                            <span className="text-sm text-slate-500">{lifecycleBlockReason}</span>
+                        )}
                         <DialogContent>
                             <DialogHeader>
                                 <DialogTitle>Finalize this quote?</DialogTitle>
@@ -544,5 +570,5 @@ export function QuoteStatusActions({
 
 // Utility to check if quote is editable
 export function isQuoteEditable(status: string): boolean {
-    return status === "DRAFT" || status === "INCOMPLETE";
+    return status === "DRAFT" || status === "READY";
 }

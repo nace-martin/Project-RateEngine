@@ -429,6 +429,20 @@ export interface V3QuoteVersion {
   total_weight_kg?: number; // Added via serializer
 }
 
+export interface QuoteLifecycleMetadata {
+  status_recommendation: string;
+  missing_components: string[];
+  requires_spot: boolean;
+  can_finalize: boolean;
+  can_delete: boolean;
+  validation_errors: string[];
+  component_outcomes: Record<string, {
+    required: boolean;
+    covered: boolean;
+    missing: boolean;
+  }>;
+}
+
 export interface CanonicalQuoteFxApplied {
   applied: boolean;
   rate: string | null;
@@ -553,6 +567,7 @@ export interface V3QuoteComputeResponse {
   rate_provider?: string | null; // Agent who provided rates
   latest_version: V3QuoteVersion;
   quote_result?: CanonicalQuoteResult | null;
+  lifecycle?: QuoteLifecycleMetadata | null;
 }
 
 export type QuoteVersionChargeInput = V3ManualOverride;
@@ -637,6 +652,7 @@ export interface QuoteComputeResult {
   routing?: RoutingInfo;
   notes: string[];
   quote_result?: CanonicalQuoteResult | null;
+  lifecycle?: QuoteLifecycleMetadata | null;
 }
 
 export interface Tier1Stats {
