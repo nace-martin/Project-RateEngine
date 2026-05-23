@@ -73,6 +73,15 @@ class QuoteComputeSelectorValidationTests(APITestCase):
             gl_cost_code="5100",
             default_unit="KG",
         )
+        ServiceComponent.objects.create(
+            code="IMP-FRT-VALIDATION",
+            description="Import Freight Validation",
+            mode="AIR",
+            leg="MAIN",
+            category="TRANSPORT",
+            unit="KG",
+            audience="BOTH",
+        )
         self.domestic_freight_pc = ProductCode.objects.create(
             id=3660,
             code="DOM-FRT-AIR",
@@ -416,6 +425,24 @@ class QuoteComputeSelectorValidationTests(APITestCase):
             gl_cost_code="5100",
             default_unit="SHIPMENT",
         )
+        ServiceComponent.objects.create(
+            code="IMP-ORIGIN-HANDLING-VALIDATION",
+            description="Import Origin Validation",
+            mode="AIR",
+            leg="ORIGIN",
+            category="ACCESSORIAL",
+            unit="SHIPMENT",
+            audience="BOTH",
+        )
+        ServiceComponent.objects.create(
+            code="IMP-CARTAGE-DEST-VALIDATION",
+            description="Import Destination Validation",
+            mode="AIR",
+            leg="DESTINATION",
+            category="ACCESSORIAL",
+            unit="SHIPMENT",
+            audience="BOTH",
+        )
 
         ImportCOGS.objects.create(
             product_code=self.freight_pc,
@@ -456,3 +483,201 @@ class QuoteComputeSelectorValidationTests(APITestCase):
 
         self.assertNotEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertNotEqual(response.data.get("error_code"), "RATE_RESOLUTION_MISSING_COVERAGE")
+
+    def test_import_quote_resolves_different_counterparty_types_for_different_legs(self):
+        carrier_c = Carrier.objects.create(code="VAL-CX", name="Carrier CX", carrier_type="AIRLINE")
+        agent_c = Agent.objects.create(code="VAL-AG-C", name="Agent CX", country_code="AU", agent_type="ORIGIN")
+
+        # Freight component uses carrier
+        ImportCOGS.objects.create(
+            product_code=self.freight_pc,
+            origin_airport="SYD",
+            destination_airport="POM",
+            carrier=carrier_c,
+            currency="AUD",
+            rate_per_kg=Decimal("5.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Origin-local component uses agent
+        origin_pc = ProductCode.objects.create(
+            id=2671,
+            code="IMP-AWB-ORIGIN-TEST",
+            description="AWB Fee Origin",
+            domain="IMPORT",
+            category="DOCUMENTATION",
+            is_gst_applicable=True,
+            gst_rate=Decimal("0.10"),
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        ServiceComponent.objects.create(
+            code="IMP-AWB-ORIGIN-TEST",
+            description="AWB Fee Origin Test",
+            mode="AIR",
+            leg="ORIGIN",
+            category="DOCUMENTATION",
+            unit="SHIPMENT",
+            audience="BOTH",
+        )
+        ImportCOGS.objects.create(
+            product_code=origin_pc,
+            origin_airport="SYD",
+            destination_airport=None,
+            agent=agent_c,
+            currency="AUD",
+            rate_per_shipment=Decimal("30.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # D2A service scope requires both FREIGHT and ORIGIN_LOCAL
+        response = self.client.post(
+            "/api/v3/quotes/compute/",
+            self._payload(service_scope="D2A"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        res_dims = response.data["latest_version"]["payload_json"]["resolved_dimensions"]
+        self.assertEqual(res_dims["carrier_id"], carrier_c.id)
+        self.assertEqual(res_dims["agent_id"], agent_c.id)
+
+    def test_import_quote_resolves_null_destination_airport_rows(self):
+        agent_c = Agent.objects.create(code="VAL-AG-D", name="Agent D", country_code="AU", agent_type="ORIGIN")
+
+        # Freight component uses agent_c
+        ImportCOGS.objects.create(
+            product_code=self.freight_pc,
+            origin_airport="SYD",
+            destination_airport="POM",
+            agent=agent_c,
+            currency="AUD",
+            rate_per_kg=Decimal("5.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Origin-local component uses agent_c and destination_airport=None
+        origin_pc = ProductCode.objects.create(
+            id=2672,
+            code="IMP-DOC-ORIGIN-TEST",
+            description="Doc Fee Origin",
+            domain="IMPORT",
+            category="DOCUMENTATION",
+            is_gst_applicable=True,
+            gst_rate=Decimal("0.10"),
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        ServiceComponent.objects.create(
+            code="IMP-DOC-ORIGIN-TEST",
+            description="Doc Fee Origin Test",
+            mode="AIR",
+            leg="ORIGIN",
+            category="DOCUMENTATION",
+            unit="SHIPMENT",
+            audience="BOTH",
+        )
+        ImportCOGS.objects.create(
+            product_code=origin_pc,
+            origin_airport="SYD",
+            destination_airport=None,
+            agent=agent_c,
+            currency="AUD",
+            rate_per_shipment=Decimal("25.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # D2A service scope requires both FREIGHT and ORIGIN_LOCAL
+        response = self.client.post(
+            "/api/v3/quotes/compute/",
+            self._payload(service_scope="D2A"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        lines = response.data["latest_version"]["lines"]
+        origin_lines = [l for l in lines if l["service_component"]["code"] == "IMP-DOC-ORIGIN-TEST"]
+        self.assertEqual(len(origin_lines), 1)
+        self.assertEqual(float(origin_lines[0]["cost_fcy"]), 25.0)
+        self.assertEqual(origin_lines[0]["cost_fcy_currency"], "AUD")
+
+    def test_bne_origin_local_seeded_rates_integration(self):
+        from core.models import Location
+        bne_loc = Location.objects.filter(code="BNE").first()
+        if not bne_loc:
+            from core.models import Country
+            au_country = Country.objects.get(code="AU")
+            bne_loc = create_location(code="BNE", name="Brisbane", country=au_country, is_active=True)
+
+        # Seed freight COGS for BNE -> POM
+        carrier = Carrier.objects.create(
+            code="BNE-CX",
+            name="BNE Carrier",
+            carrier_type="AIRLINE",
+        )
+        ImportCOGS.objects.create(
+            product_code=self.freight_pc,
+            origin_airport="BNE",
+            destination_airport="POM",
+            carrier=carrier,
+            currency="AUD",
+            rate_per_kg=Decimal("5.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Seed ProductCode, ServiceComponent, and COGS rate for IMP-DOC-ORIGIN
+        doc_origin_pc = ProductCode.objects.create(
+            id=2010,
+            code="IMP-DOC-ORIGIN",
+            description="Import Documentation Fee Origin",
+            domain="IMPORT",
+            category="DOCUMENTATION",
+            is_gst_applicable=True,
+            gst_rate=Decimal("0.10"),
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit="SHIPMENT",
+        )
+        ServiceComponent.objects.create(
+            code="IMP-DOC-ORIGIN",
+            description="Import Documentation Fee Origin",
+            mode="AIR",
+            leg="ORIGIN",
+            category="DOCUMENTATION",
+            unit="SHIPMENT",
+            audience="BOTH",
+        )
+        ImportCOGS.objects.create(
+            product_code=doc_origin_pc,
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            currency="AUD",
+            rate_per_shipment=Decimal("20.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        payload = self._payload(
+            origin_location_id=str(bne_loc.id),
+            destination_location_id=str(self.destination.id),
+            service_scope="D2A",
+        )
+
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        lines = response.data["latest_version"]["lines"]
+        
+        freight_lines = [l for l in lines if l["service_component"]["leg"] == "MAIN"]
+        origin_lines = [l for l in lines if l["service_component"]["leg"] == "ORIGIN"]
+        
+        self.assertTrue(len(freight_lines) > 0)
+        self.assertTrue(len(origin_lines) > 0)

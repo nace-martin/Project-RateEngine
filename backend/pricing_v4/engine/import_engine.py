@@ -382,6 +382,8 @@ class ImportPricingEngine:
             if pc.default_unit == 'PERCENT':
                 continue
             
+            agent_id_val = self.preferred_agent_id if leg != 'FREIGHT' else None
+            carrier_id_val = self.preferred_carrier_id if leg == 'FREIGHT' else None
             try:
                 cogs = select_import_cogs_rate(
                     RateSelectionContext(
@@ -390,8 +392,8 @@ class ImportPricingEngine:
                         origin_airport=self.origin,
                         destination_airport=self.destination,
                         currency=self.buy_currency,
-                        agent_id=self.preferred_agent_id,
-                        carrier_id=self.preferred_carrier_id,
+                        agent_id=agent_id_val,
+                        carrier_id=carrier_id_val,
                     )
                 ).record
             except RateNotFoundError:
@@ -775,6 +777,10 @@ class ImportPricingEngine:
         if leg in {'ORIGIN', 'DESTINATION', 'LANE'}:
             metadata['rate_scope'] = leg
 
+        resolved_leg = leg or self._get_leg_for_product_code(pc)
+        agent_id_val = self.preferred_agent_id if resolved_leg != 'FREIGHT' else None
+        carrier_id_val = self.preferred_carrier_id if resolved_leg == 'FREIGHT' else None
+
         try:
             return select_import_cogs_rate(
                 RateSelectionContext(
@@ -783,8 +789,8 @@ class ImportPricingEngine:
                     origin_airport=self.origin,
                     destination_airport=self.destination,
                     currency=self.buy_currency,
-                    agent_id=self.preferred_agent_id,
-                    carrier_id=self.preferred_carrier_id,
+                    agent_id=agent_id_val,
+                    carrier_id=carrier_id_val,
                     metadata=metadata,
                 )
             ).record
@@ -835,7 +841,7 @@ class ImportPricingEngine:
                         direction='IMPORT',
                         currency=self.buy_currency,
                         agent_id=self.preferred_agent_id,
-                        carrier_id=self.preferred_carrier_id,
+                        carrier_id=None,
                     )
                 ).record
             except RateNotFoundError:

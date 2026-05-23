@@ -602,6 +602,14 @@ class RateAvailabilityService:
             return best_sell_outcome
 
         def evaluate_row(component: str, row) -> dict:
+            if direction == 'DOMESTIC':
+                agent_id_val = agent_id
+                carrier_id_val = carrier_id
+            else:
+                agent_id_val = agent_id if component != COMPONENT_FREIGHT else None
+                carrier_id_val = carrier_id if component == COMPONENT_FREIGHT else None
+
+
             if isinstance(row, DomesticCOGS):
                 return cls._run_selector(
                     component=component,
@@ -612,8 +620,8 @@ class RateAvailabilityService:
                             origin_zone=origin_airport,
                             destination_zone=destination_airport,
                             currency=buy_currency or 'PGK',
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
+                            agent_id=agent_id_val,
+                            carrier_id=carrier_id_val,
                         )
                     ),
                     success_outcome=success_outcome,
@@ -644,8 +652,8 @@ class RateAvailabilityService:
                             origin_airport=origin_airport,
                             destination_airport=destination_airport,
                             currency=buy_currency,
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
+                            agent_id=agent_id_val,
+                            carrier_id=carrier_id_val,
                         )
                     ),
                     success_outcome=success_outcome,
@@ -677,8 +685,8 @@ class RateAvailabilityService:
                             origin_airport=origin_airport,
                             destination_airport=destination_airport,
                             currency=buy_currency,
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
+                            agent_id=agent_id_val,
+                            carrier_id=carrier_id_val,
                         )
                     ),
                     success_outcome=success_outcome,
@@ -710,8 +718,8 @@ class RateAvailabilityService:
                             location=row.location,
                             direction=row.direction,
                             currency=buy_currency,
-                            agent_id=agent_id,
-                            carrier_id=carrier_id,
+                            agent_id=agent_id_val,
+                            carrier_id=carrier_id_val,
                         )
                     ),
                     success_outcome=success_outcome,

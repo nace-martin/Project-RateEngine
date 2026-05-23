@@ -144,18 +144,19 @@ def resolve_quote_rate_dimensions(context: RateResolutionContext) -> ResolvedRat
     shared_currency = normalized.override_buy_currency or _shared_currency(component_rows, buy_side_components)
     shared_counterparty = _shared_counterparty(component_rows, buy_side_components)
 
+    resolved_agent, resolved_carrier = _resolve_independent_counterparties(component_rows, buy_side_components)
+
     agent_id = normalized.override_agent_id
     carrier_id = normalized.override_carrier_id
-    if agent_id is None and carrier_id is None and shared_counterparty is not None:
-        if shared_counterparty[0] == "agent":
-            agent_id = shared_counterparty[1]
-        elif shared_counterparty[0] == "carrier":
-            carrier_id = shared_counterparty[1]
+    if agent_id is None:
+        agent_id = resolved_agent
+    if carrier_id is None:
+        carrier_id = resolved_carrier
 
     resolution_basis = "component_level_resolution_only"
     if normalized.override_buy_currency or normalized.override_agent_id or normalized.override_carrier_id:
         resolution_basis = "request_overrides_applied"
-    elif shared_currency is not None or shared_counterparty is not None:
+    elif shared_currency is not None or resolved_agent is not None or resolved_carrier is not None:
         resolution_basis = "derived_shared_dimensions"
 
     return ResolvedRateDimensions(
@@ -301,7 +302,11 @@ def _buy_side_component_rows(
 
     lane_rows = (
         _active_queryset(ImportCOGS, context.quote_date)
-        .filter(origin_airport=context.origin_airport, destination_airport=context.destination_airport)
+        .filter(
+            models.Q(origin_airport=context.origin_airport, destination_airport=context.destination_airport) |
+            models.Q(origin_airport=context.origin_airport, destination_airport__isnull=True) |
+            models.Q(origin_airport=context.origin_airport, destination_airport="")
+        )
         .select_related("product_code", "agent", "carrier")
     )
     for row in lane_rows:
@@ -440,6 +445,46 @@ def _shared_counterparty(
     if len(shared) == 1:
         return next(iter(shared))
     return None
+
+
+def _resolve_independent_counterparties(
+    component_rows: dict[str, list[models.Model]],
+    buy_side_components: tuple[str, ...],
+) -> tuple[int | None, int | None]:
+    unique_agents_per_component: list[int] = []
+    unique_carriers_per_component: list[int] = []
+    
+    for component in buy_side_components:
+        sigs = set()
+        for row in component_rows.get(component, []):
+            sig = _counterparty_signature(row)
+            if sig is not None:
+                sigs.add(sig)
+        
+        # If a single component has more than one counterparty option,
+        # it is ambiguous. We do not resolve a default counterparty from it.
+        if len(sigs) == 1:
+            kind, cid = next(iter(sigs))
+            if kind == "agent":
+                unique_agents_per_component.append(cid)
+            elif kind == "carrier":
+                unique_carriers_per_component.append(cid)
+                
+    resolved_agent = None
+    # We only resolve a shared agent if all components that specify a unique agent agree on it
+    if unique_agents_per_component:
+        first_agent = unique_agents_per_component[0]
+        if all(cid == first_agent for cid in unique_agents_per_component):
+            resolved_agent = first_agent
+            
+    resolved_carrier = None
+    # We only resolve a shared carrier if all components that specify a unique carrier agree on it
+    if unique_carriers_per_component:
+        first_carrier = unique_carriers_per_component[0]
+        if all(cid == first_carrier for cid in unique_carriers_per_component):
+            resolved_carrier = first_carrier
+            
+    return resolved_agent, resolved_carrier
 
 
 def _counterparty_signature(row: models.Model) -> tuple[str, int] | None:
