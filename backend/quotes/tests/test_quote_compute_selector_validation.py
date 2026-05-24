@@ -403,7 +403,7 @@ class QuoteComputeSelectorValidationTests(APITestCase):
     def test_quote_compute_allows_component_level_resolution_when_global_path_is_not_shared(self):
         origin_pc = ProductCode.objects.create(
             id=2661,
-            code="IMP-ORIGIN-HANDLING-VALIDATION",
+            code="IMP-ORG-HNDL-VAL",
             description="Import Origin Validation",
             domain="IMPORT",
             category="HANDLING",
@@ -415,7 +415,7 @@ class QuoteComputeSelectorValidationTests(APITestCase):
         )
         destination_pc = ProductCode.objects.create(
             id=2662,
-            code="IMP-CARTAGE-DEST-VALIDATION",
+            code="IMP-CTG-DST-VAL",
             description="Import Destination Validation",
             domain="IMPORT",
             category="CARTAGE",
@@ -426,7 +426,7 @@ class QuoteComputeSelectorValidationTests(APITestCase):
             default_unit="SHIPMENT",
         )
         ServiceComponent.objects.create(
-            code="IMP-ORIGIN-HANDLING-VALIDATION",
+            code="IMP-ORG-HNDL-VAL",
             description="Import Origin Validation",
             mode="AIR",
             leg="ORIGIN",
@@ -435,7 +435,7 @@ class QuoteComputeSelectorValidationTests(APITestCase):
             audience="BOTH",
         )
         ServiceComponent.objects.create(
-            code="IMP-CARTAGE-DEST-VALIDATION",
+            code="IMP-CTG-DST-VAL",
             description="Import Destination Validation",
             mode="AIR",
             leg="DESTINATION",
