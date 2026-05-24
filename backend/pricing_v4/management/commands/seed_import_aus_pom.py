@@ -1,12 +1,11 @@
-from pricing_v4.services.pricing_domain_service import PricingDomainService
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
 from datetime import date
-from pricing_v4.models import ProductCode, ImportCOGS, Agent
+from pricing_v4.models import ProductCode, ImportCOGS, Agent, Carrier
 
 class Command(BaseCommand):
-    help = 'Seeds Import COGS (Buy Rates) for BNE/SYD -> POM (EFM AU Only)'
+    help = 'Seeds Import COGS (Buy Rates) for BNE/SYD -> POM'
 
     def handle(self, *args, **kwargs):
         self.stdout.write("=" * 60)
@@ -23,81 +22,92 @@ class Command(BaseCommand):
                     'agent_type': 'ORIGIN'
                 }
             )
+            px, _ = Carrier.objects.get_or_create(
+                code='PX',
+                defaults={
+                    'name': 'Air Niugini',
+                    'carrier_type': 'AIRLINE',
+                },
+            )
 
-            # ORIGIN CHARGES (AUD) - BNE->POM & SYD->POM
-            # Rates from User Image: "EFM AU from BNE to POM Import Rates - Door to Airport Only"
-            
-            origins = ['BNE', 'SYD']
-            for org in origins:
+            freight_cards = {
+                'BNE': {
+                    'min_charge': '350.00',
+                    'weight_breaks': [
+                        {"min_kg": 0, "rate": "7.50"},
+                        {"min_kg": 45, "rate": "7.35"},
+                        {"min_kg": 100, "rate": "7.00"},
+                        {"min_kg": 250, "rate": "6.75"},
+                        {"min_kg": 500, "rate": "6.45"},
+                        {"min_kg": 1000, "rate": "6.10"},
+                    ],
+                },
+                'SYD': {
+                    'min_charge': '415.00',
+                    'weight_breaks': [
+                        {"min_kg": 45, "rate": "8.10"},
+                        {"min_kg": 100, "rate": "7.55"},
+                        {"min_kg": 250, "rate": "7.50"},
+                        {"min_kg": 500, "rate": "7.20"},
+                        {"min_kg": 1000, "rate": "6.85"},
+                    ],
+                },
+            }
+
+            for org, freight_card in freight_cards.items():
                 self.stdout.write(f"\nProcessing Origin {org}...")
-                
-                # --- IMP-FRT-AIR (AUD) ---
-                # Min: 330.00
-                # +45: 7.05, +100: 6.75, +250: 6.55, +500: 6.25, +1000: 5.95
-                frt_wb = [
-                    {"min_kg": 45, "rate": "7.05"},
-                    {"min_kg": 100, "rate": "6.75"},
-                    {"min_kg": 250, "rate": "6.55"},
-                    {"min_kg": 500, "rate": "6.25"},
-                    {"min_kg": 1000, "rate": "5.95"},
-                ]
-                
+
                 self._seed_cogs(
-                    code='IMP-FRT-AIR', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    min_charge='330.00', weight_breaks=frt_wb
+                    code='IMP-FRT-AIR',
+                    org=org,
+                    dest='POM',
+                    agent=None,
+                    carrier=px,
+                    scope='LANE',
+                    curr='AUD',
+                    min_charge=freight_card['min_charge'],
+                    weight_breaks=freight_card['weight_breaks'],
                 )
 
-                # --- IMP-PICKUP (AUD) ---
-                # Min 85.00, 0.26/kg
+                # Origin-local import COGS are origin-scoped, not BNE/SYD -> POM lane rows.
                 self._seed_cogs(
-                    code='IMP-PICKUP', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    min_charge='85.00', per_kg='0.26'
+                    code='IMP-PICKUP', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD', min_charge='85.00', per_kg='0.26'
                 )
 
-                # --- IMP-FSC-PICKUP (PERCENT) ---
-                # 20%
                 self._seed_cogs(
-                    code='IMP-FSC-PICKUP', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    percent_rate='20.00'
+                    code='IMP-FSC-PICKUP', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD', percent_rate='20.00'
                 )
 
-                # --- IMP-SCREEN-ORIGIN (AUD) ---
-                # Min 70.00, 0.36/kg
                 self._seed_cogs(
-                    code='IMP-SCREEN-ORIGIN', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    min_charge='70.00', per_kg='0.36'
+                    code='IMP-SCREEN-ORIGIN', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD', min_charge='70.00', per_kg='0.382'
                 )
 
-                # --- IMP-CTO-ORIGIN (AUD) ---
-                # Min 30.00, 0.30/kg
                 self._seed_cogs(
-                    code='IMP-CTO-ORIGIN', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    min_charge='30.00', per_kg='0.30'
+                    code='IMP-CTO-ORIGIN', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD', flat='30.00'
                 )
 
-                # --- IMP-DOC-ORIGIN (AUD) ---
-                # Flat 80.00
                 self._seed_cogs(
-                    code='IMP-DOC-ORIGIN', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    flat='80.00'
+                    code='IMP-DOC-ORIGIN', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD', flat='82.00'
                 )
                 
-                # --- IMP-AGENCY-ORIGIN (AUD) ---
-                # Flat 175.00
                 self._seed_cogs(
-                    code='IMP-AGENCY-ORIGIN', org=org, dest='POM', agent=efm_au, curr='AUD',
+                    code='IMP-AGENCY-ORIGIN', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD',
                     flat='175.00'
                 )
                 
-                # --- IMP-AWB-ORIGIN (AUD) ---
-                # Flat 25.00
                 self._seed_cogs(
-                    code='IMP-AWB-ORIGIN', org=org, dest='POM', agent=efm_au, curr='AUD',
-                    flat='25.00'
+                    code='IMP-AWB-ORIGIN', org=org, dest=None, agent=efm_au, carrier=None, scope='ORIGIN',
+                    curr='AUD', flat='30.00'
                 )
 
 
-    def _seed_cogs(self, code, org, dest, agent, curr,
+    def _seed_cogs(self, code, org, dest, agent, carrier, scope, curr,
                    flat=None, per_kg=None, min_charge=None, max_charge=None, weight_breaks=None, percent_rate=None):
         """
         Seeds Import COGS only.
@@ -115,28 +125,47 @@ class Command(BaseCommand):
             'max_charge': Decimal(max_charge) if max_charge else None,
             'weight_breaks': weight_breaks,
             'percent_rate': Decimal(percent_rate) if percent_rate else None,
+            'is_additive': False,
+            'scope': scope,
         }
         lookup = {
             'product_code': pc,
             'origin_airport': org,
-            'destination_airport': dest,
             'agent': agent,
+            'carrier': carrier,
             'currency': curr,
             'valid_from': date(2025, 1, 1),
             'valid_until': date(2026, 12, 31),
         }
-        matches = ImportCOGS.objects.filter(**lookup).order_by('id')
+        if code == 'IMP-FRT-AIR':
+            matches = ImportCOGS.objects.filter(
+                product_code=pc,
+                origin_airport=org,
+                destination_airport=dest,
+                currency=curr,
+                valid_from=date(2025, 1, 1),
+                valid_until=date(2026, 12, 31),
+            ).order_by('id')
+        elif dest is None:
+            matches = ImportCOGS.objects.filter(**lookup).order_by('id')
+        else:
+            matches = ImportCOGS.objects.filter(**lookup, destination_airport=dest).order_by('id')
+
         if matches.exists():
             if matches.count() > 1:
                 self.stdout.write(
                     self.style.WARNING(
-                        f"  ! Duplicate ImportCOGS rows found for {code} {org}->{dest} ({curr}); updating oldest match only"
+                        f"  ! Duplicate ImportCOGS rows found for {code} {org}->{dest} ({curr}); updating all matches"
                     )
                 )
-            obj = matches.first()
+            for obj in matches:
+                obj.destination_airport = dest
+                for field, value in seed_values.items():
+                    setattr(obj, field, value)
+                obj.save()
+        else:
+            obj = ImportCOGS(**lookup, destination_airport=dest)
             for field, value in seed_values.items():
                 setattr(obj, field, value)
-            PricingDomainService.save_rate(obj)
-        else:
-            PricingDomainService.save_rate(ImportCOGS(**lookup, **seed_values))
+            obj.save()
         self.stdout.write(f"  - Seeded COGS {code} {org}->{dest} ({curr})")

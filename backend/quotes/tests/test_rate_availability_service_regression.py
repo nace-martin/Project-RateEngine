@@ -64,7 +64,15 @@ class TestRateAvailabilityRegression:
             origin_airport='BNE',
             destination_airport='POM',
             currency='AUD',
-            rate_per_kg=Decimal('2.50'),
+            min_charge=Decimal('350.00'),
+            weight_breaks=[
+                {"min_kg": 0, "rate": "7.50"},
+                {"min_kg": 45, "rate": "7.35"},
+                {"min_kg": 100, "rate": "7.00"},
+                {"min_kg": 250, "rate": "6.75"},
+                {"min_kg": 500, "rate": "6.45"},
+                {"min_kg": 1000, "rate": "6.10"},
+            ],
             valid_from='2025-01-01',
             valid_until='2026-12-31',
             carrier=self.carrier
@@ -117,7 +125,15 @@ class TestRateAvailabilityRegression:
             origin_airport='BNE',
             destination_airport='POM',
             currency='AUD',
-            rate_per_kg=Decimal('2.50'),
+            min_charge=Decimal('350.00'),
+            weight_breaks=[
+                {"min_kg": 0, "rate": "7.50"},
+                {"min_kg": 45, "rate": "7.35"},
+                {"min_kg": 100, "rate": "7.00"},
+                {"min_kg": 250, "rate": "6.75"},
+                {"min_kg": 500, "rate": "6.45"},
+                {"min_kg": 1000, "rate": "6.10"},
+            ],
             valid_from='2025-01-01',
             valid_until='2026-12-31',
             carrier=self.carrier

@@ -45,6 +45,7 @@ class ImportCOGSAPITests(APITestCase):
             gl_cost_code="5100",
             default_unit=ProductCode.UNIT_KG,
         )
+        Agent.objects.filter(code="EFM-AU").delete()
         self.agent = Agent.objects.create(
             code="EFM-AU",
             name="EFM Australia",

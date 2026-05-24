@@ -681,3 +681,313 @@ class QuoteComputeSelectorValidationTests(APITestCase):
         
         self.assertTrue(len(freight_lines) > 0)
         self.assertTrue(len(origin_lines) > 0)
+
+    def test_bne_pom_import_100kg_regression(self):
+        from core.models import Location, FxSnapshot, Policy
+        from django.utils import timezone
+        from pricing_v4.models import LocalCOGSRate, LocalSellRate
+
+        # 1. Ensure BNE location exists
+        bne_loc = Location.objects.filter(code="BNE").first()
+        if not bne_loc:
+            from core.models import Country
+            au_country = Country.objects.get(code="AU")
+            bne_loc = create_location(code="BNE", name="Brisbane", country=au_country, is_active=True)
+
+        # 2. Seed FxSnapshot and Policy
+        FxSnapshot.objects.all().delete()
+        FxSnapshot.objects.create(
+            as_of_timestamp=timezone.now(),
+            source="BSP",
+            rates={"AUD": {"tt_buy": "0.3218", "tt_sell": "0.30571"}},
+            caf_percent=Decimal("0.05"),
+        )
+        Policy.objects.all().delete()
+        Policy.objects.create(
+            name="Test Policy",
+            caf_import_pct=Decimal("0.05"),
+            caf_export_pct=Decimal("0.10"),
+            margin_pct=Decimal("0.20"),
+            effective_from=timezone.now().date(),
+            effective_to=(timezone.now() + timedelta(days=30)).date(),
+            is_active=True,
+        )
+
+        # 3. Create ProductCodes and ServiceComponents for IMP accessorials/freight/destination
+        pcs_data = [
+            (2001, "IMP-FRT-AIR", "Import Air Freight", "FREIGHT", "KG", "MAIN", "TRANSPORT"),
+            (2050, "IMP-PICKUP", "Pick Up", "ACCESSORIAL", "SHIPMENT", "ORIGIN", "ACCESSORIAL"),
+            (2060, "IMP-FSC-PICKUP", "FSC Pick Up", "SURCHARGE", "SHIPMENT", "ORIGIN", "ACCESSORIAL"),
+            (2040, "IMP-SCREEN-ORIGIN", "X-Ray Screening Fee", "ACCESSORIAL", "SHIPMENT", "ORIGIN", "ACCESSORIAL"),
+            (2030, "IMP-CTO-ORIGIN", "CTO Fee", "ACCESSORIAL", "SHIPMENT", "ORIGIN", "ACCESSORIAL"),
+            (2010, "IMP-DOC-ORIGIN", "Export Document Fee", "DOCUMENTATION", "SHIPMENT", "ORIGIN", "DOCUMENTATION"),
+            (2012, "IMP-AGENCY-ORIGIN", "Export Agency Fee", "ACCESSORIAL", "SHIPMENT", "ORIGIN", "ACCESSORIAL"),
+            (2011, "IMP-AWB-ORIGIN", "Origin AWB Fee", "DOCUMENTATION", "SHIPMENT", "ORIGIN", "DOCUMENTATION"),
+            # Destination ProductCodes
+            (2020, "IMP-CLEAR", "Customs Clearance", "CLEARANCE", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+            (2021, "IMP-AGENCY-DEST", "Agency Fee Destination", "ACCESSORIAL", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+            (2022, "IMP-DOC-DEST", "Documentation Fee Destination", "DOCUMENTATION", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+            (2070, "IMP-HANDLING-DEST", "Handling Fee Destination", "ACCESSORIAL", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+            (2071, "IMP-LOADING-DEST", "Loading Fee Destination", "ACCESSORIAL", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+            (2072, "IMP-CARTAGE-DEST", "Cartage Destination", "CARTAGE", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+            (2080, "IMP-FSC-CARTAGE-DEST", "Fuel Surcharge Destination", "SURCHARGE", "SHIPMENT", "DESTINATION", "ACCESSORIAL"),
+        ]
+
+        pcs = {}
+        for pid, code, desc, cat, unit, leg, sc_cat in pcs_data:
+            ProductCode.objects.filter(id=pid).delete()
+            ProductCode.objects.filter(code=code).delete()
+            ServiceComponent.objects.filter(code=code).delete()
+
+            pcs[code] = ProductCode.objects.create(
+                id=pid,
+                code=code,
+                description=desc,
+                domain="IMPORT",
+                category=cat,
+                is_gst_applicable=True,
+                gst_rate=Decimal("0.10"),
+                gl_revenue_code="4100",
+                gl_cost_code="5100",
+                default_unit=unit,
+            )
+            ServiceComponent.objects.create(
+                code=code,
+                description=desc,
+                mode="AIR",
+                leg=leg,
+                category=sc_cat,
+                unit=unit,
+                audience="BOTH",
+            )
+
+        # 4. Seed ImportCOGS rates matching standard seed card for BNE
+        # Freight BNE -> POM
+        carrier = Carrier.objects.create(
+            code="VAL-PX-FRT",
+            name="Air Niugini Freight",
+            carrier_type="AIRLINE",
+        )
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-FRT-AIR"],
+            origin_airport="BNE",
+            destination_airport="POM",
+            carrier=carrier,
+            scope="LANE",
+            currency="AUD",
+            min_charge=Decimal("350.00"),
+            weight_breaks=[
+                {"min_kg": 0, "rate": "7.50"},
+                {"min_kg": 45, "rate": "7.35"},
+                {"min_kg": 100, "rate": "7.00"},
+                {"min_kg": 250, "rate": "6.75"},
+                {"min_kg": 500, "rate": "6.45"},
+                {"min_kg": 1000, "rate": "6.10"},
+            ],
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Pick Up BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-PICKUP"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            min_charge=Decimal("85.00"),
+            rate_per_kg=Decimal("0.26"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # FSC Pick Up BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-FSC-PICKUP"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            percent_rate=Decimal("20.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # X-Ray Screening BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-SCREEN-ORIGIN"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            min_charge=Decimal("70.00"),
+            rate_per_kg=Decimal("0.382"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # CTO Fee BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-CTO-ORIGIN"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            rate_per_shipment=Decimal("30.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Export Document Fee BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-DOC-ORIGIN"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            rate_per_shipment=Decimal("82.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Export Agency Fee BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-AGENCY-ORIGIN"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            rate_per_shipment=Decimal("175.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Origin AWB Fee BNE -> None
+        ImportCOGS.objects.create(
+            product_code=pcs["IMP-AWB-ORIGIN"],
+            origin_airport="BNE",
+            destination_airport=None,
+            agent=self.agent_a,
+            scope="ORIGIN",
+            currency="AUD",
+            rate_per_shipment=Decimal("30.00"),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        # Create EFM PNG Agent
+        efm_pg, _ = Agent.objects.get_or_create(
+            code='EFM-PG',
+            defaults={
+                'name': 'EFM PNG',
+                'country_code': 'PG',
+                'agent_type': 'DESTINATION'
+            }
+        )
+
+        # Seed Destination Local Charges in LocalCOGSRate & LocalSellRate
+        dest_codes = ["IMP-CLEAR", "IMP-AGENCY-DEST", "IMP-DOC-DEST", "IMP-HANDLING-DEST", "IMP-LOADING-DEST", "IMP-CARTAGE-DEST", "IMP-FSC-CARTAGE-DEST"]
+        for code in dest_codes:
+            LocalCOGSRate.objects.create(
+                product_code=pcs[code],
+                location="POM",
+                direction="IMPORT",
+                scope="DESTINATION",
+                agent=efm_pg,
+                currency="PGK",
+                rate_type="FLAT",
+                amount=Decimal("50.00"),
+                valid_from=self.valid_from,
+                valid_until=self.valid_until,
+            )
+            LocalSellRate.objects.create(
+                product_code=pcs[code],
+                location="POM",
+                direction="IMPORT",
+                payment_term="ANY",
+                scope="DESTINATION",
+                currency="PGK",
+                rate_type="FLAT",
+                amount=Decimal("60.00"),
+                valid_from=self.valid_from,
+                valid_until=self.valid_until,
+            )
+
+        # 5. Build D2D, COLLECT, 100kg Import Quote Payload
+        payload = self._payload(
+            origin_location_id=str(bne_loc.id),
+            destination_location_id=str(self.destination.id),
+            service_scope="D2D",
+            incoterm="D2D",
+            payment_term="COLLECT",
+            buy_currency="AUD",
+            dimensions=[
+                {
+                    "pieces": 1,
+                    "length_cm": "10",
+                    "width_cm": "10",
+                    "height_cm": "10",
+                    "gross_weight_kg": "100",
+                    "package_type": "Pallet",
+                }
+            ],
+        )
+
+        # 6. Request computation
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        # 7. Assertions
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(response.data["quote_result"]["spot_required"])
+        self.assertEqual(response.data["quote_result"]["missing_components"], [])
+        self.assertNotEqual(response.data["status"], "INCOMPLETE")
+        self.assertNotEqual(response.data["latest_version"]["status"], "INCOMPLETE")
+
+        # Verify that all component amounts match expected BUY values in AUD
+        lines = response.data["latest_version"]["lines"]
+        returned_product_codes = {line["product_code"] for line in lines}
+        expected_existing_codes = {
+            "IMP-FRT-AIR",
+            "IMP-PICKUP",
+            "IMP-SCREEN-ORIGIN",
+            "IMP-CTO-ORIGIN",
+            "IMP-DOC-ORIGIN",
+            "IMP-AGENCY-ORIGIN",
+            "IMP-AWB-ORIGIN",
+        }
+        self.assertTrue(expected_existing_codes.issubset(returned_product_codes))
+
+        def get_line_buy(prod_code):
+            for l in lines:
+                if l["product_code"] == prod_code:
+                    return Decimal(str(l["cost_fcy"] if l["cost_fcy"] is not None else l["cost_pgk"]))
+            return None
+
+        # Air Freight: 100kg * 7.00 = 700.00
+        self.assertEqual(get_line_buy("IMP-FRT-AIR"), Decimal("700.00"))
+        # Pick Up: min applies = 85.00
+        self.assertEqual(get_line_buy("IMP-PICKUP"), Decimal("85.00"))
+        # X-Ray Screening: min applies = 70.00
+        self.assertEqual(get_line_buy("IMP-SCREEN-ORIGIN"), Decimal("70.00"))
+        # CTO Fee: 30.00
+        self.assertEqual(get_line_buy("IMP-CTO-ORIGIN"), Decimal("30.00"))
+        # Export Document Fee: 82.00
+        self.assertEqual(get_line_buy("IMP-DOC-ORIGIN"), Decimal("82.00"))
+        # Export Agency Fee: 175.00
+        self.assertEqual(get_line_buy("IMP-AGENCY-ORIGIN"), Decimal("175.00"))
+        # Origin AWB Fee: 30.00
+        self.assertEqual(get_line_buy("IMP-AWB-ORIGIN"), Decimal("30.00"))
+
+        # Verify FX details match snapshot rate and CAF
+        fx_applied = response.data["quote_result"]["fx_applied"]
+        self.assertTrue(fx_applied["applied"])
+        self.assertEqual(fx_applied["from_currency"], "AUD")
+        self.assertEqual(fx_applied["to_currency"], "PGK")
+        self.assertEqual(Decimal(str(fx_applied["base_rate"])), Decimal("0.3218"))
+        self.assertEqual(Decimal(str(fx_applied["effective_fx_after_caf"])), Decimal("0.30571"))

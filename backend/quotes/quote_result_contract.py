@@ -746,7 +746,18 @@ def build_fx_applied_payload(
     if fx_rate is not None:
         shipment_type = str(getattr(getattr(version, "quote", None), "shipment_type", "") or "").upper()
         payment_term = str(getattr(getattr(version, "quote", None), "payment_term", "") or "").upper()
-        if base_rate is None:
+        if fx_currency and from_currency in (None, fx_currency) and to_currency in (None, "PGK"):
+            # Persisted quote lines carry the rate actually used in calculation.
+            # Prefer it over stale/default audit metadata so detail views do not
+            # display a default base rate that differs from the line math.
+            base_rate = fx_rate
+            defaults_used = [
+                item
+                for item in defaults_used
+                if str(item.get("currency") or "").upper() in {"", fx_currency}
+            ]
+            effective_fx_after_caf = None
+        elif base_rate is None:
             base_rate = fx_rate
         if from_currency is None and fx_currency:
             from_currency = fx_currency

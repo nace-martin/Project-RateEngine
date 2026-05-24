@@ -627,6 +627,86 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertIn("Stored quote warning", quote_result["warnings"])
         self.assertIn("FX SELL rate missing for AUD; used 1.0 fallback.", quote_result["warnings"])
 
+    def test_fx_display_prefers_persisted_line_exchange_rate_over_stale_audit_default(self):
+        customer = Company.objects.create(name="AUD Import Customer")
+        contact = Contact.objects.create(
+            company=customer,
+            first_name="Ava",
+            last_name="Import",
+            email="ava.import@example.com",
+        )
+        quote = Quote.objects.create(
+            customer=customer,
+            contact=contact,
+            mode="AIR",
+            shipment_type=Quote.ShipmentType.IMPORT,
+            incoterm="EXW",
+            payment_term=Quote.PaymentTerm.COLLECT,
+            service_scope="D2D",
+            output_currency="PGK",
+            origin_location=create_location(name="Brisbane", code=indexed_iata_code(10, "B")),
+            destination_location=create_location(name="Port Moresby", code=indexed_iata_code(11, "P")),
+            status=Quote.Status.DRAFT,
+            created_by=self.user,
+        )
+        version = QuoteVersion.objects.create(
+            quote=quote,
+            version_number=1,
+            status=Quote.Status.DRAFT,
+            created_by=self.user,
+            engine_version="V4",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            cost_pgk=Decimal("2175.26"),
+            cost_fcy=Decimal("700.00"),
+            cost_fcy_currency="AUD",
+            sell_pgk=Decimal("2747.70"),
+            sell_pgk_incl_gst=Decimal("2747.70"),
+            sell_fcy=Decimal("2747.70"),
+            sell_fcy_currency="PGK",
+            exchange_rate=Decimal("0.321800"),
+            bucket="airfreight",
+            leg="MAIN",
+            product_code="IMP-FRT-AIR",
+            component="FREIGHT",
+            unit_type="KG",
+            cost_source="DB_TARIFF",
+            rate_source="DB_TARIFF",
+            canonical_cost_source="DB_TARIFF",
+        )
+        QuoteTotal.objects.create(
+            quote_version=version,
+            total_cost_pgk=Decimal("2175.26"),
+            total_sell_pgk=Decimal("2747.70"),
+            total_sell_pgk_incl_gst=Decimal("2747.70"),
+            has_missing_rates=False,
+            audit_metadata_json={
+                "fx_audit": {
+                    "applied": True,
+                    "base_rate": "0.35",
+                    "base_rate_type": "TT_BUY",
+                    "from_currency": "AUD",
+                    "to_currency": "PGK",
+                    "caf_percent": "0.05",
+                    "caf_operation": "DEDUCTED",
+                    "effective_rate_after_caf": "0.332500",
+                    "defaults_used": [
+                        {"field": "tt_buy", "currency": "PGK", "default": "0.35"},
+                    ],
+                }
+            },
+        )
+
+        response = self.client.get(reverse("quotes:quote-v3-detail", kwargs={"pk": quote.id}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        fx_applied = response.json()["quote_result"]["fx_applied"]
+        self.assertEqual(fx_applied["rate"], "0.321800")
+        self.assertEqual(fx_applied["base_rate"], "0.321800")
+        self.assertEqual(fx_applied["effective_fx_after_caf"], "0.305710")
+        self.assertEqual(fx_applied["fx_defaults_used"], [])
+
     def test_quote_result_subcategory_classification(self):
         """Verify that line items in quote_result have correct subcategories."""
         quote = self.quote

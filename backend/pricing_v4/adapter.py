@@ -549,8 +549,15 @@ class PricingServiceV4Adapter:
             # PRIORITY: Use the currency already determined by the View/User (Customer Preference)
             # If not set, fallback to adapter logic
             quote_currency = self.get_output_currency()
-            
-            fx_info = fx_rates.get(quote_currency, {})
+            normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
+            normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
+
+            # Lookup the FCY currency involved in the conversion
+            lookup_currency = normalized_quote_currency
+            if normalized_quote_currency == "PGK" and normalized_buy_currency:
+                lookup_currency = normalized_buy_currency
+
+            fx_info = fx_rates.get(lookup_currency, {})
             # Use defaults if missing (same as Export)
             tt_buy_from_snapshot = bool(fx_info and fx_info.get('tt_buy') is not None)
             tt_sell_from_snapshot = bool(fx_info and fx_info.get('tt_sell') is not None)
@@ -568,14 +575,12 @@ class PricingServiceV4Adapter:
                      margin_rate = Decimal(str(self.policy.margin_pct))
 
             caf_used = caf_rate if caf_rate is not None else ImportPricingEngine.DEFAULT_CAF
-            normalized_quote_currency = str(quote_currency or "").upper() or "PGK"
-            normalized_buy_currency = str(getattr(self.quote_input, "buy_currency", None) or "").upper() or None
             fx_applied = (normalized_quote_currency != "PGK") or (normalized_buy_currency not in (None, "", "PGK"))
             defaults_used = []
             if not tt_buy_from_snapshot:
-                defaults_used.append({"field": "tt_buy", "currency": normalized_quote_currency, "default": str(tt_buy)})
+                defaults_used.append({"field": "tt_buy", "currency": lookup_currency, "default": str(tt_buy)})
             if not tt_sell_from_snapshot:
-                defaults_used.append({"field": "tt_sell", "currency": normalized_quote_currency, "default": str(tt_sell)})
+                defaults_used.append({"field": "tt_sell", "currency": lookup_currency, "default": str(tt_sell)})
             if caf_rate is None:
                 defaults_used.append({"field": "caf_percent", "scope": "import", "default": str(caf_used)})
 
