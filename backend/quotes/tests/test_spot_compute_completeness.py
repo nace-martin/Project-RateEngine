@@ -242,7 +242,7 @@ def test_spot_compute_uses_import_prepaid_fcy_output_currency(monkeypatch):
     assert captured.get("output_currency") == "AUD"
 
 
-def test_spot_create_quote_uses_export_prepaid_pgk_output_currency(monkeypatch):
+def test_spot_create_quote_uses_export_prepaid_non_au_fcy_output_currency(monkeypatch):
     pgk = Currency.objects.create(code="PGK", name="Papua New Guinea Kina")
     usd = Currency.objects.create(code="USD", name="US Dollar")
     pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
@@ -289,8 +289,8 @@ def test_spot_create_quote_uses_export_prepaid_pgk_output_currency(monkeypatch):
     assert payload["success"] is True
 
     quote = Quote.objects.get(id=payload["quote_id"])
-    assert captured.get("output_currency") == "PGK"
-    assert quote.output_currency == "PGK"
+    assert captured.get("output_currency") == "USD"
+    assert quote.output_currency == "USD"
 
 
 def test_spot_create_quote_persists_selected_contact_and_incoterm(monkeypatch):
