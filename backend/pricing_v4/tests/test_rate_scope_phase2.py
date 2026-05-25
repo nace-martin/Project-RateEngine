@@ -136,7 +136,7 @@ class Phase2QuoteOutputRegressionTests(TestCase):
             product_code=cls.exp_freight,
             origin_airport="POM",
             destination_airport="BNE",
-            currency="USD",
+            currency="AUD",
             rate_per_kg=Decimal("4.00"),
             min_charge=Decimal("80.00"),
             valid_from=cls.valid_from,
@@ -199,8 +199,8 @@ class Phase2QuoteOutputRegressionTests(TestCase):
         self.assertEqual([line.product_code for line in result.destination_lines], ["IMP-CLEAR", "IMP-CARTAGE-DEST"])
 
     def test_export_air_pom_bne_quote_output_is_stable(self):
-        # COLLECT resolves to USD for AU-bound export shipments under corrected business rules,
-        # which correctly matches the USD sell rate in the test fixture.
+        # COLLECT resolves to AUD for AU-bound export shipments under corrected business rules,
+        # which correctly matches the AUD sell rate in the test fixture.
         result = ExportPricingEngine(
             quote_date=date.today(),
             origin="POM",
@@ -209,11 +209,11 @@ class Phase2QuoteOutputRegressionTests(TestCase):
             payment_term=ExportPaymentTerm.COLLECT,
             tt_sell=Decimal("2.50"),
             caf_rate=Decimal("0.00"),
-            destination_currency="USD",
+            destination_currency="AUD",
         ).calculate_quote([self.exp_freight.id])
 
         self.assertEqual(result.total_cost_pgk, Decimal("300.00"))
-        self.assertEqual(result.lines[0].sell_currency, "USD")
+        self.assertEqual(result.lines[0].sell_currency, "AUD")
         self.assertEqual(result.lines[0].sell_amount, Decimal("200.00"))
         self.assertEqual([line.product_code for line in result.lines], ["EXP-FRT-AIR"])
 

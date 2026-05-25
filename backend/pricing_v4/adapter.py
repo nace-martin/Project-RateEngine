@@ -501,7 +501,7 @@ class PricingServiceV4Adapter:
                     margin_rate = Decimal(str(self.policy.margin_pct))
 
             caf_used = caf_rate if caf_rate is not None else ExportPricingEngine.DEFAULT_CAF
-            fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.PREPAID)
+            fx_applied = (str(quote_currency or '').upper() != 'PGK') and (export_payment_term == ExportPaymentTerm.COLLECT)
             defaults_used: list[dict[str, str]] = []
             if not tt_buy_from_snapshot:
                 defaults_used.append({"field": "tt_buy", "currency": str(quote_currency or "").upper() or "UNKNOWN", "default": str(tt_buy)})
@@ -520,7 +520,7 @@ class PricingServiceV4Adapter:
                 caf_operation=("ADDED" if fx_applied else None),
                 effective_rate_after_caf=(tt_sell * (Decimal("1") + caf_used) if fx_applied else None),
                 defaults_used=defaults_used,
-                notes=("Export PREPAID: CAF added to TT_SELL; conversion recorded for FCY -> PGK audit." if fx_applied else None),
+                notes=("Export COLLECT: CAF added to TT_SELL; conversion recorded for FCY -> PGK audit." if fx_applied else None),
             )
             
             engine = ExportPricingEngine(
