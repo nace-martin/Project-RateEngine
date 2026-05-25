@@ -170,7 +170,7 @@ class ExportPricingEngine:
         self._cost_cache: Dict[int, Decimal] = {}
     
     def _determine_quote_currency(self) -> str:
-        if self.payment_term == PaymentTerm.PREPAID:
+        if self.payment_term == PaymentTerm.COLLECT:
             return self.destination_currency
         return 'PGK'
     
@@ -342,9 +342,9 @@ class ExportPricingEngine:
             service_scope=service_scope,
             currency=self.quote_currency, quote_currency=self.quote_currency,
             total_margin=total_margin, total_gst=total_gst, total_sell_incl_gst=total_sell_incl_gst,
-            fx_rate_used=self.tt_sell if self.payment_term == PaymentTerm.PREPAID else None,
-            effective_fx_rate=self._get_effective_fx_rate() if self.payment_term == PaymentTerm.PREPAID else None,
-            caf_rate=self.caf_rate if self.payment_term == PaymentTerm.PREPAID else None,
+            fx_rate_used=self.tt_sell if self.payment_term == PaymentTerm.COLLECT else None,
+            effective_fx_rate=self._get_effective_fx_rate() if self.payment_term == PaymentTerm.COLLECT else None,
+            caf_rate=self.caf_rate if self.payment_term == PaymentTerm.COLLECT else None,
         )
     
     def _prefetch_rates(self, product_code_ids: List[int]):
@@ -381,7 +381,7 @@ class ExportPricingEngine:
                         destination_airport=self.destination,
                         currency=self.quote_currency,
                     ),
-                    allow_pgk_fallback=self.payment_term == PaymentTerm.PREPAID and self.quote_currency != 'PGK',
+                    allow_pgk_fallback=self.payment_term == PaymentTerm.COLLECT and self.quote_currency != 'PGK',
                 ).record
             except RateNotFoundError:
                 pass
@@ -451,9 +451,9 @@ class ExportPricingEngine:
                 local_rates = local_rates.exclude(rate_type='PERCENT')
 
             preferred_currency = None
-            if self.payment_term == PaymentTerm.PREPAID:
+            if self.payment_term == PaymentTerm.COLLECT:
                 preferred_currency = self.destination_currency or self.quote_currency
-            elif self.payment_term == PaymentTerm.COLLECT:
+            elif self.payment_term == PaymentTerm.PREPAID:
                 preferred_currency = self.quote_currency or 'PGK'
 
             if not preferred_currency:
@@ -470,7 +470,7 @@ class ExportPricingEngine:
                         currency=preferred_currency,
                     ),
                     queryset_override=local_rates,
-                    allow_pgk_fallback=self.payment_term == PaymentTerm.PREPAID and preferred_currency != 'PGK',
+                    allow_pgk_fallback=self.payment_term == PaymentTerm.COLLECT and preferred_currency != 'PGK',
                 ).record
             except RateNotFoundError:
                 return None
@@ -526,7 +526,7 @@ class ExportPricingEngine:
         
         fx_applied, caf_applied, margin_applied = False, False, False
         rate_is_fcy = (sell_rate.currency == self.quote_currency)
-        if self.payment_term == PaymentTerm.PREPAID:
+        if self.payment_term == PaymentTerm.COLLECT:
             if rate_is_fcy: sell_amount = sell_amount_base
             else:
                 sell_with_margin = self._apply_margin(sell_amount_base)
@@ -537,7 +537,7 @@ class ExportPricingEngine:
             sell_amount = sell_amount_base
         
         margin_cost_base = cost_amount
-        if self.payment_term == PaymentTerm.PREPAID and rate_is_fcy and cost_amount > 0:
+        if self.payment_term == PaymentTerm.COLLECT and rate_is_fcy and cost_amount > 0:
             margin_cost_base = self._convert_pgk_to_fcy(cost_amount)
             
         margin_amount = sell_amount - margin_cost_base

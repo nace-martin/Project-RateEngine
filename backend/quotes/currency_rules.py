@@ -34,7 +34,7 @@ def determine_quote_currency(
         return "AUD" if origin == "AU" else "USD"
 
     if shipment == "EXPORT":
-        if term == "COLLECT":
+        if term == "PREPAID":
             return "PGK"
         return "AUD" if destination == "AU" else "USD"
 
