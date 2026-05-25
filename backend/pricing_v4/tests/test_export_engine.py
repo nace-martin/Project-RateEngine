@@ -600,3 +600,176 @@ class ExportProductCodeSelectionTest(TestCase):
 
         self.assertNotIn(product_code.id, general_codes)
         self.assertIn(product_code.id, commodity_codes)
+
+
+class ExportFscAirDbTariffTest(TestCase):
+    """Verify POM -> SIN EXPORT COLLECT 100kg resolves EXP-FSC-AIR from database without fallback."""
+
+    @classmethod
+    def setUpTestData(cls):
+        # 1. Create the ProductCodes
+        cls.pc_fsc_air = ProductCode.objects.update_or_create(
+            id=1002,
+            defaults={
+                'code': 'EXP-FSC-AIR',
+                'description': 'Airline Export Fuel Surcharge',
+                'domain': ProductCode.DOMAIN_EXPORT,
+                'category': 'SURCHARGE',
+                'is_gst_applicable': True,
+                'gst_rate': Decimal('0.10'),
+                'gst_treatment': ProductCode.GST_TREATMENT_STANDARD,
+                'gl_revenue_code': '4000',
+                'gl_cost_code': '5000',
+                'default_unit': ProductCode.UNIT_KG,
+            }
+        )[0]
+        cls.pc_clear = ProductCode.objects.update_or_create(
+            id=1020,
+            defaults={
+                'code': 'EXP-CLEAR',
+                'description': 'Export Customs Clearance',
+                'domain': ProductCode.DOMAIN_EXPORT,
+                'category': 'CLEARANCE',
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.00'),
+                'gst_treatment': ProductCode.GST_TREATMENT_EXEMPT,
+                'gl_revenue_code': '4300',
+                'gl_cost_code': '5300',
+                'default_unit': ProductCode.UNIT_SHIPMENT,
+            }
+        )[0]
+        cls.pc_agency = ProductCode.objects.update_or_create(
+            id=1021,
+            defaults={
+                'code': 'EXP-AGENCY',
+                'description': 'Export Agency Fee',
+                'domain': ProductCode.DOMAIN_EXPORT,
+                'category': 'AGENCY',
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.00'),
+                'gst_treatment': ProductCode.GST_TREATMENT_EXEMPT,
+                'gl_revenue_code': '4300',
+                'gl_cost_code': '5300',
+                'default_unit': ProductCode.UNIT_SHIPMENT,
+            }
+        )[0]
+        cls.pc_pickup = ProductCode.objects.update_or_create(
+            id=1050,
+            defaults={
+                'code': 'EXP-PICKUP',
+                'description': 'Export Pickup/Collection',
+                'domain': ProductCode.DOMAIN_EXPORT,
+                'category': 'CARTAGE',
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.00'),
+                'gl_revenue_code': '4500',
+                'gl_cost_code': '5500',
+                'default_unit': ProductCode.UNIT_KG,
+            }
+        )[0]
+
+        # 2. Seed sell rates in DB
+        cls.valid_from = date(2025, 1, 1)
+        cls.valid_until = date(2030, 12, 31)
+
+        LocalSellRate.objects.update_or_create(
+            product_code=cls.pc_fsc_air,
+            location='POM',
+            direction='EXPORT',
+            payment_term='ANY',
+            currency='PGK',
+            valid_from=cls.valid_from,
+            defaults={
+                'rate_type': 'PER_KG',
+                'amount': Decimal('0.80'),
+                'valid_until': cls.valid_until,
+                'scope': 'LOCAL',
+            }
+        )
+
+        LocalSellRate.objects.update_or_create(
+            product_code=cls.pc_clear,
+            location='POM',
+            direction='EXPORT',
+            payment_term='ANY',
+            currency='PGK',
+            valid_from=cls.valid_from,
+            defaults={
+                'rate_type': 'FIXED',
+                'amount': Decimal('300.00'),
+                'valid_until': cls.valid_until,
+                'scope': 'LOCAL',
+            }
+        )
+
+        LocalSellRate.objects.update_or_create(
+            product_code=cls.pc_agency,
+            location='POM',
+            direction='EXPORT',
+            payment_term='ANY',
+            currency='PGK',
+            valid_from=cls.valid_from,
+            defaults={
+                'rate_type': 'FIXED',
+                'amount': Decimal('250.00'),
+                'valid_until': cls.valid_until,
+                'scope': 'LOCAL',
+            }
+        )
+
+        LocalSellRate.objects.update_or_create(
+            product_code=cls.pc_pickup,
+            location='POM',
+            direction='EXPORT',
+            payment_term='ANY',
+            currency='PGK',
+            valid_from=cls.valid_from,
+            defaults={
+                'rate_type': 'PER_KG',
+                'amount': Decimal('1.50'),
+                'valid_until': cls.valid_until,
+                'scope': 'LOCAL',
+            }
+        )
+
+    def test_collect_quote_resolves_fsc_from_db_without_fallback_and_no_cogs_is_allowed(self):
+        engine = ExportPricingEngine(
+            quote_date=date(2026, 5, 25),
+            origin='POM',
+            destination='SIN',
+            chargeable_weight_kg=Decimal('100'),
+            payment_term=PaymentTerm.COLLECT,
+            tt_sell=Decimal('0.2326'),
+            caf_rate=Decimal('0.05'),
+            destination_currency='USD',
+        )
+
+        result = engine.calculate_quote([1002, 1020, 1021, 1050])
+
+        self.assertEqual(result.currency, 'USD')
+
+        # Find line items
+        by_code = {item.product_code: item for item in result.line_items}
+
+        # 1. EXP-FSC-AIR must not be a fallback
+        fsc_line = by_code['EXP-FSC-AIR']
+        self.assertEqual(fsc_line.rate_source, 'DB_TARIFF')
+        self.assertFalse(fsc_line.is_rate_missing)
+        self.assertIsNone(fsc_line.calculation_notes)
+        self.assertTrue(fsc_line.fx_applied)
+
+        # 2. EXP-CLEAR, EXP-AGENCY, EXP-PICKUP should have DB_TARIFF sell and 0.00 cost
+        clear_line = by_code['EXP-CLEAR']
+        self.assertEqual(clear_line.rate_source, 'DB_TARIFF')
+        self.assertEqual(clear_line.cost_amount, Decimal('0.00'))
+        self.assertEqual(clear_line.cost_source, 'DB_TARIFF')
+
+        agency_line = by_code['EXP-AGENCY']
+        self.assertEqual(agency_line.rate_source, 'DB_TARIFF')
+        self.assertEqual(agency_line.cost_amount, Decimal('0.00'))
+        self.assertEqual(agency_line.cost_source, 'DB_TARIFF')
+
+        pickup_line = by_code['EXP-PICKUP']
+        self.assertEqual(pickup_line.rate_source, 'DB_TARIFF')
+        self.assertEqual(pickup_line.cost_amount, Decimal('0.00'))
+        self.assertEqual(pickup_line.cost_source, 'DB_TARIFF')
