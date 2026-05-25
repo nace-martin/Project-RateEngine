@@ -23,6 +23,7 @@ from pricing_v4.models import (
     ExportSellRate,
     LocalCOGSRate,
     LocalSellRate,
+    Surcharge,
 )
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult
@@ -105,7 +106,7 @@ class ExportPrepaidFcyMarginTest(ExportEngineTestCase):
             product_code=self.pc_clearance,
             location='POM',
             direction='EXPORT',
-            payment_term='PREPAID',
+            payment_term='COLLECT',
             currency='USD',
             rate_type='FIXED',
             amount=Decimal('80.00'),
@@ -119,7 +120,7 @@ class ExportPrepaidFcyMarginTest(ExportEngineTestCase):
             origin='POM',
             destination='BNE',
             chargeable_weight_kg=Decimal('1'),
-            payment_term=PaymentTerm.PREPAID,
+            payment_term=PaymentTerm.COLLECT,
             tt_sell=Decimal('2.00'),
             caf_rate=Decimal('0.00'),
             destination_currency='USD'
@@ -164,7 +165,7 @@ class ExportLocalSellRateSelectionTest(ExportEngineTestCase):
             product_code=self.pc_clearance,
             location='POM',
             direction='EXPORT',
-            payment_term='PREPAID',
+            payment_term='COLLECT',
             currency='PGK',
             rate_type='FIXED',
             amount=Decimal('250.00'),
@@ -190,7 +191,7 @@ class ExportLocalSellRateSelectionTest(ExportEngineTestCase):
             origin='POM',
             destination='HKG',
             chargeable_weight_kg=Decimal('1'),
-            payment_term=PaymentTerm.PREPAID,
+            payment_term=PaymentTerm.COLLECT,
             tt_sell=Decimal('2.50'),
             caf_rate=Decimal('0.00'),
             destination_currency='USD'
@@ -207,7 +208,7 @@ class ExportLocalSellRateSelectionTest(ExportEngineTestCase):
             product_code=self.pc_dest_clearance,
             location='SIN',
             direction='EXPORT',
-            payment_term='PREPAID',
+            payment_term='COLLECT',
             currency='USD',
             rate_type='FIXED',
             amount=Decimal('135.00'),
@@ -220,7 +221,7 @@ class ExportLocalSellRateSelectionTest(ExportEngineTestCase):
             origin='POM',
             destination='SIN',
             chargeable_weight_kg=Decimal('1'),
-            payment_term=PaymentTerm.PREPAID,
+            payment_term=PaymentTerm.COLLECT,
             tt_sell=Decimal('2.50'),
             caf_rate=Decimal('0.00'),
             destination_currency='USD'
@@ -299,6 +300,158 @@ class ExportSellRateSelectionTest(ExportEngineTestCase):
         self.assertEqual(line.rule_family, CALCULATION_TIERED_BREAK)
 
 
+class ExportFxAndCollectCurrencyTest(ExportEngineTestCase):
+    """Export PREPAID converts PGK sell rates to FCY; COLLECT stays PGK."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.pc_fx_freight = ProductCode.objects.create(
+            id=1506,
+            code='EXP-FRT-AIR-FX-TEST',
+            description='Export Air Freight FX Test',
+            domain='EXPORT',
+            category='FREIGHT',
+            is_gst_applicable=False,
+            gst_rate=Decimal('0.00'),
+            gl_revenue_code='4306',
+            gl_cost_code='5306',
+            default_unit=ProductCode.UNIT_KG,
+        )
+
+    def setUp(self):
+        ExportCOGS.objects.create(
+            product_code=self.pc_fx_freight,
+            origin_airport='POM',
+            destination_airport='SIN',
+            agent=self.agent,
+            currency='PGK',
+            rate_per_shipment=Decimal('400.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+        ExportSellRate.objects.create(
+            product_code=self.pc_fx_freight,
+            origin_airport='POM',
+            destination_airport='SIN',
+            currency='PGK',
+            rate_per_shipment=Decimal('1000.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+    def test_export_prepaid_fcy_quote_uses_tt_sell_with_caf_added(self):
+        result = ExportPricingEngine(
+            quote_date=date.today(),
+            origin='POM',
+            destination='SIN',
+            chargeable_weight_kg=Decimal('1'),
+            payment_term=PaymentTerm.COLLECT,
+            tt_sell=Decimal('2.00'),
+            caf_rate=Decimal('0.10'),
+            margin_rate=Decimal('0.20'),
+            destination_currency='USD',
+        ).calculate_quote([self.pc_fx_freight.id])
+
+        line = result.lines[0]
+        self.assertEqual(result.quote_currency, 'USD')
+        self.assertEqual(result.fx_rate_used, Decimal('2.00'))
+        self.assertEqual(result.effective_fx_rate, Decimal('2.2000'))
+        self.assertEqual(result.caf_rate, Decimal('0.10'))
+        self.assertEqual(line.sell_currency, 'USD')
+        self.assertEqual(line.sell_amount, Decimal('545.45'))
+        self.assertTrue(line.fx_applied)
+        self.assertTrue(line.caf_applied)
+        self.assertTrue(line.margin_applied)
+
+    def test_export_collect_pgk_quote_does_not_convert_to_destination_fcy(self):
+        ExportSellRate.objects.create(
+            product_code=self.pc_fx_freight,
+            origin_airport='POM',
+            destination_airport='SIN',
+            currency='USD',
+            rate_per_shipment=Decimal('99.00'),
+            valid_from=self.valid_from,
+            valid_until=self.valid_until,
+        )
+
+        result = ExportPricingEngine(
+            quote_date=date.today(),
+            origin='POM',
+            destination='SIN',
+            chargeable_weight_kg=Decimal('1'),
+            payment_term=PaymentTerm.PREPAID,
+            tt_sell=Decimal('2.00'),
+            caf_rate=Decimal('0.10'),
+            destination_currency='USD',
+        ).calculate_quote([self.pc_fx_freight.id])
+
+        line = result.lines[0]
+        self.assertEqual(result.quote_currency, 'PGK')
+        self.assertIsNone(result.fx_rate_used)
+        self.assertIsNone(result.effective_fx_rate)
+        self.assertIsNone(result.caf_rate)
+        self.assertEqual(line.sell_currency, 'PGK')
+        self.assertEqual(line.sell_amount, Decimal('1000.00'))
+        self.assertFalse(line.fx_applied)
+        self.assertFalse(line.caf_applied)
+
+
+class ExportFallbackDefaultTest(TestCase):
+    """Document the current hardcoded export defaults when sell rates are absent."""
+
+    DEFAULT_PRODUCTS = [
+        (1002, 'EXP-FSC-AIR', 'Airline Export Fuel Surcharge', 'SURCHARGE', ProductCode.UNIT_KG),
+        (1020, 'EXP-CLEAR', 'Customs Clearance (Origin)', 'CLEARANCE', ProductCode.UNIT_SHIPMENT),
+        (1030, 'EXP-TERM', 'Terminal Handling', 'HANDLING', ProductCode.UNIT_SHIPMENT),
+        (1032, 'EXP-HANDLE', 'Handling Fee', 'HANDLING', ProductCode.UNIT_SHIPMENT),
+        (1040, 'EXP-SCREEN', 'Security Screening', 'SCREENING', ProductCode.UNIT_KG),
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        for pc_id, code, description, category, default_unit in cls.DEFAULT_PRODUCTS:
+            ProductCode.objects.update_or_create(
+                id=pc_id,
+                defaults={
+                    'code': code,
+                    'description': description,
+                    'domain': ProductCode.DOMAIN_EXPORT,
+                    'category': category,
+                    'is_gst_applicable': False,
+                    'gst_rate': Decimal('0.00'),
+                    'gl_revenue_code': '4300',
+                    'gl_cost_code': '5300',
+                    'default_unit': default_unit,
+                },
+            )
+
+    def setUp(self):
+        product_code_ids = [pc_id for pc_id, *_ in self.DEFAULT_PRODUCTS]
+        ExportSellRate.objects.filter(product_code_id__in=product_code_ids).delete()
+        LocalSellRate.objects.filter(product_code_id__in=product_code_ids).delete()
+        Surcharge.objects.filter(product_code_id__in=product_code_ids).delete()
+
+    def test_missing_export_sell_rates_use_current_hardcoded_defaults(self):
+        result = ExportPricingEngine(
+            quote_date=date.today(),
+            origin='POM',
+            destination='BNE',
+            chargeable_weight_kg=Decimal('50'),
+            payment_term=PaymentTerm.PREPAID,
+            destination_currency='AUD',
+        ).calculate_quote([1002, 1020, 1030, 1032, 1040])
+
+        by_code = {line.product_code: line for line in result.lines}
+        self.assertEqual(by_code['EXP-CLEAR'].sell_amount, Decimal('300.00'))
+        self.assertEqual(by_code['EXP-FSC-AIR'].sell_amount, Decimal('40.00'))
+        self.assertEqual(by_code['EXP-SCREEN'].sell_amount, Decimal('55.00'))
+        self.assertEqual(by_code['EXP-TERM'].sell_amount, Decimal('150.00'))
+        self.assertEqual(by_code['EXP-HANDLE'].sell_amount, Decimal('50.00'))
+        self.assertEqual({line.sell_currency for line in result.lines}, {'PGK'})
+        self.assertTrue(all('Default' in line.notes for line in result.lines))
+
+
 class ExportPercentRateSelectionTest(ExportEngineTestCase):
     """Percent ProductCodes must not pick incompatible FIXED placeholder rows."""
 
@@ -360,7 +513,7 @@ class ExportPercentRateSelectionTest(ExportEngineTestCase):
             product_code=self.pc_fsc_pickup,
             location='POM',
             direction='EXPORT',
-            payment_term='PREPAID',
+            payment_term='COLLECT',
             currency='PGK',
             rate_type='PERCENT',
             amount=Decimal('10.00'),
@@ -375,7 +528,7 @@ class ExportPercentRateSelectionTest(ExportEngineTestCase):
             origin='POM',
             destination='SIN',
             chargeable_weight_kg=Decimal('100'),
-            payment_term=PaymentTerm.PREPAID,
+            payment_term=PaymentTerm.COLLECT,
             tt_sell=Decimal('2.50'),
             caf_rate=Decimal('0.00'),
             destination_currency='USD'
