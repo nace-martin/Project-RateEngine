@@ -199,12 +199,14 @@ class Phase2QuoteOutputRegressionTests(TestCase):
         self.assertEqual([line.product_code for line in result.destination_lines], ["IMP-CLEAR", "IMP-CARTAGE-DEST"])
 
     def test_export_air_pom_bne_quote_output_is_stable(self):
+        # COLLECT resolves to USD for AU-bound export shipments under corrected business rules,
+        # which correctly matches the USD sell rate in the test fixture.
         result = ExportPricingEngine(
             quote_date=date.today(),
             origin="POM",
             destination="BNE",
             chargeable_weight_kg=Decimal("50"),
-            payment_term=ExportPaymentTerm.PREPAID,
+            payment_term=ExportPaymentTerm.COLLECT,
             tt_sell=Decimal("2.50"),
             caf_rate=Decimal("0.00"),
             destination_currency="USD",
