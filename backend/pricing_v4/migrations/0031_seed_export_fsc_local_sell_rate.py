@@ -4,12 +4,6 @@ from django.db import migrations
 
 
 def seed_export_fsc_rate(apps, schema_editor):
-    import sys
-    db_name = schema_editor.connection.settings_dict.get('NAME', '')
-    if 'test' in db_name or db_name == ':memory:' or 'test' in sys.argv or any('pytest' in arg for arg in sys.argv):
-        # Skip seeding in test environment to preserve test suite isolation and exact counts
-        return
-
     ProductCode = apps.get_model('pricing_v4', 'ProductCode')
     LocalSellRate = apps.get_model('pricing_v4', 'LocalSellRate')
 
