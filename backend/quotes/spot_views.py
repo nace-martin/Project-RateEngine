@@ -1197,6 +1197,31 @@ class SpotTriggerEvaluateAPIView(APIView):
             is_spot,
         )
         
+        # Build debug_audit payload
+        from quotes.completeness import required_components
+        req_comps = list(required_components(direction, service_scope))
+        
+        checked_tables = []
+        selector_filters = {}
+        matched_rate_ids = []
+        missing_reasons = {}
+
+        for comp, outcome in component_outcomes.items():
+            model_name = outcome.get('selector_model')
+            if model_name and model_name not in checked_tables:
+                checked_tables.append(model_name)
+            
+            ctx = outcome.get('selector_context') or {}
+            if ctx:
+                selector_filters[comp] = ctx
+            
+            rate_id = outcome.get('matched_rate_id')
+            if rate_id:
+                matched_rate_ids.append(rate_id)
+            
+            if outcome.get('status') in {'missing_rate', 'missing_dimension', 'ambiguous'}:
+                missing_reasons[comp] = outcome.get('detail') or 'No matching rate found.'
+
         response_payload = {
             'is_spot_required': is_spot,
             'trigger': {
@@ -1208,6 +1233,14 @@ class SpotTriggerEvaluateAPIView(APIView):
                 'manual_required_product_codes': trigger.manual_required_product_codes,
             } if trigger else None,
             'component_outcomes': component_outcomes,
+            'debug_audit': {
+                'required_components': req_comps,
+                'checked_tables': checked_tables,
+                'selector_filters': selector_filters,
+                'matched_rate_ids': matched_rate_ids,
+                'missing_components': trigger.missing_components if trigger else [],
+                'missing_reasons': missing_reasons,
+            }
         }
         if selector_issue is not None:
             response_payload['selector_issue'] = selector_issue

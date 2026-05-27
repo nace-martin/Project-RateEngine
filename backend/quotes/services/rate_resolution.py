@@ -317,6 +317,15 @@ def _buy_side_component_rows(
     for row in local_rows:
         if COMPONENT_DESTINATION_LOCAL in required_set:
             rows_by_component[COMPONENT_DESTINATION_LOCAL].append(row)
+
+    local_origin_rows = (
+        _active_queryset(LocalCOGSRate, context.quote_date)
+        .filter(direction="IMPORT", location=context.origin_airport)
+        .select_related("product_code", "agent", "carrier")
+    )
+    for row in local_origin_rows:
+        if COMPONENT_ORIGIN_LOCAL in required_set:
+            rows_by_component[COMPONENT_ORIGIN_LOCAL].append(row)
     return rows_by_component
 
 

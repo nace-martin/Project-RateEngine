@@ -119,3 +119,284 @@ class SPOTRegressionD2DCollectTests(APITestCase):
         self.assertIn("FREIGHT", data["shipment"]["missing_components"])
         self.assertIn("ORIGIN_LOCAL", data["shipment"]["missing_components"])
         self.assertNotIn("DESTINATION_LOCAL", data["shipment"]["missing_components"])
+
+    def test_import_bne_pom_d2d_collect_all_present_no_spot(self):
+        """
+        D2D, COLLECT Import BNE -> POM with all components present in DB.
+        Expected: SPOT must NOT trigger.
+        """
+        # Create AU and BNE
+        au = Country.objects.get_or_create(code="AU", defaults={"name": "Australia"})[0]
+        bne = create_location(code="BNE", name="Brisbane", country=au)
+        
+        # ProductCodes
+        pc_frt, _ = ProductCode.objects.get_or_create(
+            id=2001,
+            defaults={"code": "IMP-FRT-AIR", "category": "FREIGHT", "description": "Freight", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        pc_origin, _ = ProductCode.objects.get_or_create(
+            id=2050,
+            defaults={"code": "IMP-PICKUP", "category": "CARTAGE", "description": "Origin Pickup", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        pc_dest, _ = ProductCode.objects.get_or_create(
+            id=2060,
+            defaults={"code": "IMP-CARTAGE-DEST", "category": "CARTAGE", "description": "Dest Delivery", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        
+        # Seed buy/sell rows
+        from pricing_v4.models import ImportCOGS, LocalCOGSRate, LocalSellRate, Agent
+        
+        agent, _ = Agent.objects.get_or_create(
+            code="EFM-AU",
+            defaults={"name": "EFM Australia", "country_code": "AU", "agent_type": "ORIGIN"}
+        )
+
+        ImportCOGS.objects.get_or_create(
+            product_code=pc_frt,
+            origin_airport="BNE",
+            destination_airport="POM",
+            currency="AUD",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_per_kg": 5.0}
+        )
+        LocalCOGSRate.objects.get_or_create(
+            product_code=pc_origin,
+            location="BNE",
+            direction="IMPORT",
+            currency="AUD",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_type": "FIXED", "amount": 100.0}
+        )
+        LocalCOGSRate.objects.get_or_create(
+            product_code=pc_dest,
+            location="POM",
+            direction="IMPORT",
+            currency="PGK",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_type": "FIXED", "amount": 150.0}
+        )
+        LocalSellRate.objects.get_or_create(
+            product_code=pc_dest,
+            location="POM",
+            direction="IMPORT",
+            currency="PGK",
+            payment_term="COLLECT",
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_type": "FIXED", "amount": 200.0}
+        )
+        
+        # Create quote
+        quote = Quote.objects.create(
+            customer=self.customer,
+            mode="AIR",
+            shipment_type="IMPORT",
+            origin_location=bne,
+            destination_location=self.destination,
+            status="DRAFT",
+            service_scope="D2D",
+            payment_term="COLLECT",
+            commodity_code="GCR",
+            created_by=self.user
+        )
+        
+        eval_url = "/api/v3/spot/evaluate-trigger/"
+        eval_payload = {
+            "origin_country": "AU",
+            "destination_country": "PG",
+            "origin_airport": "BNE",
+            "destination_airport": "POM",
+            "service_scope": "D2D",
+            "payment_term": "COLLECT",
+            "commodity": "GCR",
+            "quote_id": str(quote.id)
+        }
+        response = self.client.post(eval_url, eval_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        data = response.json()
+        self.assertFalse(data["is_spot_required"])
+        self.assertIn("debug_audit", data)
+
+    def test_import_bne_pom_d2d_collect_origin_missing_spot_origin_only(self):
+        """
+        D2D, COLLECT Import BNE -> POM with origin local missing.
+        Expected: SPOT triggers with ORIGIN_LOCAL in missing_components.
+        """
+        # Create AU and BNE
+        au = Country.objects.get_or_create(code="AU", defaults={"name": "Australia"})[0]
+        bne = create_location(code="BNE", name="Brisbane", country=au)
+        
+        # ProductCodes
+        pc_frt, _ = ProductCode.objects.get_or_create(
+            id=2001,
+            defaults={"code": "IMP-FRT-AIR", "category": "FREIGHT", "description": "Freight", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        pc_dest, _ = ProductCode.objects.get_or_create(
+            id=2060,
+            defaults={"code": "IMP-CARTAGE-DEST", "category": "CARTAGE", "description": "Dest Delivery", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        
+        # Seed freight and destination charges, but NOT origin
+        from pricing_v4.models import ImportCOGS, LocalCOGSRate, LocalSellRate, Agent
+        
+        agent, _ = Agent.objects.get_or_create(
+            code="EFM-AU",
+            defaults={"name": "EFM Australia", "country_code": "AU", "agent_type": "ORIGIN"}
+        )
+
+        ImportCOGS.objects.get_or_create(
+            product_code=pc_frt,
+            origin_airport="BNE",
+            destination_airport="POM",
+            currency="AUD",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_per_kg": 5.0}
+        )
+        LocalCOGSRate.objects.get_or_create(
+            product_code=pc_dest,
+            location="POM",
+            direction="IMPORT",
+            currency="PGK",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_type": "FIXED", "amount": 150.0}
+        )
+        LocalSellRate.objects.get_or_create(
+            product_code=pc_dest,
+            location="POM",
+            direction="IMPORT",
+            currency="PGK",
+            payment_term="COLLECT",
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_type": "FIXED", "amount": 200.0}
+        )
+        
+        # Ensure BNE LocalCOGSRate for origin pickup is NOT in the database
+        LocalCOGSRate.objects.filter(location="BNE", direction="IMPORT").delete()
+        
+        # Create quote
+        quote = Quote.objects.create(
+            customer=self.customer,
+            mode="AIR",
+            shipment_type="IMPORT",
+            origin_location=bne,
+            destination_location=self.destination,
+            status="DRAFT",
+            service_scope="D2D",
+            payment_term="COLLECT",
+            commodity_code="GCR",
+            created_by=self.user
+        )
+        
+        eval_url = "/api/v3/spot/evaluate-trigger/"
+        eval_payload = {
+            "origin_country": "AU",
+            "destination_country": "PG",
+            "origin_airport": "BNE",
+            "destination_airport": "POM",
+            "service_scope": "D2D",
+            "payment_term": "COLLECT",
+            "commodity": "GCR",
+            "quote_id": str(quote.id)
+        }
+        response = self.client.post(eval_url, eval_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        data = response.json()
+        self.assertTrue(data["is_spot_required"])
+        self.assertEqual(data["trigger"]["missing_components"], ["ORIGIN_LOCAL"])
+
+    def test_import_bne_pom_d2d_collect_destination_missing_spot_destination_only(self):
+        """
+        D2D, COLLECT Import BNE -> POM with destination local missing.
+        Expected: SPOT triggers with DESTINATION_LOCAL in missing_components.
+        """
+        # Create AU and BNE
+        au = Country.objects.get_or_create(code="AU", defaults={"name": "Australia"})[0]
+        bne = create_location(code="BNE", name="Brisbane", country=au)
+        
+        # ProductCodes
+        pc_frt, _ = ProductCode.objects.get_or_create(
+            id=2001,
+            defaults={"code": "IMP-FRT-AIR", "category": "FREIGHT", "description": "Freight", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        pc_origin, _ = ProductCode.objects.get_or_create(
+            id=2050,
+            defaults={"code": "IMP-PICKUP", "category": "CARTAGE", "description": "Origin Pickup", "domain": "IMPORT", "is_gst_applicable": True}
+        )
+        
+        # Seed freight and origin charges, but NOT destination
+        from pricing_v4.models import ImportCOGS, LocalCOGSRate, LocalSellRate, Agent
+        
+        agent, _ = Agent.objects.get_or_create(
+            code="EFM-AU",
+            defaults={"name": "EFM Australia", "country_code": "AU", "agent_type": "ORIGIN"}
+        )
+
+        ImportCOGS.objects.get_or_create(
+            product_code=pc_frt,
+            origin_airport="BNE",
+            destination_airport="POM",
+            currency="AUD",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_per_kg": 5.0}
+        )
+        LocalCOGSRate.objects.get_or_create(
+            product_code=pc_origin,
+            location="BNE",
+            direction="IMPORT",
+            currency="AUD",
+            agent=agent,
+            valid_from="2025-01-01",
+            valid_until="2026-12-31",
+            defaults={"rate_type": "FIXED", "amount": 100.0}
+        )
+        
+        # Ensure POM LocalCOGSRate / LocalSellRate for destination is NOT in the database
+        LocalCOGSRate.objects.filter(location="POM", direction="IMPORT").delete()
+        LocalSellRate.objects.filter(location="POM", direction="IMPORT").delete()
+        
+        # Create quote
+        quote = Quote.objects.create(
+            customer=self.customer,
+            mode="AIR",
+            shipment_type="IMPORT",
+            origin_location=bne,
+            destination_location=self.destination,
+            status="DRAFT",
+            service_scope="D2D",
+            payment_term="COLLECT",
+            commodity_code="GCR",
+            created_by=self.user
+        )
+        
+        eval_url = "/api/v3/spot/evaluate-trigger/"
+        eval_payload = {
+            "origin_country": "AU",
+            "destination_country": "PG",
+            "origin_airport": "BNE",
+            "destination_airport": "POM",
+            "service_scope": "D2D",
+            "payment_term": "COLLECT",
+            "commodity": "GCR",
+            "quote_id": str(quote.id)
+        }
+        response = self.client.post(eval_url, eval_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        data = response.json()
+        self.assertTrue(data["is_spot_required"])
+        self.assertEqual(data["trigger"]["missing_components"], ["DESTINATION_LOCAL"])
