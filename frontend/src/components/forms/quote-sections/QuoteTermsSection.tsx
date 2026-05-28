@@ -175,7 +175,7 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
               </SelectContent>
             </Select>
             <FormDescription>
-              Buy-side currency and counterparties are resolved automatically from active V4 pricing data.
+              Select whether the freight is prepaid or collect.
             </FormDescription>
             <FormMessage />
           </FormItem>
@@ -207,7 +207,7 @@ export default function QuoteTermsSection({ user }: QuoteTermsSectionProps) {
               </SelectContent>
             </Select>
             <FormDescription>
-              {isImport ? "Import shipment" : "Export/Domestic shipment"}
+              Select the agreed trade term for this shipment, such as EXW, FOB, CIF, or DAP.
             </FormDescription>
             <FormMessage />
           </FormItem>

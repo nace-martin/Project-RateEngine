@@ -497,11 +497,14 @@ class ReportsViewSet(viewsets.ViewSet):
         )
 
         finalized_period_qs = financial_quotes.filter(
-            Q(status=Quote.Status.FINALIZED, finalized_at__date__gte=start_date, finalized_at__date__lte=end_date)
-            | Q(status=Quote.Status.ACCEPTED, updated_at__date__gte=start_date, updated_at__date__lte=end_date)
+            Q(finalized_at__date__gte=start_date, finalized_at__date__lte=end_date)
+            | Q(status__in=[Quote.Status.FINALIZED, Quote.Status.SENT, Quote.Status.ACCEPTED, Quote.Status.LOST, Quote.Status.EXPIRED],
+                finalized_at__isnull=True, updated_at__date__gte=start_date, updated_at__date__lte=end_date)
         )
 
-        pipeline_stats = created_period_qs.filter(status=Quote.Status.DRAFT).aggregate(
+        pipeline_stats = financial_quotes.filter(
+            status__in=[Quote.Status.DRAFT, Quote.Status.INCOMPLETE]
+        ).aggregate(
             count=Count('id'),
             value=Sum('latest_total_sell_pgk_incl_gst')
         )

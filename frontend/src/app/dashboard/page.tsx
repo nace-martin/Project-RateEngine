@@ -151,11 +151,11 @@ export default function DashboardPage() {
         const expiredQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'EXPIRED');
         const cancelledQuotes = allQuotes.filter(q => normalizedStatus(q.status, q.valid_until) === 'CANCELLED');
 
-        const currency = allQuotes[0]?.latest_version.totals.total_sell_fcy_currency ?? "PGK";
+        const currency = allQuotes[0]?.latest_version?.totals?.total_sell_fcy_currency ?? "PGK";
 
         // Total value of finalized quotes
         const finalizedValue = finalizedQuotes.reduce((sum, quote) => {
-            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            const amount = parseFloat(quote.latest_version?.totals?.total_sell_fcy_incl_gst || "0");
             return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
 
@@ -163,7 +163,7 @@ export default function DashboardPage() {
         const pipelineValue = allQuotes
             .filter(q => normalizedStatus(q.status, q.valid_until) !== 'CANCELLED')
             .reduce((sum, quote) => {
-                const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+                const amount = parseFloat(quote.latest_version?.totals?.total_sell_fcy_incl_gst || "0");
                 return sum + (isNaN(amount) ? 0 : amount);
             }, 0);
 
@@ -173,7 +173,7 @@ export default function DashboardPage() {
 
         const newQuotesLast7Days = allQuotes.filter(q => new Date(q.created_at) > sevenDaysAgo);
         const newValueLast7Days = newQuotesLast7Days.reduce((sum, quote) => {
-            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            const amount = parseFloat(quote.latest_version?.totals?.total_sell_fcy_incl_gst || "0");
             return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
 
@@ -198,7 +198,7 @@ export default function DashboardPage() {
 
         const avgQuoteValue = finalizedQuotes.length > 0 ? finalizedValue / finalizedQuotes.length : 0;
         const lostOpportunityValue = [...lostQuotes, ...expiredQuotes].reduce((sum, quote) => {
-            const amount = parseFloat(quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            const amount = parseFloat(quote.latest_version?.totals?.total_sell_fcy_incl_gst || "0");
             return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
 
@@ -323,14 +323,14 @@ export default function DashboardPage() {
 
         // Finalized Revenue in PGK
         const finalizedRevenuePGK = finalizedThisMonth.reduce((sum, quote) => {
-            const amount = parseFloat(quote.latest_version.totals.total_sell_pgk_incl_gst || quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            const amount = parseFloat(quote.latest_version?.totals?.total_sell_pgk_incl_gst || quote.latest_version?.totals?.total_sell_fcy_incl_gst || "0");
             return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
 
         // Draft quotes only for pipeline
         const draftQuotes = allQuotes.filter(q => q.status?.toLowerCase() === 'draft');
         const pipelinePGK = draftQuotes.reduce((sum, quote) => {
-            const amount = parseFloat(quote.latest_version.totals.total_sell_pgk_incl_gst || quote.latest_version.totals.total_sell_fcy_incl_gst || "0");
+            const amount = parseFloat(quote.latest_version?.totals?.total_sell_pgk_incl_gst || quote.latest_version?.totals?.total_sell_fcy_incl_gst || "0");
             return sum + (isNaN(amount) ? 0 : amount);
         }, 0);
 
@@ -509,43 +509,43 @@ export default function DashboardPage() {
         <ProtectedRoute>
             <main className="container mx-auto space-y-8 py-8 max-w-7xl font-sans">
                 {/* MODERN HERO SECTION */}
-                <section className="relative rounded-[2rem] overflow-hidden shadow-2xl">
+                <section className="relative rounded-2xl overflow-hidden shadow-lg">
                     {/* Gradient Background */}
                     <div className="absolute inset-0 bg-gradient-to-br from-[#0F52BA] via-[#1a65d8] to-[#0d3d8a]" />
                     {/* Abstract Shapes/Glass effect */}
-                    <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
-                    <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-white/5 rounded-full blur-3xl -ml-10 -mb-10 pointer-events-none"></div>
+                    <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-white/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
+                    <div className="absolute bottom-0 left-0 w-[200px] h-[200px] bg-white/5 rounded-full blur-3xl -ml-5 -mb-5 pointer-events-none"></div>
 
-                    <div className="relative z-10 px-10 py-12 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                        <div className="space-y-4 max-w-2xl">
-                            <div className="inline-flex items-center rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-blue-100 backdrop-blur-md border border-white/10">
+                    <div className="relative z-10 px-8 py-6 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="space-y-2 max-w-2xl">
+                            <div className="inline-flex items-center rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-medium text-blue-100 backdrop-blur-md border border-white/10">
                                 Quoting Control Center
                             </div>
-                            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white drop-shadow-sm">
+                            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white drop-shadow-sm">
                                 Hello, {displayName}
                             </h1>
-                            <p className="text-lg text-blue-100 leading-relaxed font-light">
+                            <p className="text-sm text-blue-100 leading-relaxed font-light">
                                 You have <span className="font-semibold text-white">{metrics.draftCount} quotes in progress</span>.
                                 Monitor your pipeline and keep things moving.
                             </p>
 
-                            <div className="flex flex-wrap gap-3 pt-4">
+                            <div className="flex flex-wrap gap-2 pt-2">
                                 {canEditQuotes && (
-                                    <Button size="lg" className="bg-white text-primary hover:bg-blue-50 font-semibold h-12 px-6 rounded-xl shadow-lg shadow-blue-900/20 border-0" asChild>
+                                    <Button size="default" className="bg-white text-primary hover:bg-blue-50 font-semibold h-10 px-4 rounded-lg shadow-md border-0" asChild>
                                         <Link href="/quotes/new">
-                                            <PlusCircle className="mr-2 h-5 w-5" />
+                                            <PlusCircle className="mr-2 h-4 w-4" />
                                             New Quote
                                         </Link>
                                     </Button>
                                 )}
-                                <Button variant="outline" size="lg" className="bg-white/10 text-white border-white/20 hover:bg-white/20 h-12 px-6 rounded-xl backdrop-blur-sm" asChild>
+                                <Button variant="outline" size="default" className="bg-white/10 text-white border-white/20 hover:bg-white/20 h-10 px-4 rounded-lg backdrop-blur-sm" asChild>
                                     <Link href="/quotes">
                                         View All
                                         <ArrowRight className="ml-2 h-4 w-4" />
                                     </Link>
                                 </Button>
                                 {(isManager || isAdmin) && (
-                                    <Button variant="outline" size="lg" className="bg-white/10 text-white border-white/20 hover:bg-white/20 h-12 px-6 rounded-xl backdrop-blur-sm" asChild>
+                                    <Button variant="outline" size="default" className="bg-white/10 text-white border-white/20 hover:bg-white/20 h-10 px-4 rounded-lg backdrop-blur-sm" asChild>
                                         <Link href="/dashboard/management">
                                             <BarChart3 className="mr-2 h-4 w-4" />
                                             Performance
@@ -557,28 +557,30 @@ export default function DashboardPage() {
 
                         {/* Needs Attention Widget (Glass Card) */}
                         {metrics.expiringSoon.length > 0 ? (
-                            <div className="w-full md:w-[320px] bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-5 shadow-inner">
-                                <div className="flex items-start gap-3">
-                                    <div className="p-2 bg-amber-500/20 rounded-lg text-amber-200">
-                                        <Clock className="h-5 w-5" />
+                            <div className="w-full md:w-auto bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-4 shadow-inner">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-1.5 bg-amber-500/20 rounded-lg text-amber-200 shrink-0">
+                                        <Clock className="h-4 w-4" />
                                     </div>
-                                    <div className="flex-1">
-                                        <h3 className="font-semibold text-white mb-1">Needs Attention</h3>
-                                        <p className="text-sm text-blue-100 mb-3">
+                                    <div className="flex-1 min-w-[150px]">
+                                        <h3 className="font-semibold text-white text-sm">Needs Attention</h3>
+                                        <p className="text-xs text-blue-100">
                                             <span className="font-bold text-amber-300">{metrics.expiringSoon.length} quotes</span> expiring soon.
                                         </p>
-                                        <Button size="sm" variant="secondary" className="w-full bg-white/90 text-primary hover:bg-white border-none shadow-none text-xs h-8">
-                                            Send Reviews
-                                        </Button>
                                     </div>
+                                    <Button size="sm" variant="secondary" className="bg-white/90 text-primary hover:bg-white border-none shadow-none text-xs px-3 h-8 shrink-0">
+                                        Send Reviews
+                                    </Button>
                                 </div>
                             </div>
                         ) : (
                             // Fallback widget if nothing urgent
-                            <div className="w-full md:w-[280px] bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6 text-center">
-                                <CheckCircle2 className="h-8 w-8 text-emerald-300 mx-auto mb-2 opacity-80" />
-                                <p className="text-white font-medium">All caught up!</p>
-                                <p className="text-sm text-blue-200">No urgent items pending.</p>
+                            <div className="w-full md:w-auto bg-white/5 backdrop-blur-md border border-white/10 rounded-xl p-4 flex items-center gap-3 text-left">
+                                <CheckCircle2 className="h-6 w-6 text-emerald-300 shrink-0 opacity-80" />
+                                <div>
+                                    <p className="text-white font-medium text-sm">All caught up!</p>
+                                    <p className="text-xs text-blue-200">No urgent items pending.</p>
+                                </div>
                             </div>
                         )}
                     </div>
