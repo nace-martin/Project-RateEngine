@@ -1,7 +1,10 @@
 # backend/quotes/migrations/0037_seed_parent_organization.py
 
+import os
 import django.db.models.deletion
 from django.db import migrations, models
+from django.core.files import File
+from django.conf import settings
 
 
 def seed_parent_organization(apps, schema_editor):
@@ -24,7 +27,7 @@ def seed_parent_organization(apps, schema_editor):
         organization.default_currency = pgk
         organization.save(update_fields=["default_currency", "updated_at"])
 
-    OrganizationBranding.objects.get_or_create(
+    branding, _ = OrganizationBranding.objects.get_or_create(
         organization=organization,
         defaults={
             "display_name": "Express Freight Management",
@@ -47,6 +50,16 @@ def seed_parent_organization(apps, schema_editor):
             "is_active": True,
         },
     )
+
+    # Copy and save the EFM static logo from backend/static/images/efm_logo.png
+    static_logo_path = os.path.join(settings.BASE_DIR, "static", "images", "efm_logo.png")
+    if os.path.exists(static_logo_path):
+        if not branding.logo_small:
+            with open(static_logo_path, "rb") as f:
+                branding.logo_small.save("efm_logo.png", File(f), save=True)
+        if not branding.logo_primary:
+            with open(static_logo_path, "rb") as f:
+                branding.logo_primary.save("efm_logo.png", File(f), save=True)
 
 
 def unseed_parent_organization(apps, schema_editor):
