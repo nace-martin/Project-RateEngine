@@ -371,23 +371,41 @@ class CustomUserAdminTests(TestCase):
         self.admin = CustomUserAdmin(CustomUser, self.site)
         # Clear existing locations if any to avoid conflicts in tests
         Location.objects.all().delete()
-        self.pom = Location.objects.create(code='POM', name='Port Moresby', is_branch=True)
-        self.adl = Location.objects.create(code='ADL', name='Adelaide', is_branch=False)
+        # Create valid branches
+        self.branch_codes = ['POM', 'LAE', 'BNE', 'HIR', 'NAN', 'SUV']
+        for code in self.branch_codes:
+            Location.objects.create(code=code, name=f'Branch {code}', is_branch=True)
+        
+        # Create non-branch locations
+        self.non_branch = Location.objects.create(code='ADL', name='Adelaide', is_branch=False)
+        self.non_branch_2 = Location.objects.create(code='AMS', name='Amsterdam', is_branch=False)
 
-    def test_primary_location_queryset_filtered_by_is_branch(self):
+    def test_primary_location_queryset_only_contains_branches(self):
         formfield = self.admin.formfield_for_foreignkey(
             CustomUser._meta.get_field('primary_location'),
             None
         )
         queryset = formfield.queryset
-        self.assertIn(self.pom, queryset)
-        self.assertNotIn(self.adl, queryset)
+        codes = list(queryset.values_list('code', flat=True))
+        
+        for code in self.branch_codes:
+            self.assertIn(code, codes)
+        
+        self.assertNotIn('ADL', codes)
+        self.assertNotIn('AMS', codes)
+        self.assertEqual(queryset.count(), len(self.branch_codes))
 
-    def test_authorised_locations_queryset_filtered_by_is_branch(self):
+    def test_authorised_locations_queryset_only_contains_branches(self):
         formfield = self.admin.formfield_for_manytomany(
             CustomUser._meta.get_field('authorised_locations'),
             None
         )
         queryset = formfield.queryset
-        self.assertIn(self.pom, queryset)
-        self.assertNotIn(self.adl, queryset)
+        codes = list(queryset.values_list('code', flat=True))
+        
+        for code in self.branch_codes:
+            self.assertIn(code, codes)
+        
+        self.assertNotIn('ADL', codes)
+        self.assertNotIn('AMS', codes)
+        self.assertEqual(queryset.count(), len(self.branch_codes))
