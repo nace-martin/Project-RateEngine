@@ -6,7 +6,7 @@ from django.utils.translation import gettext_lazy as _
 from decimal import Decimal
 
 # Choices for reusable fields
-MODE_CHOICES = [('AIR', 'Air'), ('SEA', 'Sea'), ('LAND', 'Land')]
+MODE_CHOICES = [('AIR', 'Air'), ('SEA', 'Sea'), ('LAND', 'Land'), ('CUSTOMS', 'Customs')]
 LEG_CHOICES = [('ORIGIN', 'Origin'), ('MAIN', 'Main Freight'), ('DESTINATION', 'Destination')]
 UNIT_CHOICES = [
     ('SHIPMENT', 'Per Shipment'),

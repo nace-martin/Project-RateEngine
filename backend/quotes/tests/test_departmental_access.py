@@ -76,7 +76,7 @@ class DepartmentalVisibilityTestCase(TestCase):
         )
         cls.quote_by_sea_sales = Quote.objects.create(
             customer=cls.customer,
-            mode='AIR',  # Mode is different from department!
+            mode='SEA',  # Update to matching SEA mode under new RBAC rules
             status=Quote.Status.DRAFT,
             created_by=cls.sea_sales
         )

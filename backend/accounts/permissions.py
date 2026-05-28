@@ -218,3 +218,22 @@ class QuoteAccessPermission(BasePermission):
         
         # For write methods, check edit permission
         return request.user.can_edit_quotes
+
+
+class HasQuoteAccess(BasePermission):
+    """
+    Enforces object-level department and location access.
+    """
+    message = "You do not have permission to access this quote."
+    
+    def has_permission(self, request, view):
+        return request.user and request.user.is_authenticated
+        
+    def has_object_permission(self, request, view, obj):
+        from accounts.access_control import can_user_view_quote, can_user_edit_quote
+        from rest_framework.permissions import SAFE_METHODS
+        
+        write_operations = request.method not in SAFE_METHODS or getattr(view, 'action', None) in ['transition', 'clone', 'versions']
+        if write_operations:
+            return can_user_edit_quote(request.user, obj)
+        return can_user_view_quote(request.user, obj)

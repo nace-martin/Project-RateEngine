@@ -67,40 +67,43 @@ function NewQuoteContent() {
     const originParam = searchParams.get("origin");
     const destinationParam = searchParams.get("destination");
 
-    if (customerId || originParam || destinationParam || serviceType || opportunityId) {
-      const fetchInitial = async () => {
-        setIsLoadingInitial(true);
-        try {
-          const [customer, origin, destination] = await Promise.all([
-            customerId ? getCompany(customerId) : Promise.resolve(undefined),
-            resolveLocationParam(originParam),
-            resolveLocationParam(destinationParam),
-          ]);
+    const fetchInitial = async () => {
+      setIsLoadingInitial(true);
+      try {
+        const [customer, origin, destination] = await Promise.all([
+          customerId ? getCompany(customerId) : Promise.resolve(undefined),
+          resolveLocationParam(originParam),
+          resolveLocationParam(destinationParam),
+        ]);
 
-          if (customer) setInitialCustomer(customer);
-          if (origin) setInitialOrigin(origin);
-          if (destination) setInitialDestination(destination);
-
-          const prefill = buildQuotePrefillDefaults({
-            companyId: customerId,
-            opportunityId,
-            serviceType,
-            originLocationId: origin?.id,
-            destinationLocationId: destination?.id,
-            originCode: origin?.code,
-            destinationCode: destination?.code,
-          });
-          setDefaultValues(prefill.defaultValues);
-          setUnsupportedServiceType(prefill.unsupportedServiceType);
-        } catch (err) {
-          console.error("Failed to load initial data from params", err);
-        } finally {
-          setIsLoadingInitial(false);
+        if (customer) setInitialCustomer(customer);
+        if (origin) {
+          setInitialOrigin(origin);
+        } else if (user?.primary_location) {
+          const userOrigin = await getLocation(user.primary_location.id);
+          if (userOrigin) setInitialOrigin(userOrigin);
         }
-      };
-      void fetchInitial();
-    }
-  }, [searchParams]);
+        if (destination) setInitialDestination(destination);
+
+        const prefill = buildQuotePrefillDefaults({
+          companyId: customerId,
+          opportunityId,
+          serviceType: serviceType || user?.department,
+          originLocationId: origin?.id || user?.primary_location?.id,
+          destinationLocationId: destination?.id,
+          originCode: origin?.code || user?.primary_location?.code,
+          destinationCode: destination?.code,
+        });
+        setDefaultValues(prefill.defaultValues);
+        setUnsupportedServiceType(prefill.unsupportedServiceType);
+      } catch (err) {
+        console.error("Failed to load initial data from params", err);
+      } finally {
+        setIsLoadingInitial(false);
+      }
+    };
+    void fetchInitial();
+  }, [searchParams, user]);
 
   // Missing Rates State
   const [missingRates, setMissingRates] = useState({ carrier: false, agent: false });

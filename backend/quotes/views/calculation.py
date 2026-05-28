@@ -92,15 +92,70 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
     
     # Note: We override 'create' behavior by implementing 'post'
     def post(self, request, *args, **kwargs):
+        # 1. Perform pre-fill defaults and validation checks on request data before Pydantic parsing
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        user = request.user
+        role = getattr(user, 'role', '')
+        is_admin = user.is_superuser or role == 'admin'
+        
+        # Pre-fill department from user's primary department if not explicitly provided
+        if not data.get('mode') and getattr(user, 'department', None):
+            data['mode'] = user.department
+
         try:
-            payload = QuoteComputeRequest(**request.data)
+            payload = QuoteComputeRequest(**data)
         except (ValidationError, PydanticCoreValidationError) as e:
             return Response(e.errors(), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            # Fallback for any other validation-like errors
             if hasattr(e, 'errors'):
                 return Response(e.errors(), status=status.HTTP_400_BAD_REQUEST)
             raise e
+
+        # Enforce department and location restrictions for non-admin users
+        if not is_admin:
+            from accounts.access_control import get_user_allowed_departments, get_user_allowed_location_codes
+            
+            # A. Department Check
+            allowed_depts = get_user_allowed_departments(user)
+            if payload.mode.upper() not in allowed_depts:
+                return Response(
+                    {"detail": f"You are not authorized to create quotes for department '{payload.mode}'."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            # B. Location Check
+            allowed_codes = get_user_allowed_location_codes(user)
+            if '*' not in allowed_codes:
+                # Try to resolve location by explicit parameter, or user primary location, or route locations
+                target_location = None
+                owning_loc_id = data.get('owning_location_id')
+                owning_loc_code = data.get('owning_location')
+                
+                if owning_loc_id:
+                    target_location = Location.objects.filter(id=owning_loc_id, is_active=True).first()
+                elif owning_loc_code:
+                    target_location = Location.objects.filter(code=str(owning_loc_code).upper(), is_active=True).first()
+                    
+                if not target_location and getattr(user, 'primary_location', None):
+                    target_location = user.primary_location
+                    
+                if not target_location:
+                    # Fallback to route origin or destination
+                    target_location = Location.objects.filter(id=payload.origin_location_id, is_active=True).first()
+                    if not target_location:
+                        target_location = Location.objects.filter(id=payload.destination_location_id, is_active=True).first()
+                        
+                if not target_location:
+                    return Response({"detail": "Owning branch/location could not be resolved."}, status=status.HTTP_400_BAD_REQUEST)
+                    
+                if target_location.code.upper() not in allowed_codes:
+                    return Response(
+                        {"detail": f"You are not authorized to create quotes for branch '{target_location.code}'."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                # Cache the resolved location for saving later
+                request._resolved_owning_location = target_location
 
         existing_quote = None
         if payload.quote_id:
@@ -501,6 +556,22 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             persist=True,
         )
 
+        # Resolve owning_location/branch
+        owning_location = getattr(request, '_resolved_owning_location', None)
+        if not owning_location:
+            owning_loc_id = request.data.get('owning_location_id') if hasattr(request, 'data') else None
+            owning_loc_code = request.data.get('owning_location') if hasattr(request, 'data') else None
+            if owning_loc_id:
+                owning_location = Location.objects.filter(id=owning_loc_id, is_active=True).first()
+            elif owning_loc_code:
+                owning_location = Location.objects.filter(code=str(owning_loc_code).upper(), is_active=True).first()
+            
+            if not owning_location and getattr(request.user, 'primary_location', None):
+                owning_location = request.user.primary_location
+                
+            if not owning_location:
+                owning_location = origin_location or destination_location
+
         if is_new_quote:
             # --- Create the Quote object ---
             quote = Quote.objects.create(
@@ -516,6 +587,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 output_currency=output_currency or 'PGK',
                 origin_location_id=validated_data.origin_location_id,
                 destination_location_id=validated_data.destination_location_id,
+                owning_location=owning_location,
                 policy=policy,
                 fx_snapshot=snapshot,
                 is_dangerous_goods=validated_data.is_dangerous_goods,
@@ -539,6 +611,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.output_currency = output_currency or 'PGK'
             quote.origin_location_id = validated_data.origin_location_id
             quote.destination_location_id = validated_data.destination_location_id
+            quote.owning_location = owning_location
             quote.policy = policy
             quote.fx_snapshot = snapshot
             quote.is_dangerous_goods = validated_data.is_dangerous_goods
@@ -559,6 +632,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'output_currency',
                 'origin_location',
                 'destination_location',
+                'owning_location',
                 'policy',
                 'fx_snapshot',
                 'is_dangerous_goods',

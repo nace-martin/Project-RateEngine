@@ -87,8 +87,38 @@ def _user_is_manager_or_admin(user) -> bool:
 def _user_can_access_spe(user, spe_db: SpotPricingEnvelopeDB) -> bool:
     if not user or not user.is_authenticated:
         return False
-    if _user_is_manager_or_admin(user):
+        
+    role = getattr(user, 'role', '')
+    if user.is_superuser or role == 'admin':
         return True
+        
+    if role == 'finance':
+        return True
+        
+    # Check if linked to a quote
+    if spe_db.quote:
+        from accounts.access_control import can_user_view_quote
+        return can_user_view_quote(user, spe_db.quote)
+        
+    if role == 'manager':
+        from accounts.access_control import get_user_allowed_departments, get_user_allowed_location_codes
+        allowed_depts = get_user_allowed_departments(user)
+        allowed_codes = get_user_allowed_location_codes(user)
+        
+        creator = spe_db.created_by
+        if creator:
+            creator_dept = getattr(creator, 'department', None)
+            if creator_dept and creator_dept.upper() not in allowed_depts:
+                return False
+                
+            if '*' not in allowed_codes:
+                # Check primary location and authorized locations of the creator
+                creator_loc = getattr(creator, 'primary_location', None)
+                if not creator_loc or creator_loc.code.upper() not in allowed_codes:
+                    return False
+        return True
+        
+    # Sales and other roles must be the creator
     return spe_db.created_by_id == user.id
 
 
@@ -1338,8 +1368,35 @@ class SpotEnvelopeListCreateAPIView(APIView):
     def get(self, request):
         """List SPEs created by user."""
         spe_qs = _spe_queryset()
-        if not _user_is_manager_or_admin(request.user):
-            spe_qs = spe_qs.filter(created_by=request.user)
+        
+        # Enforce central RBAC rules for spot envelope listing
+        user = request.user
+        role = getattr(user, 'role', '')
+        if not user.is_superuser and role != 'admin':
+            if role == 'finance':
+                pass # Finance sees all
+            elif role == 'manager':
+                from accounts.access_control import get_user_allowed_departments, get_user_allowed_location_codes, get_quote_queryset_filter
+                from quotes.models import Quote
+                from django.db.models import Q
+                
+                allowed_depts = get_user_allowed_departments(user)
+                allowed_codes = get_user_allowed_location_codes(user)
+                
+                dept_loc_q = Q(created_by__department__in=allowed_depts)
+                if '*' not in allowed_codes:
+                    dept_loc_q &= (
+                        Q(created_by__primary_location__code__in=allowed_codes) |
+                        Q(created_by__authorised_locations__code__in=allowed_codes)
+                    )
+                
+                quote_filter = get_quote_queryset_filter(user)
+                spe_qs = spe_qs.filter(
+                    Q(quote__isnull=False, quote__in=Quote.objects.filter(quote_filter)) |
+                    Q(quote__isnull=True) & dept_loc_q
+                )
+            else:
+                spe_qs = spe_qs.filter(created_by=user)
 
         # Filter by status if provided
         status_param = request.query_params.get('status')

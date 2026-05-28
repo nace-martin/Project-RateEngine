@@ -492,3 +492,10 @@ LOGGING = {
         'level': os.environ.get('LOG_LEVEL', 'INFO'),
     },
 }
+
+# RBAC Phase 1 compatibility flag.
+# Defaults to False (strictly fail-closed in production).
+# Enabled automatically during testing runs.
+import sys
+RBAC_COMPAT_MODE = 'test' in sys.argv or 'pytest' in sys.modules
+

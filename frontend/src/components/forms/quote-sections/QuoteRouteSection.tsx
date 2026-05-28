@@ -1,8 +1,9 @@
 "use client";
-
+ 
 import { useMemo } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
-
+import { useAuth } from "@/context/auth-context";
+ 
 import { Plane, Ship } from "lucide-react";
 
 import LocationSearch from "@/components/LocationSearchCombobox";
@@ -38,6 +39,14 @@ import { useQuoteStore } from "@/store/useQuoteStore";
 
 export default function QuoteRouteSection() {
   const form = useFormContext<QuoteFormData>();
+  const { user } = useAuth();
+  const allowedDepts = user?.allowed_departments || (user?.department ? [user.department] : ['AIR']);
+  
+  const isDeptAllowed = (dept: string) => {
+    if (user?.role === 'admin') return true;
+    return allowedDepts.includes(dept.toUpperCase());
+  };
+
   const originLocation = useQuoteStore((state) => state.originLocation);
   const destinationLocation = useQuoteStore((state) => state.destinationLocation);
   const setOriginLocation = useQuoteStore((state) => state.setOriginLocation);
@@ -84,18 +93,46 @@ export default function QuoteRouteSection() {
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value="AIR">
-                    <div className="flex items-center gap-2">
-                      <Plane className="h-4 w-4" />
-                      Air Freight
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="SEA" disabled>
-                    <div className="flex items-center gap-2">
-                      <Ship className="h-4 w-4" />
-                      Sea Freight (Coming Soon)
-                    </div>
-                  </SelectItem>
+                  {isDeptAllowed('AIR') && (
+                    <SelectItem value="AIR">
+                      <div className="flex items-center gap-2">
+                        <Plane className="h-4 w-4" />
+                        Air Freight
+                      </div>
+                    </SelectItem>
+                  )}
+                  {isDeptAllowed('SEA') && (
+                    <SelectItem value="SEA">
+                      <div className="flex items-center gap-2">
+                        <Ship className="h-4 w-4" />
+                        Sea Freight
+                      </div>
+                    </SelectItem>
+                  )}
+                  {isDeptAllowed('LAND') && (
+                    <SelectItem value="LAND">
+                      <div className="flex items-center gap-2">
+                        <span className="h-4 w-4 text-xs font-bold font-mono flex items-center justify-center bg-slate-100 rounded">L</span>
+                        Land Freight
+                      </div>
+                    </SelectItem>
+                  )}
+                  {isDeptAllowed('CUSTOMS') && (
+                    <SelectItem value="CUSTOMS">
+                      <div className="flex items-center gap-2">
+                        <span className="h-4 w-4 text-xs font-bold font-mono flex items-center justify-center bg-slate-100 rounded">C</span>
+                        Customs Clearance
+                      </div>
+                    </SelectItem>
+                  )}
+                  {!isDeptAllowed('SEA') && (
+                    <SelectItem value="SEA" disabled>
+                      <div className="flex items-center gap-2">
+                        <Ship className="h-4 w-4" />
+                        Sea Freight (Coming Soon)
+                      </div>
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
               <FormMessage />

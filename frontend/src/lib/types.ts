@@ -27,11 +27,21 @@ export interface UserOrganizationRef {
   branding?: UserBrandingRef | null;
 }
 
+export interface UserLocationRef {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface User {
   id?: number;
   username: string;
   email?: string | null;
   role: string;
+  department?: string | null;
+  allowed_departments?: string[];
+  primary_location?: UserLocationRef | null;
+  allowed_locations?: UserLocationRef[];
   organization?: UserOrganizationRef | null;
 }
 

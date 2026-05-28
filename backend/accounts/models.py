@@ -49,14 +49,34 @@ class CustomUser(AbstractUser):
     DEPARTMENT_CHOICES = [
         ('AIR', 'Air Freight'),
         ('SEA', 'Sea Freight'),
-        ('LAND', 'Land Freight'),
+        ('LAND', 'Land Freight / Inland Transport'),
+        ('CUSTOMS', 'Customs'),
     ]
     department = models.CharField(
         max_length=10, 
         choices=DEPARTMENT_CHOICES, 
         null=True, 
         blank=True,
-        help_text="Department assignment for visibility restrictions (e.g., Air vs Sea)."
+        help_text="Primary department assignment for visibility restrictions."
+    )
+    allowed_departments = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of additional authorized department codes (e.g. ['AIR', 'CUSTOMS'])."
+    )
+    primary_location = models.ForeignKey(
+        'core.Location',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='primary_users',
+        help_text="Primary home branch location for this user."
+    )
+    authorised_locations = models.ManyToManyField(
+        'core.Location',
+        blank=True,
+        related_name='authorised_users',
+        help_text="All authorized branch locations this user can access."
     )
     organization = models.ForeignKey(
         'parties.Organization',

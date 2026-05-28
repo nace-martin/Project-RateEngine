@@ -117,6 +117,14 @@ class Quote(models.Model):
         related_name='quotes_as_destination',
         help_text="Generic destination location (airport, port, city, address)."
     )
+    owning_location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='quotes_owned',
+        help_text="The location/branch that owns/manages this quote (e.g. POM, LAE)."
+    )
     # --- END REFACTOR ---
 
     policy = models.ForeignKey(

@@ -79,9 +79,13 @@ class ReportsViewSet(viewsets.ViewSet):
         return 'monthly', today.replace(day=1), today
 
     def _build_activity_series(self, timeframe, start_date, end_date):
+        from accounts.access_control import get_quote_queryset_filter
+        qs = Quote.objects.exclude(is_archived=True)
+        if hasattr(self, 'request') and self.request and self.request.user:
+            qs = qs.filter(get_quote_queryset_filter(self.request.user))
+            
         quote_dates = (
-            Quote.objects.exclude(is_archived=True)
-            .filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
+            qs.filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
             .values_list('created_at__date', flat=True)
         )
 
@@ -146,11 +150,15 @@ class ReportsViewSet(viewsets.ViewSet):
         Optionally filter by date range, user, and mode.
         """
         latest_total = self._get_latest_total_subquery()
+        from accounts.access_control import get_quote_queryset_filter
 
         qs = Quote.objects.annotate(
             latest_total_sell_pgk=Subquery(latest_total.values('total_sell_pgk')[:1]),
             latest_total_cost_pgk=Subquery(latest_total.values('total_cost_pgk')[:1]),
         ).exclude(is_archived=True)
+
+        if hasattr(self, 'request') and self.request and self.request.user:
+            qs = qs.filter(get_quote_queryset_filter(self.request.user))
 
         if start_date and end_date:
             qs = qs.filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
@@ -158,7 +166,7 @@ class ReportsViewSet(viewsets.ViewSet):
         if user_id:
             qs = qs.filter(created_by_id=user_id)
 
-        if mode and mode.upper() in ['AIR', 'SEA']:
+        if mode and mode.upper() in ['AIR', 'SEA', 'LAND', 'CUSTOMS']:
             qs = qs.filter(mode=mode.upper())
 
         return qs

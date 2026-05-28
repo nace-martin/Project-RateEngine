@@ -40,7 +40,7 @@ class LogicalRateCardsViewTests(APITestCase):
             gl_cost_code="5000",
         )
         self.export_local = ProductCode.objects.create(
-            id=1002,
+            id=1003,
             code="EXP-DOC-TEST",
             description="Export Documentation Test",
             domain=ProductCode.DOMAIN_EXPORT,

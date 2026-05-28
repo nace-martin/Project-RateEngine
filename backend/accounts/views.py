@@ -68,11 +68,41 @@ def _serialize_organization(organization, request=None):
 
 def _serialize_user(user: CustomUser, request=None):
     organization = getattr(user, 'organization', None)
+    primary_location = getattr(user, 'primary_location', None)
+    
+    allowed_locs = []
+    if primary_location:
+        allowed_locs.append({
+            'id': str(primary_location.id),
+            'code': primary_location.code,
+            'name': primary_location.name,
+        })
+    if user.id:
+        auth_locs = user.authorised_locations.all()
+        for loc in auth_locs:
+            if not any(al['id'] == str(loc.id) for al in allowed_locs):
+                allowed_locs.append({
+                    'id': str(loc.id),
+                    'code': loc.code,
+                    'name': loc.name,
+                })
+        
+    from accounts.access_control import get_user_allowed_departments
+    allowed_depts = get_user_allowed_departments(user)
+
     return {
         'id': user.id,
         'username': user.username,
         'email': user.email,
         'role': user.role,
+        'department': user.department,
+        'allowed_departments': allowed_depts,
+        'primary_location': {
+            'id': str(primary_location.id),
+            'code': primary_location.code,
+            'name': primary_location.name,
+        } if primary_location else None,
+        'allowed_locations': allowed_locs,
         'organization': _serialize_organization(organization, request=request),
     }
 
