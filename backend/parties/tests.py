@@ -408,6 +408,10 @@ class OrganizationBrandingSettingsAPITests(APITestCase):
                 "accent_color": "#D71920",
             },
         )
+        self.admin.organization = self.organization
+        self.admin.save(update_fields=["organization"])
+        self.sales.organization = self.organization
+        self.sales.save(update_fields=["organization"])
         self.url = reverse("parties:organization-branding-settings-v3")
 
     def test_admin_can_get_branding_settings(self):
@@ -519,3 +523,80 @@ class OrganizationBrandingSettingsAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNone(response.data["logo_primary_url"])
         self.assertTrue(response.data["logo_primary_missing"])
+
+
+class PublicBrandingViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = reverse("parties:organization-branding-public")
+        Organization.objects.all().delete()
+        self.currency = Currency.objects.filter(code="PGK").first() or Currency.objects.create(code="PGK", name="Kina")
+        self.organization = Organization.objects.create(
+            name="Test EFM Organization",
+            slug="test-efm-organization",
+            default_currency=self.currency,
+            is_active=True,
+        )
+        self.branding = OrganizationBranding.objects.create(
+            organization=self.organization,
+            display_name="Test EFM Branding",
+            primary_color="#123456",
+            accent_color="#789abc",
+            is_active=True,
+        )
+
+    def test_get_public_branding_success(self):
+        # Accessible without authentication
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["display_name"], "Test EFM Branding")
+        self.assertEqual(response.data["primary_color"], "#123456")
+        self.assertEqual(response.data["accent_color"], "#789abc")
+        self.assertEqual(response.data["organization_slug"], "test-efm-organization")
+        self.assertEqual(response.data["organization_name"], "Test EFM Organization")
+
+    def test_get_public_branding_no_organization_graceful(self):
+        # Deleting all organizations to test error path
+        Organization.objects.all().delete()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["detail"], "No organization configured.")
+
+    def test_branding_prefers_parent_company_brand_over_department(self):
+        # Create a parent company organization: slug="efm"
+        parent_org = Organization.objects.create(
+            name="Express Freight Management",
+            slug="efm",
+            default_currency=self.currency,
+            is_active=True,
+        )
+        parent_branding = OrganizationBranding.objects.create(
+            organization=parent_org,
+            display_name="EFM Global Branding",
+            primary_color="#111111",
+            accent_color="#222222",
+            is_active=True,
+        )
+
+        # Create a department-specific organization: slug="efm-express-air-cargo"
+        dept_org = Organization.objects.create(
+            name="EFM Express Air Cargo",
+            slug="efm-express-air-cargo",
+            default_currency=self.currency,
+            is_active=True,
+        )
+        dept_branding = OrganizationBranding.objects.create(
+            organization=dept_org,
+            display_name="Express Air Cargo Branding",
+            primary_color="#333333",
+            accent_color="#444444",
+            is_active=True,
+        )
+
+        # Verify that parent company branding is resolved and returned instead of the department's,
+        # even though "EFM Express Air Cargo" comes alphabetically first!
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["organization_slug"], "efm")
+        self.assertEqual(response.data["display_name"], "EFM Global Branding")
+

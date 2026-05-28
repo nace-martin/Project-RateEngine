@@ -60,12 +60,43 @@ def resolve_active_organization(user=None) -> Organization:
     if user_organization:
         return user_organization
 
-    organization = Organization.objects.filter(is_active=True).order_by("name").first()
-    if organization:
-        return organization
-    organization = Organization.objects.order_by("name").first()
-    if organization:
-        return organization
+    # Deterministic selection for parent/global organization (e.g. slug="efm" or name="Express Freight Management" / "EFM")
+    # TODO: Formalize tenant/department brand hierarchy in the database model (e.g. adding is_parent or parent_organization foreign key).
+    
+    # 1. Try active parent organization by slug or name
+    parent_org = (
+        Organization.objects.filter(slug="efm", is_active=True).first()
+        or Organization.objects.filter(name__in=["Express Freight Management", "EFM"], is_active=True).first()
+    )
+    if parent_org:
+        return parent_org
+
+    # 2. Try any active organization other than the department-specific Express Air Cargo
+    other_org = Organization.objects.filter(is_active=True).exclude(slug="efm-express-air-cargo").order_by("name").first()
+    if other_org:
+        return other_org
+
+    # 3. Fallback to Express Air Cargo if it is the only active organization
+    fallback_org = Organization.objects.filter(slug="efm-express-air-cargo", is_active=True).first()
+    if fallback_org:
+        return fallback_org
+
+    # 4. Try any active organization as a final fallback
+    any_active = Organization.objects.filter(is_active=True).order_by("name").first()
+    if any_active:
+        return any_active
+
+    # 5. Handle cases where no active organizations exist by looking at inactive ones
+    any_inactive = (
+        Organization.objects.filter(slug="efm").first()
+        or Organization.objects.filter(name__in=["Express Freight Management", "EFM"]).first()
+        or Organization.objects.exclude(slug="efm-express-air-cargo").order_by("name").first()
+        or Organization.objects.filter(slug="efm-express-air-cargo").first()
+        or Organization.objects.order_by("name").first()
+    )
+    if any_inactive:
+        return any_inactive
+
     raise Organization.DoesNotExist("No organization configured.")
 
 
@@ -209,3 +240,26 @@ class PublicOrganizationBrandingLogoView(APIView):
         response["Content-Disposition"] = f'inline; filename="{file_name}"'
         response["Cache-Control"] = "public, max-age=300"
         return response
+
+
+class PublicBrandingView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        try:
+            organization = resolve_active_organization()
+            branding, _ = OrganizationBranding.objects.get_or_create(
+                organization=organization,
+                defaults={
+                    "display_name": organization.name,
+                    "is_active": True,
+                },
+            )
+            serializer = OrganizationBrandingSettingsSerializer(
+                branding,
+                context={"request": request},
+            )
+            return Response(serializer.data)
+        except Organization.DoesNotExist:
+            return Response({"detail": "No organization configured."}, status=404)

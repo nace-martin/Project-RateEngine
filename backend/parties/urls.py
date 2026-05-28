@@ -15,6 +15,7 @@ urlpatterns = [
     # --- V3 ENDPOINTS ---
     path('v3/', include(router_v3.urls)),
     path('v3/branding/organization/', views.OrganizationBrandingSettingsView.as_view(), name='organization-branding-settings-v3'),
+    path('v3/public/branding/', views.PublicBrandingView.as_view(), name='organization-branding-public'),
     path(
         'v3/public/branding/<slug:organization_slug>/<str:variant>/',
         views.PublicOrganizationBrandingLogoView.as_view(),

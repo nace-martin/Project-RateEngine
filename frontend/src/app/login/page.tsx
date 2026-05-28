@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/card';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/context/toast-context';
-import { login as apiLogin } from '@/lib/api';
+import { login as apiLogin, getPublicBrandingSettings } from '@/lib/api';
 import { Mail, Lock, Eye, EyeOff, Box } from 'lucide-react';
 
 export default function LoginPage() {
@@ -25,8 +25,28 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [branding, setBranding] = useState<{
+    display_name?: string;
+    logo_small_url?: string | null;
+  } | null>(null);
   const { login } = useAuth();
   const { toast } = useToast();
+
+  useEffect(() => {
+    let active = true;
+    getPublicBrandingSettings()
+      .then((data) => {
+        if (active) {
+          setBranding(data);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load public branding settings:', err);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -63,13 +83,33 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4 font-sans text-gray-600">
       <Card className="w-full max-w-[440px] shadow-xl border-gray-100 bg-white">
-        {/* ... existing header ... */}
         <CardHeader className="space-y-6 pt-12 pb-8 text-center">
-          <div className="flex justify-center items-center gap-2 mb-2">
-            <div className="bg-blue-50 p-2 rounded-lg">
-              <Box className="w-6 h-6 text-blue-600" />
-            </div>
-            <span className="text-xl font-bold text-gray-900 tracking-tight">RateEngine</span>
+          <div className="flex flex-col justify-center items-center gap-2 mb-2">
+            {branding?.logo_small_url ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={branding.logo_small_url}
+                  alt={`${branding.display_name || 'Company'} logo`}
+                  className="h-11 w-auto max-h-11 object-contain"
+                />
+                <span className="text-xl font-bold text-gray-900 tracking-tight mt-1">
+                  RateEngine
+                </span>
+                {branding.display_name && branding.display_name !== 'RateEngine' && (
+                  <span className="text-xs uppercase tracking-wider text-gray-400 font-semibold -mt-1">
+                    {branding.display_name}
+                  </span>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="bg-blue-50 p-2 rounded-lg">
+                  <Box className="w-6 h-6 text-blue-600" />
+                </div>
+                <span className="text-xl font-bold text-gray-900 tracking-tight">RateEngine</span>
+              </div>
+            )}
           </div>
           <div className="space-y-2">
             <CardTitle className="text-2xl font-bold tracking-tight text-gray-900">

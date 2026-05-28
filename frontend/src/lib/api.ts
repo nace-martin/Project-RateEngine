@@ -197,6 +197,21 @@ export async function getOrganizationBrandingSettings(): Promise<OrganizationBra
   return response.json();
 }
 
+export async function getPublicBrandingSettings(): Promise<OrganizationBrandingSettings> {
+  const url = API_BASE_URL + '/api/v3/public/branding/';
+  const response = await fetch(url, {
+    cache: 'no-store',
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to load public branding settings: ${detail}`);
+  }
+
+  return response.json();
+}
+
+
 export async function updateOrganizationBrandingSettings(
   data: Partial<OrganizationBrandingSettings> & {
     logo_primary_file?: File | null;
