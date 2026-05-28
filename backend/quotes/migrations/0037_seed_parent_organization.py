@@ -51,15 +51,15 @@ def seed_parent_organization(apps, schema_editor):
         },
     )
 
-    # Copy and save the EFM static logo from backend/static/images/efm_logo.png
-    static_logo_path = os.path.join(settings.BASE_DIR, "static", "images", "efm_logo.png")
+    # Copy and save the correct EFM static logo from backend/static/images/efm_logo_new.png
+    static_logo_path = os.path.join(settings.BASE_DIR, "static", "images", "efm_logo_new.png")
     if os.path.exists(static_logo_path):
         if not branding.logo_small:
             with open(static_logo_path, "rb") as f:
-                branding.logo_small.save("efm_logo.png", File(f), save=True)
+                branding.logo_small.save("efm_logo_new.png", File(f), save=True)
         if not branding.logo_primary:
             with open(static_logo_path, "rb") as f:
-                branding.logo_primary.save("efm_logo.png", File(f), save=True)
+                branding.logo_primary.save("efm_logo_new.png", File(f), save=True)
 
 
 def unseed_parent_organization(apps, schema_editor):

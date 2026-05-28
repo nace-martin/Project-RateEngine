@@ -103,6 +103,7 @@ backend/static/*
 !backend/static/images/
 backend/static/images/*
 !backend/static/images/efm_logo_cropped.png
+!backend/static/images/efm_logo_new.png
 backend/branding/
 
 # Node/JS tooling caches
