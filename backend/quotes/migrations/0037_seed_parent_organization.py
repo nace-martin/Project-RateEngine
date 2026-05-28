@@ -27,7 +27,7 @@ def seed_parent_organization(apps, schema_editor):
         organization.default_currency = pgk
         organization.save(update_fields=["default_currency", "updated_at"])
 
-    branding, _ = OrganizationBranding.objects.get_or_create(
+    branding, created = OrganizationBranding.objects.get_or_create(
         organization=organization,
         defaults={
             "display_name": "Express Freight Management",
@@ -51,15 +51,45 @@ def seed_parent_organization(apps, schema_editor):
         },
     )
 
+    if not created:
+        branding.display_name = "Express Freight Management"
+        branding.legal_name = "Express Freight Management Ltd"
+        branding.primary_color = "#0F2A56"
+        branding.accent_color = "#D71920"
+        branding.support_email = "info@efmexpress.com"
+        branding.support_phone = "+675 325 8500"
+        branding.website_url = "https://www.efmexpress.com"
+        branding.address_lines = "PO Box 1791\nPort Moresby\nPapua New Guinea"
+        branding.quote_footer_text = "Valid until quoted expiry. Space subject to availability at time of booking."
+        branding.public_quote_tagline = "Freight forwarder and logistics solutions from Express Freight Management"
+        branding.email_signature_text = "Express Freight Management\nPhone: +675 325 8500\nEmail: info@efmexpress.com"
+        branding.is_active = True
+        branding.save(update_fields=[
+            "display_name", "legal_name", "primary_color", "accent_color",
+            "support_email", "support_phone", "website_url", "address_lines",
+            "quote_footer_text", "public_quote_tagline", "email_signature_text", "is_active"
+        ])
+
     # Copy and save the correct EFM static logo from backend/static/images/efm_logo_new.png
     static_logo_path = os.path.join(settings.BASE_DIR, "static", "images", "efm_logo_new.png")
     if os.path.exists(static_logo_path):
-        if not branding.logo_small:
-            with open(static_logo_path, "rb") as f:
-                branding.logo_small.save("efm_logo_new.png", File(f), save=True)
-        if not branding.logo_primary:
-            with open(static_logo_path, "rb") as f:
-                branding.logo_primary.save("efm_logo_new.png", File(f), save=True)
+        # Unconditionally clear old logo files to prevent Django naming collision (e.g. efm_logo_new_xxxx.png)
+        # and ensure the correct asset is freshly saved and used.
+        if branding.logo_small:
+            try:
+                branding.logo_small.delete(save=False)
+            except Exception:
+                pass
+        if branding.logo_primary:
+            try:
+                branding.logo_primary.delete(save=False)
+            except Exception:
+                pass
+
+        with open(static_logo_path, "rb") as f:
+            branding.logo_small.save("efm_logo_new.png", File(f), save=True)
+        with open(static_logo_path, "rb") as f:
+            branding.logo_primary.save("efm_logo_new.png", File(f), save=True)
 
 
 def unseed_parent_organization(apps, schema_editor):
