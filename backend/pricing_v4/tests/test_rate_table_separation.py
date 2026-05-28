@@ -44,6 +44,9 @@ class RateTableSeparationTests(TestCase):
             default_unit='SHIPMENT',
         )
 
+    def setUp(self):
+        LocalSellRate.objects.all().delete()
+
     def test_csv_routes_export_local_charge_to_local_sell_rate(self):
         csv_content = (
             'rate_type,origin_code,destination_code,product_code,currency,amount,amount_basis,payment_term,valid_from,valid_until\n'

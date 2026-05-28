@@ -23,7 +23,10 @@ export function AppSidebar() {
     const { user, logout } = useAuth();
     const [collapsed, setCollapsed] = useState(false);
     const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
-    const brandLogoUrl = user?.organization?.branding?.logo_url || null;
+    const rawBrandLogoUrl = user?.organization?.branding?.logo_url || null;
+    const brandLogoUrl = rawBrandLogoUrl && (rawBrandLogoUrl.startsWith('http') || rawBrandLogoUrl.startsWith('/') || rawBrandLogoUrl.startsWith('data:image/')) 
+        ? rawBrandLogoUrl 
+        : null;
 
     const routes = [
         {

@@ -9,6 +9,7 @@ from pricing_v4.services.pricing_domain_service import PricingDomainService
 
 class PricingDomainServiceTests(TestCase):
     def setUp(self):
+        LocalSellRate.objects.all().delete()
         # Use a unique ID and code
         unique_id = 1999
         while ProductCode.objects.filter(id=unique_id).exists():

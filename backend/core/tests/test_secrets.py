@@ -1,6 +1,6 @@
 import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 from core.secrets import SecretResolver, get_secret
 
 class TestSecretResolver:
@@ -16,9 +16,9 @@ class TestSecretResolver:
             with pytest.raises(RuntimeError, match="GOOGLE_CLOUD_PROJECT environment variable is not set"):
                 resolver.resolve("sm://MY_SECRET")
 
-    @patch("google.cloud.secretmanager.SecretManagerServiceClient")
-    def test_resolve_sm_short_path_with_project(self, mock_client_class):
-        mock_client = mock_client_class.return_value
+    @patch("core.secrets.SecretResolver.client", new_callable=PropertyMock)
+    def test_resolve_sm_short_path_with_project(self, mock_client_prop):
+        mock_client = mock_client_prop.return_value
         mock_response = MagicMock()
         mock_response.payload.data.decode.return_value = "secret_value"
         mock_client.access_secret_version.return_value = mock_response
@@ -32,9 +32,9 @@ class TestSecretResolver:
                 request={"name": "projects/test-project/secrets/MY_SECRET/versions/latest"}
             )
 
-    @patch("google.cloud.secretmanager.SecretManagerServiceClient")
-    def test_resolve_sm_versioned_path(self, mock_client_class):
-        mock_client = mock_client_class.return_value
+    @patch("core.secrets.SecretResolver.client", new_callable=PropertyMock)
+    def test_resolve_sm_versioned_path(self, mock_client_prop):
+        mock_client = mock_client_prop.return_value
         mock_response = MagicMock()
         mock_response.payload.data.decode.return_value = "v2_value"
         mock_client.access_secret_version.return_value = mock_response
@@ -48,9 +48,9 @@ class TestSecretResolver:
                 request={"name": "projects/test-project/secrets/MY_SECRET/versions/2"}
             )
 
-    @patch("google.cloud.secretmanager.SecretManagerServiceClient")
-    def test_resolve_sm_full_path(self, mock_client_class):
-        mock_client = mock_client_class.return_value
+    @patch("core.secrets.SecretResolver.client", new_callable=PropertyMock)
+    def test_resolve_sm_full_path(self, mock_client_prop):
+        mock_client = mock_client_prop.return_value
         mock_response = MagicMock()
         mock_response.payload.data.decode.return_value = "full_path_value"
         mock_client.access_secret_version.return_value = mock_response
@@ -64,9 +64,9 @@ class TestSecretResolver:
             request={"name": full_path}
         )
 
-    @patch("google.cloud.secretmanager.SecretManagerServiceClient")
-    def test_resolve_failure(self, mock_client_class):
-        mock_client = mock_client_class.return_value
+    @patch("core.secrets.SecretResolver.client", new_callable=PropertyMock)
+    def test_resolve_failure(self, mock_client_prop):
+        mock_client = mock_client_prop.return_value
         mock_client.access_secret_version.side_effect = Exception("API Error")
 
         with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "test-project"}):

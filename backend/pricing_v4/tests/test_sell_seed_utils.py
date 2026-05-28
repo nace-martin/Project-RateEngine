@@ -12,6 +12,7 @@ from pricing_v4.models import ExportSellRate, ImportSellRate, LocalSellRate, Pro
 
 class SellSeedUtilsTests(TestCase):
     def setUp(self):
+        LocalSellRate.objects.all().delete()
         self.export_freight = ProductCode.objects.create(
             id=1001,
             code="EXP-FRT-AIR-TEST",

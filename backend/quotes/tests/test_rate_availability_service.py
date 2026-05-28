@@ -413,7 +413,7 @@ def test_export_d2a_payment_term_mismatch_does_not_count_origin_local():
 
     ExportCOGS.objects.create(
         product_code=pc_freight,
-        origin_airport="POM",
+        origin_airport="LAE",
         destination_airport="HIR",
         agent=agent,
         currency="USD",
@@ -423,7 +423,7 @@ def test_export_d2a_payment_term_mismatch_does_not_count_origin_local():
     )
     LocalCOGSRate.objects.create(
         product_code=pc_origin,
-        location="POM",
+        location="LAE",
         direction="EXPORT",
         agent=agent,
         currency="PGK",
@@ -434,7 +434,7 @@ def test_export_d2a_payment_term_mismatch_does_not_count_origin_local():
     )
     LocalSellRate.objects.create(
         product_code=pc_origin,
-        location="POM",
+        location="LAE",
         direction="EXPORT",
         payment_term="PREPAID",
         currency="PGK",
@@ -445,7 +445,7 @@ def test_export_d2a_payment_term_mismatch_does_not_count_origin_local():
     )
 
     prepaid = RateAvailabilityService.get_availability(
-        "POM", "HIR", "EXPORT", "D2A", payment_term="PREPAID"
+        "LAE", "HIR", "EXPORT", "D2A", payment_term="PREPAID"
     )
     assert prepaid[COMPONENT_ORIGIN_LOCAL] is True
     is_spot, trigger = _evaluate("EXPORT", "D2A", prepaid)
@@ -453,7 +453,7 @@ def test_export_d2a_payment_term_mismatch_does_not_count_origin_local():
     assert trigger is None
 
     collect = RateAvailabilityService.get_availability(
-        "POM", "HIR", "EXPORT", "D2A", payment_term="COLLECT"
+        "LAE", "HIR", "EXPORT", "D2A", payment_term="COLLECT"
     )
     assert collect[COMPONENT_ORIGIN_LOCAL] is False
     is_spot, trigger = _evaluate("EXPORT", "D2A", collect)

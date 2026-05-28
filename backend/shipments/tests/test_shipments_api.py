@@ -11,7 +11,7 @@ from shipments.services import recalculate_shipment_totals
 class ShipmentAPITests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
-        self.organization = Organization.objects.create(name="EFM", slug="efm")
+        self.organization, _ = Organization.objects.get_or_create(slug="efm", defaults={"name": "EFM"})
         self.user = user_model.objects.create_user(
             username="shipment-user",
             password="pass123",
@@ -30,7 +30,7 @@ class ShipmentAPITests(APITestCase):
             role="sales",
             organization=self.organization,
         )
-        self.other_organization = Organization.objects.create(name="Other Org", slug="other-org")
+        self.other_organization, _ = Organization.objects.get_or_create(slug="other-org", defaults={"name": "Other Org"})
         self.other_org_user = user_model.objects.create_user(
             username="other-org-user",
             password="pass123",

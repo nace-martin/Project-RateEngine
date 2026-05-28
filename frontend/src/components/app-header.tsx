@@ -32,7 +32,10 @@ export default function AppHeader() {
   const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
   const [open, setOpen] = useState(false);
   const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
-  const brandLogoUrl = user?.organization?.branding?.logo_url || null;
+  const rawBrandLogoUrl = user?.organization?.branding?.logo_url || null;
+  const brandLogoUrl = rawBrandLogoUrl && (rawBrandLogoUrl.startsWith('http') || rawBrandLogoUrl.startsWith('/') || rawBrandLogoUrl.startsWith('data:image/')) 
+    ? rawBrandLogoUrl 
+    : null;
   const productSubLabel = brandName === 'RateEngine' ? null : 'Powered by RateEngine';
 
   // Hide header on login page

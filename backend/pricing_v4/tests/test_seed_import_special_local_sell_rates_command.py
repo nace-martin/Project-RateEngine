@@ -28,6 +28,9 @@ class SeedImportSpecialLocalSellRatesCommandTests(TestCase):
                 default_unit=ProductCode.UNIT_SHIPMENT,
             )
 
+    def setUp(self):
+        LocalSellRate.objects.all().delete()
+
     def test_command_seeds_expected_tariffs(self):
         out = StringIO()
 

@@ -8,6 +8,7 @@ from pricing_v4.models import LocalSellRate, ProductCode
 
 class LocalSellConstraintsTests(TestCase):
     def setUp(self):
+        LocalSellRate.objects.all().delete()
         # Use get_or_create to avoid unique ID conflicts if tests run repeatedly
         self.pc_export, _ = ProductCode.objects.get_or_create(
             id=1900,
