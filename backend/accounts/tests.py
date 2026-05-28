@@ -359,3 +359,35 @@ class UserManagementOrganizationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         created = CustomUser.objects.get(username='lae-sales-user')
         self.assertEqual(created.organization, self.org_b)
+
+
+from django.contrib.admin.sites import AdminSite
+from core.models import Location
+from .admin import CustomUserAdmin
+
+class CustomUserAdminTests(TestCase):
+    def setUp(self):
+        self.site = AdminSite()
+        self.admin = CustomUserAdmin(CustomUser, self.site)
+        # Clear existing locations if any to avoid conflicts in tests
+        Location.objects.all().delete()
+        self.pom = Location.objects.create(code='POM', name='Port Moresby', is_branch=True)
+        self.adl = Location.objects.create(code='ADL', name='Adelaide', is_branch=False)
+
+    def test_primary_location_queryset_filtered_by_is_branch(self):
+        formfield = self.admin.formfield_for_foreignkey(
+            CustomUser._meta.get_field('primary_location'),
+            None
+        )
+        queryset = formfield.queryset
+        self.assertIn(self.pom, queryset)
+        self.assertNotIn(self.adl, queryset)
+
+    def test_authorised_locations_queryset_filtered_by_is_branch(self):
+        formfield = self.admin.formfield_for_manytomany(
+            CustomUser._meta.get_field('authorised_locations'),
+            None
+        )
+        queryset = formfield.queryset
+        self.assertIn(self.pom, queryset)
+        self.assertNotIn(self.adl, queryset)

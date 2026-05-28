@@ -139,6 +139,10 @@ class Location(models.Model):
     address_line = models.CharField(max_length=255, blank=True)
     metadata = models.JSONField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    is_branch = models.BooleanField(
+        default=False,
+        help_text="True if this location is an EFM branch/office."
+    )
 
     @property
     def display_name(self) -> str:
