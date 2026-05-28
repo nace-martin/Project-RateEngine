@@ -393,7 +393,7 @@ function BucketSection({
     globalFx?: CanonicalQuoteResult["fx_applied"];
     icon: React.ReactNode;
 }) {
-    const [isExpanded, setIsExpanded] = useState(true);
+    const [isExpanded, setIsExpanded] = useState(false);
     const styles = getSectionStyle();
 
     const bucketTotal = isShowingFCY
