@@ -864,6 +864,22 @@ class RateAvailabilityService:
                 valid_until__gte=today,
             ).select_related('product_code')
         )
+        import_origin_rows = list(
+            LocalCOGSRate.objects.filter(
+                location=origin_airport,
+                direction='IMPORT',
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).select_related('product_code')
+        ) + list(
+            LocalSellRate.objects.filter(
+                location=origin_airport,
+                direction='IMPORT',
+                valid_from__lte=today,
+                valid_until__gte=today,
+            ).select_related('product_code')
+        )
+
         import_destination_rows = list(
             LocalCOGSRate.objects.filter(
                 location=destination_airport,
@@ -887,7 +903,7 @@ class RateAvailabilityService:
         ]
         origin_candidates = [
             evaluate_row(COMPONENT_ORIGIN_LOCAL, row)
-            for row in import_lane_rows
+            for row in import_lane_rows + import_origin_rows
             if classify_import_component(row.product_code.code, row.product_code.category) == COMPONENT_ORIGIN_LOCAL
         ]
         destination_candidates = [
@@ -902,6 +918,15 @@ class RateAvailabilityService:
         outcomes[COMPONENT_FREIGHT] = choose_best(COMPONENT_FREIGHT, freight_candidates)
         outcomes[COMPONENT_ORIGIN_LOCAL] = choose_best(COMPONENT_ORIGIN_LOCAL, origin_candidates)
         outcomes[COMPONENT_DESTINATION_LOCAL] = choose_best(COMPONENT_DESTINATION_LOCAL, destination_candidates)
+        outcomes[COMPONENT_ORIGIN_LOCAL] = apply_payment_term_gate(
+            outcomes[COMPONENT_ORIGIN_LOCAL],
+            COMPONENT_ORIGIN_LOCAL,
+            [
+                row for row in import_origin_rows
+                if isinstance(row, LocalSellRate)
+                and classify_import_component(row.product_code.code, row.product_code.category) == COMPONENT_ORIGIN_LOCAL
+            ],
+        )
         outcomes[COMPONENT_DESTINATION_LOCAL] = apply_payment_term_gate(
             outcomes[COMPONENT_DESTINATION_LOCAL],
             COMPONENT_DESTINATION_LOCAL,
