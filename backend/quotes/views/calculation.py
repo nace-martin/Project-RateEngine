@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.db import transaction
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, status
 from rest_framework.response import Response
@@ -503,6 +504,8 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 quote_status=initial_status,
                 persist=True,
             )
+        except Http404:
+            raise
         except Exception as exc:
             logger.exception(
                 "CRM opportunity resolution failed during quote creation. Proceeding without opportunity link. Customer ID: %s, Shipment Type: %s, Error: %s",
