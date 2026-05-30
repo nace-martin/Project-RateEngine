@@ -4,11 +4,13 @@ Django signals for Quote lifecycle event tracking.
 Auto-creates QuoteEvent entries when quote status changes.
 """
 
+import logging
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 from .models import Quote, QuoteEvent
 
+logger = logging.getLogger(__name__)
 
 # Store original status before save
 _original_statuses = {}
@@ -24,101 +26,110 @@ def _sync_crm_for_quote_event(instance: Quote, event_type: str, user=None) -> No
     if not opportunity:
         return
 
-    from crm.models import Opportunity
-    from crm.services import (
-        create_quote_system_interaction,
-        mark_opportunity_lost,
-        mark_opportunity_quoted,
-        mark_opportunity_won,
-    )
-    from quotes.state_machine import ACTIVE_STATES
-
-    quote_id_outcome = f"quote_id={instance.id}"
-
-    if event_type == QuoteEvent.EventType.CREATED:
-        create_quote_system_interaction(
-            opportunity,
-            instance,
-            user,
-            "QUOTE_CREATED",
-            _crm_quote_summary(instance, "created"),
-            outcomes=quote_id_outcome,
+    try:
+        from crm.models import Opportunity
+        from crm.services import (
+            create_quote_system_interaction,
+            mark_opportunity_lost,
+            mark_opportunity_quoted,
+            mark_opportunity_won,
         )
-        return
+        from quotes.state_machine import ACTIVE_STATES
 
-    if event_type == QuoteEvent.EventType.FINALIZED:
-        create_quote_system_interaction(
-            opportunity,
-            instance,
-            user,
-            "QUOTE_FINALIZED",
-            _crm_quote_summary(instance, "finalized"),
-            outcomes=quote_id_outcome,
-        )
-        mark_opportunity_quoted(opportunity, quote=instance, actor=user)
-        return
+        quote_id_outcome = f"quote_id={instance.id}"
 
-    if event_type == QuoteEvent.EventType.SENT:
-        create_quote_system_interaction(
-            opportunity,
-            instance,
-            user,
-            "QUOTE_SENT",
-            _crm_quote_summary(instance, "sent"),
-            outcomes=quote_id_outcome,
-        )
-        mark_opportunity_quoted(opportunity, quote=instance, actor=user)
-        return
-
-    if event_type == QuoteEvent.EventType.ACCEPTED:
-        create_quote_system_interaction(
-            opportunity,
-            instance,
-            user,
-            "QUOTE_ACCEPTED",
-            _crm_quote_summary(instance, "accepted"),
-            outcomes=quote_id_outcome,
-        )
-        mark_opportunity_won(
-            opportunity,
-            actor=user,
-            reason=f"Quote {instance.quote_number or instance.id} accepted.",
-            source_type="QUOTE_ACCEPTED",
-            source_id=str(instance.id),
-        )
-        return
-
-    if event_type == QuoteEvent.EventType.LOST:
-        create_quote_system_interaction(
-            opportunity,
-            instance,
-            user,
-            "QUOTE_LOST",
-            _crm_quote_summary(instance, "lost"),
-            outcomes=quote_id_outcome,
-        )
-        opportunity.refresh_from_db()
-        if opportunity.status in {Opportunity.Status.WON, Opportunity.Status.LOST}:
+        if event_type == QuoteEvent.EventType.CREATED:
+            create_quote_system_interaction(
+                opportunity,
+                instance,
+                user,
+                "QUOTE_CREATED",
+                _crm_quote_summary(instance, "created"),
+                outcomes=quote_id_outcome,
+            )
             return
-        has_other_active_quotes = instance.opportunity.quotes.exclude(pk=instance.pk).filter(
-            status__in=ACTIVE_STATES,
-        ).exists()
-        if not has_other_active_quotes:
-            mark_opportunity_lost(
+
+        if event_type == QuoteEvent.EventType.FINALIZED:
+            create_quote_system_interaction(
+                opportunity,
+                instance,
+                user,
+                "QUOTE_FINALIZED",
+                _crm_quote_summary(instance, "finalized"),
+                outcomes=quote_id_outcome,
+            )
+            mark_opportunity_quoted(opportunity, quote=instance, actor=user)
+            return
+
+        if event_type == QuoteEvent.EventType.SENT:
+            create_quote_system_interaction(
+                opportunity,
+                instance,
+                user,
+                "QUOTE_SENT",
+                _crm_quote_summary(instance, "sent"),
+                outcomes=quote_id_outcome,
+            )
+            mark_opportunity_quoted(opportunity, quote=instance, actor=user)
+            return
+
+        if event_type == QuoteEvent.EventType.ACCEPTED:
+            create_quote_system_interaction(
+                opportunity,
+                instance,
+                user,
+                "QUOTE_ACCEPTED",
+                _crm_quote_summary(instance, "accepted"),
+                outcomes=quote_id_outcome,
+            )
+            mark_opportunity_won(
                 opportunity,
                 actor=user,
-                reason=f"Quote {instance.quote_number or instance.id} marked lost.",
+                reason=f"Quote {instance.quote_number or instance.id} accepted.",
+                source_type="QUOTE_ACCEPTED",
+                source_id=str(instance.id),
             )
-        return
+            return
 
-    if event_type == QuoteEvent.EventType.EXPIRED:
-        create_quote_system_interaction(
-            opportunity,
-            instance,
-            user,
-            "QUOTE_EXPIRED",
-            _crm_quote_summary(instance, "expired"),
-            outcomes=quote_id_outcome,
+        if event_type == QuoteEvent.EventType.LOST:
+            create_quote_system_interaction(
+                opportunity,
+                instance,
+                user,
+                "QUOTE_LOST",
+                _crm_quote_summary(instance, "lost"),
+                outcomes=quote_id_outcome,
+            )
+            opportunity.refresh_from_db()
+            if opportunity.status in {Opportunity.Status.WON, Opportunity.Status.LOST}:
+                return
+            has_other_active_quotes = instance.opportunity.quotes.exclude(pk=instance.pk).filter(
+                status__in=ACTIVE_STATES,
+            ).exists()
+            if not has_other_active_quotes:
+                mark_opportunity_lost(
+                    opportunity,
+                    actor=user,
+                    reason=f"Quote {instance.quote_number or instance.id} marked lost.",
+                )
+            return
+
+        if event_type == QuoteEvent.EventType.EXPIRED:
+            create_quote_system_interaction(
+                opportunity,
+                instance,
+                user,
+                "QUOTE_EXPIRED",
+                _crm_quote_summary(instance, "expired"),
+                outcomes=quote_id_outcome,
+            )
+    except Exception as exc:
+        logger.exception(
+            "CRM event synchronization failed. Quote ID: %s, Customer ID: %s, Event: %s, Error: %s",
+            instance.id,
+            getattr(instance.customer, "id", None),
+            event_type,
+            exc,
         )
 
 
@@ -161,7 +172,14 @@ def create_quote_event(sender, instance, created, **kwargs):
             event_type=QuoteEvent.EventType.CREATED,
             metadata={'initial_status': instance.status}
         )
-        _sync_crm_for_quote_event(instance, QuoteEvent.EventType.CREATED, user=instance.created_by)
+        try:
+            _sync_crm_for_quote_event(instance, QuoteEvent.EventType.CREATED, user=instance.created_by)
+        except Exception as exc:
+            logger.exception(
+                "CRM post-save sync failed during quote creation. Quote ID: %s, Error: %s",
+                instance.id,
+                exc,
+            )
     elif original_status and original_status != instance.status:
         # Status changed
         event_type = status_to_event.get(instance.status)
@@ -184,4 +202,12 @@ def create_quote_event(sender, instance, created, **kwargs):
                     'new_status': instance.status
                 }
             )
-            _sync_crm_for_quote_event(instance, event_type, user=user)
+            try:
+                _sync_crm_for_quote_event(instance, event_type, user=user)
+            except Exception as exc:
+                logger.exception(
+                    "CRM post-save sync failed during status transition. Quote ID: %s, Event: %s, Error: %s",
+                    instance.id,
+                    event_type,
+                    exc,
+                )
