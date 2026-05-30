@@ -487,19 +487,29 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         is_new_quote = quote is None
         origin_location = Location.objects.filter(id=validated_data.origin_location_id).first()
         destination_location = Location.objects.filter(id=validated_data.destination_location_id).first()
-        opportunity, opportunity_was_auto_created = resolve_quote_opportunity(
-            customer=customer,
-            opportunity_id=validated_data.opportunity_id,
-            existing_quote=quote,
-            mode=validated_data.mode,
-            shipment_type=shipment_type,
-            service_scope=validated_data.service_scope,
-            origin_location=origin_location,
-            destination_location=destination_location,
-            actor=request.user,
-            quote_status=initial_status,
-            persist=True,
-        )
+        opportunity = None
+        opportunity_was_auto_created = False
+        try:
+            opportunity, opportunity_was_auto_created = resolve_quote_opportunity(
+                customer=customer,
+                opportunity_id=validated_data.opportunity_id,
+                existing_quote=quote,
+                mode=validated_data.mode,
+                shipment_type=shipment_type,
+                service_scope=validated_data.service_scope,
+                origin_location=origin_location,
+                destination_location=destination_location,
+                actor=request.user,
+                quote_status=initial_status,
+                persist=True,
+            )
+        except Exception as exc:
+            logger.exception(
+                "CRM opportunity resolution failed during quote creation. Proceeding without opportunity link. Customer ID: %s, Shipment Type: %s, Error: %s",
+                validated_data.customer_id,
+                shipment_type,
+                exc,
+            )
 
         if is_new_quote:
             # --- Create the Quote object ---
@@ -570,8 +580,16 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             latest_version = quote.versions.order_by('-version_number').first()
             version_number = 1 if latest_version is None else latest_version.version_number + 1
 
-        if opportunity_was_auto_created:
-            create_auto_quote_opportunity_interaction(opportunity, quote, request.user)
+        if opportunity and opportunity_was_auto_created:
+            try:
+                create_auto_quote_opportunity_interaction(opportunity, quote, request.user)
+            except Exception as exc:
+                logger.exception(
+                    "CRM opportunity interaction auto-creation failed. Quote ID: %s, Opportunity ID: %s, Error: %s",
+                    getattr(quote, "id", None),
+                    opportunity.id,
+                    exc,
+                )
 
         # Create the QuoteVersion
         version = QuoteVersion.objects.create(
