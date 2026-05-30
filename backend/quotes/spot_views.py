@@ -33,6 +33,7 @@ from rest_framework.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 
 from core.security import validate_pdf_upload
+from core.business_rules import classify_png_shipment
 from pricing_v4.models import ChargeAlias, ProductCode
 from quotes.spot_services import (
     ScopeValidator,
@@ -912,11 +913,7 @@ def _resolve_missing_components_for_context(ctx: dict) -> Optional[list[str]]:
 
 
 def _infer_shipment_type(origin_country: str, destination_country: str) -> str:
-    if origin_country == "PG" and destination_country == "PG":
-        return "DOMESTIC"
-    if origin_country == "PG":
-        return "EXPORT"
-    return "IMPORT"
+    return classify_png_shipment(origin_country, destination_country)
 
 
 def _build_spe_from_db(
