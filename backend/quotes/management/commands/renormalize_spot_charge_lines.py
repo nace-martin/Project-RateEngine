@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from core.business_rules import classify_png_shipment
 from pricing_v4.models import ChargeAlias
 from quotes.models import Quote
 from quotes.services.charge_normalization import resolve_charge_alias
@@ -201,13 +202,10 @@ def _mode_scope_for_context(shipment_context: dict | None) -> str:
     shipment_context = shipment_context or {}
     origin_country = str(shipment_context.get("origin_country") or "").upper()
     destination_country = str(shipment_context.get("destination_country") or "").upper()
-    if origin_country == "PG" and destination_country == "PG":
-        return ChargeAlias.ModeScope.DOMESTIC
-    if origin_country == "PG":
-        return ChargeAlias.ModeScope.EXPORT
-    if destination_country == "PG":
-        return ChargeAlias.ModeScope.IMPORT
-    return ChargeAlias.ModeScope.ANY
+    try:
+        return classify_png_shipment(origin_country, destination_country)
+    except ValueError:
+        return ChargeAlias.ModeScope.ANY
 
 
 def _direction_scope_for_bucket(bucket: str | None) -> str:
