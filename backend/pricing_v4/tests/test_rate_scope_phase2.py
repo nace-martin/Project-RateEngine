@@ -10,6 +10,7 @@ from django.test import TestCase
 from pricing_v4.engine.domestic_engine import DomesticPricingEngine
 from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm as ExportPaymentTerm
 from pricing_v4.engine.import_engine import ImportPricingEngine, PaymentTerm, ServiceScope
+from pricing_v4.tests.test_export_engine import seed_all_export_product_codes
 from pricing_v4.models import (
     Agent,
     Carrier,
@@ -49,9 +50,10 @@ class Phase2QuoteOutputRegressionTests(TestCase):
         )
         cls.carrier = Carrier.objects.create(code="P2-PX", name="Phase 2 Carrier", carrier_type="AIRLINE")
 
+        seed_all_export_product_codes()
         cls.imp_clear = _product(9201, "IMP-CLEAR", "Import Customs Clearance", "IMPORT", "CLEARANCE")
         cls.imp_cartage = _product(9202, "IMP-CARTAGE-DEST", "Destination Cartage", "IMPORT", "CARTAGE")
-        cls.exp_freight = _product(9101, "EXP-FRT-AIR", "Export Air Freight", "EXPORT", "FREIGHT", "KG")
+        cls.exp_freight = ProductCode.objects.get(code="EXP-FRT-AIR")
         cls.dom_freight = _product(9301, "DOM-FRT-AIR", "Domestic Air Freight", "DOMESTIC", "FREIGHT", "KG")
 
         LocalCOGSRate.objects.create(
