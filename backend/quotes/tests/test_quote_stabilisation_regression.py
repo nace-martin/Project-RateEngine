@@ -23,6 +23,7 @@ from pricing_v4.models import (
     ProductCode,
 )
 from services.models import ServiceComponent
+from pricing_v4.tests.test_export_engine import seed_all_export_product_codes
 
 
 class CoreQuoteStabilisationRegressionTests(APITestCase):
@@ -125,49 +126,11 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
             }
         )[0]
 
-        # V4 ExportPricingEngine hardcodes specific ProductCode IDs (1001 for freight, 1010 for doc/origin, 1080 for dest clearance)
-        self.exp_freight_pc = ProductCode.objects.get_or_create(
-            id=1001,
-            defaults={
-                "code": "EXP-FRT-AIR",
-                "description": "Export Air Freight",
-                "domain": "EXPORT",
-                "category": "FREIGHT",
-                "is_gst_applicable": False,
-                "gl_revenue_code": "4100",
-                "gl_cost_code": "5100",
-                "default_unit": "KG",
-            }
-        )[0]
-
-        self.exp_origin_pc = ProductCode.objects.get_or_create(
-            id=1010,
-            defaults={
-                "code": "EXP-DOC",
-                "description": "Export Documentation",
-                "domain": "EXPORT",
-                "category": "DOCUMENTATION",
-                "is_gst_applicable": True,
-                "gst_rate": Decimal("0.10"),
-                "gl_revenue_code": "4100",
-                "gl_cost_code": "5100",
-                "default_unit": "SHIPMENT",
-            }
-        )[0]
-
-        self.exp_dest_pc = ProductCode.objects.get_or_create(
-            id=1080,
-            defaults={
-                "code": "EXP-CLEAR-DEST",
-                "description": "Export Dest Clearance",
-                "domain": "EXPORT",
-                "category": "CLEARANCE",
-                "is_gst_applicable": False,
-                "gl_revenue_code": "4100",
-                "gl_cost_code": "5100",
-                "default_unit": "SHIPMENT",
-            }
-        )[0]
+        # Seed all export product codes dynamically using the helper to satisfy ExportPricingEngine requirements
+        seed_all_export_product_codes()
+        self.exp_freight_pc = ProductCode.objects.get(code="EXP-FRT-AIR")
+        self.exp_origin_pc = ProductCode.objects.get(code="EXP-DOC")
+        self.exp_dest_pc = ProductCode.objects.get(code="EXP-CLEAR-DEST")
 
         self.dom_freight_pc = ProductCode.objects.get_or_create(
             id=5007,

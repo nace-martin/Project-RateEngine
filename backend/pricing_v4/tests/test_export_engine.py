@@ -25,7 +25,7 @@ from pricing_v4.models import (
     LocalSellRate,
     Surcharge,
 )
-from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm
+from pricing_v4.engine.export_engine import ExportPricingEngine, PaymentTerm, resolve_export_codes_to_ids
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult
 
 
@@ -33,47 +33,51 @@ EXPECTED_QUOTE_RESULT_FIELDS = {field.name for field in fields(QuoteResult)}
 EXPECTED_LINE_ITEM_FIELDS = {field.name for field in fields(QuoteLineItem)}
 
 
+def seed_all_export_product_codes():
+    expected_codes = [
+        ('EXP-FRT-AIR', 'FREIGHT', ProductCode.UNIT_KG),
+        ('EXP-FSC-AIR', 'SURCHARGE', ProductCode.UNIT_KG),
+        ('EXP-DOC', 'DOCUMENTATION', ProductCode.UNIT_SHIPMENT),
+        ('EXP-AWB', 'DOCUMENTATION', ProductCode.UNIT_SHIPMENT),
+        ('EXP-TERM', 'HANDLING', ProductCode.UNIT_SHIPMENT),
+        ('EXP-HANDLE', 'HANDLING', ProductCode.UNIT_SHIPMENT),
+        ('EXP-SCREEN', 'SCREENING', ProductCode.UNIT_KG),
+        ('EXP-CLEAR', 'CLEARANCE', ProductCode.UNIT_SHIPMENT),
+        ('EXP-AGENCY', 'AGENCY', ProductCode.UNIT_SHIPMENT),
+        ('EXP-BUILDUP', 'HANDLING', ProductCode.UNIT_SHIPMENT),
+        ('EXP-PICKUP', 'CARTAGE', ProductCode.UNIT_KG),
+        ('EXP-FSC-PICKUP', 'SURCHARGE', ProductCode.UNIT_PERCENT),
+        ('EXP-CLEAR-DEST', 'CLEARANCE', ProductCode.UNIT_SHIPMENT),
+        ('EXP-DELIVERY-DEST', 'CARTAGE', ProductCode.UNIT_SHIPMENT),
+        ('EXP-DG', 'HANDLING', ProductCode.UNIT_SHIPMENT),
+    ]
+    for idx, (code, category, unit) in enumerate(expected_codes, start=1000):
+        ProductCode.objects.get_or_create(
+            code=code,
+            defaults={
+                'id': idx,
+                'description': f"Export {code}",
+                'domain': ProductCode.DOMAIN_EXPORT,
+                'category': category,
+                'is_gst_applicable': False,
+                'gst_rate': Decimal('0.00'),
+                'gl_revenue_code': '4300',
+                'gl_cost_code': '5300',
+                'default_unit': unit,
+            }
+        )
+
+
 class ExportEngineTestCase(TestCase):
     """Base test case with common setup for Export Engine tests."""
 
     @classmethod
     def setUpTestData(cls):
-        cls.pc_clearance = ProductCode.objects.create(
-            id=1501,
-            code='EXP-CLEAR-TEST',
-            description='Export Clearance Test',
-            domain='EXPORT',
-            category='CLEARANCE',
-            is_gst_applicable=False,
-            gst_rate=Decimal('0.00'),
-            gl_revenue_code='4300',
-            gl_cost_code='5300',
-            default_unit='SHIPMENT'
-        )
-        cls.pc_dest_clearance = ProductCode.objects.create(
-            id=1504,
-            code='EXP-CLEAR-DEST-TEST',
-            description='Export Destination Clearance Test',
-            domain='EXPORT',
-            category='CLEARANCE',
-            is_gst_applicable=False,
-            gst_rate=Decimal('0.00'),
-            gl_revenue_code='4304',
-            gl_cost_code='5304',
-            default_unit='SHIPMENT',
-        )
-        cls.pc_freight = ProductCode.objects.create(
-            id=1505,
-            code='EXP-FRT-AIR-TEST',
-            description='Export Air Freight Test',
-            domain='EXPORT',
-            category='FREIGHT',
-            is_gst_applicable=False,
-            gst_rate=Decimal('0.00'),
-            gl_revenue_code='4305',
-            gl_cost_code='5305',
-            default_unit=ProductCode.UNIT_KG,
-        )
+        seed_all_export_product_codes()
+
+        cls.pc_clearance = ProductCode.objects.get(code='EXP-CLEAR')
+        cls.pc_dest_clearance = ProductCode.objects.get(code='EXP-CLEAR-DEST')
+        cls.pc_freight = ProductCode.objects.get(code='EXP-FRT-AIR')
 
         cls.agent = Agent.objects.create(
             code='TEST-AGENT',
@@ -84,6 +88,7 @@ class ExportEngineTestCase(TestCase):
 
         cls.valid_from = date.today() - timedelta(days=1)
         cls.valid_until = date.today() + timedelta(days=365)
+
 
 
 class ExportPrepaidFcyMarginTest(ExportEngineTestCase):
@@ -280,6 +285,11 @@ class ExportSellRateSelectionTest(ExportEngineTestCase):
         )
 
     def test_prepaid_pgk_quote_prefers_exact_pgk_export_sell_rate(self):
+        from pricing_v4.engine.export_engine import _RESOLVED_EXPORT_IDS_CACHE
+        print("DEBUG: pc_freight.id =", self.pc_freight.id)
+        print("DEBUG: cache =", _RESOLVED_EXPORT_IDS_CACHE)
+        print("DEBUG: ExportSellRates =", list(ExportSellRate.objects.filter(product_code=self.pc_freight).values('id', 'product_code_id', 'currency', 'origin_airport', 'destination_airport', 'valid_from', 'valid_until')))
+        
         engine = ExportPricingEngine(
             quote_date=date.today(),
             origin='POM',
@@ -292,6 +302,7 @@ class ExportSellRateSelectionTest(ExportEngineTestCase):
         )
 
         result = engine.calculate_quote([self.pc_freight.id])
+        print("DEBUG: result lines =", [(l.product_code, l.sell_amount, l.sell_currency, l.is_rate_missing, l.notes) for l in result.lines])
         self.assertEqual(len(result.lines), 1)
         line = result.lines[0]
 
@@ -400,39 +411,22 @@ class ExportFxAndCollectCurrencyTest(ExportEngineTestCase):
 class ExportFallbackDefaultTest(TestCase):
     """Document the current hardcoded export defaults when sell rates are absent."""
 
-    DEFAULT_PRODUCTS = [
-        (1002, 'EXP-FSC-AIR', 'Airline Export Fuel Surcharge', 'SURCHARGE', ProductCode.UNIT_KG),
-        (1020, 'EXP-CLEAR', 'Customs Clearance (Origin)', 'CLEARANCE', ProductCode.UNIT_SHIPMENT),
-        (1030, 'EXP-TERM', 'Terminal Handling', 'HANDLING', ProductCode.UNIT_SHIPMENT),
-        (1032, 'EXP-HANDLE', 'Handling Fee', 'HANDLING', ProductCode.UNIT_SHIPMENT),
-        (1040, 'EXP-SCREEN', 'Security Screening', 'SCREENING', ProductCode.UNIT_KG),
-    ]
-
     @classmethod
     def setUpTestData(cls):
-        for pc_id, code, description, category, default_unit in cls.DEFAULT_PRODUCTS:
-            ProductCode.objects.update_or_create(
-                id=pc_id,
-                defaults={
-                    'code': code,
-                    'description': description,
-                    'domain': ProductCode.DOMAIN_EXPORT,
-                    'category': category,
-                    'is_gst_applicable': False,
-                    'gst_rate': Decimal('0.00'),
-                    'gl_revenue_code': '4300',
-                    'gl_cost_code': '5300',
-                    'default_unit': default_unit,
-                },
-            )
+        seed_all_export_product_codes()
 
     def setUp(self):
-        product_code_ids = [pc_id for pc_id, *_ in self.DEFAULT_PRODUCTS]
+        product_code_ids = resolve_export_codes_to_ids([
+            'EXP-FSC-AIR', 'EXP-CLEAR', 'EXP-TERM', 'EXP-HANDLE', 'EXP-SCREEN'
+        ])
         ExportSellRate.objects.filter(product_code_id__in=product_code_ids).delete()
         LocalSellRate.objects.filter(product_code_id__in=product_code_ids).delete()
         Surcharge.objects.filter(product_code_id__in=product_code_ids).delete()
 
     def test_missing_export_sell_rates_use_current_hardcoded_defaults(self):
+        codes = ['EXP-FSC-AIR', 'EXP-CLEAR', 'EXP-TERM', 'EXP-HANDLE', 'EXP-SCREEN']
+        product_code_ids = resolve_export_codes_to_ids(codes)
+
         result = ExportPricingEngine(
             quote_date=date.today(),
             origin='POM',
@@ -440,7 +434,7 @@ class ExportFallbackDefaultTest(TestCase):
             chargeable_weight_kg=Decimal('50'),
             payment_term=PaymentTerm.PREPAID,
             destination_currency='AUD',
-        ).calculate_quote([1002, 1020, 1030, 1032, 1040])
+        ).calculate_quote(product_code_ids)
 
         by_code = {line.product_code: line for line in result.lines}
         self.assertEqual(by_code['EXP-CLEAR'].sell_amount, Decimal('300.00'))
@@ -545,11 +539,11 @@ class ExportPercentRateSelectionTest(ExportEngineTestCase):
         self.assertEqual(by_code[self.pc_fsc_pickup.code].rule_family, CALCULATION_PERCENT_OF_BASE)
 
 
-class ExportProductCodeSelectionTest(TestCase):
+class ExportProductCodeSelectionTest(ExportEngineTestCase):
     def test_general_export_scope_does_not_auto_include_special_cargo_fees(self):
         codes = ExportPricingEngine.get_product_codes(is_dg=False, service_scope='D2A')
 
-        self.assertIn(1020, codes)
+        self.assertIn(self.pc_clearance.id, codes)
         self.assertNotIn(1071, codes)
         self.assertNotIn(1072, codes)
 
@@ -600,3 +594,83 @@ class ExportProductCodeSelectionTest(TestCase):
 
         self.assertNotIn(product_code.id, general_codes)
         self.assertIn(product_code.id, commodity_codes)
+
+
+class ExportProductCodeDecouplingTests(TestCase):
+    def setUp(self):
+        from pricing_v4.engine.export_engine import _RESOLVED_EXPORT_IDS_CACHE
+        _RESOLVED_EXPORT_IDS_CACHE.clear()
+
+    def test_decoupled_resolution_succeeds_when_all_expected_product_codes_exist(self):
+        expected_codes = [
+            'EXP-FRT-AIR', 'EXP-FSC-AIR', 'EXP-DOC', 'EXP-AWB', 'EXP-TERM',
+            'EXP-HANDLE', 'EXP-SCREEN', 'EXP-CLEAR', 'EXP-AGENCY', 'EXP-BUILDUP',
+            'EXP-PICKUP', 'EXP-FSC-PICKUP', 'EXP-CLEAR-DEST', 'EXP-DELIVERY-DEST',
+            'EXP-DG'
+        ]
+        # Seed all of them with custom arbitrary IDs (not the 10xx ones) to prove we are not depending on literal hardcoded IDs
+        seeded_ids = {}
+        for idx, code in enumerate(expected_codes, start=9000):
+            pc = ProductCode.objects.create(
+                id=idx,
+                code=code,
+                description=f"Decoupled {code}",
+                domain=ProductCode.DOMAIN_EXPORT,
+                category="SURCHARGE",
+                is_gst_applicable=False,
+                gst_rate=Decimal("0.00"),
+                gl_revenue_code="4300",
+                gl_cost_code="5300",
+                default_unit=ProductCode.UNIT_SHIPMENT,
+            )
+            seeded_ids[code] = pc.id
+
+        # Call get_product_codes under a scope requiring all base codes + DG + Clearance
+        resolved_ids = ExportPricingEngine.get_product_codes(
+            is_dg=True,
+            service_scope='D2D',
+            origin='POM',
+            destination='BNE',
+            payment_term='PREPAID',
+            quote_date=date.today(),
+        )
+
+        # Assert that all dynamic custom IDs are retrieved successfully
+        for code, idx in seeded_ids.items():
+            self.assertIn(idx, resolved_ids)
+
+    def test_missing_required_export_product_code_raises_loud_configuration_error(self):
+        # Seed all codes EXCEPT the required EXP-FRT-AIR code
+        expected_codes = [
+            'EXP-FSC-AIR', 'EXP-DOC', 'EXP-AWB', 'EXP-TERM',
+            'EXP-HANDLE', 'EXP-SCREEN', 'EXP-CLEAR', 'EXP-AGENCY', 'EXP-BUILDUP',
+            'EXP-PICKUP', 'EXP-FSC-PICKUP', 'EXP-CLEAR-DEST', 'EXP-DELIVERY-DEST',
+            'EXP-DG'
+        ]
+        for idx, code in enumerate(expected_codes, start=9000):
+            ProductCode.objects.create(
+                id=idx,
+                code=code,
+                description=f"Decoupled {code}",
+                domain=ProductCode.DOMAIN_EXPORT,
+                category="SURCHARGE",
+                is_gst_applicable=False,
+                gst_rate=Decimal("0.00"),
+                gl_revenue_code="4300",
+                gl_cost_code="5300",
+                default_unit=ProductCode.UNIT_SHIPMENT,
+            )
+
+        # Calling the engine should fail loudly because EXP-FRT-AIR is missing
+        with self.assertRaises(ValueError) as context:
+            ExportPricingEngine.get_product_codes(
+                is_dg=True,
+                service_scope='D2D',
+                origin='POM',
+                destination='BNE',
+                payment_term='PREPAID',
+                quote_date=date.today(),
+            )
+        self.assertIn("Configuration Error", str(context.exception))
+        self.assertIn("EXP-FRT-AIR", str(context.exception))
+

@@ -22,6 +22,7 @@ AMENDMENTS:
 - Handling Fee: Default PGK 50.00 if rate missing
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -61,6 +62,50 @@ from quotes.quote_result_contract import (
     normalize_rate_source,
 )
 from pricing_v4.engine.result_types import QuoteLineItem, QuoteResult, build_tax_breakdown
+
+logger = logging.getLogger(__name__)
+
+# Cache of resolved product code string -> integer ID
+_RESOLVED_EXPORT_IDS_CACHE = {}
+
+def resolve_export_codes_to_ids(codes: List[str]) -> List[int]:
+    """
+    Resolves alphanumeric ProductCode code names to database IDs.
+    Fails loudly with a clear configuration error if any required code is missing from the database.
+    Utilizes a module-level in-memory cache to avoid repeated queries.
+    """
+    # Detect Django test database resets and clear contaminated cache
+    if _RESOLVED_EXPORT_IDS_CACHE:
+        first_id = list(_RESOLVED_EXPORT_IDS_CACHE.values())[0]
+        if not ProductCode.objects.filter(id=first_id).exists():
+            _RESOLVED_EXPORT_IDS_CACHE.clear()
+
+    missing_codes = [c for c in codes if c not in _RESOLVED_EXPORT_IDS_CACHE]
+    if missing_codes:
+        # Fetch missing codes from the database
+        db_codes = {
+            pc.code: pc.id
+            for pc in ProductCode.objects.filter(code__in=missing_codes)
+        }
+        # Update the cache
+        _RESOLVED_EXPORT_IDS_CACHE.update(db_codes)
+        
+    still_missing = [c for c in codes if c not in _RESOLVED_EXPORT_IDS_CACHE]
+    if still_missing:
+        logger.error(
+            "Export pricing configuration failure. Required ProductCode(s) missing from database: %s",
+            ', '.join(still_missing)
+        )
+        raise ValueError(
+            f"Configuration Error: The following required Export ProductCode(s) are missing from the database: {', '.join(still_missing)}"
+        )
+            
+    return [_RESOLVED_EXPORT_IDS_CACHE[c] for c in codes]
+
+
+
+
+
 
 class PaymentTerm(Enum):
     COLLECT = "COLLECT"
@@ -104,6 +149,7 @@ class ChargeLineResult:
     caf_applied: bool = False
     margin_applied: bool = False
     rule_family: str = CALCULATION_FLAT
+
 
 
 class ExportPricingEngine:
@@ -222,7 +268,8 @@ class ExportPricingEngine:
         
         # Origin Clearance (D2A, D2D)
         if service_scope in ('D2A', 'D2D'):
-            codes.append(1020)  # EXP-CLEAR - Customs Clearance (Origin)
+            clearance_ids = resolve_export_codes_to_ids(['EXP-CLEAR'])
+            codes.extend(clearance_ids)
         
         # Deduplicate and sort
         return sorted(list(set(codes)))
@@ -239,35 +286,37 @@ class ExportPricingEngine:
     ) -> List[int]:
         if service_scope == 'A2A': service_scope = 'P2P'
 
-        codes = [
-            1001,  # EXP-FRT-AIR - Air Freight
-            1002,  # EXP-FSC-AIR - Airline Export Fuel Surcharge
-            1010,  # EXP-DOC - Documentation
-            1011,  # EXP-AWB - AWB Fee
-            1030,  # EXP-TERM - Terminal Handling
-            1032,  # EXP-HANDLE - Handling Fee
-            1040,  # EXP-SCREEN - Security Screening
+        base_codes = [
+            'EXP-FRT-AIR',
+            'EXP-FSC-AIR',
+            'EXP-DOC',
+            'EXP-AWB',
+            'EXP-TERM',
+            'EXP-HANDLE',
+            'EXP-SCREEN',
         ]
         
         if service_scope in ('D2A', 'D2D'):
-            codes.extend([
-                1020,  # EXP-CLEAR - Customs Clearance (Origin)
-                1021,  # EXP-AGENCY - Agency Fee
-                1031,  # EXP-BUILDUP - Build-Up
-                1050,  # EXP-PICKUP - Pickup/Collection
-                1060,  # EXP-FSC-PICKUP - Fuel Surcharge on Pickup
+            base_codes.extend([
+                'EXP-CLEAR',
+                'EXP-AGENCY',
+                'EXP-BUILDUP',
+                'EXP-PICKUP',
+                'EXP-FSC-PICKUP',
             ])
         
         if service_scope in ('D2D', 'A2D'):
-            codes.extend([
-                1080,  # EXP-CLEAR-DEST
-                1081,  # EXP-DELIVERY-DEST
+            base_codes.extend([
+                'EXP-CLEAR-DEST',
+                'EXP-DELIVERY-DEST',
             ])
             
         if is_dg:
-            codes.append(1070)
+            base_codes.append('EXP-DG')
 
-        codes.extend(get_auto_product_code_ids(
+        resolved_ids = resolve_export_codes_to_ids(base_codes)
+
+        resolved_ids.extend(get_auto_product_code_ids(
             shipment_type='EXPORT',
             service_scope=service_scope,
             commodity_code=commodity_code,
@@ -277,7 +326,7 @@ class ExportPricingEngine:
             quote_date=quote_date,
         ))
             
-        return sorted(list(set(codes)))
+        return sorted(list(set(resolved_ids)))
     
     def calculate_quote(
         self,
@@ -485,25 +534,25 @@ class ExportPricingEngine:
         sell_rate = self._get_sell_rate(product_code_id)
         
         if not sell_rate:
-            # 1. Customs Brokerage Default (PGK 300.00)
-            if product_code_id == 1020:
+            # 1. Customs Clearance Default (PGK 300.00)
+            if pc.code == 'EXP-CLEAR':
                 return self._create_default_line(pc, self.DEFAULT_BROKERAGE_FEE, "Default Customs Brokerage Fee")
             
             # 2. Airline Fuel Surcharge Default (PGK 0.80/kg)
-            if product_code_id == 1002:
+            if pc.code == 'EXP-FSC-AIR':
                 sell_amount = (self.chargeable_weight_kg * self.DEFAULT_AIR_FUEL_SURCHARGE).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 return self._create_default_line(pc, sell_amount, f"Default Airline Fuel Surcharge (K{self.DEFAULT_AIR_FUEL_SURCHARGE}/kg)")
 
             # 3. Security Surcharge Default (PGK 0.20/kg + PGK 45.00 flat)
-            if product_code_id == 1040:
+            if pc.code == 'EXP-SCREEN':
                 sell_amount = (self.chargeable_weight_kg * self.DEFAULT_SECURITY_SCREEN_RATE) + self.DEFAULT_SECURITY_SCREEN_FLAT
                 sell_amount = sell_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 return self._create_default_line(pc, sell_amount, f"Default Security Surcharge (K{self.DEFAULT_SECURITY_SCREEN_RATE}/kg + K{self.DEFAULT_SECURITY_SCREEN_FLAT} flat)")
 
             # 4. Terminal and Handling Defaults
-            if product_code_id == 1030: # Terminal
+            if pc.code == 'EXP-TERM': # Terminal
                 return self._create_default_line(pc, self.DEFAULT_TERMINAL_FEE, "Default Terminal Fee")
-            if product_code_id == 1032: # Handling
+            if pc.code == 'EXP-HANDLE': # Handling
                 return self._create_default_line(pc, self.DEFAULT_HANDLING_FEE, "Default Handling Fee")
 
             if requested_product_code_ids and product_code_id in requested_product_code_ids:
