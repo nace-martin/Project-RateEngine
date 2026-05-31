@@ -28,6 +28,7 @@ import json
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from django.conf import settings
+from core.business_rules import classify_png_shipment
 from quotes.completeness import COMPONENT_FREIGHT, required_components
 from quotes.ai_intake_schemas import VALID_CURRENCIES
 
@@ -585,11 +586,7 @@ class SpotPricingEnvelope(BaseModel):
                 # Explicitly local-only SPOT requests can carry local charges without airfreight.
                 return self
 
-            shipment_type = "IMPORT"
-            if self.shipment.origin_country == "PG" and self.shipment.destination_country == "PG":
-                shipment_type = "DOMESTIC"
-            elif self.shipment.origin_country == "PG":
-                shipment_type = "EXPORT"
+            shipment_type = classify_png_shipment(self.shipment.origin_country, self.shipment.destination_country)
 
             required = required_components(
                 shipment_type=shipment_type,
