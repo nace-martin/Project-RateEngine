@@ -244,17 +244,11 @@ class ScopeValidator:
             destination_airport=destination_airport,
         )
 
-        if origin_country == cls.PNG_COUNTRY_CODE:
+        try:
+            classify_png_shipment(origin_country, destination_country)
             return True, None
-        
-        if destination_country == cls.PNG_COUNTRY_CODE:
-            return True, None
-        
-        return False, (
-            f"Out of scope: RateEngine only supports shipments to or from "
-            f"Papua New Guinea (PNG). Received {origin_country} → {destination_country}. "
-            f"No pricing can be generated for this route."
-        )
+        except ValueError as exc:
+            return False, str(exc)
 
 
 # =============================================================================
