@@ -609,6 +609,156 @@ class TestSPESchemaValidation:
         assert ctx.context_hash is not None
         assert len(ctx.context_hash) == 64  # SHA256 hex digest
 
+    def test_spe_resolves_matrix_routing_successfully(self):
+        """SPE validates standard PNG routes successfully."""
+        # PG -> PG = DOMESTIC
+        spe_dom = SpotPricingEnvelope(
+            id=str(uuid4()),
+            status=SPEStatus.DRAFT,
+            shipment=SPEShipmentContext(
+                origin_country="PG",
+                destination_country="PG",
+                origin_code="POM",
+                destination_code="LAE",
+                commodity="GCR",
+                total_weight_kg=100.0,
+                pieces=1
+            ),
+            charges=[
+                SPEChargeLine(
+                    code="AIRFREIGHT_SPOT",
+                    description="Airfreight",
+                    amount=500.0,
+                    currency="PGK",
+                    unit="flat",
+                    bucket="airfreight",
+                    is_primary_cost=True,
+                    source_reference="Agent quote",
+                    entered_by_user_id="user123",
+                    entered_at=datetime.now()
+                )
+            ],
+            conditions=SPEConditions(),
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test",
+            created_by_user_id="user123",
+            created_at=datetime.now(),
+            expires_at=datetime.now() + timedelta(hours=72)
+        )
+        assert spe_dom.shipment.origin_country == "PG"
+
+        # PG -> AU = EXPORT
+        spe_exp = SpotPricingEnvelope(
+            id=str(uuid4()),
+            status=SPEStatus.DRAFT,
+            shipment=SPEShipmentContext(
+                origin_country="PG",
+                destination_country="AU",
+                origin_code="POM",
+                destination_code="BNE",
+                commodity="GCR",
+                total_weight_kg=100.0,
+                pieces=1
+            ),
+            charges=[
+                SPEChargeLine(
+                    code="AIRFREIGHT_SPOT",
+                    description="Airfreight",
+                    amount=500.0,
+                    currency="USD",
+                    unit="per_kg",
+                    bucket="airfreight",
+                    is_primary_cost=True,
+                    source_reference="Agent quote",
+                    entered_by_user_id="user123",
+                    entered_at=datetime.now()
+                )
+            ],
+            conditions=SPEConditions(),
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test",
+            created_by_user_id="user123",
+            created_at=datetime.now(),
+            expires_at=datetime.now() + timedelta(hours=72)
+        )
+        assert spe_exp.shipment.destination_country == "AU"
+
+    def test_spe_classification_fails_for_invalid_cross_border_routes(self):
+        """SPE schema validation raises ValueError for invalid non-PNG to non-PNG routes."""
+        with pytest.raises(ValueError) as exc_info:
+            SpotPricingEnvelope(
+                id=str(uuid4()),
+                status=SPEStatus.DRAFT,
+                shipment=SPEShipmentContext(
+                    origin_country="AU",
+                    destination_country="SG",
+                    origin_code="MEL",
+                    destination_code="SIN",
+                    commodity="GCR",
+                    total_weight_kg=100.0,
+                    pieces=1
+                ),
+                charges=[
+                    SPEChargeLine(
+                        code="AIRFREIGHT_SPOT",
+                        description="Airfreight",
+                        amount=500.0,
+                        currency="USD",
+                        unit="flat",
+                        bucket="airfreight",
+                        is_primary_cost=True,
+                        source_reference="Agent quote",
+                        entered_by_user_id="user123",
+                        entered_at=datetime.now()
+                    )
+                ],
+                conditions=SPEConditions(),
+                spot_trigger_reason_code="TEST",
+                spot_trigger_reason_text="Test",
+                created_by_user_id="user123",
+                created_at=datetime.now(),
+                expires_at=datetime.now() + timedelta(hours=72)
+            )
+        assert "only supports shipments to or from Papua New Guinea" in str(exc_info.value) or "only supports routes to or from PNG" in str(exc_info.value)
+
+    def test_spe_classification_fails_for_missing_country_context(self):
+        """SPE schema validation raises ValueError when origin or destination is missing/empty."""
+        with pytest.raises(ValueError) as exc_info:
+            SpotPricingEnvelope(
+                id=str(uuid4()),
+                status=SPEStatus.DRAFT,
+                shipment=SPEShipmentContext(
+                    origin_country="",
+                    destination_country="PG",
+                    origin_code="",
+                    destination_code="POM",
+                    commodity="GCR",
+                    total_weight_kg=100.0,
+                    pieces=1
+                ),
+                charges=[
+                    SPEChargeLine(
+                        code="AIRFREIGHT_SPOT",
+                        description="Airfreight",
+                        amount=500.0,
+                        currency="USD",
+                        unit="flat",
+                        bucket="airfreight",
+                        is_primary_cost=True,
+                        source_reference="Agent quote",
+                        entered_by_user_id="user123",
+                        entered_at=datetime.now()
+                    )
+                ],
+                conditions=SPEConditions(),
+                spot_trigger_reason_code="TEST",
+                spot_trigger_reason_text="Test",
+                created_by_user_id="user123",
+                created_at=datetime.now(),
+                expires_at=datetime.now() + timedelta(hours=72)
+            )
+        assert "Country code must be a 2-letter ISO code or 'OTHER'" in str(exc_info.value)
+
 
 # =============================================================================
 # SPE LIFECYCLE TESTS (Tweak #3)
