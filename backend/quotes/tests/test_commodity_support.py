@@ -572,3 +572,49 @@ class QuoteCommodityAPITests(APITestCase):
             ["IMP-AVI-MANUAL-API"],
         )
         self.assertIn("Import AVI manual only (IMP-AVI-MANUAL-API)", payload["detail"])
+
+
+class TestStandardQuoteShipmentClassification(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        aud = Currency.objects.create(code="AUD", name="Australian Dollar")
+        pgk = Currency.objects.create(code="PGK", name="Papua New Guinean Kina")
+        au = Country.objects.create(code="AU", name="Australia", currency=aud)
+        pg = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
+        sg = Country.objects.create(code="SG", name="Singapore")
+
+        cls.pom = create_location(code="POM", name="Port Moresby", country=pg, is_active=True)
+        cls.lae = create_location(code="LAE", name="Lae", country=pg, is_active=True)
+        cls.syd = create_location(code="SYD", name="Sydney", country=au, is_active=True)
+        cls.sin = create_location(code="SIN", name="Singapore", country=sg, is_active=True)
+
+        # Location with missing country
+        cls.missing_country_loc = create_location(code="XXX", name="No Country", country=None, is_active=True)
+
+    def test_classify_shipment_type_air_matrix(self):
+        # PG -> PG = DOMESTIC
+        self.assertEqual(_classify_shipment_type("AIR", self.pom, self.lae), "DOMESTIC")
+        # PG -> AU = EXPORT
+        self.assertEqual(_classify_shipment_type("AIR", self.pom, self.syd), "EXPORT")
+        # AU -> PG = IMPORT
+        self.assertEqual(_classify_shipment_type("AIR", self.syd, self.pom), "IMPORT")
+
+    def test_classify_shipment_type_air_cross_border_fails(self):
+        with self.assertRaisesMessage(ValueError, "Cross-border shipments not involving PNG are not yet supported."):
+            _classify_shipment_type("AIR", self.syd, self.sin)
+
+    def test_classify_shipment_type_missing_locations_fails(self):
+        with self.assertRaisesMessage(ValueError, "Origin and destination locations are required."):
+            _classify_shipment_type("AIR", None, self.pom)
+
+    def test_classify_shipment_type_missing_countries_fails(self):
+        with self.assertRaisesMessage(ValueError, "Origin and destination locations must include countries for AIR mode."):
+            _classify_shipment_type("AIR", self.pom, self.missing_country_loc)
+
+    def test_classify_shipment_type_sea_mode_fails(self):
+        with self.assertRaisesMessage(ValueError, "SEA mode is not yet supported."):
+            _classify_shipment_type("SEA", self.pom, self.syd)
+
+    def test_classify_shipment_type_unsupported_mode_fails(self):
+        with self.assertRaisesMessage(ValueError, "Mode 'ROAD' is not supported."):
+            _classify_shipment_type("ROAD", self.pom, self.syd)

@@ -58,6 +58,8 @@ from core.dataclasses import (
 
 logger = logging.getLogger(__name__)
 
+from core.business_rules import classify_png_shipment
+
 def _classify_shipment_type(mode: str, origin_location: Location, destination_location: Location) -> str:
     if not origin_location or not destination_location:
         raise ValueError("Origin and destination locations are required.")
@@ -69,13 +71,12 @@ def _classify_shipment_type(mode: str, origin_location: Location, destination_lo
         if not org_country or not dest_country:
             raise ValueError("Origin and destination locations must include countries for AIR mode.")
 
-        if org_country == 'PG' and dest_country == 'PG':
-            return Quote.ShipmentType.DOMESTIC
-        if org_country != 'PG' and dest_country == 'PG':
-            return Quote.ShipmentType.IMPORT
-        if org_country == 'PG' and dest_country != 'PG':
-            return Quote.ShipmentType.EXPORT
-        raise ValueError("Cross-border shipments not involving PNG are not yet supported.")
+        try:
+            return classify_png_shipment(org_country, dest_country)
+        except ValueError as exc:
+            if "Out of scope" in str(exc):
+                raise ValueError("Cross-border shipments not involving PNG are not yet supported.")
+            raise ValueError(str(exc))
 
     if mode == 'SEA':
         raise ValueError("SEA mode is not yet supported.")
