@@ -27,6 +27,7 @@ from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
+from core.business_rules import classify_png_shipment
 from core.commodity import DEFAULT_COMMODITY_CODE
 from quotes.branding import QuoteBrandingContext
 from quotes.spot_schemas import (
@@ -2365,11 +2366,7 @@ class ReplyAnalysisService:
         def _shipment_type_from_context(ctx: dict) -> str:
             origin_country = (ctx.get("origin_country") or "").upper()
             dest_country = (ctx.get("destination_country") or "").upper()
-            if origin_country == "PG" and dest_country == "PG":
-                return "DOMESTIC"
-            if origin_country == "PG":
-                return "EXPORT"
-            return "IMPORT"
+            return classify_png_shipment(origin_country, dest_country)
 
         missing_component_codes: set[str] | None = None
         shipment_type = None

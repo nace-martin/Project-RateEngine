@@ -2096,270 +2096,276 @@ class SpotReplyAnalysisAPIView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     
     def post(self, request):
-        text = request.data.get('text', '')
-        pdf_file = request.FILES.get('file')
-        spe_id = request.data.get('spe_id')
-        source_batch_id = request.data.get('source_batch_id')
-        source_kind = _normalize_source_kind(request.data.get('source_kind'))
-        target_bucket = _normalize_target_bucket(request.data.get('target_bucket'))
-        source_type = _normalize_source_type(request.data.get('source_type'), pdf_file=pdf_file)
-        manual_assertions = request.data.get('assertions', [])
-        use_ai = request.data.get('use_ai', True)
-        pdf_warnings = []
-        shipment_context = None
+        try:
+            text = request.data.get('text', '')
+            pdf_file = request.FILES.get('file')
+            spe_id = request.data.get('spe_id')
+            source_batch_id = request.data.get('source_batch_id')
+            source_kind = _normalize_source_kind(request.data.get('source_kind'))
+            target_bucket = _normalize_target_bucket(request.data.get('target_bucket'))
+            source_type = _normalize_source_type(request.data.get('source_type'), pdf_file=pdf_file)
+            manual_assertions = request.data.get('assertions', [])
+            use_ai = request.data.get('use_ai', True)
+            pdf_warnings = []
+            shipment_context = None
 
-        if isinstance(manual_assertions, str):
-            try:
-                manual_assertions = json.loads(manual_assertions)
-            except json.JSONDecodeError:
-                manual_assertions = []
+            if isinstance(manual_assertions, str):
+                try:
+                    manual_assertions = json.loads(manual_assertions)
+                except json.JSONDecodeError:
+                    manual_assertions = []
 
-        if isinstance(use_ai, str):
-            use_ai = use_ai.strip().lower() not in {"false", "0", "no", "off"}
+            if isinstance(use_ai, str):
+                use_ai = use_ai.strip().lower() not in {"false", "0", "no", "off"}
 
-        if spe_id:
-            try:
-                spe_db = _get_spe_or_404(request.user, spe_id)
-                shipment_context = _normalize_shipment_context(spe_db.shipment_context_json)
-                if (
-                    shipment_context is not None
-                    and not shipment_context.get("payment_term")
-                    and getattr(spe_db, "quote", None)
-                    and getattr(spe_db.quote, "payment_term", None)
-                ):
-                    shipment_context["payment_term"] = str(spe_db.quote.payment_term).upper()
-            except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
-                pass
+            if spe_id:
+                try:
+                    spe_db = _get_spe_or_404(request.user, spe_id)
+                    shipment_context = _normalize_shipment_context(spe_db.shipment_context_json)
+                    if (
+                        shipment_context is not None
+                        and not shipment_context.get("payment_term")
+                        and getattr(spe_db, "quote", None)
+                        and getattr(spe_db.quote, "payment_term", None)
+                    ):
+                        shipment_context["payment_term"] = str(spe_db.quote.payment_term).upper()
+                except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
+                    pass
 
-        if pdf_file:
-            try:
-                validate_pdf_upload(pdf_file)
-            except Exception as exc:
+            if pdf_file:
+                try:
+                    validate_pdf_upload(pdf_file)
+                except Exception as exc:
+                    return Response(
+                        {'error': '; '.join(getattr(exc, 'messages', [str(exc)]))},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                from quotes.ai_intake_service import extract_rate_quote_text_from_pdf
+
+                extraction_result = extract_rate_quote_text_from_pdf(pdf_file.read(), context=shipment_context)
+                if not extraction_result.success:
+                    return Response(
+                        {'error': extraction_result.error or 'PDF extraction failed'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                text = extraction_result.text or ''
+                pdf_warnings = list(extraction_result.warnings or [])
+            
+            if not text:
                 return Response(
-                    {'error': '; '.join(getattr(exc, 'messages', [str(exc)]))},
+                    {'error': 'Either "text" or "file" is required.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            from quotes.ai_intake_service import extract_rate_quote_text_from_pdf
+                
+            if shipment_context:
+                # Enrich with real names for the AI prompt
+                from core.models import Airport
+                orig_ap = Airport.objects.filter(iata_code=shipment_context.get('origin_code')).first()
+                dest_ap = Airport.objects.filter(iata_code=shipment_context.get('destination_code')).first()
+                if orig_ap: shipment_context['origin'] = orig_ap.city.name
+                if dest_ap: shipment_context['destination'] = dest_ap.city.name
+                
+            # Calculate direction and availability to guide the analyst
+            direction = 'IMPORT'
+            availability = None
+            if shipment_context:
+                origin_country, destination_country = _resolve_country_pair(
+                    shipment_context.get('origin_country', ''),
+                    shipment_context.get('destination_country', ''),
+                    origin_code=shipment_context.get('origin_code'),
+                    destination_code=shipment_context.get('destination_code'),
+                )
+                direction = _infer_shipment_type(origin_country, destination_country)
+                
+                from quotes.spot_services import RateAvailabilityService
+                component_outcomes = RateAvailabilityService.get_component_outcomes(
+                    origin_airport=shipment_context.get('origin_code', ''),
+                    destination_airport=shipment_context.get('destination_code', ''),
+                    direction=direction,
+                    service_scope=shipment_context.get('service_scope', 'P2P'),
+                    payment_term=shipment_context.get('payment_term'),
+                )
+                availability = {
+                    component: outcome.get('status') in {'covered_exact', 'covered_fallback'}
+                    for component, outcome in component_outcomes.items()
+                }
+                
+                # Enrich context with missing status to guide AI
+                if availability:
+                    shipment_context['missing_components'] = [k for k, v in availability.items() if not v]
+                    shipment_context['component_outcomes'] = component_outcomes
 
-            extraction_result = extract_rate_quote_text_from_pdf(pdf_file.read(), context=shipment_context)
-            if not extraction_result.success:
-                return Response(
-                    {'error': extraction_result.error or 'PDF extraction failed'},
-                    status=status.HTTP_400_BAD_REQUEST
+            if use_ai and not manual_assertions:
+                # If AI is requested and no manual edits provided, do full AI analysis
+                result = ReplyAnalysisService.analyze_with_ai(
+                    raw_text=text,
+                    shipment_context=shipment_context,
+                    availability=availability
+                )
+                logger.info(
+                    "analyze-reply AI result: assertions=%d, warnings=%d, can_proceed=%s",
+                    len(result.assertions), len(result.warnings), result.summary.can_proceed,
+                )
+                if not result.assertions:
+                    logger.warning("analyze-reply returned 0 assertions for text of length %d", len(text))
+            else:
+                # Manual edit flow or fallback
+                result = ReplyAnalysisService.analyze_manual(
+                    raw_text=text,
+                    assertions=manual_assertions
                 )
 
-            text = extraction_result.text or ''
-            pdf_warnings = list(extraction_result.warnings or [])
-        
-        if not text:
+            if pdf_warnings:
+                result.warnings.extend(pdf_warnings)
+
+            # Auto-populate SPE with AI-extracted charges (draft only)
+            if use_ai and not manual_assertions and spe_id and shipment_context:
+                try:
+                    spe_db = _get_spe_or_404(request.user, spe_id)
+                except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
+                    spe_db = None
+
+                if spe_db and spe_db.status == 'draft':
+                    from decimal import Decimal, InvalidOperation
+
+                    def _to_decimal(val):
+                        if val is None or val == "":
+                            return None
+                        try:
+                            return Decimal(str(val))
+                        except (InvalidOperation, ValueError):
+                            return None
+
+                    source_reference = str(
+                        request.data.get('source_reference')
+                        or (pdf_file.name if pdf_file else "Agent reply")
+                    )
+                    source_label = str(
+                        request.data.get('label')
+                        or _default_source_label(source_kind, target_bucket)
+                    )
+                    auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+                        result,
+                        source_reference=source_reference,
+                        shipment_context=shipment_context,
+                    )
+                    safety_signals = getattr(result, "safety_signals", None)
+                    if hasattr(safety_signals, "model_dump"):
+                        safety_signals = safety_signals.model_dump()
+                    elif not isinstance(safety_signals, dict):
+                        safety_signals = {}
+                    if not safety_signals.get("imported_charge_count"):
+                        safety_signals["imported_charge_count"] = len(auto_charges)
+                    if not safety_signals.get("conditional_charge_count"):
+                        safety_signals["conditional_charge_count"] = sum(
+                            1 for charge in auto_charges if charge.get("conditional")
+                        )
+                    if "pdf_fallback_used" not in safety_signals:
+                        safety_signals["pdf_fallback_used"] = any(
+                            "pdf extraction fallback" in str(w).lower() for w in (result.warnings or [])
+                        )
+                    detected_currencies = sorted(
+                        {
+                            str(charge.get("currency") or "").upper()
+                            for charge in auto_charges
+                            if str(charge.get("currency") or "").strip()
+                        }
+                    )
+                    batch = _get_or_create_source_batch(
+                        spe_db=spe_db,
+                        request=request,
+                        source_batch_id=source_batch_id,
+                        source_kind=source_kind,
+                        source_type=source_type,
+                        target_bucket=target_bucket,
+                        label=source_label,
+                        source_reference=source_reference,
+                        raw_text=text,
+                        file_name=pdf_file.name if pdf_file else "",
+                        file_content_type=getattr(pdf_file, "content_type", "") if pdf_file else "",
+                        analysis_summary_json=build_source_analysis_summary_payload(
+                            warnings=result.warnings or [],
+                            assertion_count=len(result.assertions or []),
+                            can_proceed=getattr(result.summary, "can_proceed", False),
+                            ai_used=True,
+                            detected_currencies=detected_currencies,
+                            safety_signals=safety_signals,
+                        ),
+                    )
+
+                    now = timezone.now()
+                    existing_batch_lines = list(batch.charge_lines.all())
+                    normalized_auto_charges = []
+
+                    if auto_charges:
+                        for charge in auto_charges:
+                            amount_val = _to_decimal(charge.get("amount"))
+                            if amount_val is None or amount_val <= 0:
+                                continue
+
+                            min_charge_val = _to_decimal(charge.get("min_charge"))
+                            normalized_auto_charges.append(
+                                {
+                                    **charge,
+                                    "amount": amount_val,
+                                    "min_charge": min_charge_val,
+                                    "rate": _to_decimal(charge.get("rate")),
+                                    "min_amount": _to_decimal(charge.get("min_amount")),
+                                    "max_amount": _to_decimal(charge.get("max_amount")),
+                                    "percent": _to_decimal(charge.get("percent")),
+                                }
+                            )
+
+                    existing_matching_lines = list(existing_batch_lines)
+                    if normalized_auto_charges:
+                        batch_line_ids = {line.id for line in existing_batch_lines}
+                        incoming_source_signatures = {
+                            _incoming_charge_source_semantic_signature(charge)
+                            for charge in normalized_auto_charges
+                        }
+                        if incoming_source_signatures:
+                            stale_reclassification_candidates = [
+                                line
+                                for line in spe_db.charge_lines.select_related("source_batch").all()
+                                if line.id not in batch_line_ids
+                                and (
+                                    line.source_batch is None
+                                    or line.source_batch.source_kind == source_kind
+                                )
+                                and _existing_line_source_semantic_signature(line) in incoming_source_signatures
+                            ]
+                            existing_matching_lines.extend(stale_reclassification_candidates)
+
+                    _reconcile_spe_charge_lines(
+                        spe_db=spe_db,
+                        existing_lines=existing_batch_lines,
+                        existing_lines_for_matching=existing_matching_lines,
+                        incoming_charges=normalized_auto_charges,
+                        entered_by=request.user,
+                        entered_at=now,
+                        shipment_context=shipment_context,
+                        source_batch=batch,
+                    )
+
+                    # Update conditional flag in SPE conditions
+                    if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():
+                        conditions = spe_db.conditions_json or {}
+                        conditions["conditional_charges_present"] = True
+                        spe_db.conditions_json = conditions
+                        spe_db.save(update_fields=["conditions_json"])
+
+                    result_payload = result.model_dump()
+                    result_payload["source_batch_id"] = str(batch.id)
+                    result_payload["source_batch_label"] = batch.label
+                    return Response(result_payload)
+            
+            return Response(result.model_dump())
+        except ValueError as exc:
             return Response(
-                {'error': 'Either "text" or "file" is required.'},
+                {'error': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
-        if shipment_context:
-            # Enrich with real names for the AI prompt
-            from core.models import Airport
-            orig_ap = Airport.objects.filter(iata_code=shipment_context.get('origin_code')).first()
-            dest_ap = Airport.objects.filter(iata_code=shipment_context.get('destination_code')).first()
-            if orig_ap: shipment_context['origin'] = orig_ap.city.name
-            if dest_ap: shipment_context['destination'] = dest_ap.city.name
-            
-        # Calculate direction and availability to guide the analyst
-        direction = 'IMPORT'
-        availability = None
-        if shipment_context:
-            origin_country, destination_country = _resolve_country_pair(
-                shipment_context.get('origin_country', ''),
-                shipment_context.get('destination_country', ''),
-                origin_code=shipment_context.get('origin_code'),
-                destination_code=shipment_context.get('destination_code'),
-            )
-            direction = _infer_shipment_type(origin_country, destination_country)
-            
-            from quotes.spot_services import RateAvailabilityService
-            component_outcomes = RateAvailabilityService.get_component_outcomes(
-                origin_airport=shipment_context.get('origin_code', ''),
-                destination_airport=shipment_context.get('destination_code', ''),
-                direction=direction,
-                service_scope=shipment_context.get('service_scope', 'P2P'),
-                payment_term=shipment_context.get('payment_term'),
-            )
-            availability = {
-                component: outcome.get('status') in {'covered_exact', 'covered_fallback'}
-                for component, outcome in component_outcomes.items()
-            }
-            
-            # Enrich context with missing status to guide AI
-            if availability:
-                shipment_context['missing_components'] = [k for k, v in availability.items() if not v]
-                shipment_context['component_outcomes'] = component_outcomes
-
-        if use_ai and not manual_assertions:
-            # If AI is requested and no manual edits provided, do full AI analysis
-            result = ReplyAnalysisService.analyze_with_ai(
-                raw_text=text,
-                shipment_context=shipment_context,
-                availability=availability
-            )
-            logger.info(
-                "analyze-reply AI result: assertions=%d, warnings=%d, can_proceed=%s",
-                len(result.assertions), len(result.warnings), result.summary.can_proceed,
-            )
-            if not result.assertions:
-                logger.warning("analyze-reply returned 0 assertions for text of length %d", len(text))
-        else:
-            # Manual edit flow or fallback
-            result = ReplyAnalysisService.analyze_manual(
-                raw_text=text,
-                assertions=manual_assertions
-            )
-
-        if pdf_warnings:
-            result.warnings.extend(pdf_warnings)
-
-        # Auto-populate SPE with AI-extracted charges (draft only)
-        if use_ai and not manual_assertions and spe_id and shipment_context:
-            try:
-                spe_db = _get_spe_or_404(request.user, spe_id)
-            except (SpotPricingEnvelopeDB.DoesNotExist, ValueError):
-                spe_db = None
-
-            if spe_db and spe_db.status == 'draft':
-                from decimal import Decimal, InvalidOperation
-
-                def _to_decimal(val):
-                    if val is None or val == "":
-                        return None
-                    try:
-                        return Decimal(str(val))
-                    except (InvalidOperation, ValueError):
-                        return None
-
-                source_reference = str(
-                    request.data.get('source_reference')
-                    or (pdf_file.name if pdf_file else "Agent reply")
-                )
-                source_label = str(
-                    request.data.get('label')
-                    or _default_source_label(source_kind, target_bucket)
-                )
-                auto_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
-                    result,
-                    source_reference=source_reference,
-                    shipment_context=shipment_context,
-                )
-                safety_signals = getattr(result, "safety_signals", None)
-                if hasattr(safety_signals, "model_dump"):
-                    safety_signals = safety_signals.model_dump()
-                elif not isinstance(safety_signals, dict):
-                    safety_signals = {}
-                if not safety_signals.get("imported_charge_count"):
-                    safety_signals["imported_charge_count"] = len(auto_charges)
-                if not safety_signals.get("conditional_charge_count"):
-                    safety_signals["conditional_charge_count"] = sum(
-                        1 for charge in auto_charges if charge.get("conditional")
-                    )
-                if "pdf_fallback_used" not in safety_signals:
-                    safety_signals["pdf_fallback_used"] = any(
-                        "pdf extraction fallback" in str(w).lower() for w in (result.warnings or [])
-                    )
-                detected_currencies = sorted(
-                    {
-                        str(charge.get("currency") or "").upper()
-                        for charge in auto_charges
-                        if str(charge.get("currency") or "").strip()
-                    }
-                )
-                batch = _get_or_create_source_batch(
-                    spe_db=spe_db,
-                    request=request,
-                    source_batch_id=source_batch_id,
-                    source_kind=source_kind,
-                    source_type=source_type,
-                    target_bucket=target_bucket,
-                    label=source_label,
-                    source_reference=source_reference,
-                    raw_text=text,
-                    file_name=pdf_file.name if pdf_file else "",
-                    file_content_type=getattr(pdf_file, "content_type", "") if pdf_file else "",
-                    analysis_summary_json=build_source_analysis_summary_payload(
-                        warnings=result.warnings or [],
-                        assertion_count=len(result.assertions or []),
-                        can_proceed=getattr(result.summary, "can_proceed", False),
-                        ai_used=True,
-                        detected_currencies=detected_currencies,
-                        safety_signals=safety_signals,
-                    ),
-                )
-
-                now = timezone.now()
-                existing_batch_lines = list(batch.charge_lines.all())
-                normalized_auto_charges = []
-
-                if auto_charges:
-                    for charge in auto_charges:
-                        amount_val = _to_decimal(charge.get("amount"))
-                        if amount_val is None or amount_val <= 0:
-                            continue
-
-                        min_charge_val = _to_decimal(charge.get("min_charge"))
-                        normalized_auto_charges.append(
-                            {
-                                **charge,
-                                "amount": amount_val,
-                                "min_charge": min_charge_val,
-                                "rate": _to_decimal(charge.get("rate")),
-                                "min_amount": _to_decimal(charge.get("min_amount")),
-                                "max_amount": _to_decimal(charge.get("max_amount")),
-                                "percent": _to_decimal(charge.get("percent")),
-                            }
-                        )
-
-                existing_matching_lines = list(existing_batch_lines)
-                if normalized_auto_charges:
-                    batch_line_ids = {line.id for line in existing_batch_lines}
-                    incoming_source_signatures = {
-                        _incoming_charge_source_semantic_signature(charge)
-                        for charge in normalized_auto_charges
-                    }
-                    if incoming_source_signatures:
-                        stale_reclassification_candidates = [
-                            line
-                            for line in spe_db.charge_lines.select_related("source_batch").all()
-                            if line.id not in batch_line_ids
-                            and (
-                                line.source_batch is None
-                                or line.source_batch.source_kind == source_kind
-                            )
-                            and _existing_line_source_semantic_signature(line) in incoming_source_signatures
-                        ]
-                        existing_matching_lines.extend(stale_reclassification_candidates)
-
-                _reconcile_spe_charge_lines(
-                    spe_db=spe_db,
-                    existing_lines=existing_batch_lines,
-                    existing_lines_for_matching=existing_matching_lines,
-                    incoming_charges=normalized_auto_charges,
-                    entered_by=request.user,
-                    entered_at=now,
-                    shipment_context=shipment_context,
-                    source_batch=batch,
-                )
-
-                # Update conditional flag in SPE conditions
-                if any(c.get("conditional") for c in auto_charges) or spe_db.charge_lines.filter(conditional=True).exists():
-                    conditions = spe_db.conditions_json or {}
-                    conditions["conditional_charges_present"] = True
-                    spe_db.conditions_json = conditions
-                    spe_db.save(update_fields=["conditions_json"])
-
-                result_payload = result.model_dump()
-                result_payload["source_batch_id"] = str(batch.id)
-                result_payload["source_batch_label"] = batch.label
-                return Response(result_payload)
-        
-        return Response(result.model_dump())
 
 # Add this to the end of spot_views.py
 
