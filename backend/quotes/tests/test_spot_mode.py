@@ -115,6 +115,15 @@ class TestScopeValidation:
         assert is_valid is True
         assert error is None
 
+    def test_scope_invalid_for_missing_blank_countries(self):
+        """Missing or blank countries without airport codes must be rejected."""
+        is_valid, error = ScopeValidator.validate(
+            origin_country="",
+            destination_country=""
+        )
+        assert is_valid is False
+        assert "supports routes to or from PNG" in error or "Out of scope" in error or "Missing country data" in error
+
 
 # =============================================================================
 # SPOT TRIGGER TESTS
