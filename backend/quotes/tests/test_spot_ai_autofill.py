@@ -1770,3 +1770,151 @@ def test_builder_threads_source_line_identity_from_analysis():
     assert charges[0]["source_line_identity"] == "assertion-line:14"
     assert charges[0]["source_excerpt"] == "Destination fee USD 75"
     assert charges[0]["source_line_number"] == 14
+
+
+def test_shipment_type_classification_resolves_matrix():
+    # PG -> PG = DOMESTIC
+    analysis = ReplyAnalysisResult(
+        raw_text="Airfreight PGK 500",
+        assertions=[
+            ExtractedAssertion(
+                text="Airfreight",
+                category=AssertionCategory.RATE,
+                status=AssertionStatus.CONFIRMED,
+                confidence=0.9,
+                rate_amount=Decimal("500.00"),
+                rate_currency="PGK",
+                rate_unit="flat",
+            )
+        ],
+        summary=AnalysisSummary(has_rate=True, has_currency=True),
+        warnings=[],
+    )
+
+    charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+        analysis=analysis,
+        source_reference="AI",
+        shipment_context={
+            "origin_country": "PG",
+            "destination_country": "PG",
+            "service_scope": "A2A",
+        },
+    )
+    assert len(charges) == 1
+
+    # PG -> AU = EXPORT
+    charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+        analysis=analysis,
+        source_reference="AI",
+        shipment_context={
+            "origin_country": "PG",
+            "destination_country": "AU",
+            "service_scope": "A2A",
+        },
+    )
+    assert len(charges) == 1
+
+    # AU -> PG = IMPORT
+    charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+        analysis=analysis,
+        source_reference="AI",
+        shipment_context={
+            "origin_country": "AU",
+            "destination_country": "PG",
+            "service_scope": "A2A",
+        },
+    )
+    assert len(charges) == 1
+
+
+def test_shipment_type_classification_invalid_corridor_raises_error():
+    analysis = ReplyAnalysisResult(
+        raw_text="Airfreight PGK 500",
+        assertions=[
+            ExtractedAssertion(
+                text="Airfreight",
+                category=AssertionCategory.RATE,
+                status=AssertionStatus.CONFIRMED,
+                confidence=0.9,
+                rate_amount=Decimal("500.00"),
+                rate_currency="PGK",
+                rate_unit="flat",
+            )
+        ],
+        summary=AnalysisSummary(has_rate=True, has_currency=True),
+        warnings=[],
+    )
+
+    # AU -> SG returns/raises clear invalid context error, not IMPORT
+    with pytest.raises(ValueError, match="only supports routes to or from PNG"):
+        ReplyAnalysisService.build_spe_charges_from_analysis(
+            analysis=analysis,
+            source_reference="AI",
+            shipment_context={
+                "origin_country": "AU",
+                "destination_country": "SG",
+                "service_scope": "A2A",
+            },
+        )
+
+
+def test_shipment_type_classification_missing_country_raises_error():
+    analysis = ReplyAnalysisResult(
+        raw_text="Airfreight PGK 500",
+        assertions=[],
+        summary=AnalysisSummary(has_rate=True, has_currency=True),
+        warnings=[],
+    )
+
+    with pytest.raises(ValueError, match="Both origin and destination country codes are required"):
+        ReplyAnalysisService.build_spe_charges_from_analysis(
+            analysis=analysis,
+            source_reference="AI",
+            shipment_context={
+                "origin_country": "",
+                "destination_country": "PG",
+                "service_scope": "A2A",
+            },
+        )
+
+    with pytest.raises(ValueError, match="Both origin and destination country codes are required"):
+        ReplyAnalysisService.build_spe_charges_from_analysis(
+            analysis=analysis,
+            source_reference="AI",
+            shipment_context={
+                "origin_country": "PG",
+                "destination_country": None,
+                "service_scope": "A2A",
+            },
+        )
+
+
+def test_api_boundary_returns_400_for_invalid_context(monkeypatch):
+    user, origin, destination = _setup_user_and_locations()
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    spe = _create_spe(
+        user=user,
+        origin_code="BNE",
+        dest_code="SIN",
+        origin_country="AU",
+        dest_country="SG",  # Invalid non-PG corridor
+        service_scope="a2a",
+    )
+
+    # Request to analyze reply text should return 400 Bad Request
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Airfreight rates: flat USD 200",
+            "spe_id": str(spe.id),
+            "use_ai": False,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "error" in response.data
+    assert "only supports routes to or from PNG" in response.data["error"]
+
