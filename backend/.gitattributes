@@ -1,0 +1,2 @@
+entrypoint.prod.sh text eol=lf
+entrypoint.migrate.sh text eol=lf

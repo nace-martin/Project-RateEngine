@@ -53,3 +53,19 @@ class HealthCheckTests(APITestCase):
         data = response.json()
         assert data['check_type'] == 'combined'
         assert 'database' in data
+
+    def test_healthz_endpoint(self):
+        """Lightweight healthz endpoint should return 200 and {"status": "ok"}."""
+        url = reverse('healthz')
+        response = self.client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"status": "ok"}
+
+    def test_healthz_slash_endpoint(self):
+        """healthz with slash should also work."""
+        url = reverse('healthz_slash')
+        response = self.client.get(url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"status": "ok"}
