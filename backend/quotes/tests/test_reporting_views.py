@@ -127,6 +127,11 @@ class TestReportsViewSet:
         assert mode_entry['revenue'] == 1500.0
 
     def test_sales_performance(self, api_client, manager_user, sales_user, quote_factory):
+        manager_user.department = 'Sales'
+        manager_user.save()
+        sales_user.department = 'Sales'
+        sales_user.save()
+
         api_client.force_authenticate(user=manager_user)
         
         quote_factory(sales_user, Quote.Status.FINALIZED, 2000)
