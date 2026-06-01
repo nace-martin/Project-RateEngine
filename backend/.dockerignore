@@ -1,0 +1,59 @@
+# =============================================================================
+# RateEngine Production .dockerignore
+# =============================================================================
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Redundant Frontend/Backend Modules
+node_modules/
+
+# Python Compilation & Testing Caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Local Databases and Volatile Caches
+db.sqlite3
+*.sqlite3
+*.db
+*.sqlite3-journal
+*.sqlite3-wal
+
+# Log files & Debug Outputs
+logs/
+*.log
+*.traceback
+out.txt
+out2.txt
+patch_both.diff
+patch_pytest.diff
+
+# Local Media and Django Assets
+media/
+staticfiles/
+test_staticfiles/
+test_staticfiles_output/
+
+# Sensitive Variables
+.env
+.env.*
+
+# Knowledge Graph & CLI Toolings
+graphify-out/
+
+# System Files & Git Files
+.git/
+.gitignore
+.DS_Store
+Thumbs.db

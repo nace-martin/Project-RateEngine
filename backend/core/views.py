@@ -122,7 +122,11 @@ class LocationV3DetailView(APIView):
         return Response(data)
 
 
+from django.http import JsonResponse
 from django.utils import timezone
+
+def healthz(request):
+    return JsonResponse({"status": "ok"})
 
 class LivenessCheckAPIView(APIView):
     """
