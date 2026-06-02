@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
@@ -330,8 +331,8 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
     ],
-    # Rate limiting to prevent brute force and DoS attacks
-    'DEFAULT_THROTTLE_CLASSES': [
+    # Rate limiting to prevent brute force and DoS attacks (disabled in tests)
+    'DEFAULT_THROTTLE_CLASSES': [] if 'test' in sys.argv else [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
     ],
