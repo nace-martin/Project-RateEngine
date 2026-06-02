@@ -339,107 +339,108 @@ class QuoteValidationMatrixRegressionTests(APITestCase):
                 for payment_term in payment_terms:
                     count += 1
                     
-                    # 1. Setup the shipment parameters
-                    if direction == "DOMESTIC":
-                        origin = self.pom
-                        destination = self.lae
-                        origin_country = "PG"
-                        destination_country = "PG"
-                        incoterm = "EXW"
-                        carrier_id = self.carrier_px.id
-                        agent_id = None
-                        buy_currency = "PGK"
-                    elif direction == "IMPORT":
-                        origin = self.bne
-                        destination = self.pom
-                        origin_country = "AU"
-                        destination_country = "PG"
-                        incoterm = "FCA" if scope == "D2A" else "EXW"
-                        carrier_id = None
-                        agent_id = self.agent_bne.id
-                        buy_currency = "AUD"
-                    else:  # EXPORT
-                        origin = self.pom
-                        destination = self.bne
-                        origin_country = "PG"
-                        destination_country = "AU"
-                        incoterm = "FCA" if scope == "D2A" else "DAP" if scope == "D2D" and payment_term == "PREPAID" else "EXW"
-                        carrier_id = None
-                        agent_id = self.agent_bne.id
-                        buy_currency = "USD"
+                    with self.subTest(direction=direction, scope=scope, payment_term=payment_term):
+                        # 1. Setup the shipment parameters
+                        if direction == "DOMESTIC":
+                            origin = self.pom
+                            destination = self.lae
+                            origin_country = "PG"
+                            destination_country = "PG"
+                            incoterm = "EXW"
+                            carrier_id = self.carrier_px.id
+                            agent_id = None
+                            buy_currency = "PGK"
+                        elif direction == "IMPORT":
+                            origin = self.bne
+                            destination = self.pom
+                            origin_country = "AU"
+                            destination_country = "PG"
+                            incoterm = "FCA" if scope == "D2A" else "EXW"
+                            carrier_id = None
+                            agent_id = self.agent_bne.id
+                            buy_currency = "AUD"
+                        else:  # EXPORT
+                            origin = self.pom
+                            destination = self.bne
+                            origin_country = "PG"
+                            destination_country = "AU"
+                            incoterm = "FCA" if scope == "D2A" else "DAP" if scope == "D2D" and payment_term == "PREPAID" else "EXW"
+                            carrier_id = None
+                            agent_id = self.agent_bne.id
+                            buy_currency = "USD"
 
-                    # --- PHASE A: All Rates Exist (Standard Quote / SPOT = False) ---
-                    self._seed_rates(direction, scope, payment_term)
+                        # --- PHASE A: All Rates Exist (Standard Quote / SPOT = False) ---
+                        self._seed_rates(direction, scope, payment_term)
 
-                    # Trigger evaluation
-                    eval_payload = {
-                        "origin_country": origin_country,
-                        "destination_country": destination_country,
-                        "origin_airport": origin.code,
-                        "destination_airport": destination.code,
-                        "service_scope": scope,
-                        "payment_term": payment_term,
-                        "commodity": "GCR",
-                        "agent_id": agent_id,
-                        "carrier_id": carrier_id,
-                        "buy_currency": buy_currency
-                    }
-                    eval_res = self.client.post("/api/v3/spot/evaluate-trigger/", eval_payload, format="json")
-                    self.assertEqual(
-                        eval_res.status_code, status.HTTP_200_OK,
-                        f"Failed trigger evaluation for {direction} {scope} {payment_term}"
-                    )
-                    self.assertFalse(
-                        eval_res.json()["is_spot_required"],
-                        f"Spot trigger incorrectly activated when all rates exist for {direction} {scope} {payment_term}"
-                    )
+                        # Trigger evaluation
+                        eval_payload = {
+                            "origin_country": origin_country,
+                            "destination_country": destination_country,
+                            "origin_airport": origin.code,
+                            "destination_airport": destination.code,
+                            "service_scope": scope,
+                            "payment_term": payment_term,
+                            "commodity": "GCR",
+                            "agent_id": agent_id,
+                            "carrier_id": carrier_id,
+                            "buy_currency": buy_currency
+                        }
+                        eval_res = self.client.post("/api/v3/spot/evaluate-trigger/", eval_payload, format="json")
+                        self.assertEqual(
+                            eval_res.status_code, status.HTTP_200_OK,
+                            f"Failed trigger evaluation for {direction} {scope} {payment_term}"
+                        )
+                        self.assertFalse(
+                            eval_res.json()["is_spot_required"],
+                            f"Spot trigger incorrectly activated when all rates exist for {direction} {scope} {payment_term}"
+                        )
 
-                    # Create & Compute standard quote
-                    payload = self._payload(
-                        origin, destination, scope, payment_term, incoterm,
-                        agent_id=agent_id, carrier_id=carrier_id, buy_currency=buy_currency
-                    )
-                    res = self.client.post("/api/v3/quotes/compute/", payload, format="json")
-                    self.assertEqual(
-                        res.status_code, status.HTTP_201_CREATED,
-                        f"Failed standard quote compute for {direction} {scope} {payment_term}. Detail: {res.data if hasattr(res, 'data') else res}"
-                    )
-                    self.assertEqual(
-                        res.data["status"], "DRAFT",
-                        f"Incorrect quote status for standard quote in {direction} {scope} {payment_term}"
-                    )
+                        # Create & Compute standard quote
+                        payload = self._payload(
+                            origin, destination, scope, payment_term, incoterm,
+                            agent_id=agent_id, carrier_id=carrier_id, buy_currency=buy_currency
+                        )
+                        res = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+                        self.assertEqual(
+                            res.status_code, status.HTTP_201_CREATED,
+                            f"Failed standard quote compute for {direction} {scope} {payment_term}. Detail: {res.data if hasattr(res, 'data') else res}"
+                        )
+                        self.assertEqual(
+                            res.data["status"], "DRAFT",
+                            f"Incorrect quote status for standard quote in {direction} {scope} {payment_term}"
+                        )
 
-                    # --- PHASE B: Rates are Missing (SPOT = True) ---
-                    # Delete all rates so it triggers SPOT
-                    ImportCOGS.objects.all().delete()
-                    ImportSellRate.objects.all().delete()
-                    ExportCOGS.objects.all().delete()
-                    ExportSellRate.objects.all().delete()
-                    DomesticCOGS.objects.all().delete()
-                    DomesticSellRate.objects.all().delete()
-                    LocalCOGSRate.objects.all().delete()
-                    LocalSellRate.objects.all().delete()
+                        # --- PHASE B: Rates are Missing (SPOT = True) ---
+                        # Delete all rates so it triggers SPOT
+                        ImportCOGS.objects.all().delete()
+                        ImportSellRate.objects.all().delete()
+                        ExportCOGS.objects.all().delete()
+                        ExportSellRate.objects.all().delete()
+                        DomesticCOGS.objects.all().delete()
+                        DomesticSellRate.objects.all().delete()
+                        LocalCOGSRate.objects.all().delete()
+                        LocalSellRate.objects.all().delete()
 
-                    eval_res_spot = self.client.post("/api/v3/spot/evaluate-trigger/", eval_payload, format="json")
-                    self.assertEqual(eval_res_spot.status_code, status.HTTP_200_OK)
-                    spot_data = eval_res_spot.json()
-                    
-                    self.assertTrue(
-                        spot_data["is_spot_required"],
-                        f"Spot trigger failed to activate when rates are missing for {direction} {scope} {payment_term}"
-                    )
+                        eval_res_spot = self.client.post("/api/v3/spot/evaluate-trigger/", eval_payload, format="json")
+                        self.assertEqual(eval_res_spot.status_code, status.HTTP_200_OK)
+                        spot_data = eval_res_spot.json()
+                        
+                        self.assertTrue(
+                            spot_data["is_spot_required"],
+                            f"Spot trigger failed to activate when rates are missing for {direction} {scope} {payment_term}"
+                        )
 
-                    # Verify expected missing components based on service scope logic
-                    missing = spot_data["trigger"]["missing_components"]
-                    if direction == "DOMESTIC":
-                        self.assertEqual(missing, ["FREIGHT"])
-                    elif scope == "A2A":
-                        self.assertEqual(missing, ["FREIGHT"])
-                    elif scope == "D2A":
-                        self.assertEqual(set(missing), {"ORIGIN_LOCAL", "FREIGHT"})
-                    elif scope == "A2D":
-                        self.assertEqual(missing, ["DESTINATION_LOCAL"])
-                    elif scope == "D2D":
-                        self.assertEqual(set(missing), {"ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"})
+                        # Verify expected missing components based on service scope logic
+                        missing = spot_data["trigger"]["missing_components"]
+                        if direction == "DOMESTIC":
+                            self.assertEqual(missing, ["FREIGHT"])
+                        elif scope == "A2A":
+                            self.assertEqual(missing, ["FREIGHT"])
+                        elif scope == "D2A":
+                            self.assertEqual(set(missing), {"ORIGIN_LOCAL", "FREIGHT"})
+                        elif scope == "A2D":
+                            self.assertEqual(missing, ["DESTINATION_LOCAL"])
+                        elif scope == "D2D":
+                            self.assertEqual(set(missing), {"ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"})
 
         self.assertEqual(count, 24, "Did not execute exactly 24 matrix combinations.")
