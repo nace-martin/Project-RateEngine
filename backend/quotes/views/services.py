@@ -135,11 +135,23 @@ class CustomerDetailAPIView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _get_company(self, company_id):
-        queryset = Company.objects.select_related(
+        user = self.request.user
+        base_filter = Q(is_customer=True) | Q(company_type='CUSTOMER')
+
+        if user.is_superuser or user.role == 'admin':
+            queryset = Company.objects.filter(base_filter)
+        else:
+            user_org = getattr(user, 'organization', None)
+            if not user_org:
+                from django.http import Http404
+                raise Http404("No Customer matches the given query.")
+
+            tenant_filter = Q(account_owner__organization=user_org) | Q(quotes_as_customer__organization=user_org)
+            queryset = Company.objects.filter(base_filter).filter(tenant_filter).distinct()
+
+        queryset = queryset.select_related(
             'commercial_profile__preferred_quote_currency'
-        ).prefetch_related('contacts', 'addresses__city__country').filter(
-            Q(is_customer=True) | Q(company_type='CUSTOMER')
-        )
+        ).prefetch_related('contacts', 'addresses__city__country')
         return get_object_or_404(queryset, pk=company_id)
 
     def _serialize_commercial_profile(self, company: Company) -> dict:

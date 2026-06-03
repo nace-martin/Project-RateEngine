@@ -519,3 +519,82 @@ class OrganizationBrandingSettingsAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNone(response.data["logo_primary_url"])
         self.assertTrue(response.data["logo_primary_missing"])
+
+
+class CustomerDetailAPITests(APITestCase):
+    def setUp(self):
+        # Create organizations
+        self.org_a = Organization.objects.create(name="Org A", slug="org-a", is_active=True)
+        self.org_b = Organization.objects.create(name="Org B", slug="org-b", is_active=True)
+
+        # Create users
+        self.admin = CustomUser.objects.create_user(
+            username="admin-user", password="password123", role=CustomUser.ROLE_ADMIN, organization=self.org_a
+        )
+        self.user_org_a = CustomUser.objects.create_user(
+            username="user-org-a", password="password123", role=CustomUser.ROLE_SALES, organization=self.org_a
+        )
+        self.user_org_b = CustomUser.objects.create_user(
+            username="user-org-b", password="password123", role=CustomUser.ROLE_SALES, organization=self.org_b
+        )
+
+        # Create customers
+        self.customer_org_a = Company.objects.create(
+            name="Customer Org A", is_customer=True, company_type="CUSTOMER", account_owner=self.user_org_a
+        )
+        self.customer_unowned = Company.objects.create(
+            name="Customer Unowned", is_customer=True, company_type="CUSTOMER", account_owner=None
+        )
+
+    def test_admin_can_retrieve_any_customer(self):
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("quotes:customer-detail", kwargs={"customer_id": self.customer_org_a.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["company_name"], "Customer Org A")
+
+        url_unowned = reverse("quotes:customer-detail", kwargs={"customer_id": self.customer_unowned.id})
+        response_unowned = self.client.get(url_unowned)
+        self.assertEqual(response_unowned.status_code, status.HTTP_200_OK)
+        self.assertEqual(response_unowned.data["company_name"], "Customer Unowned")
+
+    def test_same_organization_user_can_retrieve_customer(self):
+        self.client.force_authenticate(user=self.user_org_a)
+        url = reverse("quotes:customer-detail", kwargs={"customer_id": self.customer_org_a.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["company_name"], "Customer Org A")
+
+    def test_cross_organization_user_gets_404(self):
+        self.client.force_authenticate(user=self.user_org_b)
+        url = reverse("quotes:customer-detail", kwargs={"customer_id": self.customer_org_a.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unowned_customer_is_blocked_for_non_admin_unless_linked(self):
+        # 1. Unowned customer is blocked when not linked to any quotes in the organization
+        self.client.force_authenticate(user=self.user_org_a)
+        url = reverse("quotes:customer-detail", kwargs={"customer_id": self.customer_unowned.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        # 2. Link unowned customer to a quote in Org A
+        from quotes.models import Quote
+        Quote.objects.create(
+            customer=self.customer_unowned,
+            organization=self.org_a,
+            status=Quote.Status.DRAFT,
+            mode="AIR",
+            created_by=self.user_org_a
+        )
+
+        # 3. Should now be retrievable for user in Org A
+        response_after_linked = self.client.get(url)
+        self.assertEqual(response_after_linked.status_code, status.HTTP_200_OK)
+        self.assertEqual(response_after_linked.data["company_name"], "Customer Unowned")
+
+        # 4. But still blocked for user in Org B
+        self.client.force_authenticate(user=self.user_org_b)
+        response_org_b = self.client.get(url)
+        self.assertEqual(response_org_b.status_code, status.HTTP_404_NOT_FOUND)
+
