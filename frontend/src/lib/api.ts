@@ -12,7 +12,6 @@ import {
   V3QuoteComputeResponse,
   Customer,
   QuoteVersionCreatePayload,
-  StationSummary,
   QuoteComputeResult,
   OrganizationBrandingSettings,
   PaginatedResponse,
@@ -161,21 +160,6 @@ export async function login(
   };
 }
 
-export async function getMe(): Promise<User> {
-  const url = API_BASE_URL + '/api/auth/me/';
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch user data.');
-  }
-
-  return response.json();
-}
 
 export async function getOrganizationBrandingSettings(): Promise<OrganizationBrandingSettings> {
   const url = API_BASE_URL + '/api/v3/branding/organization/';
@@ -622,29 +606,6 @@ export async function setCustomerArchived(
   return response.json();
 }
 
-export async function listStations(tokenOverride?: string | null): Promise<StationSummary[]> {
-  const token = resolveAuthToken(tokenOverride);
-  const searchFallback = 'a'; // basic seed term to return a reasonable list
-  const url = API_BASE_URL + `/api/v3/core/airports/search/?search=${encodeURIComponent(searchFallback)}`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to fetch stations: ${detail}`);
-  }
-
-  const airports: AirportSearchResult[] = await response.json();
-  return airports.map((airport, index) => ({
-    id: index + 1,
-    iata_code: airport.iata_code,
-    name: airport.name,
-    city_country: airport.city_country,
-  }));
-}
 
 export async function createQuoteVersion(
   tokenOverride: string | null | undefined,
@@ -755,128 +716,6 @@ export interface SpotRate {
   notes: string;
   created_at?: string;
   charges: SpotCharge[];
-}
-
-export async function getSpotRates(quoteId: string): Promise<SpotRate[]> {
-  const url = API_BASE_URL + `/api/v3/spot-rates/?quote=${quoteId}`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` }
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to fetch spot rates: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function createSpotRate(data: Partial<SpotRate>): Promise<SpotRate> {
-  const url = API_BASE_URL + '/api/v3/spot-rates/';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to create spot rate: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function updateSpotRate(id: string, data: Partial<SpotRate>): Promise<SpotRate> {
-  const url = API_BASE_URL + `/api/v3/spot-rates/${id}/`;
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to update spot rate: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function deleteSpotRate(id: string): Promise<void> {
-  const url = API_BASE_URL + `/api/v3/spot-rates/${id}/`;
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: { Authorization: `Token ${resolveAuthToken()}` }
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to delete spot rate: ${detail}`);
-  }
-}
-
-export async function createSpotCharge(data: Partial<SpotCharge>): Promise<SpotCharge> {
-  const url = API_BASE_URL + '/api/v3/spot-charges/';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to create spot charge: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function updateSpotCharge(id: string, data: Partial<SpotCharge>): Promise<SpotCharge> {
-  const url = API_BASE_URL + `/api/v3/spot-charges/${id}/`;
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to update spot charge: ${detail}`);
-  }
-  return response.json();
-}
-
-export async function deleteSpotCharge(id: string): Promise<void> {
-  const url = API_BASE_URL + `/api/v3/spot-charges/${id}/`;
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: { Authorization: `Token ${resolveAuthToken()}` }
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to delete spot charge: ${detail}`);
-  }
-}
-
-// --- Services ---
-export interface ServiceComponent {
-  id: string;
-  code: string;
-  description: string;
-  mode: string;
-  category: string;
-}
-
-export async function getServiceComponents(): Promise<ServiceComponent[]> {
-  const url = API_BASE_URL + '/api/v3/services/';
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch service components');
-  return response.json();
 }
 
 // --- Quote Clone ---
@@ -1386,26 +1225,6 @@ export async function listSpotEnvelopes(
 
 // --- Reporting ---
 
-export interface DashboardReportData {
-  total_revenue: number;
-  volume_by_mode: Array<{ mode: string; count: number; revenue: number }>;
-  conversion: {
-    total: number;
-    drafts: number;
-    finalized: number;
-    lost: number;
-  };
-}
-
-export async function getDashboardReports(): Promise<DashboardReportData> {
-  const url = API_BASE_URL + '/api/v3/reports/dashboard/';
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch dashboard reports');
-  return response.json();
-}
-
 // --- Dashboard Metrics with Timeframe Support ---
 
 export type DashboardTimeframe = 'weekly' | 'monthly' | 'ytd';
@@ -1448,23 +1267,6 @@ export async function getDashboardMetrics(
   return response.json();
 }
 
-export interface SalesPerformanceData {
-  created_by__username: string;
-  created_by__first_name: string;
-  created_by__last_name: string;
-  total_quotes: number;
-  total_revenue: number | null;
-  converted_quotes: number;
-}
-
-export async function getSalesPerformanceReports(): Promise<SalesPerformanceData[]> {
-  const url = API_BASE_URL + '/api/v3/reports/sales_performance/';
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch sales performance');
-  return response.json();
-}
 
 // --- Commercial Reporting (Phase 1 MVP) ---
 
@@ -1658,14 +1460,6 @@ export async function getCustomerDiscounts(params?: {
   return response.json();
 }
 
-export async function getCustomerDiscount(id: string): Promise<CustomerDiscount> {
-  const url = API_BASE_URL + `/api/v4/discounts/${id}/`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch discount details');
-  return response.json();
-}
 
 export async function createCustomerDiscount(data: Partial<CustomerDiscount>): Promise<CustomerDiscount> {
   const url = API_BASE_URL + '/api/v4/discounts/';
@@ -2377,17 +2171,6 @@ export async function getLocalCOGSRateHistory(id: number | string): Promise<Rate
   return listRateHistory(`/api/v4/rates/local-cogs/${id}/history/`);
 }
 
-export async function getExportSellRates(params?: { origin?: string; destination?: string }): Promise<V4SellRate[]> {
-  return listExportSellRates(params);
-}
-
-export async function getImportSellRates(params?: { origin?: string; destination?: string }): Promise<V4SellRate[]> {
-  return listImportSellRates(params);
-}
-
-export async function getDomesticSellRates(params?: { origin?: string; destination?: string }): Promise<V4SellRate[]> {
-  return listDomesticSellRates(params);
-}
 
 
 // =============================================================================
