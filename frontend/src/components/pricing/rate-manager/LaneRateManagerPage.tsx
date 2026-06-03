@@ -39,6 +39,7 @@ import {
 } from '@/lib/api';
 import LaneRateFormModal from './LaneRateFormModal';
 import RateHistorySheet from './RateHistorySheet';
+import { getRateStatus } from '@/lib/pricing/rate-utils';
 
 type ModalState<T extends LaneRateRecord | LaneCOGSRateRecord> =
   | { mode: 'create'; rate: T | null }
@@ -66,12 +67,7 @@ interface LaneRateManagerPageProps<T extends LaneRateRecord | LaneCOGSRateRecord
   loadHistory: (id: number | string) => Promise<RateChangeLogEntry[]>;
 }
 
-function getStatusLabel(rate: LaneRateRecord | LaneCOGSRateRecord): 'ACTIVE' | 'EXPIRED' | 'SCHEDULED' {
-  const today = new Date().toISOString().split('T')[0];
-  if (rate.valid_until < today) return 'EXPIRED';
-  if (rate.valid_from > today) return 'SCHEDULED';
-  return 'ACTIVE';
-}
+
 
 function statusBadge(status: 'ACTIVE' | 'EXPIRED' | 'SCHEDULED') {
   if (status === 'ACTIVE') {
@@ -139,7 +135,7 @@ export default function LaneRateManagerPage<T extends LaneRateRecord | LaneCOGSR
   const filteredRates = useMemo(
     () =>
       rates.filter((rate) => {
-        const status = getStatusLabel(rate);
+        const status = getRateStatus(rate);
         if (statusFilter !== 'all' && status !== statusFilter) return false;
         if (productFilter !== 'all' && String(rate.product_code) !== productFilter) return false;
         if (currencyFilter !== 'all' && rate.currency !== currencyFilter) return false;
@@ -304,7 +300,7 @@ export default function LaneRateManagerPage<T extends LaneRateRecord | LaneCOGSR
               </TableHeader>
               <TableBody>
                 {filteredRates.map((rate) => {
-                  const status = getStatusLabel(rate);
+                  const status = getRateStatus(rate);
                   const basis = rate.weight_breaks?.length
                     ? 'Weight breaks'
                     : rate.percent_rate
