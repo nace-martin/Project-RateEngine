@@ -18,6 +18,17 @@ Gemini CLI must follow `AGENTS.md`. This file is Gemini-specific operating guida
 - Main frontend area: `frontend/`.
 - API is versioned and served through DRF.
 
+## Deployment Guardrails
+
+- Follow AGENTS.md as the authoritative source for deployment rules.
+- Production target is Google Cloud Run using stateless containers.
+- Web containers must not run database migrations on startup.
+- Services must bind to the dynamic `$PORT`.
+- Do not copy `.env` files or secrets into images.
+- Containers should run as non-root where practical.
+- Docker build/run verification is required for deployment-related PRs.
+- Cloud SQL, Secret Manager, and GCS are the intended production services.
+
 ## Common Commands
 
 Backend setup and run:
