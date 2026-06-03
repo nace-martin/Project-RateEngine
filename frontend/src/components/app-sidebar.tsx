@@ -1,3 +1,4 @@
+// fallow-ignore-file unused-file
 'use client';
 
 import Link from 'next/link';
