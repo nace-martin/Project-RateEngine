@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "../config";
+import type { PaginatedResponse } from "../types";
 
 export { API_BASE_URL };
 
@@ -34,3 +35,55 @@ export const parseErrorResponse = async (response: Response): Promise<string> =>
   }
   return response.statusText || "Unknown error";
 };
+
+export async function getJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+export async function sendJson<T>(url: string, method: string, data?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(detail);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return response.json();
+}
+
+export function appendDefinedParams(url: URL, params: Record<string, string | undefined>): void {
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  });
+}
+
+export function normalizeListResponse<T>(payload: T[] | PaginatedResponse<T>): T[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (payload && Array.isArray(payload.results)) {
+    return payload.results;
+  }
+  return [];
+}
+

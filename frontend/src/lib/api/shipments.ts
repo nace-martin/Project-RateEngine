@@ -4,40 +4,7 @@ import {
   ShipmentSettings,
   ShipmentTemplate,
 } from "../shipment-types";
-import { API_BASE_URL, parseErrorResponse, resolveAuthToken } from "./shared";
-
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(detail);
-  }
-  return response.json();
-}
-
-async function sendJson<T>(url: string, method: string, data?: unknown): Promise<T> {
-  const response = await fetch(url, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Token ${resolveAuthToken()}`,
-    },
-    body: data === undefined ? undefined : JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(detail);
-  }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return response.json();
-}
+import { API_BASE_URL, getJson, sendJson, parseErrorResponse, resolveAuthToken } from "./shared";
 
 export async function listShipments(params?: { q?: string; status?: string }): Promise<ShipmentRecord[]> {
   const url = new URL(API_BASE_URL + "/api/v3/shipments/");

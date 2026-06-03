@@ -4,113 +4,67 @@ import type {
   Customer,
   LocationSearchResult,
 } from "../types";
-import { API_BASE_URL, getToken } from "./shared";
+import { API_BASE_URL, getJson } from "./shared";
 
-export async function searchCompanies(
-  query: string,
-): Promise<CompanySearchResult[]> {
-  const url = API_BASE_URL + `/api/v3/parties/companies/search/?q=${query}`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-  if (!response.ok) {
+export async function searchCompanies(query: string): Promise<CompanySearchResult[]> {
+  try {
+    return await getJson<CompanySearchResult[]>(
+      API_BASE_URL + `/api/v3/parties/companies/search/?q=${encodeURIComponent(query)}`,
+    );
+  } catch {
     throw new Error("Failed to search companies");
   }
-  return response.json();
 }
 
-export async function getCompany(
-  companyId: string,
-): Promise<CompanySearchResult> {
-  const url = API_BASE_URL + `/api/v3/customers/${companyId}/`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-  if (!response.ok) {
+export async function getCompany(companyId: string): Promise<CompanySearchResult> {
+  try {
+    return await getJson<CompanySearchResult>(API_BASE_URL + `/api/v3/customers/${companyId}/`);
+  } catch {
     throw new Error("Failed to fetch company");
   }
-  return response.json();
 }
 
 export async function listCustomers(): Promise<CompanySearchResult[]> {
-  const url = API_BASE_URL + "/api/v3/customers/";
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) {
+  try {
+    const payload = await getJson<CompanySearchResult[] | { results?: CompanySearchResult[] }>(
+      API_BASE_URL + "/api/v3/customers/",
+    );
+    return Array.isArray(payload) ? payload : payload.results || [];
+  } catch {
     throw new Error("Failed to fetch customers");
   }
-  const payload = await response.json();
-  return Array.isArray(payload) ? payload : payload.results || [];
 }
 
-export async function getContactsForCompany(
-  companyId: string,
-): Promise<Contact[]> {
-  const url = API_BASE_URL + `/api/v3/parties/companies/${companyId}/contacts/`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-  if (!response.ok) {
+export async function getContactsForCompany(companyId: string): Promise<Contact[]> {
+  try {
+    return await getJson<Contact[]>(API_BASE_URL + `/api/v3/parties/companies/${companyId}/contacts/`);
+  } catch {
     throw new Error("Failed to fetch contacts");
   }
-  return response.json();
 }
 
-export async function getCustomerDetail(
-  customerId: string,
-): Promise<Customer> {
-  const url = API_BASE_URL + `/api/v3/customer-details/${customerId}/`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) {
+export async function getCustomerDetail(customerId: string): Promise<Customer> {
+  try {
+    return await getJson<Customer>(API_BASE_URL + `/api/v3/customer-details/${customerId}/`);
+  } catch {
     throw new Error("Failed to fetch customer details");
   }
-  return response.json();
 }
 
-export async function searchLocations(
-  query: string,
-): Promise<LocationSearchResult[]> {
-  const url =
-    API_BASE_URL + `/api/v3/locations/search/?q=${encodeURIComponent(query)}`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-
-  if (!response.ok) {
+export async function searchLocations(query: string): Promise<LocationSearchResult[]> {
+  try {
+    return await getJson<LocationSearchResult[]>(
+      API_BASE_URL + `/api/v3/locations/search/?q=${encodeURIComponent(query)}`,
+    );
+  } catch {
     throw new Error("Failed to search locations");
   }
-
-  return response.json();
 }
 
-export async function getLocation(
-  locationId: string,
-): Promise<LocationSearchResult> {
-  const url = API_BASE_URL + `/api/v3/locations/${locationId}/`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-  if (!response.ok) {
+export async function getLocation(locationId: string): Promise<LocationSearchResult> {
+  try {
+    return await getJson<LocationSearchResult>(API_BASE_URL + `/api/v3/locations/${locationId}/`);
+  } catch {
     throw new Error("Failed to fetch location");
   }
-  return response.json();
 }

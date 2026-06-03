@@ -1,6 +1,7 @@
 // frontend/src/lib/api.ts
 import axios from 'axios';
 import { API_BASE_URL } from './config';
+import { getJson, sendJson } from './api/shared';
 import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
 import {
   LoginData,
@@ -550,17 +551,11 @@ export async function listCities(params?: {
   if (params?.query && params.query.trim()) {
     url.searchParams.append('q', params.query.trim());
   }
-  const response = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Token ${getToken()}`,
-    },
-  });
-
-  if (!response.ok) {
+  try {
+    return await getJson<CityOption[]>(url.toString());
+  } catch {
     throw new Error('Failed to fetch cities');
   }
-
-  return response.json();
 }
 
 export async function deleteCustomer(
@@ -1453,57 +1448,35 @@ export async function getCustomerDiscounts(params?: {
     if (params.discount_type) url.searchParams.append('discount_type', params.discount_type);
     if (params.search) url.searchParams.append('search', params.search);
   }
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch customer discounts');
-  return response.json();
+  try {
+    return await getJson<CustomerDiscount[]>(url.toString());
+  } catch {
+    throw new Error('Failed to fetch customer discounts');
+  }
 }
 
 
 export async function createCustomerDiscount(data: Partial<CustomerDiscount>): Promise<CustomerDiscount> {
-  const url = API_BASE_URL + '/api/v4/discounts/';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to create discount: ${detail}`);
+  try {
+    return await sendJson<CustomerDiscount>(API_BASE_URL + '/api/v4/discounts/', 'POST', data);
+  } catch (error) {
+    throw new Error(`Failed to create discount: ${(error as Error).message}`);
   }
-  return response.json();
 }
 
 export async function updateCustomerDiscount(id: string, data: Partial<CustomerDiscount>): Promise<CustomerDiscount> {
-  const url = API_BASE_URL + `/api/v4/discounts/${id}/`;
-  const response = await fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(data),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to update discount: ${detail}`);
+  try {
+    return await sendJson<CustomerDiscount>(API_BASE_URL + `/api/v4/discounts/${id}/`, 'PATCH', data);
+  } catch (error) {
+    throw new Error(`Failed to update discount: ${(error as Error).message}`);
   }
-  return response.json();
 }
 
 export async function deleteCustomerDiscount(id: string): Promise<void> {
-  const url = API_BASE_URL + `/api/v4/discounts/${id}/`;
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to delete discount: ${detail}`);
+  try {
+    await sendJson<void>(API_BASE_URL + `/api/v4/discounts/${id}/`, 'DELETE');
+  } catch (error) {
+    throw new Error(`Failed to delete discount: ${(error as Error).message}`);
   }
 }
 
@@ -1511,20 +1484,11 @@ export async function bulkUpsertCustomerDiscounts(payload: {
   customer: string;
   lines: CustomerDiscountBulkLine[];
 }): Promise<{ customer: string; saved_count: number; discounts: CustomerDiscount[] }> {
-  const url = API_BASE_URL + '/api/v4/discounts/bulk-upsert/';
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Token ${resolveAuthToken()}`
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to save negotiated pricing: ${detail}`);
+  try {
+    return await sendJson(API_BASE_URL + '/api/v4/discounts/bulk-upsert/', 'POST', payload);
+  } catch (error) {
+    throw new Error(`Failed to save negotiated pricing: ${(error as Error).message}`);
   }
-  return response.json();
 }
 
 export async function getProductCodes(params?: {
@@ -1536,11 +1500,11 @@ export async function getProductCodes(params?: {
     if (params.domain) url.searchParams.append('domain', params.domain);
     if (params.search) url.searchParams.append('search', params.search);
   }
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch product codes');
-  return response.json();
+  try {
+    return await getJson<ProductCodeOption[]>(url.toString());
+  } catch {
+    throw new Error('Failed to fetch product codes');
+  }
 }
 
 
@@ -1728,11 +1692,11 @@ export async function listPricingAgents(params?: {
 }): Promise<PricingAgentOption[]> {
   const url = new URL(API_BASE_URL + '/api/v4/agents/');
   if (params?.search) url.searchParams.append('search', params.search);
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch pricing agents');
-  return response.json();
+  try {
+    return await getJson<PricingAgentOption[]>(url.toString());
+  } catch {
+    throw new Error('Failed to fetch pricing agents');
+  }
 }
 
 export async function manuallyResolveSpotChargeLine(
@@ -1786,11 +1750,11 @@ export async function listPricingCarriers(params?: {
 }): Promise<PricingCarrierOption[]> {
   const url = new URL(API_BASE_URL + '/api/v4/carriers/');
   if (params?.search) url.searchParams.append('search', params.search);
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-  });
-  if (!response.ok) throw new Error('Failed to fetch pricing carriers');
-  return response.json();
+  try {
+    return await getJson<PricingCarrierOption[]>(url.toString());
+  } catch {
+    throw new Error('Failed to fetch pricing carriers');
+  }
 }
 
 export async function getQuoteCounterpartyHints(params: {
@@ -1809,15 +1773,11 @@ export async function getQuoteCounterpartyHints(params: {
   if (params.buyCurrency) url.searchParams.append('buy_currency', params.buyCurrency);
   if (params.quoteDate) url.searchParams.append('quote_date', params.quoteDate);
 
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to fetch quote counterparty hints: ${detail}`);
+  try {
+    return await getJson<QuoteCounterpartyHints>(url.toString());
+  } catch (error) {
+    throw new Error(`Failed to fetch quote counterparty hints: ${(error as Error).message}`);
   }
-  return response.json();
 }
 
 function appendRateListParams(
@@ -1847,15 +1807,11 @@ async function listRateRows<T>(
 ): Promise<T[]> {
   const url = new URL(API_BASE_URL + path);
   appendRateListParams(url, params, routeParamNames);
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Token ${resolveAuthToken()}` },
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    const detail = await parseErrorResponse(response);
-    throw new Error(`Failed to fetch rates: ${detail}`);
+  try {
+    return await getJson<T[]>(url.toString());
+  } catch (error) {
+    throw new Error(`Failed to fetch rates: ${(error as Error).message}`);
   }
-  return response.json();
 }
 
 async function createRateRow<TResponse, TPayload>(path: string, data: TPayload): Promise<TResponse> {
