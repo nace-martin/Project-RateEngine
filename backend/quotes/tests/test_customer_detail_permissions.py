@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 
 from core.models import City, Country
 from core.models import Currency
-from parties.models import Address, Company, Contact
+from parties.models import Address, Company, Contact, Organization
 
 
 pytestmark = pytest.mark.django_db
@@ -21,8 +21,16 @@ def _mk_user(username: str, role: str):
 
 
 def test_customer_detail_get_allowed_for_authenticated_user():
+    org = Organization.objects.create(name="Test Org", slug="test-org", is_active=True)
     user = _mk_user("sales_get", "sales")
-    company = Company.objects.create(name="Seed Customer", is_customer=True, company_type="CUSTOMER")
+    user.organization = org
+    user.save()
+    company = Company.objects.create(
+        name="Seed Customer",
+        is_customer=True,
+        company_type="CUSTOMER",
+        account_owner=user,
+    )
     client = APIClient()
     client.force_authenticate(user=user)
 
