@@ -80,7 +80,6 @@ export async function markOpportunityQualified(opportunityId: string): Promise<O
     return await sendJson<Opportunity>(
       API_BASE_URL + `/api/v3/crm/opportunities/${opportunityId}/mark_qualified/`,
       "POST",
-      {},
     );
   } catch (error) {
     throw new Error(`Failed to mark opportunity as qualified: ${(error as Error).message}`);
@@ -205,7 +204,7 @@ export async function updateTask(taskId: string, data: Partial<TaskPayload>): Pr
 
 export async function completeTask(taskId: string): Promise<Task> {
   try {
-    return await sendJson<Task>(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/complete/`, "POST", {});
+    return await sendJson<Task>(API_BASE_URL + `/api/v3/crm/tasks/${taskId}/complete/`, "POST");
   } catch (error) {
     throw new Error(`Failed to complete task: ${(error as Error).message}`);
   }
