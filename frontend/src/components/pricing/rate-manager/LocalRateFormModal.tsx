@@ -33,8 +33,8 @@ import {
   type PricingCarrierOption,
   type ProductCodeOption,
   type RateRevisionOptions,
-  type RateWeightBreak,
 } from '@/lib/api';
+import { isoDateWithOffset, cleanWeightBreaks } from '@/lib/pricing/rate-utils';
 
 type FormMode = 'create' | 'edit' | 'revise';
 type CounterpartyType = 'agent' | 'carrier';
@@ -58,12 +58,6 @@ interface LocalRateFormModalProps<T extends LocalRateRecord | LocalCOGSRateRecor
   updateRate: (id: number | string, payload: Partial<LocalRateUpsertPayload>) => Promise<T>;
   reviseRate: (id: number | string, payload: LocalRateUpsertPayload & RateRevisionOptions) => Promise<T>;
   onSuccess: () => void | Promise<void>;
-}
-
-function isoDateWithOffset(offsetDays = 0): string {
-  const base = new Date();
-  base.setDate(base.getDate() + offsetDays);
-  return base.toISOString().split('T')[0];
 }
 
 function initialWeightBreaks(rate: LocalRateRecord | null | undefined): WeightBreakDraft[] {
@@ -231,14 +225,7 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
       additive_flat_amount: additiveFlatAmount.trim() || null,
       min_charge: minCharge.trim() || null,
       max_charge: maxCharge.trim() || null,
-      weight_breaks: weightBreaks
-        .filter((row) => row.min_kg.trim() !== '' || row.rate.trim() !== '')
-        .map(
-          (row): RateWeightBreak => ({
-            min_kg: Number(row.min_kg),
-            rate: row.rate.trim(),
-          }),
-        ),
+      weight_breaks: cleanWeightBreaks(weightBreaks),
       percent_of_product_code: percentOfProductCode ? Number(percentOfProductCode) : null,
       valid_from: validFrom,
       valid_until: validUntil,

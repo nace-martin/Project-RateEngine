@@ -33,9 +33,8 @@ import {
   type PricingCarrierOption,
   type ProductCodeOption,
   type RateRevisionOptions,
-  type RateWeightBreak,
 } from '@/lib/api';
-
+import { isoDateWithOffset, cleanWeightBreaks } from '@/lib/pricing/rate-utils';
 type FormMode = 'create' | 'edit' | 'revise';
 type CounterpartyType = 'agent' | 'carrier';
 type PricingMode = 'PER_KG' | 'PER_SHIPMENT' | 'ADDITIVE' | 'PERCENT' | 'WEIGHT_BREAKS';
@@ -86,11 +85,7 @@ function initialWeightBreaks(rate: LaneRecord | null | undefined): WeightBreakDr
   }));
 }
 
-function isoDateWithOffset(offsetDays = 0): string {
-  const base = new Date();
-  base.setDate(base.getDate() + offsetDays);
-  return base.toISOString().split('T')[0];
-}
+
 
 export default function LaneRateFormModal<T extends LaneRecord>({
   open,
@@ -264,14 +259,7 @@ export default function LaneRateFormModal<T extends LaneRecord>({
     } else if (pricingMode === 'PERCENT') {
       payload.percent_rate = percentRate.trim() || null;
     } else if (pricingMode === 'WEIGHT_BREAKS') {
-      payload.weight_breaks = weightBreaks
-        .filter((row) => row.min_kg.trim() !== '' || row.rate.trim() !== '')
-        .map(
-          (row): RateWeightBreak => ({
-            min_kg: Number(row.min_kg),
-            rate: row.rate.trim(),
-          }),
-        );
+      payload.weight_breaks = cleanWeightBreaks(weightBreaks);
     }
 
     setSaving(true);

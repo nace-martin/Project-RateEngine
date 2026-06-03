@@ -39,6 +39,7 @@ import {
 } from '@/lib/api';
 import LocalRateFormModal from './LocalRateFormModal';
 import RateHistorySheet from './RateHistorySheet';
+import { getRateStatus } from '@/lib/pricing/rate-utils';
 
 type ModalState<T extends LocalRateRecord | LocalCOGSRateRecord> =
   | { mode: 'create'; rate: T | null }
@@ -60,12 +61,7 @@ interface LocalRateManagerPageProps<T extends LocalRateRecord | LocalCOGSRateRec
   loadHistory: (id: number | string) => Promise<RateChangeLogEntry[]>;
 }
 
-function getStatusLabel(rate: LocalRateRecord | LocalCOGSRateRecord): 'ACTIVE' | 'EXPIRED' | 'SCHEDULED' {
-  const today = new Date().toISOString().split('T')[0];
-  if (rate.valid_until < today) return 'EXPIRED';
-  if (rate.valid_from > today) return 'SCHEDULED';
-  return 'ACTIVE';
-}
+
 
 function statusBadge(status: 'ACTIVE' | 'EXPIRED' | 'SCHEDULED') {
   if (status === 'ACTIVE') {
@@ -133,7 +129,7 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
   const filteredRates = useMemo(
     () =>
       rates.filter((rate) => {
-        const status = getStatusLabel(rate);
+        const status = getRateStatus(rate);
         if (statusFilter !== 'all' && status !== statusFilter) return false;
         if (productFilter !== 'all' && String(rate.product_code) !== productFilter) return false;
         if (directionFilter !== 'all' && rate.direction !== directionFilter) return false;
@@ -307,7 +303,7 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
               </TableHeader>
               <TableBody>
                 {filteredRates.map((rate) => {
-                  const status = getStatusLabel(rate);
+                  const status = getRateStatus(rate);
                   const basis = rate.weight_breaks?.length
                     ? 'Weight breaks'
                     : rate.rate_type === 'PERCENT'
