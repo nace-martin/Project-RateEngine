@@ -1,3 +1,4 @@
+// fallow-ignore-file unused-file
 /**
  * Format Utilities
  * Shared formatting functions for display purposes

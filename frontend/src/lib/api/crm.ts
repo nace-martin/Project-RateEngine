@@ -1,5 +1,4 @@
 import type {
-  CompanySearchResult,
   CreateInteractionPayload,
   Interaction,
   Opportunity,
@@ -8,7 +7,7 @@ import type {
   Task,
   V3QuoteComputeResponse,
 } from "../types";
-import { searchCompanies as searchPartyCompanies } from "./parties";
+
 import { API_BASE_URL, parseErrorResponse, resolveAuthToken } from "./shared";
 
 function normalizeListResponse<T>(payload: T[] | PaginatedResponse<T>): T[] {
@@ -39,9 +38,6 @@ export async function createInteraction(data: CreateInteractionPayload): Promise
   return response.json();
 }
 
-export async function searchCompanies(query: string): Promise<CompanySearchResult[]> {
-  return searchPartyCompanies(query);
-}
 
 type ListOpportunityParams = {
   company?: string;
