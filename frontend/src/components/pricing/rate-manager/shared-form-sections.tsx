@@ -7,6 +7,11 @@ import { DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+type RateWeightBreakDraft = {
+  min_kg: string;
+  rate: string;
+};
+
 export function RateFormRevisionNotice() {
   return (
     <Alert>
@@ -87,6 +92,51 @@ export function RateChargeBoundsFields({
         <Label>Maximum Charge</Label>
         <Input value={maxCharge} onChange={(event) => onMaxChargeChange(event.target.value)} placeholder="Optional" />
       </div>
+    </div>
+  );
+}
+
+export function RateWeightBreakEditor({
+  weightBreaks,
+  helperText,
+  onAddWeightBreak,
+  onUpdateWeightBreak,
+  onRemoveWeightBreak,
+}: {
+  weightBreaks: RateWeightBreakDraft[];
+  helperText: string;
+  onAddWeightBreak: () => void;
+  onUpdateWeightBreak: (index: number, field: keyof RateWeightBreakDraft, value: string) => void;
+  onRemoveWeightBreak: (index: number) => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-medium">Weight Breaks</div>
+          <div className="text-sm text-muted-foreground">{helperText}</div>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onAddWeightBreak}>
+          Add Tier
+        </Button>
+      </div>
+      {weightBreaks.map((row, index) => (
+        <div key={`${index}-${row.min_kg}-${row.rate}`} className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+          <Input
+            value={row.min_kg}
+            onChange={(event) => onUpdateWeightBreak(index, 'min_kg', event.target.value)}
+            placeholder="Min KG"
+          />
+          <Input
+            value={row.rate}
+            onChange={(event) => onUpdateWeightBreak(index, 'rate', event.target.value)}
+            placeholder="Rate"
+          />
+          <Button type="button" variant="ghost" onClick={() => onRemoveWeightBreak(index)}>
+            Remove
+          </Button>
+        </div>
+      ))}
     </div>
   );
 }
