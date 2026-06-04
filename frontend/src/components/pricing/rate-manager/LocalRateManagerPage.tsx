@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -37,7 +36,7 @@ import {
 import LocalRateFormModal from './LocalRateFormModal';
 import RateHistorySheet from './RateHistorySheet';
 import { getRateStatus } from '@/lib/pricing/rate-utils';
-import { RateManagerLifecycleNotice, RateManagerToolbar, RateStatusBadge } from './shared-page-components';
+import { RateManagerLifecycleNotice, RateManagerToolbar, RateRowActions, RateStatusBadge } from './shared-page-components';
 
 type ModalState<T extends LocalRateRecord | LocalCOGSRateRecord> =
   | { mode: 'create'; rate: T | null }
@@ -307,25 +306,14 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
                         <div className="text-xs text-muted-foreground">to {rate.valid_until}</div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setHistoryRate(rate)}>
-                            History
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => setModalState({ mode: 'revise', rate })}>
-                            New Effective Rate
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => setModalState({ mode: 'edit', rate })}>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleRetire(rate)}
-                            disabled={activeActionId === rate.id}
-                          >
-                            {activeActionId === rate.id ? 'Retiring...' : 'Retire'}
-                          </Button>
-                        </div>
+                        <RateRowActions
+                          rate={rate}
+                          isRetiring={activeActionId === rate.id}
+                          onHistory={setHistoryRate}
+                          onRevise={(selectedRate) => setModalState({ mode: 'revise', rate: selectedRate })}
+                          onEdit={(selectedRate) => setModalState({ mode: 'edit', rate: selectedRate })}
+                          onRetire={(selectedRate) => void handleRetire(selectedRate)}
+                        />
                       </TableCell>
                     </TableRow>
                   );
