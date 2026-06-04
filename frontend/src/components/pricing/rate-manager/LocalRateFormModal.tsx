@@ -5,7 +5,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -20,7 +19,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/context/toast-context';
 import {
   getProductCodes,
@@ -35,6 +33,12 @@ import {
   type RateRevisionOptions,
 } from '@/lib/api';
 import { isoDateWithOffset, cleanWeightBreaks } from '@/lib/pricing/rate-utils';
+import {
+  RateFormFooter,
+  RateFormRevisionNotice,
+  RateRetirePreviousOption,
+  RateValidityFields,
+} from './shared-form-sections';
 
 type FormMode = 'create' | 'edit' | 'revise';
 type CounterpartyType = 'agent' | 'carrier';
@@ -274,13 +278,7 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          {initialRate?.is_active && isRevision ? (
-            <Alert>
-              <AlertDescription>
-                This revision is prefilled from the selected row. Save it as a new effective-dated rate instead of overwriting the current one.
-              </AlertDescription>
-            </Alert>
-          ) : null}
+          {initialRate?.is_active && isRevision ? <RateFormRevisionNotice /> : null}
 
           {formError ? (
             <Alert variant="destructive">
@@ -491,44 +489,29 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Valid From</Label>
-              <Input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Valid Until</Label>
-              <Input type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />
-            </div>
-          </div>
+          <RateValidityFields
+            validFrom={validFrom}
+            validUntil={validUntil}
+            onValidFromChange={setValidFrom}
+            onValidUntilChange={setValidUntil}
+          />
 
           {isRevision ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  id="local-retire-previous"
-                  checked={retirePrevious}
-                  onCheckedChange={(checked) => setRetirePrevious(Boolean(checked))}
-                />
-                <div className="space-y-1">
-                  <Label htmlFor="local-retire-previous">Auto-retire the prior row</Label>
-                  <div className="text-sm text-muted-foreground">
-                    Recommended. When enabled, the current row will end the day before the new revision starts.
-                  </div>
-                </div>
-              </div>
-            </div>
+            <RateRetirePreviousOption
+              id="local-retire-previous"
+              checked={retirePrevious}
+              onCheckedChange={(checked) => setRetirePrevious(Boolean(checked))}
+            />
           ) : null}
         </div>
 
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={handleSubmit} disabled={saving || loadingOptions}>
-            {saving ? 'Saving...' : isEditing ? 'Save Changes' : isRevision ? 'Create Revision' : 'Create Rate'}
-          </Button>
-        </DialogFooter>
+        <RateFormFooter
+          saving={saving}
+          loadingOptions={loadingOptions}
+          submitLabel={saving ? 'Saving...' : isEditing ? 'Save Changes' : isRevision ? 'Create Revision' : 'Create Rate'}
+          onCancel={() => onOpenChange(false)}
+          onSubmit={handleSubmit}
+        />
       </DialogContent>
     </Dialog>
   );
