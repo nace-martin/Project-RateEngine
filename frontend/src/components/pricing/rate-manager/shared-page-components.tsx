@@ -58,3 +58,36 @@ export function RateManagerLifecycleNotice() {
     </Alert>
   );
 }
+
+export function RateRowActions<T>({
+  rate,
+  isRetiring,
+  onHistory,
+  onRevise,
+  onEdit,
+  onRetire,
+}: {
+  rate: T;
+  isRetiring: boolean;
+  onHistory: (rate: T) => void;
+  onRevise: (rate: T) => void;
+  onEdit: (rate: T) => void;
+  onRetire: (rate: T) => void;
+}) {
+  return (
+    <div className="flex justify-end gap-2">
+      <Button variant="outline" size="sm" onClick={() => onHistory(rate)}>
+        History
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => onRevise(rate)}>
+        New Effective Rate
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => onEdit(rate)}>
+        Edit
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => onRetire(rate)} disabled={isRetiring}>
+        {isRetiring ? 'Retiring...' : 'Retire'}
+      </Button>
+    </div>
+  );
+}
