@@ -8,7 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -39,6 +38,7 @@ import {
   RateFormRevisionNotice,
   RateRetirePreviousOption,
   RateValidityFields,
+  RateWeightBreakEditor,
 } from './shared-form-sections';
 
 type FormMode = 'create' | 'edit' | 'revise';
@@ -449,34 +449,13 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
           ) : null}
 
           {rateType === 'PER_KG' ? (
-            <div className="space-y-3 rounded-lg border p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Weight Breaks</div>
-                  <div className="text-sm text-muted-foreground">Optional. Leave blank if this row is not tiered.</div>
-                </div>
-                <Button type="button" variant="outline" size="sm" onClick={addWeightBreak}>
-                  Add Tier
-                </Button>
-              </div>
-              {weightBreaks.map((row, index) => (
-                <div key={`${index}-${row.min_kg}-${row.rate}`} className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                  <Input
-                    value={row.min_kg}
-                    onChange={(event) => updateWeightBreak(index, 'min_kg', event.target.value)}
-                    placeholder="Min KG"
-                  />
-                  <Input
-                    value={row.rate}
-                    onChange={(event) => updateWeightBreak(index, 'rate', event.target.value)}
-                    placeholder="Rate"
-                  />
-                  <Button type="button" variant="ghost" onClick={() => removeWeightBreak(index)}>
-                    Remove
-                  </Button>
-                </div>
-              ))}
-            </div>
+            <RateWeightBreakEditor
+              weightBreaks={weightBreaks}
+              helperText="Optional. Leave blank if this row is not tiered."
+              onAddWeightBreak={addWeightBreak}
+              onUpdateWeightBreak={updateWeightBreak}
+              onRemoveWeightBreak={removeWeightBreak}
+            />
           ) : null}
 
           <RateChargeBoundsFields
