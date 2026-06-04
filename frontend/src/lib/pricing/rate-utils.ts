@@ -1,7 +1,4 @@
-export interface RateWeightBreak {
-  min_kg: number;
-  rate: string;
-}
+import type { RateWeightBreak } from '../api';
 
 export function isoDateWithOffset(offsetDays = 0): string {
   const base = new Date();
