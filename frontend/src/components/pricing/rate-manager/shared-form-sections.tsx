@@ -66,6 +66,31 @@ export function RateValidityFields({
   );
 }
 
+export function RateChargeBoundsFields({
+  minCharge,
+  maxCharge,
+  onMinChargeChange,
+  onMaxChargeChange,
+}: {
+  minCharge: string;
+  maxCharge: string;
+  onMinChargeChange: (value: string) => void;
+  onMaxChargeChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="space-y-2">
+        <Label>Minimum Charge</Label>
+        <Input value={minCharge} onChange={(event) => onMinChargeChange(event.target.value)} placeholder="Optional" />
+      </div>
+      <div className="space-y-2">
+        <Label>Maximum Charge</Label>
+        <Input value={maxCharge} onChange={(event) => onMaxChargeChange(event.target.value)} placeholder="Optional" />
+      </div>
+    </div>
+  );
+}
+
 export function RateFormFooter({
   saving,
   loadingOptions,

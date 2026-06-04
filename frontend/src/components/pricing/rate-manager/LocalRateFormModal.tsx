@@ -34,6 +34,7 @@ import {
 } from '@/lib/api';
 import { isoDateWithOffset, cleanWeightBreaks } from '@/lib/pricing/rate-utils';
 import {
+  RateChargeBoundsFields,
   RateFormFooter,
   RateFormRevisionNotice,
   RateRetirePreviousOption,
@@ -478,16 +479,12 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
             </div>
           ) : null}
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Minimum Charge</Label>
-              <Input value={minCharge} onChange={(event) => setMinCharge(event.target.value)} placeholder="Optional" />
-            </div>
-            <div className="space-y-2">
-              <Label>Maximum Charge</Label>
-              <Input value={maxCharge} onChange={(event) => setMaxCharge(event.target.value)} placeholder="Optional" />
-            </div>
-          </div>
+          <RateChargeBoundsFields
+            minCharge={minCharge}
+            maxCharge={maxCharge}
+            onMinChargeChange={setMinCharge}
+            onMaxChargeChange={setMaxCharge}
+          />
 
           <RateValidityFields
             validFrom={validFrom}
