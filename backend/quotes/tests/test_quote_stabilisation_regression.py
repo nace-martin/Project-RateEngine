@@ -22,6 +22,7 @@ from pricing_v4.models import (
     LocalSellRate,
     ProductCode,
 )
+from quotes.models import Quote
 from services.models import ServiceComponent
 from pricing_v4.tests.test_export_engine import seed_all_export_product_codes
 
@@ -262,6 +263,90 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
         res = self.client.post("/api/v3/quotes/compute/", payload, format="json")
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         self.assertEqual(res.data["status"], "DRAFT")
+
+    def test_standard_quote_recompute_appends_new_version(self):
+        ImportCOGS.objects.create(
+            product_code=self.imp_freight_pc, origin_airport="BNE", destination_airport="POM",
+            agent=self.agent_bne, currency="AUD", rate_per_kg=Decimal("4.50"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        ImportSellRate.objects.create(
+            product_code=self.imp_freight_pc, origin_airport="BNE", destination_airport="POM",
+            currency="PGK", rate_per_kg=Decimal("12.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalCOGSRate.objects.create(
+            product_code=self.imp_origin_pc, location="BNE", direction="IMPORT",
+            agent=self.agent_bne, currency="AUD", rate_type="FIXED", amount=Decimal("50.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.imp_origin_pc, location="BNE", direction="IMPORT",
+            payment_term="COLLECT", currency="PGK", rate_type="FIXED", amount=Decimal("150.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalCOGSRate.objects.create(
+            product_code=self.imp_dest_pc, location="POM", direction="IMPORT",
+            agent=self.agent_pom, currency="PGK", rate_type="FIXED", amount=Decimal("70.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.imp_dest_pc, location="POM", direction="IMPORT",
+            payment_term="COLLECT", currency="PGK", rate_type="FIXED", amount=Decimal("200.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+
+        create_payload = self._payload(
+            self.bne, self.pom, "D2D", "COLLECT", "EXW",
+            agent_id=self.agent_bne.id,
+            buy_currency="AUD",
+        )
+        create_res = self.client.post("/api/v3/quotes/compute/", create_payload, format="json")
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+        quote_id = str(create_res.data["id"])
+
+        edit_payload = self._payload(
+            self.bne, self.pom, "D2D", "COLLECT", "EXW",
+            quote_id=quote_id,
+            agent_id=self.agent_bne.id,
+            buy_currency="AUD",
+            dimensions=[
+                {
+                    "pieces": 2,
+                    "length_cm": "20",
+                    "width_cm": "15",
+                    "height_cm": "10",
+                    "gross_weight_kg": "25",
+                    "package_type": "Box",
+                }
+            ],
+        )
+        edit_res = self.client.post("/api/v3/quotes/compute/", edit_payload, format="json")
+
+        self.assertEqual(edit_res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(edit_res.data["id"]), quote_id)
+        self.assertEqual(edit_res.data["status"], "DRAFT")
+
+        quote = Quote.objects.get(id=quote_id)
+        self.assertEqual(quote.status, Quote.Status.DRAFT)
+        self.assertEqual(quote.versions.count(), 2)
+
+        self.assertEqual(str(quote.request_details_json["quote_id"]), quote_id)
+        self.assertEqual(quote.request_details_json["customer_id"], str(self.customer.id))
+        self.assertEqual(quote.request_details_json["contact_id"], str(self.contact.id))
+        self.assertEqual(quote.request_details_json["origin_location_id"], str(self.bne.id))
+        self.assertEqual(quote.request_details_json["destination_location_id"], str(self.pom.id))
+        self.assertIn("dimensions", quote.request_details_json)
+        self.assertNotIn("shipment", quote.request_details_json)
+        self.assertEqual(quote.request_details_json["dimensions"][0]["pieces"], 2)
+        self.assertEqual(str(quote.request_details_json["dimensions"][0]["gross_weight_kg"]), "25")
+
+        latest_version = quote.versions.order_by("-version_number").first()
+        self.assertIsNotNone(latest_version)
+        self.assertEqual(latest_version.version_number, 2)
+        self.assertTrue(latest_version.lines.exists())
+        self.assertTrue(hasattr(latest_version, "totals"))
+        self.assertFalse(latest_version.totals.has_missing_rates)
 
     # =========================================================================
     # Scenario 2: Import COLLECT BNE → POM D2D missing origin local
