@@ -4,7 +4,6 @@ from decimal import Decimal
 from django.core.management import call_command
 from django.test import TestCase
 from io import StringIO
-import logging
 
 from pricing_v4.models import LocalSellRate, ProductCode
 from pricing_v4.services.rate_selector import RateSelectionContext, select_local_sell_rate

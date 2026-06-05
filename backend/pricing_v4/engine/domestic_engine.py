@@ -1,5 +1,5 @@
 from decimal import Decimal
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Optional
 from datetime import date
 
@@ -8,7 +8,7 @@ from django.db.models import Q
 from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.commodity_rules import get_auto_product_code_ids, is_product_code_enabled
 from pricing_v4.models import ProductCode
-from pricing_v4.models import DomesticCOGS, DomesticSellRate, Surcharge
+from pricing_v4.models import Surcharge
 from pricing_v4.services.rate_selector import (
     RateNotFoundError,
     RateSelectionContext,

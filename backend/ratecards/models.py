@@ -1,10 +1,8 @@
 # backend/ratecards/models.py
 
-import uuid
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from core.models import City, Airport, Port
 from parties.models import Company
 from services.models import ServiceComponent, UNIT_CHOICES as SERVICE_UNIT_CHOICES
 

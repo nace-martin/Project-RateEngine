@@ -17,7 +17,7 @@ import json
 import uuid
 from typing import Optional
 from decimal import Decimal, InvalidOperation
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import UUID
 
 from django.utils import timezone
@@ -39,8 +39,6 @@ from quotes.spot_services import (
     ScopeValidator,
     SpotTriggerEvaluator,
     SpotEnvelopeService,
-    SpotTriggerReason,
-    TriggerResult,
     ReplyAnalysisService,
 )
 from quotes.spot_schemas import (

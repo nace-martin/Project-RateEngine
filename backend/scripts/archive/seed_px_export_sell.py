@@ -3,7 +3,6 @@ import os
 import sys
 import django
 from decimal import Decimal
-import json
 
 # Setup Django
 sys.path.append(os.getcwd())
@@ -13,7 +12,7 @@ django.setup()
 from parties.models import Company
 from services.models import ServiceComponent
 from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
-from core.models import Airport, Country, RouteLaneConstraint, City, LocalTariff, Currency
+from core.models import Airport, Country, Currency
 
 def run():
     print("--- Seeding PX Export Prepaid D2A SELL Rates ---")

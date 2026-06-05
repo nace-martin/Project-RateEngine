@@ -1,5 +1,4 @@
 import logging
-import pytest
 from unittest.mock import MagicMock, patch
 from core.logging_utils import GCPJSONFormatter, log_signal, SIGNAL_QUOTE_CREATED
 

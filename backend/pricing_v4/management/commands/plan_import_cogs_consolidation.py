@@ -5,14 +5,12 @@ from collections import defaultdict
 from dataclasses import dataclass, fields
 from decimal import Decimal
 from datetime import date
-from typing import Iterable, Any
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from pricing_v4.models import ImportCOGS
 from pricing_v4.services.import_cogs_scope import ImportCOGSScope, classify_import_cogs_scope
-from pricing_v4.services.rate_scope_transition import computed_transition_scope, explicit_scope
 
 
 @dataclass(frozen=True)

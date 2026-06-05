@@ -3,18 +3,16 @@ import logging
 from datetime import datetime, timedelta
 from collections import OrderedDict
 
-from django.db.models import Sum, Count, Q, Avg, F, OuterRef, Subquery
-from django.db.models.functions import TruncMonth
+from django.db.models import Sum, Count, Q, Avg, OuterRef, Subquery
 from django.http import HttpResponse
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from .models import Quote, QuoteTotal, QuoteVersion, QuoteEvent
+from .models import Quote, QuoteTotal, QuoteEvent
 from .selectors import get_quotes_for_user
-from parties.models import Company
 from accounts.permissions import IsManagerOrAdmin, IsFinanceOrAdmin
 
 logger = logging.getLogger(__name__)
@@ -200,8 +198,6 @@ class ReportsViewSet(viewsets.ViewSet):
         # Find quotes where we have both CREATED and SENT events
         avg_time_minutes = None
         try:
-            from django.db.models import Min, Max
-            from django.db.models.functions import Extract
 
             # SECURITY FIX: Enforce IDOR/RBAC protection
             quotes_with_events = get_quotes_for_user(request.user, Quote.objects.all()).filter(

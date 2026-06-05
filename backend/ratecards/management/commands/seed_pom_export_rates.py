@@ -3,7 +3,7 @@ import logging
 from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from core.models import Location, Country, Currency
+from core.models import Location
 from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
 from services.models import ServiceComponent
 
@@ -154,7 +154,6 @@ class Command(BaseCommand):
                     lane=lane,
                     service_component=comp,
                     defaults={
-                        "rate_per_shipment_fcy": Decimal(fee["rate"]) if fee["unit"] == "SHIPMENT" else None,
                         "rate_per_kg_fcy": Decimal(fee["rate"]) if fee["unit"] == "KG" else None,
                         # Handle PAGE unit (treat as shipment for now or add specific field? 
                         # Actually, PAGE unit usually implies a quantity multiplier. 

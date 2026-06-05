@@ -12,7 +12,6 @@ Architecture Principles:
 
 import io
 import logging
-from typing import Optional
 import re
 
 from .ai_intake_schemas import PDFExtractionResult

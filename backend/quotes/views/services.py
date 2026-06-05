@@ -1,5 +1,4 @@
 import logging
-import re
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -471,7 +470,7 @@ class QuotePDFAPIView(APIView):
                 {'detail': 'Quote PDF generation failed.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        except Exception as e:
+        except Exception:
             # Catch any unexpected errors and log them
             logger.exception(f"Unexpected error generating PDF for quote {quote_id}")
             return Response(

@@ -317,7 +317,7 @@ class PricingEngineView(APIView):
             
         except ValueError as e:
             return Response({"error": str(e), "code": "ERR_VALIDATION"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
+        except Exception:
             logger.exception("Pricing Engine Error")
             return Response({"error": "Internal Pricing Engine Error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -348,7 +348,6 @@ from .serializers import (
     AgentSerializer,
     CarrierSerializer,
     CustomerDiscountSerializer,
-    CustomerDiscountListSerializer,
     ProductCodeSerializer,
 )
 

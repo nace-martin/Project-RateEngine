@@ -1,7 +1,6 @@
 import os
 import django
 from collections import defaultdict
-from datetime import date
 
 # Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'rate_engine.settings')

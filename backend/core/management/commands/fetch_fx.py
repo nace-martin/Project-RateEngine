@@ -6,7 +6,6 @@ from typing import List, Tuple
 from django.core.management.base import BaseCommand, CommandError
 
 import logging
-import os
 from django.utils.timezone import now
 from core.fx import upsert_rate, d, FxUnavailableError
 from core.fx_providers import load as load_provider

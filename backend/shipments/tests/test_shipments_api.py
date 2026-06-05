@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from core.models import City, Country, Location
+from core.models import City, Country
 from core.tests.helpers import create_location
 from parties.models import Address, Company, Contact, Organization
 from shipments.models import Shipment, ShipmentCharge, ShipmentEvent

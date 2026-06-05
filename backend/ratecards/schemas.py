@@ -1,7 +1,7 @@
 
 from decimal import Decimal
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, model_validator, ValidationError
+from pydantic import BaseModel, Field, model_validator
 
 class SeededRateItem(BaseModel):
     """

@@ -6,7 +6,6 @@ from rest_framework import serializers
 from quotes.branding import get_quote_branding
 from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from services.models import ServiceComponent, SERVICE_SCOPE_CHOICES
-from parties.models import Company, Contact
 # --- ADDED IMPORTS ---
 from core.commodity import (
     COMMODITY_CODE_DG,

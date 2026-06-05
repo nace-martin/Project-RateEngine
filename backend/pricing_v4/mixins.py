@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Sequence
-from django.db import models
+from typing import Sequence
 from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)

@@ -8,7 +8,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'rate_engine.settings')
 django.setup()
 
 from services.models import ServiceRule, ServiceRuleComponent, ServiceComponent
-from ratecards.models import PartnerRate, PartnerRateLane
+from ratecards.models import PartnerRate
 
 # Get the new fuel surcharge components
 fuel_org = ServiceComponent.objects.get(code='PICKUP_FUEL_ORG')

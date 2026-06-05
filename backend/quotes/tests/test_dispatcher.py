@@ -20,7 +20,6 @@ from quotes.services.dispatcher import (
     RoutingMap,
     RoutingError,
     EngineVersion,
-    ShipmentType,
     CalculationResult,
 )
 from core.dataclasses import (

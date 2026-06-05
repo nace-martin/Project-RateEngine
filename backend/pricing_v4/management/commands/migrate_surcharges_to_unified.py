@@ -10,7 +10,6 @@ This command:
 Run with: python manage.py migrate_surcharges_to_unified
 """
 
-from datetime import date
 from decimal import Decimal
 from django.core.management.base import BaseCommand
 from pricing_v4.models import (

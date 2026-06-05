@@ -1,8 +1,8 @@
 from django.test import TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from decimal import Decimal
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import timedelta
 from django.utils import timezone
 from types import SimpleNamespace
 

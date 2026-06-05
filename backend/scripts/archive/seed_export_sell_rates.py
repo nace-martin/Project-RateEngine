@@ -15,7 +15,6 @@ from django.utils import timezone
 from core.models import Location, Airport, City, Country
 from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
 from services.models import ServiceComponent
-from parties.models import Company
 
 # =============================================================================
 # STEP 1: Add missing Locations

@@ -2,10 +2,9 @@ import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 from rest_framework.test import APITestCase
-from rest_framework import serializers
 
-from pricing_v4.models import ExportSellRate, ProductCode, LocalSellRate
-from pricing_v4.serializers import ExportSellRateSerializer, ImportCOGSSerializer
+from pricing_v4.models import ExportSellRate, ProductCode
+from pricing_v4.serializers import ExportSellRateSerializer
 
 class LaneSerializerHardeningTests(APITestCase):
     def setUp(self):

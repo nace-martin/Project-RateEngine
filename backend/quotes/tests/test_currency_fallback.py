@@ -5,7 +5,7 @@ from decimal import Decimal
 from quotes.spot_services import ReplyAnalysisService
 from quotes.ai_intake_schemas import QuoteInputPayload, SpotChargeLine
 from quotes.ai_intake_service import AIRateIntakePipelineResult
-from quotes.reply_schemas import AssertionStatus, AssertionCategory
+from quotes.reply_schemas import AssertionCategory
 from quotes.spot_schemas import SPEChargeLine
 from django.utils import timezone
 

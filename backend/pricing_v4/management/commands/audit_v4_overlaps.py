@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from django.core.management.base import BaseCommand
-from django.db.models import QuerySet
 
 from pricing_v4.models import (
     LocalSellRate, LocalCOGSRate,

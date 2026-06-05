@@ -1,4 +1,3 @@
-import os
 
 from django.db.models import Q
 from django.http import FileResponse, HttpResponse

@@ -20,7 +20,6 @@ Hard Guardrails (model-level):
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from enum import Enum
 from typing import List, Optional, Literal
 import hashlib

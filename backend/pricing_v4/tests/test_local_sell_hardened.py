@@ -3,7 +3,6 @@ from datetime import date, timedelta
 from decimal import Decimal
 from django.test import TestCase
 from django.core.exceptions import ValidationError
-from rest_framework import serializers
 
 from pricing_v4.models import LocalSellRate, ProductCode
 from pricing_v4.serializers import LocalSellRateSerializer

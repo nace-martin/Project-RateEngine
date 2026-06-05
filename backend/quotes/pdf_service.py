@@ -9,10 +9,9 @@ Clean table-style layout matching customer requirements.
 import logging
 import math
 from contextlib import nullcontext
-from decimal import Decimal, ROUND_UP
+from decimal import Decimal
 from typing import Optional
 
-from django.conf import settings
 from django.utils import timezone
 
 from fpdf import FPDF
@@ -25,7 +24,7 @@ from .buckets import (
     should_include_quote_line_in_subtotal,
 )
 from .branding import QuoteBrandingContext, get_quote_branding
-from .models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+from .models import Quote
 from .public_links import build_public_quote_url
 
 logger = logging.getLogger(__name__)

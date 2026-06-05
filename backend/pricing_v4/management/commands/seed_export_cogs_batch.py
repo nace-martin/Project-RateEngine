@@ -3,7 +3,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from decimal import Decimal
 from datetime import date
-from pricing_v4.models import ProductCode, ExportCOGS, Carrier, Agent
+from pricing_v4.models import ProductCode, ExportCOGS, Carrier
 
 class Command(BaseCommand):
     help = 'Seeds Export COGS (Buy Rates) for multiple corridors'

@@ -1,6 +1,5 @@
 import uuid
 import logging
-from typing import Optional
 from .middleware_utils import (
     set_request_id, set_trace_id, set_user_id, clear_request_context,
     get_request_id, get_trace_id, get_user_id

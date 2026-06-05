@@ -7,11 +7,9 @@ Covers:
 - Registration disabled by default
 - RBAC permission enforcement
 """
-import json
 from io import BytesIO
 
 from django.test import TestCase, override_settings
-from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status

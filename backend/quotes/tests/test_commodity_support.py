@@ -12,7 +12,7 @@ from rest_framework.test import APIRequestFactory, APITestCase
 
 from core.commodity import COMMODITY_CODE_AVI, COMMODITY_CODE_DG, DEFAULT_COMMODITY_CODE
 from core.dataclasses import CalculatedTotals, QuoteCharges
-from core.models import Country, Currency, FxSnapshot, Location, Policy
+from core.models import Country, Currency, FxSnapshot, Policy
 from core.tests.helpers import create_location
 from crm.models import Interaction, Opportunity
 from parties.models import Company, Contact

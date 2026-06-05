@@ -26,12 +26,13 @@ qi = QuoteInput(
     shipment=shipment
 )
 
-ad = PricingServiceV4Adapter(qi)
-res = ad.calculate_charges()
+if __name__ == '__main__':
+    ad = PricingServiceV4Adapter(qi)
+    res = ad.calculate_charges()
 
-print(f"has_missing: {res.totals.has_missing_rates}")
-print(f"notes: {res.totals.notes}")
-origin_lines = [l for l in res.lines if l.bucket == 'origin_charges']
-print(f"Origin Lines Count: {len(origin_lines)}")
-for l in origin_lines:
-    print(f" - {l.service_component_code}: is_rate_missing={l.is_rate_missing}, sell={l.sell_pgk}")
+    print(f"has_missing: {res.totals.has_missing_rates}")
+    print(f"notes: {res.totals.notes}")
+    origin_lines = [l for l in res.lines if l.bucket == 'origin_charges']
+    print(f"Origin Lines Count: {len(origin_lines)}")
+    for l in origin_lines:
+        print(f" - {l.service_component_code}: is_rate_missing={l.is_rate_missing}, sell={l.sell_pgk}")

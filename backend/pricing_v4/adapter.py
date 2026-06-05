@@ -738,7 +738,6 @@ class PricingServiceV4Adapter:
                     'cost_amount': Decimal('0'),
                     'sell_amount': Decimal('0'),
                     'sell_incl_gst': Decimal('0'),
-                    'gst_amount': Decimal('0'),
                     'is_rate_missing': getattr(line, 'is_rate_missing', False),
                     'bucket': bucket,
                     'leg': leg,

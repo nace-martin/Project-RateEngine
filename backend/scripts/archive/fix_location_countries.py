@@ -4,7 +4,7 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'rate_engine.settings')
 django.setup()
 
-from core.models import Location, Airport, City, Country
+from core.models import Location, Airport, Country
 
 # Mapping of airport codes to country codes
 AIRPORT_COUNTRIES = {

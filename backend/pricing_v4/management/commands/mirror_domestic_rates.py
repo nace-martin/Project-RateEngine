@@ -1,7 +1,7 @@
 from pricing_v4.services.pricing_domain_service import PricingDomainService
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from pricing_v4.models import DomesticCOGS, DomesticSellRate, ProductCode, Agent
+from pricing_v4.models import DomesticCOGS, DomesticSellRate
 
 class Command(BaseCommand):
     help = 'Mirrors ex-POM rates to create to-POM rates (symmetrical pricing)'
