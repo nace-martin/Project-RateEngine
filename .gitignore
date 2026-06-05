@@ -140,3 +140,5 @@ backend/shipments/efm/
 .agents/
 .codex/
 graphify-out/
+.fallow/
+frontend/fallow-*.json
