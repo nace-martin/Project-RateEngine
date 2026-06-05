@@ -17,12 +17,13 @@ import {
 } from "@/lib/types";
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
 import InternalInspectionAlert from "@/components/quotes/InternalInspectionAlert";
+import QuoteDetailFooter from "@/components/quotes/QuoteDetailFooter";
 
 import RoutingWarning from "@/components/RoutingWarning";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, ArrowLeft, CheckCircle, CheckCircle2, Pencil } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
 import { formatServiceScope } from "@/lib/display";
 import { getEffectiveQuoteStatus } from "@/lib/quote-helpers";
@@ -286,6 +287,28 @@ export default function QuoteDetailPage() {
   const isDomesticQuote = (quote.shipment_type || "").toUpperCase() === "DOMESTIC";
   const resolvedServiceScope = formatServiceScope(quote.service_scope);
 
+  const handleDownloadPDF = async () => {
+    if (!quote) return;
+    setPdfDownloading(true);
+    try {
+      await downloadQuotePDF(quote.id, quote.quote_number);
+      if (quote.status?.toUpperCase?.() === "FINALIZED") {
+        const sendResult = await transitionQuoteStatus(quote.id, "send");
+        if (sendResult.success) {
+          const refreshed = await getQuoteV3(id);
+          setQuote(refreshed);
+        } else {
+          console.error("Auto-send failed:", sendResult.error);
+        }
+      }
+    } catch (err) {
+      console.error("PDF download failed:", err);
+      alert(err instanceof Error ? err.message : "Failed to download PDF");
+    } finally {
+      setPdfDownloading(false);
+    }
+  };
+
   if (spotWorkflowHref) {
     return (
       <div className="container mx-auto max-w-3xl p-6">
@@ -445,95 +468,19 @@ export default function QuoteDetailPage() {
       </div>
 
       {/* Sticky Footer Action Bar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50">
-        <div className="container mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div>
-              <p className="text-xs text-slate-500 uppercase font-semibold">Total Quote Amount</p>
-              <p className="text-2xl font-bold text-slate-900">
-                {displayCurrency} {displayAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-              <p className="text-[10px] text-slate-400">
-                Inc. GST
-              </p>
-            </div>
-            {/* Currency Exchange Badge placeholder (future task) */}
-            {quote.latest_version?.totals?.currency !== 'PGK' && (
-              <div className="hidden md:block px-3 py-1 bg-amber-50 rounded border border-amber-100 text-xs text-amber-700">
-                <strong>Note:</strong> Pricing in {quote.latest_version?.totals?.currency}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            {canDownloadPDF && (
-              <Button
-                variant="outline"
-                className="hidden sm:flex"
-                disabled={pdfDownloading}
-                onClick={async () => {
-                  setPdfDownloading(true);
-                  try {
-                    await downloadQuotePDF(quote.id, quote.quote_number);
-                    if (quote.status?.toUpperCase?.() === "FINALIZED") {
-                      const sendResult = await transitionQuoteStatus(quote.id, "send");
-                      if (sendResult.success) {
-                        const refreshed = await getQuoteV3(id);
-                        setQuote(refreshed);
-                      } else {
-                        console.error("Auto-send failed:", sendResult.error);
-                      }
-                    }
-                  } catch (err) {
-                    console.error("PDF download failed:", err);
-                    alert(err instanceof Error ? err.message : "Failed to download PDF");
-                  } finally {
-                    setPdfDownloading(false);
-                  }
-                }}
-              >
-                {pdfDownloading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  "Download PDF"
-                )}
-              </Button>
-            )}
-            {/* Only show finalize button for DRAFT quotes, handled by QuoteStatusActions above */}
-            {effectiveStatus === "FINALIZED" || effectiveStatus === "SENT" || effectiveStatus === "EXPIRED" ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <CheckCircle className="h-4 w-4 text-emerald-600" />
-                <span>Quote {effectiveStatus.toLowerCase()}</span>
-              </div>
-            ) : effectiveStatus === "DRAFT" ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 mr-2 hidden sm:flex"
-                  onClick={() => router.push(buildQuoteEditHref(quote))}
-                >
-                  <Pencil className="h-4 w-4" />
-                  Edit Quote
-                </Button>
-                <QuoteStatusActions
-                  quoteId={quote.id}
-                  status={quote.status}
-                  validUntil={quote.valid_until}
-                  hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
-                  showDelete={false}
-                  onStatusChange={() => {
-                    getQuoteV3(id).then((data) => setQuote(data));
-                  }}
-                />
-              </>
-            ) : null}
-          </div>
-        </div>
-      </div>
+      <QuoteDetailFooter
+        quote={quote}
+        effectiveStatus={effectiveStatus}
+        displayCurrency={displayCurrency}
+        displayAmount={displayAmount}
+        canDownloadPDF={canDownloadPDF}
+        pdfDownloading={pdfDownloading}
+        onDownloadPDF={handleDownloadPDF}
+        onEditQuote={() => router.push(buildQuoteEditHref(quote))}
+        onStatusChange={() => {
+          getQuoteV3(id).then((data) => setQuote(data));
+        }}
+      />
 
     </div >
   );
