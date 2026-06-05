@@ -5,11 +5,9 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -20,7 +18,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/context/toast-context';
 import {
   getProductCodes,
@@ -33,8 +30,16 @@ import {
   type PricingCarrierOption,
   type ProductCodeOption,
   type RateRevisionOptions,
-  type RateWeightBreak,
 } from '@/lib/api';
+import { isoDateWithOffset, cleanWeightBreaks } from '@/lib/pricing/rate-utils';
+import {
+  RateChargeBoundsFields,
+  RateFormFooter,
+  RateFormRevisionNotice,
+  RateRetirePreviousOption,
+  RateValidityFields,
+  RateWeightBreakEditor,
+} from './shared-form-sections';
 
 type FormMode = 'create' | 'edit' | 'revise';
 type CounterpartyType = 'agent' | 'carrier';
@@ -58,12 +63,6 @@ interface LocalRateFormModalProps<T extends LocalRateRecord | LocalCOGSRateRecor
   updateRate: (id: number | string, payload: Partial<LocalRateUpsertPayload>) => Promise<T>;
   reviseRate: (id: number | string, payload: LocalRateUpsertPayload & RateRevisionOptions) => Promise<T>;
   onSuccess: () => void | Promise<void>;
-}
-
-function isoDateWithOffset(offsetDays = 0): string {
-  const base = new Date();
-  base.setDate(base.getDate() + offsetDays);
-  return base.toISOString().split('T')[0];
 }
 
 function initialWeightBreaks(rate: LocalRateRecord | null | undefined): WeightBreakDraft[] {
@@ -231,14 +230,7 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
       additive_flat_amount: additiveFlatAmount.trim() || null,
       min_charge: minCharge.trim() || null,
       max_charge: maxCharge.trim() || null,
-      weight_breaks: weightBreaks
-        .filter((row) => row.min_kg.trim() !== '' || row.rate.trim() !== '')
-        .map(
-          (row): RateWeightBreak => ({
-            min_kg: Number(row.min_kg),
-            rate: row.rate.trim(),
-          }),
-        ),
+      weight_breaks: cleanWeightBreaks(weightBreaks),
       percent_of_product_code: percentOfProductCode ? Number(percentOfProductCode) : null,
       valid_from: validFrom,
       valid_until: validUntil,
@@ -287,13 +279,7 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          {initialRate?.is_active && isRevision ? (
-            <Alert>
-              <AlertDescription>
-                This revision is prefilled from the selected row. Save it as a new effective-dated rate instead of overwriting the current one.
-              </AlertDescription>
-            </Alert>
-          ) : null}
+          {initialRate?.is_active && isRevision ? <RateFormRevisionNotice /> : null}
 
           {formError ? (
             <Alert variant="destructive">
@@ -463,85 +449,45 @@ export default function LocalRateFormModal<T extends LocalRateRecord | LocalCOGS
           ) : null}
 
           {rateType === 'PER_KG' ? (
-            <div className="space-y-3 rounded-lg border p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Weight Breaks</div>
-                  <div className="text-sm text-muted-foreground">Optional. Leave blank if this row is not tiered.</div>
-                </div>
-                <Button type="button" variant="outline" size="sm" onClick={addWeightBreak}>
-                  Add Tier
-                </Button>
-              </div>
-              {weightBreaks.map((row, index) => (
-                <div key={`${index}-${row.min_kg}-${row.rate}`} className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                  <Input
-                    value={row.min_kg}
-                    onChange={(event) => updateWeightBreak(index, 'min_kg', event.target.value)}
-                    placeholder="Min KG"
-                  />
-                  <Input
-                    value={row.rate}
-                    onChange={(event) => updateWeightBreak(index, 'rate', event.target.value)}
-                    placeholder="Rate"
-                  />
-                  <Button type="button" variant="ghost" onClick={() => removeWeightBreak(index)}>
-                    Remove
-                  </Button>
-                </div>
-              ))}
-            </div>
+            <RateWeightBreakEditor
+              weightBreaks={weightBreaks}
+              helperText="Optional. Leave blank if this row is not tiered."
+              onAddWeightBreak={addWeightBreak}
+              onUpdateWeightBreak={updateWeightBreak}
+              onRemoveWeightBreak={removeWeightBreak}
+            />
           ) : null}
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Minimum Charge</Label>
-              <Input value={minCharge} onChange={(event) => setMinCharge(event.target.value)} placeholder="Optional" />
-            </div>
-            <div className="space-y-2">
-              <Label>Maximum Charge</Label>
-              <Input value={maxCharge} onChange={(event) => setMaxCharge(event.target.value)} placeholder="Optional" />
-            </div>
-          </div>
+          <RateChargeBoundsFields
+            minCharge={minCharge}
+            maxCharge={maxCharge}
+            onMinChargeChange={setMinCharge}
+            onMaxChargeChange={setMaxCharge}
+          />
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Valid From</Label>
-              <Input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Valid Until</Label>
-              <Input type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />
-            </div>
-          </div>
+          <RateValidityFields
+            validFrom={validFrom}
+            validUntil={validUntil}
+            onValidFromChange={setValidFrom}
+            onValidUntilChange={setValidUntil}
+          />
 
           {isRevision ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  id="local-retire-previous"
-                  checked={retirePrevious}
-                  onCheckedChange={(checked) => setRetirePrevious(Boolean(checked))}
-                />
-                <div className="space-y-1">
-                  <Label htmlFor="local-retire-previous">Auto-retire the prior row</Label>
-                  <div className="text-sm text-muted-foreground">
-                    Recommended. When enabled, the current row will end the day before the new revision starts.
-                  </div>
-                </div>
-              </div>
-            </div>
+            <RateRetirePreviousOption
+              id="local-retire-previous"
+              checked={retirePrevious}
+              onCheckedChange={(checked) => setRetirePrevious(Boolean(checked))}
+            />
           ) : null}
         </div>
 
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={handleSubmit} disabled={saving || loadingOptions}>
-            {saving ? 'Saving...' : isEditing ? 'Save Changes' : isRevision ? 'Create Revision' : 'Create Rate'}
-          </Button>
-        </DialogFooter>
+        <RateFormFooter
+          saving={saving}
+          loadingOptions={loadingOptions}
+          submitLabel={saving ? 'Saving...' : isEditing ? 'Save Changes' : isRevision ? 'Create Revision' : 'Create Rate'}
+          onCancel={() => onOpenChange(false)}
+          onSubmit={handleSubmit}
+        />
       </DialogContent>
     </Dialog>
   );

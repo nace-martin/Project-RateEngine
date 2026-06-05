@@ -1,13 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { PlusCircle, RefreshCw } from 'lucide-react';
 import { PageHeader, StandardPageContainer } from '@/components/layout/standard-page';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -39,6 +35,8 @@ import {
 } from '@/lib/api';
 import LocalRateFormModal from './LocalRateFormModal';
 import RateHistorySheet from './RateHistorySheet';
+import { getRateStatus } from '@/lib/pricing/rate-utils';
+import { RateManagerLifecycleNotice, RateManagerToolbar, RateRowActions, RateStatusBadge } from './shared-page-components';
 
 type ModalState<T extends LocalRateRecord | LocalCOGSRateRecord> =
   | { mode: 'create'; rate: T | null }
@@ -58,23 +56,6 @@ interface LocalRateManagerPageProps<T extends LocalRateRecord | LocalCOGSRateRec
   reviseRate: (id: number | string, payload: LocalRateUpsertPayload & RateRevisionOptions) => Promise<T>;
   retireRate: (id: number | string) => Promise<{ deleted?: boolean; detail?: string } | T>;
   loadHistory: (id: number | string) => Promise<RateChangeLogEntry[]>;
-}
-
-function getStatusLabel(rate: LocalRateRecord | LocalCOGSRateRecord): 'ACTIVE' | 'EXPIRED' | 'SCHEDULED' {
-  const today = new Date().toISOString().split('T')[0];
-  if (rate.valid_until < today) return 'EXPIRED';
-  if (rate.valid_from > today) return 'SCHEDULED';
-  return 'ACTIVE';
-}
-
-function statusBadge(status: 'ACTIVE' | 'EXPIRED' | 'SCHEDULED') {
-  if (status === 'ACTIVE') {
-    return <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Active</Badge>;
-  }
-  if (status === 'SCHEDULED') {
-    return <Badge className="border-blue-200 bg-blue-50 text-blue-700">Scheduled</Badge>;
-  }
-  return <Badge variant="outline" className="border-slate-300 text-slate-600">Expired</Badge>;
 }
 
 export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCOGSRateRecord>({
@@ -133,7 +114,7 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
   const filteredRates = useMemo(
     () =>
       rates.filter((rate) => {
-        const status = getStatusLabel(rate);
+        const status = getRateStatus(rate);
         if (statusFilter !== 'all' && status !== statusFilter) return false;
         if (productFilter !== 'all' && String(rate.product_code) !== productFilter) return false;
         if (directionFilter !== 'all' && rate.direction !== directionFilter) return false;
@@ -192,28 +173,14 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
     <StandardPageContainer>
       <PageHeader title={title} description={description} />
 
-      <div className="flex flex-wrap gap-3">
-        <Button onClick={() => setModalState({ mode: 'create', rate: null })}>
-          <PlusCircle className="mr-2 h-4 w-4" />
-          Add {pathLabel}
-        </Button>
-        <Button variant="outline" onClick={() => void loadRates()} disabled={loading}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href="/pricing/manage">All Rate Managers</Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href="/pricing/rate-cards">Back To Rate Overview</Link>
-        </Button>
-      </div>
+      <RateManagerToolbar
+        pathLabel={pathLabel}
+        loading={loading}
+        onAdd={() => setModalState({ mode: 'create', rate: null })}
+        onRefresh={() => void loadRates()}
+      />
 
-      <Alert>
-        <AlertDescription>
-          Use <span className="font-medium">New Effective Rate</span> for active rows whenever possible. Direct edits are available for corrections, but the preferred workflow is to create a new effective-dated row.
-        </AlertDescription>
-      </Alert>
+      <RateManagerLifecycleNotice />
 
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="gap-4">
@@ -307,7 +274,7 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
               </TableHeader>
               <TableBody>
                 {filteredRates.map((rate) => {
-                  const status = getStatusLabel(rate);
+                  const status = getRateStatus(rate);
                   const basis = rate.weight_breaks?.length
                     ? 'Weight breaks'
                     : rate.rate_type === 'PERCENT'
@@ -320,7 +287,7 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
 
                   return (
                     <TableRow key={rate.id}>
-                      <TableCell>{statusBadge(status)}</TableCell>
+                      <TableCell><RateStatusBadge status={status} /></TableCell>
                       <TableCell>
                         <div className="font-medium">{rate.product_code_code}</div>
                         <div className="text-xs text-muted-foreground">{rate.product_code_description}</div>
@@ -339,25 +306,14 @@ export default function LocalRateManagerPage<T extends LocalRateRecord | LocalCO
                         <div className="text-xs text-muted-foreground">to {rate.valid_until}</div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setHistoryRate(rate)}>
-                            History
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => setModalState({ mode: 'revise', rate })}>
-                            New Effective Rate
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => setModalState({ mode: 'edit', rate })}>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleRetire(rate)}
-                            disabled={activeActionId === rate.id}
-                          >
-                            {activeActionId === rate.id ? 'Retiring...' : 'Retire'}
-                          </Button>
-                        </div>
+                        <RateRowActions
+                          rate={rate}
+                          isRetiring={activeActionId === rate.id}
+                          onHistory={setHistoryRate}
+                          onRevise={(selectedRate) => setModalState({ mode: 'revise', rate: selectedRate })}
+                          onEdit={(selectedRate) => setModalState({ mode: 'edit', rate: selectedRate })}
+                          onRetire={(selectedRate) => void handleRetire(selectedRate)}
+                        />
                       </TableCell>
                     </TableRow>
                   );
