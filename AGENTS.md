@@ -46,6 +46,25 @@ Tests passing is not enough.
 - Document manual verification steps and results in the PR.
 - If a workflow cannot be manually verified, explain why and list the residual risk.
 
+## Fallow Baseline Rule
+
+Before any audit, cleanup, refactor, or feature work, Codex, Gemini, and other AI agents must run a Fallow baseline from the project root:
+
+```bash
+npx fallow --format json
+npx fallow dead-code --format json
+npx fallow dupes --format json
+npx fallow health --format json
+```
+
+- Treat Fallow output as audit evidence.
+- If Fallow is not installed or the command fails, stop and report the failure. Do not continue with cleanup or refactor work until the baseline issue is resolved or explicitly waived.
+- Do not delete code automatically.
+- Do not modify, stage, commit, or push unless explicitly instructed.
+- Report findings first.
+- Flag dead code, unused exports, duplicate logic, complexity hotspots, dependency/import issues, and legacy quote/SPOT/INCOMPLETE-status code.
+- Run backend checks separately with Ruff and Vulture where relevant because Fallow is mainly useful for JavaScript and TypeScript.
+
 ## Spot Workflow Rules
 
 - Use `SpotPricingEnvelopeDB`, `SPESourceBatchDB`, `SPEChargeLineDB`, and `SPEAcknowledgementDB` as the active Spot persistence model.
