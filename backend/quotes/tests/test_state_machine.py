@@ -7,7 +7,6 @@ Tests for quote lifecycle transitions and edit-blocking functionality.
 
 import pytest
 from decimal import Decimal
-from uuid import uuid4
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
@@ -18,12 +17,10 @@ from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.state_machine import (
     QuoteImmutableError,
     QuoteStateMachine,
-    QuoteStateError,
     TERMINAL_STATES,
     assert_quote_mutable_for_action,
     is_quote_editable,
     get_status_display_info,
-    VALID_TRANSITIONS,
     LOCKED_STATES,
 )
 from parties.models import Company, Contact
@@ -156,6 +153,62 @@ def finalized_quote(user, setup_basic_data):
         created_by=user,
     )
     return quote
+
+
+def test_build_quote_input_from_payload_uses_resolved_rate_dimensions(monkeypatch, setup_basic_data):
+    from quotes.services.rate_resolution import ResolvedRateDimensions
+    from quotes.views import lifecycle as lifecycle_views
+
+    captured = {}
+
+    def fake_resolve_quote_rate_dimensions(context):
+        captured['context'] = context
+        return ResolvedRateDimensions(
+            buy_currency='AUD',
+            agent_id=123,
+            carrier_id=None,
+            resolution_basis='test_resolved_dimensions',
+            required_components=('freight',),
+            buy_side_components=('freight',),
+        )
+
+    monkeypatch.setattr(
+        lifecycle_views,
+        'resolve_quote_rate_dimensions',
+        fake_resolve_quote_rate_dimensions,
+    )
+
+    payload = {
+        'customer_id': str(setup_basic_data['customer'].id),
+        'contact_id': str(setup_basic_data['contact'].id),
+        'mode': 'AIR',
+        'service_scope': 'D2D',
+        'origin_location_id': str(setup_basic_data['origin_location'].id),
+        'destination_location_id': str(setup_basic_data['destination_location'].id),
+        'incoterm': 'DAP',
+        'payment_term': 'PREPAID',
+        'dimensions': [
+            {
+                'pieces': 1,
+                'length_cm': '10',
+                'width_cm': '10',
+                'height_cm': '10',
+                'gross_weight_kg': '5',
+                'package_type': 'Box',
+            }
+        ],
+    }
+
+    quote_input, validated = lifecycle_views._build_quote_input_from_payload(payload)
+
+    assert str(validated.customer_id) == str(setup_basic_data['customer'].id)
+    assert quote_input.shipment.shipment_type == 'IMPORT'
+    assert quote_input.buy_currency == 'AUD'
+    assert quote_input.agent_id == 123
+    assert quote_input.carrier_id is None
+    assert captured['context'].origin_airport == setup_basic_data['origin_location'].code
+    assert captured['context'].destination_airport == setup_basic_data['destination_location'].code
+    assert captured['context'].service_scope == 'D2D'
 
 
 # --- State Machine Unit Tests ---

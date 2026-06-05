@@ -1,11 +1,11 @@
 import logging
 import copy
+from datetime import date
 from decimal import Decimal
 from dataclasses import replace
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import viewsets, status, serializers
@@ -15,7 +15,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.decorators import action
 
-from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
+from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.serializers import (
     CanonicalQuoteResultSerializer,
     QuoteListSerializerV3,
@@ -26,9 +26,13 @@ from quotes.quote_result_contract import (
     build_persisted_quote_total_metadata,
     build_quote_result_from_quote,
 )
+from quotes.services.rate_resolution import (
+    RateResolutionContext,
+    resolve_quote_rate_dimensions,
+)
 from services.models import ServiceComponent
 from pricing_v4.adapter import PricingServiceV4Adapter
-from core.dataclasses import QuoteInput, ManualOverride
+from core.dataclasses import ManualOverride
 
 # RBAC permissions
 from accounts.permissions import (
@@ -208,6 +212,20 @@ def _build_quote_input_from_payload(payload: dict):
         origin_location,
         destination_location,
     )
+    resolved_dimensions = resolve_quote_rate_dimensions(
+        RateResolutionContext(
+            customer_id=validated.customer_id,
+            shipment_type=shipment_type,
+            service_scope=validated.service_scope,
+            payment_term=validated.payment_term,
+            origin_airport=origin_location.code,
+            destination_airport=destination_location.code,
+            quote_date=date.today(),
+            override_buy_currency=validated.buy_currency,
+            override_agent_id=validated.agent_id,
+            override_carrier_id=validated.carrier_id,
+        )
+    )
     
     # We need an instance to call _build_quote_input... or make it static.
     # It accesses `self._location_to_ref`.
@@ -219,6 +237,7 @@ def _build_quote_input_from_payload(payload: dict):
         shipment_type,
         origin_location,
         destination_location,
+        resolved_dimensions,
     )
     return quote_input, validated
 
