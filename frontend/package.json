@@ -11,6 +11,7 @@
     "test:quote-store": "node --experimental-strip-types --experimental-specifier-resolution=node scripts/quote-store.test.mjs",
     "test:quote-workflow": "node scripts/quote-workflow-roundtrip.test.mjs",
     "test:quote-detail-mapping": "node scripts/quote-detail-mapping.test.mjs",
+    "test:quote-edit-hydration": "node scripts/quote-edit-hydration.test.mjs",
     "test:crm-quote-prefill": "node scripts/crm-quote-prefill.test.mjs",
     "test:domestic-service-scope": "node scripts/domestic-service-scope.test.mjs",
     "test:spot-finalization": "node scripts/spot-finalization.test.mjs",
