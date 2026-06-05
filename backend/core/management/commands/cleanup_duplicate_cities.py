@@ -33,21 +33,36 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("DRY RUN MODE - No changes will be made\n"))
 
         with transaction.atomic():
+            iatas = list(IATA_TO_CITY.keys())
+            proper_names = list(IATA_TO_CITY.values())
+
+            # Prefetch relevant cities using select_related('country') to avoid N+1 queries in the loop
+            relevant_cities = City.objects.filter(name__in=iatas + proper_names).select_related('country')
+
+            # Map (name, country_id) -> City for instant lookups
+            cities_by_name_country = {
+                (city.name, city.country_id): city for city in relevant_cities
+            }
+
+            # Group IATA cities by their name
+            iata_cities_by_name = {}
+            for city in relevant_cities:
+                if city.name in iatas:
+                    iata_cities_by_name.setdefault(city.name, []).append(city)
+
             for iata, proper_name in IATA_TO_CITY.items():
-                # Find cities with the IATA name
-                iata_cities = City.objects.filter(name=iata)
-                if not iata_cities.exists():
+                iata_cities = iata_cities_by_name.get(iata, [])
+                if not iata_cities:
                     continue
                 
                 for iata_city in iata_cities:
-                    # Find or ensure the proper city exists
-                    try:
-                        proper_city = City.objects.get(name=proper_name, country=iata_city.country)
-                    except City.DoesNotExist:
+                    proper_city = cities_by_name_country.get((proper_name, iata_city.country_id))
+                    if not proper_city:
                         self.stdout.write(self.style.NOTICE(f"Proper city '{proper_name}' for country {iata_city.country} does not exist. Renaming '{iata}' instead."))
                         if not dry_run:
                             iata_city.name = proper_name
                             iata_city.save(update_fields=['name'])
+                            cities_by_name_country[(proper_name, iata_city.country_id)] = iata_city
                         continue
 
                     if iata_city.id == proper_city.id:
