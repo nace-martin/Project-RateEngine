@@ -8,7 +8,6 @@ Tests the RBAC departmental visibility rules:
 3. Sales sees only their own quotes
 """
 from django.test import TestCase
-from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status as http_status
 

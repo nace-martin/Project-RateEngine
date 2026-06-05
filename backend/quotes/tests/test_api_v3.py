@@ -14,7 +14,6 @@ from core.charge_rules import STANDARD_RULE_FAMILIES
 from parties.models import Company, Contact, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.spot_models import SpotPricingEnvelopeDB
-from core.models import Location
 from services.models import ServiceCode, ServiceComponent
 
 

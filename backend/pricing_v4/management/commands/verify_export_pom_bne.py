@@ -33,7 +33,7 @@ class Command(BaseCommand):
         quote_date = date.today()
         chargeable_weight = Decimal('150.00')  # 150kg test shipment
         
-        self.stdout.write(f"\nTest Parameters:")
+        self.stdout.write("\nTest Parameters:")
         self.stdout.write(f"  Origin: {origin}")
         self.stdout.write(f"  Destination: {destination}")
         self.stdout.write(f"  Quote Date: {quote_date}")
@@ -75,11 +75,11 @@ class Command(BaseCommand):
             
             # Verification checks
             if line.is_rate_missing:
-                self.stdout.write(self.style.WARNING(f"  ⚠ Missing rate"))
+                self.stdout.write(self.style.WARNING("  ⚠ Missing rate"))
                 all_passed = False
             
             if line.cost_amount > 0 and line.margin_amount <= 0:
-                self.stdout.write(self.style.ERROR(f"  ✗ Negative or zero margin!"))
+                self.stdout.write(self.style.ERROR("  ✗ Negative or zero margin!"))
                 all_passed = False
         
         self.stdout.write("-" * 70)

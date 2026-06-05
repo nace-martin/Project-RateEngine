@@ -131,8 +131,8 @@ class Command(BaseCommand):
         
         # Summary
         self.stdout.write("\nSummary:")
-        self.stdout.write(f"  AUD destinations: BNE, CNS, SYD")
-        self.stdout.write(f"  USD destinations: HKG, MNL, HIR, SIN, VLI, NAN")
+        self.stdout.write("  AUD destinations: BNE, CNS, SYD")
+        self.stdout.write("  USD destinations: HKG, MNL, HIR, SIN, VLI, NAN")
 
     def _create_sell(self, product_id, dest, currency,
                      flat_rate=None, per_kg=None,

@@ -20,9 +20,9 @@ from services.models import MODE_CHOICES, ServiceComponent, SERVICE_SCOPE_CHOICE
 # --- V3 Refactored Quote Model ---
 # Re-export SPOT models for backward compatibility
 from .spot_models import (
-    SpotPricingEnvelopeDB,
-    SPEChargeLineDB,
-    SPEAcknowledgementDB,
+    SpotPricingEnvelopeDB,  # noqa: F401
+    SPEChargeLineDB,        # noqa: F401
+    SPEAcknowledgementDB,   # noqa: F401
 )
 
 class Quote(models.Model):

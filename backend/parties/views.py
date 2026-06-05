@@ -2,7 +2,6 @@
 V3 API views for the parties app.
 """
 
-import os
 
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404

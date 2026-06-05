@@ -144,16 +144,6 @@ class Command(BaseCommand):
             service_scope='A2D',
             defaults={
                 "description": "Prepaid Import A2D (Agent Request)",
-                "output_currency_type": "ORIGIN", # We quote in OUR currency? No, "We must return these charges in their foreign currency".
-                # So if Agent is in BNE (AUD), and we are in POM (PGK), we quote in AUD?
-                # No, usually we quote in OUR local currency (PGK) and they convert?
-                # User said: "We must return these charges in their foreign currency (usually USD or AUD)".
-                # So output_currency_type should be 'USD' or 'AUD' or 'DESTINATION' (Agent's currency).
-                # Since Agent is the "Customer" here, and they are overseas, 'DESTINATION' might imply POM if it's Import?
-                # Import: Origin (Overseas) -> Destination (POM).
-                # If we quote in Agent's currency (Origin), then it's 'ORIGIN'.
-                # Wait, for Import, Origin is Overseas.
-                # So 'ORIGIN' = Match Origin Currency (Agent's Currency).
                 # UPDATE: User confirmed AU origin → AUD, else → USD
                 "output_currency_type": "ORIGIN_AU_USD", 
                 "is_active": True

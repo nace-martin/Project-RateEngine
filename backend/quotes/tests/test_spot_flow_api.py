@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 from unittest.mock import patch
 from django.utils import timezone
@@ -8,7 +9,6 @@ from decimal import Decimal
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from core.models import Location
 from core.tests.helpers import create_location
 from pricing_v4.models import (
     Agent,
@@ -29,6 +29,17 @@ from quotes.completeness import (
 from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
 
 
+@override_settings(
+    REST_FRAMEWORK={
+        "DEFAULT_PERMISSION_CLASSES": [
+            "rest_framework.permissions.IsAuthenticated",
+        ],
+        "DEFAULT_AUTHENTICATION_CLASSES": [
+            "rest_framework.authentication.TokenAuthentication",
+        ],
+        "DEFAULT_THROTTLE_CLASSES": [],
+    }
+)
 class SpotEnvelopeFlowAPITest(APITestCase):
     def setUp(self):
         User = get_user_model()

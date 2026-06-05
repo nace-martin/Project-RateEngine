@@ -4,6 +4,8 @@ from decimal import Decimal
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
+from core.models import AircraftType
+
 
 @dataclass
 class CargoConstraintViolation:

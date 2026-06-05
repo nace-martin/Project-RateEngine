@@ -24,7 +24,6 @@ from .models import (
     ComponentMargin,
     CustomerDiscount,
     RateChangeLog,
-    Surcharge,
 )
 from parties.models import Company
 

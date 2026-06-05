@@ -6,7 +6,6 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from core.models import Location
 from core.tests.helpers import create_location
 from parties.models import Company, Contact, Organization, OrganizationBranding
 from quotes.models import Quote, QuoteLine, QuoteTotal, QuoteVersion

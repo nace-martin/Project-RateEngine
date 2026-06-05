@@ -9,8 +9,8 @@ This module provides:
 3. FxConversionService - Encapsulated FX conversion logic with full audit trail
 """
 
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Literal, Dict, Any
+from decimal import Decimal
+from typing import Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 import json
 

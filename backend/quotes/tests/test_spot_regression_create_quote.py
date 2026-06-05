@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from django.urls import reverse
 
-from core.models import Currency, Country, Location
+from core.models import Currency, Country
 from core.tests.helpers import create_location
 from pricing_v4.models import ProductCode
 from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPESourceBatchDB

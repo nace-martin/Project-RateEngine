@@ -1,5 +1,4 @@
-from django.shortcuts import get_object_or_404
-from django.core.exceptions import PermissionDenied, ObjectDoesNotExist
+from django.core.exceptions import PermissionDenied
 from django.db.models import QuerySet, Q
 from quotes.models import Quote, SpotPricingEnvelopeDB
 

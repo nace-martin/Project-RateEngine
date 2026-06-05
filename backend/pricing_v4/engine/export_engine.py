@@ -23,7 +23,7 @@ AMENDMENTS:
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
@@ -32,8 +32,7 @@ from enum import Enum
 from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.commodity_rules import get_auto_product_code_ids
 from pricing_v4.models import (
-    ProductCode, ExportCOGS, ExportSellRate,
-    LocalSellRate, LocalCOGSRate, Surcharge
+    ProductCode, LocalSellRate, Surcharge
 )
 from pricing_v4.category_rules import (
     is_local_rate_category,

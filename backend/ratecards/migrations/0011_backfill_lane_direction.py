@@ -84,14 +84,14 @@ def infer_direction_from_airports(apps, schema_editor):
     
     # Print summary
     print(f"\n{'='*60}")
-    print(f"LANE DIRECTION BACKFILL SUMMARY")
+    print("LANE DIRECTION BACKFILL SUMMARY")
     print(f"{'='*60}")
     print(f"Lanes updated: {lanes_updated}")
     print(f"Lanes skipped (need manual fix): {len(lanes_skipped)}")
     
     if lanes_skipped:
         print(f"\n{'='*60}")
-        print(f"LANES THAT COULD NOT BE INFERRED (MANUAL FIX REQUIRED)")
+        print("LANES THAT COULD NOT BE INFERRED (MANUAL FIX REQUIRED)")
         print(f"{'='*60}")
         for lane_info in lanes_skipped:
             print(f"  Lane ID: {lane_info['id']}")

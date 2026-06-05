@@ -6,11 +6,9 @@ from django.core.exceptions import ValidationError
 
 from pricing_v4.models import (
     ProductCode, Carrier, Agent,
-    LocalCOGSRate, LocalSellRate,
-    ExportSellRate, ExportCOGS,
-    ImportSellRate, ImportCOGS,
-    DomesticSellRate, DomesticCOGS,
-    Surcharge
+    LocalCOGSRate, ExportSellRate, ExportCOGS,
+    ImportCOGS,
+    DomesticSellRate, Surcharge
 )
 from pricing_v4.services.pricing_domain_service import PricingDomainService
 

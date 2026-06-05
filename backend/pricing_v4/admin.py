@@ -19,8 +19,8 @@ from .models import (
     CustomerDiscount,
     CommodityChargeRule,
 )
-from .services.pricing_rate_scope import LOCAL_CATEGORIES, PricingRateScope, classify_pricing_rate_scope
-from .services.import_cogs_scope import ImportCOGSScope, classify_import_cogs_scope
+from .services.pricing_rate_scope import LOCAL_CATEGORIES, PricingRateScope
+from .services.import_cogs_scope import ImportCOGSScope
 from .services.rate_scope_transition import computed_transition_scope, scope_mismatch_label
 
 

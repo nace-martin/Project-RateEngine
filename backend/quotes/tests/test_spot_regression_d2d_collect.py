@@ -2,7 +2,7 @@ from rest_framework.test import APITestCase, APIClient
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from parties.models import Company
-from core.models import Country, Location
+from core.models import Country
 from core.tests.helpers import create_location
 from quotes.models import Quote
 from pricing_v4.models import ProductCode, LocalSellRate

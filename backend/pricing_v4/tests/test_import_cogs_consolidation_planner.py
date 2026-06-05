@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
 from decimal import Decimal
 from io import StringIO
@@ -9,7 +8,6 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from pricing_v4.models import Agent, ImportCOGS, ProductCode
-from pricing_v4.services.import_cogs_scope import ImportCOGSScope
 from pricing_v4.engine.import_engine import ImportPricingEngine, ServiceScope, PaymentTerm
 
 

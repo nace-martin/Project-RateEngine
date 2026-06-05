@@ -76,7 +76,7 @@ class Command(BaseCommand):
                 unmapped_components.append(component.code)
         
         # Summary
-        self.stdout.write(f'\n--- Mapping Summary ---')
+        self.stdout.write('\n--- Mapping Summary ---')
         self.stdout.write(self.style.SUCCESS(f'✅ Mapped: {mapped_count} components'))
         
         if unmapped_count > 0:
@@ -88,7 +88,7 @@ class Command(BaseCommand):
         mapped_total = ServiceComponent.objects.filter(service_code__isnull=False).count()
         unmapped_total = ServiceComponent.objects.filter(service_code__isnull=True).count()
         
-        self.stdout.write(f'\n--- Verification ---')
+        self.stdout.write('\n--- Verification ---')
         self.stdout.write(f'Total components: {total_components}')
         self.stdout.write(f'With service_code: {mapped_total}')
         self.stdout.write(f'Without service_code: {unmapped_total}')

@@ -14,7 +14,6 @@ from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
 from services.models import ServiceComponent
 
 # Get supplier from existing card
-from parties.models import Company
 existing_card = PartnerRateCard.objects.first()
 supplier = existing_card.supplier
 

@@ -3,7 +3,7 @@ from datetime import date
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
-from core.models import Currency, Location
+from core.models import Currency
 from core.tests.helpers import create_location
 from pricing_v4.models import ExportSellRate, LocalSellRate, ProductCode
 from pricing_v4.serializers import ExportSellRateSerializer, LocalSellRateSerializer

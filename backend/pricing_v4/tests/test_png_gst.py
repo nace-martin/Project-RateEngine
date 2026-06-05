@@ -7,7 +7,6 @@ Tests for get_png_gst_category() function covering all scenarios:
 - Import: Origin (0%), freight (0%), destination services (10%)
 - Domestic: All services (10%)
 """
-import pytest
 from decimal import Decimal
 from unittest.mock import Mock
 

@@ -1,6 +1,6 @@
 # backend/core/serializers.py
 from rest_framework import serializers
-from .models import Currency, Country, City, Airport
+from .models import Country, City, Airport
 
 class LocationSearchSerializer(serializers.Serializer):
     """

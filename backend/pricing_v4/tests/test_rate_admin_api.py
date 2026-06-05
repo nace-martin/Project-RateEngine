@@ -11,9 +11,7 @@ from parties.models import Company
 from pricing_v4.models import (
     Agent,
     Carrier,
-    DomesticCOGS,
     ExportSellRate,
-    LocalCOGSRate,
     LocalSellRate,
     ProductCode,
 )

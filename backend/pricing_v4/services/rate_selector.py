@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from django.db import models

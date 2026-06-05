@@ -3,7 +3,6 @@ import os
 import sys
 import django
 from decimal import Decimal
-import json
 
 # Setup Django
 sys.path.append(os.getcwd())
@@ -13,7 +12,7 @@ django.setup()
 from parties.models import Company
 from services.models import ServiceComponent
 from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
-from core.models import Airport, Country, RouteLaneConstraint, City
+from core.models import Airport, Country, City
 
 def run():
     print("--- Seeding PX Export Prepaid D2A Rates ---")
@@ -48,12 +47,6 @@ def run():
                 'leg': 'MAIN' if 'FRT' in code else 'ORIGIN', # These are export origin fees
                 'category': cat,
                 'unit': unit,
-                'cost_type': 'RATE_OFFER', # As per prompt "Buy Charges" but usually rates are costs. 
-                                           # Prompt says "These are our COSTS". 
-                                           # But typically we use COGS for costs.
-                                           # However, the engine logic uses RATE_OFFER for passthrough sometimes.
-                                           # Let's stick to COGS as default for new components if strictly cost.
-                                           # Actually, standard is COGS for buy rates.
                 'cost_type': 'COGS', 
                 'is_active': True
             }

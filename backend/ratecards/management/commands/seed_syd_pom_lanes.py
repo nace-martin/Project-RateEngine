@@ -261,7 +261,7 @@ class Command(BaseCommand):
                 'tiering_json': tiering_data
             }
         )
-        self.stdout.write(f"  Updated FRT_AIR with weight breaks")
+        self.stdout.write("  Updated FRT_AIR with weight breaks")
 
         # Create other rates
         # Using standard EFM values where not specified

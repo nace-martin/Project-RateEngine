@@ -1,4 +1,3 @@
-import uuid
 import logging
 from threading import local
 from typing import Optional

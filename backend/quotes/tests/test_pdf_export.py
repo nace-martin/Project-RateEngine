@@ -3,7 +3,7 @@ from pathlib import Path
 
 from django.test import TestCase
 
-from core.models import City, Country, Location
+from core.models import City, Country
 from core.tests.helpers import create_location
 from parties.models import Company, Organization, OrganizationBranding
 from quotes.branding import DEFAULT_FALLBACK_LOGO_ASSET, get_quote_branding

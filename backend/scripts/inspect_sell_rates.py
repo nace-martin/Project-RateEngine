@@ -2,7 +2,6 @@
 import os
 import sys
 import django
-from decimal import Decimal
 
 sys.path.append(os.getcwd())
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'rate_engine.settings')

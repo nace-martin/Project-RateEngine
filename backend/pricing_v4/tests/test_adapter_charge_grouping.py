@@ -1,11 +1,10 @@
 from django.test import TestCase
 from unittest.mock import MagicMock
 from decimal import Decimal
-from uuid import uuid4
 from types import SimpleNamespace
 
 from pricing_v4.adapter import PricingServiceV4Adapter
-from core.dataclasses import CalculatedChargeLine, QuoteInput
+from core.dataclasses import QuoteInput
 from pricing_v4.engine.domestic_engine import BillableCharge
 from pricing_v4.models import ProductCode
 

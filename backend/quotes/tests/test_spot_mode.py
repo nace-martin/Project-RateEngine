@@ -10,11 +10,7 @@ import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
-import hashlib
-import json
 
-from django.contrib.auth import get_user_model
-from django.utils import timezone
 
 from pricing_v4.models import ProductCode
 from quotes.spot_schemas import (

@@ -1,14 +1,12 @@
 import pytest
 from decimal import Decimal
-from rest_framework.test import APIClient, APITestCase
+from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
-import json
 
 from django.utils import timezone
 from core.models import Airport, City, Country, FxSnapshot, Currency, Policy, Location
-from parties.models import Company, Contact, CustomerCommercialProfile
+from parties.models import Company
 from services.models import ServiceComponent, ServiceRule, ServiceRuleComponent, LEG_CHOICES
-from quotes.models import Quote
 
 pytestmark = pytest.mark.django_db
 

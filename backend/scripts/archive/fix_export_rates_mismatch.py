@@ -12,8 +12,8 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'rate_engine.settings')
 django.setup()
 
 from decimal import Decimal
-from ratecards.models import PartnerRateCard, PartnerRateLane, PartnerRate
-from services.models import ServiceComponent, ServiceRule
+from ratecards.models import PartnerRateCard, PartnerRate
+from services.models import ServiceComponent
 
 buy_card = PartnerRateCard.objects.get(name='PX Export Buy Rates 2024')
 print(f'Card: {buy_card.name}')

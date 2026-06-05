@@ -7,7 +7,6 @@ from parties.models import Company
 
 from ._seed_utils import (
     ensure_required_columns,
-    is_nullish,
     load_csv_rows,
     parse_bool,
     parse_decimal,

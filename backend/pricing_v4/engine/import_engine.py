@@ -13,17 +13,17 @@ Key Rules:
 7. Service Scope determines which legs are chargeable
 8. PNG GST: Proper classification using get_png_gst_category()
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Optional, Literal
+from typing import Dict, List, Optional
 from enum import Enum
 import logging
 
 from core.commodity import DEFAULT_COMMODITY_CODE
 from pricing_v4.models import (
-    ImportCOGS, ImportSellRate, ProductCode,
-    LocalSellRate, LocalCOGSRate
+    ProductCode,
+    LocalSellRate
 )
 from pricing_v4.category_rules import (
     is_import_destination_local_code,
