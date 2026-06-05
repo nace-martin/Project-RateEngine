@@ -6,8 +6,8 @@ import { useToast } from "@/context/toast-context";
 import { useRouter } from "next/navigation";
 import { getQuoteV3, computeQuoteV3 } from "@/lib/api";
 import { getContactsForCompany } from "@/lib/api/parties";
-import { type QuoteFormSchemaV3, V3_LOCATION_TYPES, V3_PACKAGE_TYPES } from "@/lib/schemas/quoteSchema";
-import { CompanySearchResult, LocationSearchResult, Contact, QuoteContactRef, QuoteCustomerRef, V3DimensionInput } from "@/lib/types";
+import { type QuoteFormSchemaV3 } from "@/lib/schemas/quoteSchema";
+import { CompanySearchResult, LocationSearchResult, Contact } from "@/lib/types";
 import QuoteForm from "@/components/forms/QuoteForm";
 import { MissingRatesModal } from "@/components/pricing/MissingRatesModal";
 import { Loader2 } from "lucide-react";
@@ -17,9 +17,9 @@ import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { useReturnTo } from "@/hooks/useReturnTo";
 import {
     buildQuoteComputePayload,
-    getCargoTypeForCommodityCode,
     getQuoteMissingRateFlags,
 } from "@/lib/quote-workflow";
+import { hydrateQuoteEditForm } from "@/lib/quote-edit-hydration";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -85,123 +85,19 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                     setApiError(message);
                     return;
                 }
-                const payload =
-                    (quote.latest_version?.payload_json as Record<string, unknown> | undefined)
-                    ?? (quote.request_details_json as Record<string, unknown> | undefined);
-                if (!payload) throw new Error("No payload found on quote");
-
-                const shipmentPayload = (
-                    payload.shipment && typeof payload.shipment === "object"
-                        ? (payload.shipment as Record<string, unknown>)
-                        : undefined
-                );
-
-                // 1. Prepare Initial Form Data
-                let dimensions: QuoteFormSchemaV3["dimensions"] = [{
-                    pieces: 1,
-                    length_cm: "",
-                    width_cm: "",
-                    height_cm: "",
-                    gross_weight_kg: "",
-                    package_type: "Box",
-                }];
-
-                const rawDimensions = Array.isArray(payload.dimensions)
-                    ? (payload.dimensions as V3DimensionInput[])
-                    : Array.isArray(shipmentPayload?.pieces)
-                        ? (shipmentPayload.pieces as V3DimensionInput[])
-                        : [];
-
-                if (rawDimensions.length > 0) {
-                    dimensions = rawDimensions.map((d: V3DimensionInput) => ({
-                        pieces: d.pieces,
-                        length_cm: String(d.length_cm),
-                        width_cm: String(d.width_cm),
-                        height_cm: String(d.height_cm),
-                        gross_weight_kg: String(d.gross_weight_kg),
-                        package_type: Object.values(V3_PACKAGE_TYPES).includes(d.package_type as typeof V3_PACKAGE_TYPES[keyof typeof V3_PACKAGE_TYPES])
-                            ? (d.package_type as typeof V3_PACKAGE_TYPES[keyof typeof V3_PACKAGE_TYPES])
-                            : V3_PACKAGE_TYPES.BOX,
-                    }));
-                }
-
-                // Helper to extract airport code from location string (format: "CODE - Name")
-                const extractAirportCode = (locationStr: string | undefined | null): string => {
-                    if (!locationStr) return "";
-                    // Try to extract code from "CODE - Name" format
-                    const match = locationStr.match(/^([A-Z]{3})\s*-/);
-                    if (match) return match[1];
-                    // Fallback: if it's already just a 3-letter code
-                    if (/^[A-Z]{3}$/.test(locationStr.trim())) return locationStr.trim();
-                    return "";
-                };
-
-                // Extract airport codes from API response
-                const originAirportCode = extractAirportCode(quote.origin_location as string);
-                const destinationAirportCode = extractAirportCode(quote.destination_location as string);
-
-                const customerId = String(payload.customer_id || "");
-                const contactId = String(
-                    payload.contact_id
-                    || (quote.contact as QuoteContactRef)?.id
-                    || ""
-                );
-                const originLocationId = String(
-                    payload.origin_location_id
-                    || ((shipmentPayload?.origin_location as Record<string, unknown> | undefined)?.id ?? "")
-                );
-                const destinationLocationId = String(
-                    payload.destination_location_id
-                    || ((shipmentPayload?.destination_location as Record<string, unknown> | undefined)?.id ?? "")
-                );
-                const mode = String(payload.mode || shipmentPayload?.mode || "AIR");
-                const incoterm = String(payload.incoterm || shipmentPayload?.incoterm || "EXW");
-                const paymentTerm = String(payload.payment_term || shipmentPayload?.payment_term || "PREPAID");
-                const serviceScope = String(payload.service_scope || shipmentPayload?.service_scope || "A2A");
-                const commodityCode = String(
-                    payload.commodity_code
-                    || shipmentPayload?.commodity_code
-                    || ""
-                );
-                const isDangerousGoods = Boolean(
-                    payload.is_dangerous_goods
-                    ?? shipmentPayload?.is_dangerous_goods
-                );
-
-                const formData: Partial<QuoteFormSchemaV3> = {
-                    quote_id: quote.id, // Important for tracking updates
-                    customer_id: customerId,
-                    contact_id: contactId,
-                    mode: (mode as QuoteFormSchemaV3['mode']) || "AIR",
-                    incoterm: (incoterm as QuoteFormSchemaV3['incoterm']) || "EXW",
-                    payment_term: (paymentTerm as QuoteFormSchemaV3['payment_term']) || "PREPAID",
-                    service_scope: (serviceScope as QuoteFormSchemaV3['service_scope']) || "A2A",
-                    origin_airport: originAirportCode,
-                    destination_airport: destinationAirportCode,
-                    origin_location_id: originLocationId,
-                    destination_location_id: destinationLocationId,
-                    origin_location_type: V3_LOCATION_TYPES.AIRPORT,
-                    destination_location_type: V3_LOCATION_TYPES.AIRPORT,
-                    cargo_type: getCargoTypeForCommodityCode(commodityCode, isDangerousGoods),
-                    dimensions: dimensions,
-                };
-
-                setInitialData(formData);
+                const hydratedQuote = hydrateQuoteEditForm(quote);
+                setInitialData(hydratedQuote.formData);
 
                 // 2. Hydrate UI State (Customer, Contacts, Locations)
 
                 // Customer
-                if (customerId) {
-                    const custRef = quote.customer as QuoteCustomerRef;
-                    if (custRef && typeof custRef === 'object') {
-                        setInitialCustomer({
-                            id: custRef.id || customerId,
-                            name: custRef.company_name || custRef.name || "Customer",
-                        } as CompanySearchResult);
+                if (hydratedQuote.customerId) {
+                    if (hydratedQuote.initialCustomer) {
+                        setInitialCustomer(hydratedQuote.initialCustomer);
                     }
                     // Fetch contacts!
                     try {
-                        const contacts = await getContactsForCompany(customerId);
+                        const contacts = await getContactsForCompany(hydratedQuote.customerId);
                         setInitialContacts(contacts);
                     } catch (e) {
                         console.error("Failed to fetch contacts", e);
@@ -209,24 +105,12 @@ export default function EditQuotePage({ params }: { params: Promise<{ id: string
                 }
 
                 // Locations
-                if (originLocationId) {
-                    setInitialOrigin({
-                        id: originLocationId,
-                        display_name: quote.origin_location as string || originLocationId,
-                        code: originAirportCode || "ORG",
-                        type: 'AIRPORT',
-                        country_code: 'PG'
-                    } as LocationSearchResult);
+                if (hydratedQuote.initialOrigin) {
+                    setInitialOrigin(hydratedQuote.initialOrigin);
                 }
 
-                if (destinationLocationId) {
-                    setInitialDestination({
-                        id: destinationLocationId,
-                        display_name: quote.destination_location as string || destinationLocationId,
-                        code: destinationAirportCode || "DST",
-                        type: 'AIRPORT',
-                        country_code: 'AU'
-                    } as LocationSearchResult);
+                if (hydratedQuote.initialDestination) {
+                    setInitialDestination(hydratedQuote.initialDestination);
                 }
 
             } catch (err) {
