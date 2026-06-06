@@ -16,6 +16,7 @@
     "test:crm-quote-prefill": "node scripts/crm-quote-prefill.test.mjs",
     "test:domestic-service-scope": "node scripts/domestic-service-scope.test.mjs",
     "test:spot-finalization": "node scripts/spot-finalization.test.mjs",
+    "test:spot-workspace-helpers": "node scripts/spot-workspace-helpers.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
