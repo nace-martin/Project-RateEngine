@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { ChargeNormalizationStatus, SPEProductCodeSummary } from "@/lib/spot-types";
+import { humanizeEnum } from "@/lib/spot-workspace-helpers";
 
 type DisplayNormalizationStatus = ChargeNormalizationStatus | "MANUAL";
 
@@ -62,15 +63,7 @@ const STATUS_STYLES: Record<
     },
 };
 
-const humanizeEnum = (value?: string | null) => {
-    const normalized = String(value || "").trim();
-    if (!normalized) return "Not recorded";
-    return normalized
-        .split("_")
-        .filter(Boolean)
-        .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
-        .join(" ");
-};
+
 
 const productCodeSummary = (productCode?: SPEProductCodeSummary | null) => {
     if (!productCode) return "No product code resolved";

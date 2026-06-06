@@ -17,6 +17,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { SPEChargeLine } from "@/lib/spot-types";
 import { getProductCodes, type ProductCodeOption } from "@/lib/api";
 import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
+import { humanizeEnum } from "@/lib/spot-workspace-helpers";
 
 interface SpotChargeLineManualReviewSheetProps {
     open: boolean;
@@ -35,15 +36,7 @@ const formatProductCode = (productCode?: SPEChargeLine["resolved_product_code"] 
         : productCode.code;
 };
 
-const humanizeEnum = (value?: string | null) => {
-    const normalized = String(value || "").trim();
-    if (!normalized) return "Not recorded";
-    return normalized
-        .split("_")
-        .filter(Boolean)
-        .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
-        .join(" ");
-};
+
 
 export function SpotChargeLineManualReviewSheet({
     open,
