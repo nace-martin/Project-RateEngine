@@ -31,6 +31,7 @@ import {
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import { SpotWorkspaceSummary } from "@/components/spot/SpotWorkspaceSummary";
 import { SourceComparisonSheet } from "@/components/spot/SourceComparisonSheet";
+import { IssueDetailsSheet } from "@/components/spot/IssueDetailsSheet";
 import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
 import type { ReplyAnalysisResult } from "@/lib/spot-types";
 import { getSpotStandardCharges } from "@/lib/api";
@@ -61,6 +62,8 @@ const EMPTY_COMPONENTS: string[] = [];
 const EMPTY_CHARGES: SPEChargeLine[] = [];
 import {
     ReviewIssueKind,
+    ImportedReviewLine,
+    issueKindMeta,
     BUCKET_LABELS,
     issueKindPriority,
     isBuySideCharge,
@@ -88,24 +91,7 @@ import {
 
 type ReviewMode = "issues" | "allCharges";
 
-const issueKindMeta: Record<ReviewIssueKind, { label: string; className: string }> = {
-    unmapped: {
-        label: "Needs review",
-        className: "border-amber-200 bg-amber-50 text-amber-800",
-    },
-    ambiguous: {
-        label: "Ambiguous",
-        className: "border-rose-200 bg-rose-50 text-rose-800",
-    },
-    lowConfidence: {
-        label: "Low confidence",
-        className: "border-sky-200 bg-sky-50 text-sky-800",
-    },
-    conditional: {
-        label: "Conditional",
-        className: "border-slate-200 bg-slate-50 text-slate-700",
-    },
-};
+
 
 type SourceLineIssue = {
     key: string;
@@ -117,20 +103,7 @@ type SourceLineIssue = {
     occurrenceCount: number;
 };
 
-type ImportedReviewLine = {
-    key: string;
-    chargeLineId?: string;
-    label: string;
-    amountDisplay: string;
-    unitLabel: string;
-    bucketLabel: string;
-    sourceLabel: string;
-    issueKinds: ReviewIssueKind[];
-    details: string[];
-    canReviewInSheet: boolean;
-    canResolveConditional: boolean;
-    charge: SPEChargeLine;
-};
+
 
 type SourceReviewSummary = {
     id: string;
@@ -1540,153 +1513,17 @@ export default function SpotRateEntryPage() {
                             </CardContent>
                         </Card>
 
-                    <Sheet open={Boolean(activeIssueDetails)} onOpenChange={(open) => !open && setActiveIssueDetails(null)}>
-                        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
-                            {activeIssueDetails ? (
-                                <div className="space-y-6">
-                                    <SheetHeader className="space-y-3 border-b border-slate-200 pb-6">
-                                        <div className="flex flex-wrap gap-2">
-                                            {activeIssueDetails.issueKinds.map((kind) => (
-                                                <Badge
-                                                    key={`sheet-${activeIssueDetails.key}-${kind}`}
-                                                    variant="outline"
-                                                    className={issueKindMeta[kind].className}
-                                                >
-                                                    {issueKindMeta[kind].label}
-                                                </Badge>
-                                            ))}
-                                        </div>
-                                        <div>
-                                            <SheetTitle>{activeIssueDetails.label}</SheetTitle>
-                                            <SheetDescription className="mt-2 leading-6">
-                                                {getIssueProblemMessage(activeIssueDetails.issueKinds)}
-                                            </SheetDescription>
-                                        </div>
-                                    </SheetHeader>
-
-                                    <section className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm">
-                                        <div className="grid gap-3 sm:grid-cols-2">
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Amount</div>
-                                                <div className="mt-1 text-slate-900">{activeIssueDetails.amountDisplay}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Unit</div>
-                                                <div className="mt-1 text-slate-900">{activeIssueDetails.unitLabel}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Bucket</div>
-                                                <div className="mt-1 text-slate-900">{activeIssueDetails.bucketLabel}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Source</div>
-                                                <div className="mt-1 text-slate-900">{activeIssueDetails.sourceLabel}</div>
-                                            </div>
-                                        </div>
-                                    </section>
-
-                                    <section className="space-y-3">
-                                        <div className="text-sm font-semibold text-slate-950">What needs attention</div>
-                                        <ul className="space-y-2 text-sm leading-6 text-slate-700">
-                                            {activeIssueDetails.details.map((detail) => (
-                                                <li key={`${activeIssueDetails.key}-${detail}`}>{detail}</li>
-                                            ))}
-                                        </ul>
-                                    </section>
-
-                                    <section className="space-y-3">
-                                        <div className="text-sm font-semibold text-slate-950">Normalization audit</div>
-                                        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 text-sm sm:grid-cols-2">
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Source label</div>
-                                                <div className="mt-1 text-slate-900">
-                                                    {String(activeIssueDetails.charge.source_label || activeIssueDetails.charge.description || "").trim() || "Not recorded"}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Normalized label</div>
-                                                <div className="mt-1 text-slate-900">
-                                                    {String(activeIssueDetails.charge.normalized_label || "").trim() || "Not recorded"}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Method</div>
-                                                <div className="mt-1 text-slate-900">{humanizeEnum(activeIssueDetails.charge.normalization_method)}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Effective ProductCode</div>
-                                                <div className="mt-1 text-slate-900">{formatProductCodeSummary(getEffectiveProductCode(activeIssueDetails.charge))}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Manual resolution</div>
-                                                <div className="mt-1 text-slate-900">
-                                                    {activeIssueDetails.charge.manual_resolution_status === "RESOLVED"
-                                                        ? formatProductCodeSummary(activeIssueDetails.charge.manual_resolved_product_code)
-                                                        : "Not resolved"}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Status</div>
-                                                <div className="mt-1 text-slate-900">
-                                                    {getChargeStatusLabel(activeIssueDetails.charge)}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Source reference</div>
-                                                <div className="mt-1 text-slate-900">
-                                                    {String(activeIssueDetails.charge.source_reference || "").trim() || "Not recorded"}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Flags</div>
-                                                <div className="mt-1 text-slate-900">
-                                                    {[
-                                                        activeIssueDetails.charge.is_primary_cost ? "Primary" : null,
-                                                        activeIssueDetails.charge.conditional ? "Conditional" : null,
-                                                        activeIssueDetails.charge.exclude_from_totals ? "Excluded from totals" : null,
-                                                    ].filter(Boolean).join(", ") || "None"}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </section>
-
-                                    <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
-                                        {activeIssueDetails.canResolveConditional ? (
-                                            <>
-                                                <Button
-                                                    type="button"
-                                                    onClick={() => void handleConditionalDecision(activeIssueDetails, "KEEP")}
-                                                    disabled={!activeIssueDetails.chargeLineId || state.isLoading}
-                                                >
-                                                    Keep in quote
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    onClick={() => void handleConditionalDecision(activeIssueDetails, "REMOVE")}
-                                                    disabled={!activeIssueDetails.chargeLineId || state.isLoading}
-                                                >
-                                                    Remove
-                                                </Button>
-                                            </>
-                                        ) : null}
-                                        {activeIssueDetails.canReviewInSheet ? (
-                                            <Button
-                                                type="button"
-                                                onClick={() => {
-                                                    handleReviewLine(activeIssueDetails);
-                                                    setActiveIssueDetails(null);
-                                                }}
-                                                disabled={!activeIssueDetails.chargeLineId || state.isLoading}
-                                            >
-                                                Resolve
-                                            </Button>
-                                        ) : null}
-                                    </div>
-                                </div>
-                            ) : null}
-                        </SheetContent>
-                    </Sheet>
+                    <IssueDetailsSheet
+                        open={Boolean(activeIssueDetails)}
+                        activeIssueDetails={activeIssueDetails}
+                        isLoading={state.isLoading}
+                        onOpenChange={(open) => !open && setActiveIssueDetails(null)}
+                        onResolveConditional={handleConditionalDecision}
+                        onReviewLine={(line) => {
+                            handleReviewLine(line);
+                            setActiveIssueDetails(null);
+                        }}
+                    />
 
                     <SourceComparisonSheet
                         open={sourceComparisonOpen}
