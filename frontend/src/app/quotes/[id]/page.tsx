@@ -18,6 +18,11 @@ import {
 import QuoteFinancialBreakdown from "@/components/QuoteFinancialBreakdown";
 import InternalInspectionAlert from "@/components/quotes/InternalInspectionAlert";
 import QuoteDetailFooter from "@/components/quotes/QuoteDetailFooter";
+import {
+  SpotWorkflowRequiredCard,
+  SpotTriggerCheckingCard,
+  IncompleteQuoteCard,
+} from "@/components/quotes/SpotTriggerCards";
 
 import RoutingWarning from "@/components/RoutingWarning";
 import { Button } from "@/components/ui/button";
@@ -27,12 +32,9 @@ import { Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { QuoteStatusBadge, QuoteStatusActions } from "@/components/QuoteStatusBadge";
 import { formatServiceScope } from "@/lib/display";
 import { getEffectiveQuoteStatus } from "@/lib/quote-helpers";
-import type { SPECommodity, TriggerResult } from "@/lib/spot-types";
+import type { TriggerResult } from "@/lib/spot-types";
 import {
-  normalizeAirportCode,
-  normalizeCountryCode,
   computeShipmentMetrics,
-  computeChargeableWeight,
   buildSpotResumeContext,
   buildFxEntries,
   type SpotResumeContext,
@@ -309,6 +311,25 @@ export default function QuoteDetailPage() {
     }
   };
 
+  const handleRetrySpotTriggerCheck = async () => {
+    if (!quote) return;
+    setSpotTriggerChecking(true);
+    setSpotTriggerChecked(false);
+    setSpotTriggerCheckError(null);
+    try {
+      const result = await evaluateLatestSpotTrigger(quote);
+      setSpotTriggerResult(result.trigger ?? null);
+    } catch (err) {
+      setSpotTriggerResult(null);
+      setSpotTriggerCheckError(
+        err instanceof Error ? err.message : "Failed to verify the latest SPOT trigger.",
+      );
+    } finally {
+      setSpotTriggerChecking(false);
+      setSpotTriggerChecked(true);
+    }
+  };
+
   if (spotWorkflowHref) {
     return (
       <div className="container mx-auto max-w-3xl p-6">
@@ -432,31 +453,14 @@ export default function QuoteDetailPage() {
               spotLaunching={spotLaunching}
               spotLaunchError={spotLaunchError}
               onLaunchSpot={handleLaunchSpotWorkflow}
+              onReturnToEdit={() => router.push(`/quotes/${quote.id}/edit`)}
             />
           ) : (
             <IncompleteQuoteCard
               quote={quote}
               triggerCheckError={spotTriggerCheckError}
-              onRetryCheck={async () => {
-                if (!quote) {
-                  return;
-                }
-                setSpotTriggerChecking(true);
-                setSpotTriggerChecked(false);
-                setSpotTriggerCheckError(null);
-                try {
-                  const result = await evaluateLatestSpotTrigger(quote);
-                  setSpotTriggerResult(result.trigger ?? null);
-                } catch (err) {
-                  setSpotTriggerResult(null);
-                  setSpotTriggerCheckError(
-                    err instanceof Error ? err.message : "Failed to verify the latest SPOT trigger.",
-                  );
-                } finally {
-                  setSpotTriggerChecking(false);
-                  setSpotTriggerChecked(true);
-                }
-              }}
+              onRetryCheck={handleRetrySpotTriggerCheck}
+              onReturnToEdit={() => router.push(`/quotes/${quote.id}/edit`)}
             />
           )
         ) : (
@@ -486,125 +490,7 @@ export default function QuoteDetailPage() {
   );
 }
 
-function SpotWorkflowRequiredCard({
-  quote,
-  spotLaunching,
-  spotLaunchError,
-  onLaunchSpot,
-}: {
-  quote: V3QuoteComputeResponse;
-  spotLaunching: boolean;
-  spotLaunchError: string | null;
-  onLaunchSpot: () => Promise<void>;
-}) {
-  const router = useRouter();
-  return (
-    <Card className="border-amber-200 bg-amber-50/40">
-      <CardHeader>
-        <CardTitle className="text-lg text-amber-800">SPOT Workflow Required</CardTitle>
-        <CardDescription>
-          This quote is incomplete and is not linked to an active SPOT envelope yet.
-          Launch the current SPOT workflow from here, or return to edit if you need to refresh the quote inputs.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="text-sm text-muted-foreground">Quote: {quote.quote_number}</div>
-          {spotLaunchError ? (
-            <div className="text-sm text-destructive">{spotLaunchError}</div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              The detail view will evaluate the latest SPOT trigger and open the live workflow if it is still required.
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => router.push(`/quotes/${quote.id}/edit`)}>
-            Return To Quote Edit
-          </Button>
-          <Button onClick={() => void onLaunchSpot()} disabled={spotLaunching}>
-            {spotLaunching ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Opening SPOT...
-              </>
-            ) : (
-              "Open SPOT Workflow"
-            )}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
-function SpotTriggerCheckingCard({
-  quote,
-}: {
-  quote: V3QuoteComputeResponse;
-}) {
-  return (
-    <Card className="border-slate-200 bg-slate-50/60">
-      <CardHeader>
-        <CardTitle className="text-lg text-slate-900">Checking Quote Completion</CardTitle>
-        <CardDescription>
-          This quote is currently marked incomplete. Verifying the latest SPOT trigger before deciding whether the SPOT workflow is still required.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex items-center gap-3 text-sm text-slate-600">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Re-checking {quote.quote_number} against the latest SPOT trigger...
-      </CardContent>
-    </Card>
-  );
-}
-
-function IncompleteQuoteCard({
-  quote,
-  triggerCheckError,
-  onRetryCheck,
-}: {
-  quote: V3QuoteComputeResponse;
-  triggerCheckError: string | null;
-  onRetryCheck: () => Promise<void>;
-}) {
-  const router = useRouter();
-
-  return (
-    <Card className="border-slate-200 bg-slate-50/60">
-      <CardHeader>
-        <CardTitle className="text-lg text-slate-900">Incomplete Quote</CardTitle>
-        <CardDescription>
-          The latest SPOT trigger check does not require the SPOT workflow for this quote. The quote is still incomplete, so return to edit and refresh the missing rate inputs.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="text-sm text-muted-foreground">Quote: {quote.quote_number}</div>
-          {triggerCheckError ? (
-            <div className="text-sm text-destructive">
-              Unable to verify the latest SPOT trigger automatically: {triggerCheckError}
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              Return to the quote editor to refresh pricing coverage instead of launching SPOT.
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {triggerCheckError ? (
-            <Button variant="outline" onClick={() => void onRetryCheck()}>
-              Retry Trigger Check
-            </Button>
-          ) : null}
-          <Button variant="outline" onClick={() => router.push(`/quotes/${quote.id}/edit`)}>
-            Return To Quote Edit
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 async function evaluateLatestSpotTrigger(
   quote: V3QuoteComputeResponse,
