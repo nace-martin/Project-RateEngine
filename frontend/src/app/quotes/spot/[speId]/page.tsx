@@ -29,6 +29,7 @@ import {
     ReplyPasteCard,
 } from "@/components/spot";
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
+import { SpotWorkspaceSummary } from "@/components/spot/SpotWorkspaceSummary";
 import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
 import type { ReplyAnalysisResult } from "@/lib/spot-types";
 import { getSpotStandardCharges } from "@/lib/api";
@@ -992,45 +993,16 @@ export default function SpotRateEntryPage() {
             {renderProgress()}
 
             {/* Shipment Summary (Always visible) */}
-            <Card className="mb-6">
-                <CardHeader className="pb-3">
-                    <CardTitle className="text-base font-semibold">Shipment Summary</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4 xl:grid-cols-7">
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Customer</span>
-                            <span className="font-bold text-slate-900">{displayCustomerName}</span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Route</span>
-                            <span className="font-bold text-slate-900">
-                                {originCode || state.spe?.shipment.origin_code} {"->"} {destCode || state.spe?.shipment.destination_code}
-                            </span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Commodity</span>
-                            <span className="font-bold text-slate-900">{commodity || state.spe?.shipment.commodity}</span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Weight</span>
-                            <span className="font-bold text-slate-900">{weight || state.spe?.shipment.total_weight_kg} kg</span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Pieces</span>
-                            <span className="font-bold text-slate-900">{pieces || state.spe?.shipment.pieces}</span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Service Scope</span>
-                            <span className="font-bold text-slate-900">{displayServiceScope}</span>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-muted-foreground font-medium">Payment Terms</span>
-                            <span className="font-bold text-slate-900">{displayPaymentTerm}</span>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
+            <SpotWorkspaceSummary
+                customerName={displayCustomerName}
+                originCode={originCode || state.spe?.shipment.origin_code || ""}
+                destinationCode={destCode || state.spe?.shipment.destination_code || ""}
+                commodity={commodity || state.spe?.shipment.commodity || ""}
+                weightKg={weight || state.spe?.shipment.total_weight_kg || 0}
+                pieces={pieces || state.spe?.shipment.pieces || 0}
+                serviceScope={displayServiceScope}
+                paymentTerms={displayPaymentTerm}
+            />
 
             {/* Error display */}
             {(state.error || finalizeError) && (
