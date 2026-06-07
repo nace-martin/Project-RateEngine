@@ -2,6 +2,40 @@ import type { SPEChargeLine } from "@/lib/spot-types";
 
 export type ReviewIssueKind = "unmapped" | "ambiguous" | "lowConfidence" | "conditional";
 
+export type ImportedReviewLine = {
+    key: string;
+    chargeLineId?: string;
+    label: string;
+    amountDisplay: string;
+    unitLabel: string;
+    bucketLabel: string;
+    sourceLabel: string;
+    issueKinds: ReviewIssueKind[];
+    details: string[];
+    canReviewInSheet: boolean;
+    canResolveConditional: boolean;
+    charge: SPEChargeLine;
+};
+
+export const issueKindMeta: Record<ReviewIssueKind, { label: string; className: string }> = {
+    unmapped: {
+        label: "Needs review",
+        className: "border-amber-200 bg-amber-50 text-amber-800",
+    },
+    ambiguous: {
+        label: "Ambiguous",
+        className: "border-rose-200 bg-rose-50 text-rose-800",
+    },
+    lowConfidence: {
+        label: "Low confidence",
+        className: "border-sky-200 bg-sky-50 text-sky-800",
+    },
+    conditional: {
+        label: "Conditional",
+        className: "border-slate-200 bg-slate-50 text-slate-700",
+    },
+};
+
 export const BUY_SIDE_SOURCE_MARKERS = ["COGS", "BUY"];
 
 export const BUCKET_LABELS: Record<SPEChargeLine["bucket"], string> = {
