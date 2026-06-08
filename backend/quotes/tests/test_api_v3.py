@@ -330,6 +330,7 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             username="canonicaltester",
             password="pass123",
             email="canonicaltester@example.com",
+            role=User.ROLE_MANAGER,
         )
         self.client.force_authenticate(user=self.user)
 

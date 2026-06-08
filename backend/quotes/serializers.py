@@ -315,6 +315,15 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     subcategory = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     sort_order = serializers.IntegerField()
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            if not getattr(request.user, 'can_view_margins', True):
+                data['margin_amount'] = None
+                data['margin_percent'] = None
+        return data
+
 
 class CanonicalQuoteResultSerializer(serializers.Serializer):
     quote_id = serializers.CharField()
@@ -355,6 +364,19 @@ class CanonicalQuoteResultSerializer(serializers.Serializer):
     quote_version = serializers.IntegerField(allow_null=True)
     payment_term = serializers.CharField(allow_null=True, allow_blank=True, required=False)
     valid_until = serializers.DateField(allow_null=True, required=False)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            if not getattr(request.user, 'can_view_margins', True):
+                data['margin_amount'] = None
+                data['margin_percent'] = None
+                if data.get('fx_applied'):
+                    data['fx_applied']['base_rate'] = None
+                    data['fx_applied']['caf_percent'] = None
+                    data['fx_applied']['effective_fx_after_caf'] = None
+        return data
 
 class QuoteModelSerializerV3(serializers.ModelSerializer):
     """
@@ -447,7 +469,7 @@ class QuoteModelSerializerV3(serializers.ModelSerializer):
         if not getattr(obj, "latest_version", None):
             return None
         payload = build_quote_result_from_quote(obj, obj.latest_version)
-        return CanonicalQuoteResultSerializer(payload).data
+        return CanonicalQuoteResultSerializer(payload, context=self.context).data
 
     class Meta:
         model = Quote

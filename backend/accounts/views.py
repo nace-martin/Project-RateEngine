@@ -73,6 +73,10 @@ def _serialize_user(user: CustomUser, request=None):
         'username': user.username,
         'email': user.email,
         'role': user.role,
+        'permissions': {
+            'can_view_buy_charges': user.can_view_buy_charges,
+            'can_view_margins': user.can_view_margins,
+        },
         'organization': _serialize_organization(organization, request=request),
     }
 

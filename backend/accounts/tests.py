@@ -246,9 +246,9 @@ class RBACPermissionTests(TestCase):
             role=CustomUser.ROLE_ADMIN
         )
     
-    def test_sales_can_view_cogs_false(self):
-        """Sales users should not be able to view COGS."""
-        self.assertFalse(self.sales_user.can_view_cogs)
+    def test_sales_can_view_cogs_true(self):
+        """Sales users should be able to view COGS."""
+        self.assertTrue(self.sales_user.can_view_cogs)
     
     def test_manager_can_view_cogs_true(self):
         """Managers should be able to view COGS."""

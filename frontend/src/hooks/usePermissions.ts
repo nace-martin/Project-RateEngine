@@ -12,8 +12,8 @@
 import { useAuth } from '@/context/auth-context';
 import {
     hasPermission,
-    canViewCOGS,
-    canViewMargins,
+    canViewCOGS as canViewCOGS_default,
+    canViewMargins as canViewMargins_default,
     canEditQuotes,
     canFinalizeQuotes,
     canUseAIIntake,
@@ -57,8 +57,8 @@ export function usePermissions(): UsePermissionsReturn {
         hasPermission: (permission: Permission) => hasPermission(role, permission),
 
         // Specific permission checks
-        canViewCOGS: canViewCOGS(role),
-        canViewMargins: canViewMargins(role),
+        canViewCOGS: user?.permissions?.can_view_buy_charges ?? canViewCOGS_default(role),
+        canViewMargins: user?.permissions?.can_view_margins ?? canViewMargins_default(role),
         canEditQuotes: canEditQuotes(role),
         canFinalizeQuotes: canFinalizeQuotes(role),
         canUseAIIntake: canUseAIIntake(role),
