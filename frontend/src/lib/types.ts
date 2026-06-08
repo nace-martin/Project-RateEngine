@@ -33,6 +33,10 @@ export interface User {
   email?: string | null;
   role: string;
   organization?: UserOrganizationRef | null;
+  permissions?: {
+    can_view_buy_charges: boolean;
+    can_view_margins: boolean;
+  } | null;
 }
 
 export interface QuoteCustomerRef {

@@ -32,7 +32,8 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'department', 'organization', 'organization_name',
             'is_active', 'date_joined', 'last_login',
-            'password'
+            'password',
+            'can_view_buy_charges_override', 'can_view_margins_override'
         ]
         read_only_fields = ['id', 'date_joined', 'last_login']
     

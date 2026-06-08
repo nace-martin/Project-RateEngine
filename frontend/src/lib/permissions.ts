@@ -42,7 +42,7 @@ const PERMISSION_MATRIX: Record<Permission, Role[]> = {
     [PERMISSIONS.VIEW_QUOTES]: [ROLES.SALES, ROLES.MANAGER, ROLES.FINANCE, ROLES.ADMIN],
     [PERMISSIONS.EDIT_QUOTES]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
     [PERMISSIONS.FINALIZE_QUOTES]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
-    [PERMISSIONS.VIEW_COGS]: [ROLES.MANAGER, ROLES.FINANCE, ROLES.ADMIN],
+    [PERMISSIONS.VIEW_COGS]: [ROLES.SALES, ROLES.MANAGER, ROLES.FINANCE, ROLES.ADMIN],
     [PERMISSIONS.VIEW_MARGINS]: [ROLES.MANAGER, ROLES.FINANCE, ROLES.ADMIN],
     [PERMISSIONS.EDIT_RATE_CARDS]: [ROLES.MANAGER, ROLES.ADMIN],
     [PERMISSIONS.EDIT_FX_RATES]: [ROLES.FINANCE, ROLES.ADMIN],
@@ -122,4 +122,9 @@ export function canManageUsers(role: string | undefined): boolean {
  */
 export function canAccessSystemSettings(role: string | undefined): boolean {
     return hasPermission(role, PERMISSIONS.SYSTEM_SETTINGS);
+}
+
+export interface EffectivePermissions {
+    can_view_buy_charges: boolean;
+    can_view_margins: boolean;
 }

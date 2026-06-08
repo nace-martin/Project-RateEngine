@@ -1,9 +1,8 @@
-"use client";
-
 import { useState } from "react";
 import { CanonicalQuoteResult } from "@/lib/types";
 import { BreakdownLine } from "@/lib/quote-financial-helpers";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
     displayMoney,
     displayPercent,
@@ -26,6 +25,7 @@ export default function ChargeCard({
     globalFx?: CanonicalQuoteResult["fx_applied"];
 }) {
     const [isExpanded, setIsExpanded] = useState(false);
+    const { canViewCOGS, canViewMargins } = usePermissions();
     const canonicalItem = line.canonical_item;
     const rawLine = line.raw_line;
 
@@ -90,17 +90,21 @@ export default function ChargeCard({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-4 md:gap-8 justify-between xl:justify-end">
-                    <div className="flex flex-col xl:items-end min-w-[80px]">
-                        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Buy</span>
-                        <span className="text-sm font-medium text-slate-600">{canonicalItem || rawLine ? displayMoney(buyAmount, buyCurrency) : "—"}</span>
-                    </div>
-                    <div className="flex flex-col xl:items-end min-w-[100px]">
-                        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Margin</span>
-                        <div className="flex items-center gap-1 text-sm">
-                            <span className="font-medium text-emerald-600">{canonicalItem || rawLine ? displayMoney(finalMarginAmount, "PGK") : "—"}</span>
-                            {(canonicalItem || rawLine) && <span className="text-[11px] font-medium text-emerald-600/70">({displayPercent(finalMarginPercent)})</span>}
+                    {canViewCOGS && (
+                        <div className="flex flex-col xl:items-end min-w-[80px]">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Buy</span>
+                            <span className="text-sm font-medium text-slate-600">{canonicalItem || rawLine ? displayMoney(buyAmount, buyCurrency) : "—"}</span>
                         </div>
-                    </div>
+                    )}
+                    {canViewMargins && (
+                        <div className="flex flex-col xl:items-end min-w-[100px]">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Margin</span>
+                            <div className="flex items-center gap-1 text-sm">
+                                <span className="font-medium text-emerald-600">{canonicalItem || rawLine ? displayMoney(finalMarginAmount, "PGK") : "—"}</span>
+                                {(canonicalItem || rawLine) && <span className="text-[11px] font-medium text-emerald-600/70">({displayPercent(finalMarginPercent)})</span>}
+                            </div>
+                        </div>
+                    )}
                     <div className="flex flex-col xl:items-end min-w-[100px]">
                         <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Sell (Ex GST)</span>
                         <span className="text-sm font-bold text-slate-900">{formatAmount(sellExGst, displayCurrency)}</span>
@@ -153,6 +157,8 @@ export default function ChargeCard({
                         <DetailField label="Final Total (Inc GST)" value={displayMoney(Number(canonicalItem.sell_amount || 0) + Number(canonicalItem.tax_amount || 0), canonicalItem.sell_currency || displayCurrency)} />
                         
                         {(() => {
+                            if (!canViewMargins) return null; // Detailed FX/CAF requires margin visibility
+                            
                             const sellCurrency = canonicalItem.sell_currency || displayCurrency;
                             const fxApplies = typeof canonicalItem.fx_applied === "boolean"
                                 ? canonicalItem.fx_applied

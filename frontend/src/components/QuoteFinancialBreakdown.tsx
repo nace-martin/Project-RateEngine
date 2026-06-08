@@ -21,6 +21,7 @@ interface QuoteFinancialBreakdownProps {
 }
 
 import BucketSection from "./quotes/BucketSection";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
     RawQuoteLine,
     BreakdownLine,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/quote-financial-helpers";
 
 export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakdownProps) {
+    const { canViewCOGS, canViewMargins } = usePermissions();
     const normalizedResult = result as unknown as BreakdownDataShape;
     const canonicalResult = normalizedResult.quote_result ?? null;
     const data = normalizedResult.latest_version ?? normalizedResult;
@@ -92,10 +94,12 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                 {/* Top Financial Summary */}
                 {canonicalResult && (
                     <div className="px-6 py-5 border-b border-slate-200 bg-white grid grid-cols-2 md:grid-cols-5 gap-4">
-                        <div className="flex flex-col justify-center">
-                            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Total Buy Cost</span>
-                            <span className="text-base font-medium text-slate-800">{displayMoney(canonicalResult.total_cost_pgk, "PGK")}</span>
-                        </div>
+                        {canViewCOGS && (
+                            <div className="flex flex-col justify-center">
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Total Buy Cost</span>
+                                <span className="text-base font-medium text-slate-800">{displayMoney(canonicalResult.total_cost_pgk, "PGK")}</span>
+                            </div>
+                        )}
                         <div className="flex flex-col justify-center">
                             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Total Sell Amount</span>
                             <span className="text-base font-medium text-slate-800">{displayMoney(canonicalResult.total_sell_pgk, "PGK")}</span>
@@ -104,13 +108,15 @@ export default function QuoteFinancialBreakdown({ result }: QuoteFinancialBreakd
                             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">GST / Tax Total</span>
                             <span className="text-base font-medium text-slate-800">{displayMoney(canonicalResult.tax_breakdown?.gst_amount, displayCurrency)}</span>
                         </div>
-                        <div className="flex flex-col justify-center md:border-l md:border-slate-200 md:pl-6">
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 mb-1">Gross Margin</span>
-                            <div className="flex items-baseline gap-1.5">
-                                <span className="text-xl font-bold text-slate-900">{displayMoney(canonicalResult.margin_amount, "PGK")}</span>
-                                <span className="text-sm font-medium text-emerald-600">({displayPercent(canonicalResult.margin_percent)})</span>
+                        {canViewMargins && (
+                            <div className="flex flex-col justify-center md:border-l md:border-slate-200 md:pl-6">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 mb-1">Gross Margin</span>
+                                <div className="flex items-baseline gap-1.5">
+                                    <span className="text-xl font-bold text-slate-900">{displayMoney(canonicalResult.margin_amount, "PGK")}</span>
+                                    <span className="text-sm font-medium text-emerald-600">({displayPercent(canonicalResult.margin_percent)})</span>
+                                </div>
                             </div>
-                        </div>
+                        )}
                         <div className="flex flex-col justify-center md:border-l md:border-slate-200 md:pl-6">
                             <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 mb-1">Grand Total</span>
                             <span className="text-2xl font-black text-slate-900">{displayMoney(canonicalResult.sell_total, displayCurrency)}</span>

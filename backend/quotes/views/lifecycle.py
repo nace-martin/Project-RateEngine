@@ -490,7 +490,8 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             'routing': None,
             'notes': notes,
             'quote_result': CanonicalQuoteResultSerializer(
-                build_quote_result_from_quote(quote, latest_version)
+                build_quote_result_from_quote(quote, latest_version),
+                context={'request': request}
             ).data,
         }
         return Response(payload)

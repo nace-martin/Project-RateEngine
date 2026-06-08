@@ -28,6 +28,14 @@ class CustomUser(AbstractUser):
         (ROLE_ADMIN, 'Admin'),
     ]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_SALES)
+    can_view_buy_charges_override = models.BooleanField(
+        default=False, 
+        help_text="Explicitly allow viewing buy cost data regardless of role."
+    )
+    can_view_margins_override = models.BooleanField(
+        default=False, 
+        help_text="Explicitly allow viewing margins regardless of role."
+    )
 
     groups = models.ManyToManyField(
         'auth.Group',
@@ -88,14 +96,20 @@ class CustomUser(AbstractUser):
         return self.role == self.ROLE_SALES
     
     @property
+    def can_view_buy_charges(self) -> bool:
+        """Effective check: all authenticated roles can view buy cost data by default."""
+        return True
+
+    @property
     def can_view_cogs(self) -> bool:
-        """Manager, Finance, and Admin can view COGS/buy rates."""
-        return self.role in [self.ROLE_MANAGER, self.ROLE_FINANCE, self.ROLE_ADMIN]
+        """Alias for can_view_buy_charges to maintain compatibility with legacy checks."""
+        return self.can_view_buy_charges
     
     @property
     def can_view_margins(self) -> bool:
-        """Manager, Finance, and Admin can view margins."""
-        return self.role in [self.ROLE_MANAGER, self.ROLE_FINANCE, self.ROLE_ADMIN]
+        """Effective check: Manager, Finance, and Admin can view margins. Sales requires override."""
+        role_allows = self.role in [self.ROLE_MANAGER, self.ROLE_FINANCE, self.ROLE_ADMIN]
+        return role_allows or self.can_view_margins_override
     
     @property
     def can_edit_quotes(self) -> bool:
