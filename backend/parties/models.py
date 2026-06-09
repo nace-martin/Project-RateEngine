@@ -101,6 +101,79 @@ class Organization(models.Model):
         super().save(*args, **kwargs)
 
 
+class Branch(models.Model):
+    """
+    Operational branch within an Organization.
+
+    Added as an RBAC foundation model only. It is not used for runtime access
+    filtering until later phases explicitly wire selectors to it.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="branches",
+    )
+    code = models.CharField(max_length=16)
+    name = models.CharField(max_length=120)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["organization__name", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"],
+                name="unique_branch_code_per_organization",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.organization.slug}:{self.code}"
+
+
+class Department(models.Model):
+    """
+    Operational department within an Organization.
+
+    Branch is nullable because the current compatibility field only stores a
+    department code, not a branch assignment.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="departments",
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="departments",
+    )
+    code = models.CharField(max_length=24)
+    name = models.CharField(max_length=120)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["organization__name", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"],
+                name="unique_department_code_per_organization",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.organization.slug}:{self.code}"
+
+
 class OrganizationBranding(models.Model):
     """
     Per-tenant branding/configuration used in PDFs, public quote pages, and emails.
