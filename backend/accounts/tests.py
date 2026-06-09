@@ -7,16 +7,19 @@ Covers:
 - Registration disabled by default
 - RBAC permission enforcement
 """
+import json
+from io import StringIO
 from io import BytesIO
 
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from rest_framework import status
 from PIL import Image
 from core.models import Currency
-from parties.models import Organization, OrganizationBranding
-from .models import CustomUser
+from parties.models import Branch, Department, Organization, OrganizationBranding
+from .models import CustomUser, Permission, Role, RolePermission, UserMembership
 
 
 class LoginTests(TestCase):
@@ -357,3 +360,166 @@ class UserManagementOrganizationTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         created = CustomUser.objects.get(username='lae-sales-user')
         self.assertEqual(created.organization, self.org_b)
+
+
+class RBACFoundationSeedTests(TestCase):
+    def setUp(self):
+        self.pgk = Currency.objects.filter(code='PGK').first() or Currency.objects.create(
+            code='PGK',
+            name='Papua New Guinean Kina',
+        )
+        self.efm = Organization.objects.create(
+            name='Express Freight Management',
+            slug='efm',
+            default_currency=self.pgk,
+            is_active=True,
+        )
+        self.test_org = Organization.objects.create(
+            name='Test Org',
+            slug='test-org',
+            default_currency=self.pgk,
+            is_active=True,
+        )
+
+    def _run_seed(self):
+        output = StringIO()
+        call_command('seed_rbac_foundation', '--json', stdout=output)
+        return json.loads(output.getvalue())
+
+    def test_seed_command_creates_foundation_records_and_is_idempotent(self):
+        CustomUser.objects.create_user(
+            username='air-sales',
+            password='test12345',
+            role=CustomUser.ROLE_SALES,
+            department='AIR',
+            organization=self.efm,
+        )
+
+        first = self._run_seed()
+        second = self._run_seed()
+
+        self.assertGreaterEqual(first['branches']['created'], 5)
+        self.assertEqual(first['departments']['created'], Organization.objects.count() * 5)
+        self.assertGreater(first['permissions']['created'], 0)
+        self.assertEqual(first['roles']['created'], 4)
+        self.assertEqual(first['memberships']['created'], 1)
+        self.assertEqual(second['branches']['created'], 0)
+        self.assertEqual(second['departments']['created'], 0)
+        self.assertEqual(second['permissions']['created'], 0)
+        self.assertEqual(second['roles']['created'], 0)
+        self.assertEqual(second['memberships']['created'], 0)
+        self.assertEqual(second['memberships']['existing'], 1)
+
+        self.assertEqual(Branch.objects.filter(organization=self.efm).count(), 5)
+        self.assertEqual(Department.objects.filter(organization=self.efm).count(), 5)
+        self.assertEqual(Department.objects.filter(organization=self.test_org).count(), 5)
+        self.assertEqual(Role.objects.filter(organization__isnull=True).count(), 4)
+        self.assertTrue(Permission.objects.filter(code='quote.view.buy_cost').exists())
+        self.assertTrue(
+            RolePermission.objects.filter(
+                role__code=CustomUser.ROLE_SALES,
+                permission__code='quote.view.buy_cost',
+            ).exists()
+        )
+
+    def test_membership_backfill_reports_null_or_ambiguous_users_without_guessing(self):
+        good_user = CustomUser.objects.create_user(
+            username='good-user',
+            password='test12345',
+            role=CustomUser.ROLE_MANAGER,
+            department='AIR',
+            organization=self.efm,
+        )
+        null_org_user = CustomUser.objects.create_user(
+            username='null-org-user',
+            password='test12345',
+            role=CustomUser.ROLE_SALES,
+            department='AIR',
+        )
+        unknown_role_user = CustomUser.objects.create_user(
+            username='unknown-role-user',
+            password='test12345',
+            role='contractor',
+            department='AIR',
+            organization=self.efm,
+        )
+        unknown_department_user = CustomUser.objects.create_user(
+            username='unknown-department-user',
+            password='test12345',
+            role=CustomUser.ROLE_SALES,
+            department='SPACE',
+            organization=self.efm,
+        )
+        no_department_user = CustomUser.objects.create_user(
+            username='no-department-user',
+            password='test12345',
+            role=CustomUser.ROLE_ADMIN,
+            organization=self.efm,
+        )
+
+        result = self._run_seed()
+
+        self.assertEqual(UserMembership.objects.filter(user=good_user).count(), 1)
+        self.assertEqual(UserMembership.objects.filter(user=no_department_user).count(), 1)
+        self.assertEqual(UserMembership.objects.filter(user=null_org_user).count(), 0)
+        self.assertEqual(UserMembership.objects.filter(user=unknown_role_user).count(), 0)
+        self.assertEqual(UserMembership.objects.filter(user=unknown_department_user).count(), 0)
+        self.assertIn('null-org-user', result['skipped']['null_organization'])
+        self.assertIn('unknown-role-user', result['skipped']['unknown_role'])
+        self.assertIn('unknown-department-user', result['skipped']['unknown_department'])
+        self.assertIn('no-department-user', result['reported']['users_missing_department'])
+
+        good_membership = UserMembership.objects.get(user=good_user)
+        self.assertEqual(good_membership.organization, self.efm)
+        self.assertIsNone(good_membership.branch)
+        self.assertEqual(good_membership.department.code, 'AIR')
+        self.assertEqual(good_membership.role.code, CustomUser.ROLE_MANAGER)
+
+    def test_existing_login_and_me_responses_remain_backward_compatible(self):
+        organization = self.efm
+        OrganizationBranding.objects.create(
+            organization=organization,
+            display_name='Express Freight Management',
+            primary_color='#0F2A56',
+            accent_color='#D71920',
+        )
+        user = CustomUser.objects.create_user(
+            username='compat-user',
+            password='testpass123',
+            role=CustomUser.ROLE_SALES,
+            organization=organization,
+        )
+        self._run_seed()
+
+        client = APIClient()
+        login_response = client.post(
+            '/api/auth/login/',
+            {'username': 'compat-user', 'password': 'testpass123'},
+            format='json',
+        )
+
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        login_data = login_response.json()
+        self.assertEqual(login_data['username'], user.username)
+        self.assertEqual(login_data['role'], CustomUser.ROLE_SALES)
+        self.assertIn('token', login_data)
+        self.assertEqual(
+            set(login_data['user']['permissions'].keys()),
+            {'can_view_buy_charges', 'can_view_margins'},
+        )
+        self.assertEqual(login_data['user']['organization']['slug'], 'efm')
+
+        me_response = client.get(
+            '/api/auth/me/',
+            HTTP_AUTHORIZATION=f"Token {login_data['token']}",
+        )
+
+        self.assertEqual(me_response.status_code, status.HTTP_200_OK)
+        me_data = me_response.json()
+        self.assertEqual(me_data['username'], user.username)
+        self.assertEqual(me_data['role'], CustomUser.ROLE_SALES)
+        self.assertEqual(
+            set(me_data['permissions'].keys()),
+            {'can_view_buy_charges', 'can_view_margins'},
+        )
+        self.assertEqual(me_data['organization']['branding']['display_name'], 'Express Freight Management')

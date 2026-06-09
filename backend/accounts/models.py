@@ -1,5 +1,6 @@
 # backend/accounts/models.py
 
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
@@ -150,3 +151,147 @@ class CustomUser(AbstractUser):
     def can_view_audit_logs(self) -> bool:
         """Manager, Finance, and Admin can view audit logs."""
         return self.role in [self.ROLE_MANAGER, self.ROLE_FINANCE, self.ROLE_ADMIN]
+
+
+class Permission(models.Model):
+    """
+    Stable permission code for future RBAC checks.
+
+    This is seeded and stored now, but existing behavior remains driven by the
+    compatibility helpers on CustomUser until later phases wire it in.
+    """
+
+    code = models.CharField(max_length=120, unique=True)
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def __str__(self):
+        return self.code
+
+
+class Role(models.Model):
+    """
+    Role template or organization-specific role for RBAC foundations.
+
+    organization=None represents the system template roles that mirror current
+    CustomUser.role values.
+    """
+
+    code = models.CharField(max_length=64)
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True, default="")
+    organization = models.ForeignKey(
+        "parties.Organization",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="roles",
+    )
+    is_system = models.BooleanField(default=False, db_index=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    permissions = models.ManyToManyField(
+        Permission,
+        through="RolePermission",
+        related_name="roles",
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["organization__name", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"],
+                name="unique_role_code_per_organization",
+            ),
+            models.UniqueConstraint(
+                fields=["code"],
+                condition=models.Q(organization__isnull=True),
+                name="unique_system_role_code",
+            ),
+        ]
+
+    def __str__(self):
+        scope = self.organization.slug if self.organization_id else "system"
+        return f"{scope}:{self.code}"
+
+
+class RolePermission(models.Model):
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name="role_permissions")
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, related_name="role_permissions")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["role__code", "permission__code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["role", "permission"],
+                name="unique_role_permission",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.role} -> {self.permission.code}"
+
+
+class UserMembership(models.Model):
+    """
+    User membership in an organization/branch/department with an RBAC role.
+
+    branch and department are nullable for compatibility with existing users.
+    These memberships are seeded now but are not used for enforcement yet.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="memberships",
+    )
+    organization = models.ForeignKey(
+        "parties.Organization",
+        on_delete=models.CASCADE,
+        related_name="user_memberships",
+    )
+    branch = models.ForeignKey(
+        "parties.Branch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="user_memberships",
+    )
+    department = models.ForeignKey(
+        "parties.Department",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="user_memberships",
+    )
+    role = models.ForeignKey(
+        Role,
+        on_delete=models.PROTECT,
+        related_name="user_memberships",
+    )
+    is_primary = models.BooleanField(default=True, db_index=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user__username", "organization__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(is_primary=True, is_active=True),
+                name="unique_active_primary_membership_per_user",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user} @ {self.organization}"

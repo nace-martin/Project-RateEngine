@@ -4,9 +4,11 @@ from django.contrib import admin
 # Add CustomerCommercialProfile to imports
 from .models import (
     Address,
+    Branch,
     Company,
     Contact,
     CustomerCommercialProfile,
+    Department,
     Organization,
     OrganizationBranding,
 )
@@ -82,3 +84,17 @@ class OrganizationAdmin(admin.ModelAdmin):
     search_fields = ("name", "slug")
     list_filter = ("is_active", "default_currency")
     inlines = [OrganizationBrandingInline]
+
+
+@admin.register(Branch)
+class BranchAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "organization", "is_active", "updated_at")
+    search_fields = ("code", "name", "organization__name", "organization__slug")
+    list_filter = ("organization", "is_active")
+
+
+@admin.register(Department)
+class DepartmentAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "organization", "branch", "is_active", "updated_at")
+    search_fields = ("code", "name", "organization__name", "organization__slug")
+    list_filter = ("organization", "branch", "is_active")
