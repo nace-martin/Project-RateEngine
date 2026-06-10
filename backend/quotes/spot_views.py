@@ -294,6 +294,7 @@ def _resolve_spe_charge_normalization_fields(
             "normalization_method": existing_line.normalization_method,
             "matched_alias": existing_line.matched_alias,
             "resolved_product_code": existing_line.resolved_product_code,
+            "canonical_charge_type": existing_line.canonical_charge_type,
             **preserved_manual_resolution,
         }
 
@@ -303,6 +304,13 @@ def _resolve_spe_charge_normalization_fields(
         mode_scope=_charge_mode_scope_for_context(shipment_context),
         direction_scope=_charge_direction_scope_for_bucket(charge.get("bucket")),
     )
+
+    canonical_charge_type = None
+    if normalization_result.resolved_charge_alias and normalization_result.resolved_charge_alias.canonical_charge_type:
+        canonical_charge_type = normalization_result.resolved_charge_alias.canonical_charge_type
+    elif manual_resolution_source is not None:
+        canonical_charge_type = manual_resolution_source.canonical_charge_type
+
     return {
         "source_label": raw_label,
         "normalized_label": normalization_result.normalized_label,
@@ -310,14 +318,13 @@ def _resolve_spe_charge_normalization_fields(
         "normalization_method": normalization_result.normalization_method.value,
         "matched_alias": normalization_result.resolved_charge_alias,
         "resolved_product_code": normalization_result.resolved_product_code,
+        "canonical_charge_type": canonical_charge_type,
         "manual_resolution_status": None,
         "manual_resolved_product_code": None,
         "manual_resolution_by": None,
         "manual_resolution_at": None,
         **preserved_manual_resolution,
     }
-
-
 def _incoming_charge_source_label(charge: dict) -> str:
     return str(charge.get("source_label") or charge.get("description") or "")
 
