@@ -24,27 +24,19 @@ from quotes.spot_models import (
 )
 from quotes.spot_learning_models import (
     SpotResolutionLearningEvent,
-    SpotChargeMappingMemory,
 )
 
 User = get_user_model()
 
 
 class SpotLearningEventModelTest(APITestCase):
-    """Test SpotResolutionLearningEvent and SpotChargeMappingMemory models."""
+    """Test SpotResolutionLearningEvent model."""
 
     def test_learning_event_model_exists(self):
         """Verify the learning event model is available and has correct table name."""
         self.assertEqual(
             SpotResolutionLearningEvent._meta.db_table,
             'spot_resolution_learning_events',
-        )
-
-    def test_mapping_memory_model_exists(self):
-        """Verify the mapping memory model is available and has correct table name."""
-        self.assertEqual(
-            SpotChargeMappingMemory._meta.db_table,
-            'spot_charge_mapping_memory',
         )
 
     def test_learning_event_resolution_types(self):
@@ -60,11 +52,6 @@ class SpotLearningEventModelTest(APITestCase):
         actual = {choice[0] for choice in SpotResolutionLearningEvent.ResolutionType.choices}
         self.assertEqual(actual, expected)
 
-    def test_mapping_memory_status_choices(self):
-        """Verify all expected status choices for mapping memory."""
-        expected = {'LEARNED', 'LOCKED', 'RETIRED'}
-        actual = {choice[0] for choice in SpotChargeMappingMemory.Status.choices}
-        self.assertEqual(actual, expected)
 
 
 class SpotLearningEventCaptureBaseTest(APITestCase):
