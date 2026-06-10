@@ -543,11 +543,28 @@ def _build_spe_charge_line_field_values(
 
     # Normalization review reason
     normalization_review_reason = None
-    norm_status = norm_fields.get("normalization_status")
-    if norm_status == "UNMAPPED":
-        normalization_review_reason = "No active alias matching raw label found in registry."
-    elif norm_status == "AMBIGUOUS":
-        normalization_review_reason = "Multiple active aliases matched raw label with conflicting product codes."
+    if existing_line is not None and existing_line.manual_resolution_status == "RESOLVED":
+        normalization_review_reason = existing_line.normalization_review_reason
+    else:
+        norm_status = norm_fields.get("normalization_status")
+        canonical_ct = norm_fields.get("canonical_charge_type")
+        resolved_pc = norm_fields.get("resolved_product_code")
+
+        is_conditional_ct = False
+        if canonical_ct:
+            is_conditional_ct = canonical_ct.code in {"CONDITIONAL_STORAGE", "CONDITIONAL_DEMURRAGE"}
+
+        if norm_status == "UNMAPPED" and not canonical_ct:
+            normalization_review_reason = "canonical_type_missing"
+        elif canonical_ct and not resolved_pc:
+            normalization_review_reason = "product_code_missing"
+        elif norm_status == "AMBIGUOUS":
+            normalization_review_reason = "ambiguous_product_mapping"
+        elif is_conditional_ct:
+            normalization_review_reason = "conditional_charge"
+        elif norm_status == "UNMAPPED":
+            # Fallback if unmapped but somehow has canonical type
+            normalization_review_reason = "canonical_type_missing"
 
     return {
         "envelope": spe_db,

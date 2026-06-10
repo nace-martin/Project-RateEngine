@@ -326,3 +326,307 @@ class SpotCanonicalAssignmentTests(TestCase):
         # Ensure the existing canonical type is preserved unchanged
         self.assertEqual(fields['canonical_charge_type'], self.ct)
 
+
+class SpotCanonicalReviewStatesTests(TestCase):
+    """
+    Test suite for Phase 10.3g — Canonical Review States.
+    Verifies that SPEChargeLineDB.normalization_review_reason is correctly populated based on mapping issues.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        cls.user = User.objects.create_user(
+            username='review_analyst',
+            email='review@rateengine.com',
+            password='testpassword',
+            role='sales'
+        )
+        cls.pc = ProductCode.objects.create(
+            id=2993,
+            code='EXP-TEST-FSC-REV',
+            description='Export Fuel Surcharge (Review)',
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_HANDLING,
+            is_gst_applicable=False,
+        )
+        cls.pc_ambig = ProductCode.objects.create(
+            id=2994,
+            code='EXP-TEST-FSC-AMB',
+            description='Export Fuel Surcharge (Ambig)',
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_HANDLING,
+            is_gst_applicable=False,
+        )
+        cls.ct_fuel = CanonicalChargeType.objects.create(
+            code='AIRLINE_FUEL_TEST_REV',
+            name='Airline Fuel Surcharge (Review)',
+            category='FUEL'
+        )
+        cls.ct_conditional, _ = CanonicalChargeType.objects.get_or_create(
+            code='CONDITIONAL_STORAGE',
+            defaults={
+                'name': 'Conditional Storage (Review)',
+                'category': 'MISC'
+            }
+        )
+
+    def _create_spe(self):
+        from django.utils import timezone
+        return SpotPricingEnvelopeDB.objects.create(
+            status='draft',
+            shipment_context_json={
+                'origin_code': 'SIN',
+                'destination_code': 'POM',
+                'origin_country': 'SG',
+                'destination_country': 'PG',
+                'service_scope': 'D2D'
+            },
+            expires_at=timezone.now() + timezone.timedelta(hours=72)
+        )
+
+    def test_unmapped_with_no_canonical_type_produces_canonical_type_missing(self):
+        """Verify unmapped raw label with no canonical type maps to canonical_type_missing review reason."""
+        from django.utils import timezone
+        from quotes.spot_views import _create_spe_charge_line
+        spe = self._create_spe()
+
+        charge_line = _create_spe_charge_line(
+            spe_db=spe,
+            charge={
+                'code': 'UNMAPPED_LINE',
+                'description': 'completely unknown raw charge label here',
+                'amount': 50.00,
+                'currency': 'SGD',
+                'unit': 'flat',
+                'bucket': 'origin_charges',
+                'source_reference': 'REF-REV-1'
+            },
+            entered_by=self.user,
+            entered_at=timezone.now(),
+            shipment_context=spe.shipment_context_json
+        )
+        self.assertEqual(charge_line.normalization_status, 'UNMAPPED')
+        self.assertEqual(charge_line.normalization_review_reason, 'canonical_type_missing')
+
+    def test_canonical_type_exists_but_product_code_missing_produces_product_code_missing(self):
+        """Verify canonical type with no ProductCode mapping produces product_code_missing review reason."""
+        # Create an alias that maps to a CanonicalChargeType, but maps to NULL product_code?
+        # Wait, our database integrity / validation might require product_code on ChargeAlias.
+        # But wait! If we have a CanonicalChargeType matched via alias, but the resolved_product_code is null on the charge line
+        # e.g., if the matched alias specifies canonical_charge_type but has product_code null (if nullable), or if we mock it.
+        # Wait, resolved_product_code is returned byresolve_charge_alias. If resolve_charge_alias resolves to an alias, it returns its product_code.
+        # But if the alias exists but is not mapped for this mode/scope in the future (where alias is mapped to canonical only, and mapping context resolves ProductCode),
+        # then resolved_product_code can be null.
+        # Let's mock a case where we create a ChargeAlias with product_code pointing to a dummy, but we simulate a null resolved_product_code.
+        # Actually, let's look at _resolve_spe_charge_normalization_fields:
+        # "resolved_product_code": normalization_result.resolved_product_code
+        # Let's temporarily mock the resolved_product_code to None to trigger "product_code_missing".
+        # Let's see: we can create a test case that directly exercises _resolve_spe_charge_normalization_fields or _build_spe_charge_line_field_values,
+        # or we can create a ChargeAlias with a CanonicalChargeType, but where resolving it does not return a ProductCode (if we manually test the view helper).
+        # Let's do a direct test on _build_spe_charge_line_field_values passing a mock or creating a ChargeAlias.
+        # Wait, if we create a ChargeAlias with product_code pointing to something, resolved_product_code is not null.
+        # But if we test it directly via _build_spe_charge_line_field_values:
+        from django.utils import timezone
+        from quotes.spot_views import _build_spe_charge_line_field_values
+        spe = self._create_spe()
+
+        # Let's create a ChargeAlias with a CanonicalChargeType but no product_code?
+        # Wait, product_code is NOT NULL on ChargeAlias (on_delete=models.PROTECT).
+        # But we can test that if canonical_charge_type is populated and resolved_product_code is null:
+        # norm_fields = { "normalization_status": "MATCHED", "canonical_charge_type": ct, "resolved_product_code": None }
+        # Let's test the helper _resolve_spe_charge_normalization_fields or verify normalization_review_reason via _build_spe_charge_line_field_values.
+        # Let's create a test where we pass a charge to _build_spe_charge_line_field_values, but we mock resolve_charge_alias to return resolved_product_code=None.
+        from unittest.mock import patch
+        from quotes.services.charge_normalization import ChargeNormalizationResult, NormalizationStatus, NormalizationMethod
+
+        mock_result = ChargeNormalizationResult(
+            resolved_charge_alias=ChargeAlias(canonical_charge_type=self.ct_fuel),
+            resolved_product_code=None,
+            normalization_status=NormalizationStatus.MATCHED,
+            normalization_method=NormalizationMethod.EXACT_ALIAS,
+            raw_label='test label',
+            normalized_label='test label'
+        )
+
+        with patch('quotes.spot_views.resolve_charge_alias', return_value=mock_result):
+            fields = _build_spe_charge_line_field_values(
+                spe_db=spe,
+                charge={
+                    'code': 'FSC_LINE',
+                    'description': 'test label',
+                    'amount': 100.00,
+                    'currency': 'SGD',
+                    'unit': 'flat',
+                    'bucket': 'origin_charges',
+                    'source_reference': 'REF-REV-2'
+                },
+                entered_by=self.user,
+                entered_at=timezone.now(),
+                shipment_context=spe.shipment_context_json
+            )
+            self.assertEqual(fields['normalization_review_reason'], 'product_code_missing')
+
+    def test_ambiguous_alias_status_produces_ambiguous_product_mapping(self):
+        """Verify ambiguous alias status maps to ambiguous_product_mapping review reason."""
+        # Create two conflicting aliases to cause AMBIGUOUS status
+        ChargeAlias.objects.create(
+            alias_text='ambig raw label',
+            normalized_alias_text='ambig raw label',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.ANY,
+            product_code=self.pc,
+            priority=5,
+        )
+        ChargeAlias.objects.create(
+            alias_text='ambig raw label',
+            normalized_alias_text='ambig raw label',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.ANY,
+            product_code=self.pc_ambig,
+            priority=5,
+        )
+
+        from django.utils import timezone
+        from quotes.spot_views import _create_spe_charge_line
+        spe = self._create_spe()
+
+        charge_line = _create_spe_charge_line(
+            spe_db=spe,
+            charge={
+                'code': 'AMBIG_LINE',
+                'description': 'ambig raw label',
+                'amount': 50.00,
+                'currency': 'SGD',
+                'unit': 'flat',
+                'bucket': 'origin_charges',
+                'source_reference': 'REF-REV-3'
+            },
+            entered_by=self.user,
+            entered_at=timezone.now(),
+            shipment_context=spe.shipment_context_json
+        )
+        self.assertEqual(charge_line.normalization_status, 'AMBIGUOUS')
+        self.assertEqual(charge_line.normalization_review_reason, 'ambiguous_product_mapping')
+
+    def test_conditional_canonical_type_produces_conditional_charge(self):
+        """Verify conditional CanonicalChargeType maps to conditional_charge review reason."""
+        # Create alias for a conditional charge type
+        ChargeAlias.objects.create(
+            alias_text='conditional storage label',
+            normalized_alias_text='conditional storage label',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.ANY,
+            product_code=self.pc,
+            canonical_charge_type=self.ct_conditional,
+            priority=5,
+        )
+
+        from django.utils import timezone
+        from quotes.spot_views import _create_spe_charge_line
+        spe = self._create_spe()
+
+        charge_line = _create_spe_charge_line(
+            spe_db=spe,
+            charge={
+                'code': 'COND_LINE',
+                'description': 'conditional storage label',
+                'amount': 150.00,
+                'currency': 'SGD',
+                'unit': 'flat',
+                'bucket': 'origin_charges',
+                'source_reference': 'REF-REV-4'
+            },
+            entered_by=self.user,
+            entered_at=timezone.now(),
+            shipment_context=spe.shipment_context_json
+        )
+        self.assertEqual(charge_line.canonical_charge_type, self.ct_conditional)
+        self.assertEqual(charge_line.normalization_review_reason, 'conditional_charge')
+
+    def test_matched_alias_with_product_code_produces_blank_review_reason(self):
+        """Verify standard matched alias with product code has no review reason."""
+        ChargeAlias.objects.create(
+            alias_text='normal standard label',
+            normalized_alias_text='normal standard label',
+            match_type=ChargeAlias.MatchType.EXACT,
+            mode_scope=ChargeAlias.ModeScope.ANY,
+            direction_scope=ChargeAlias.DirectionScope.ANY,
+            product_code=self.pc,
+            priority=5,
+        )
+
+        from django.utils import timezone
+        from quotes.spot_views import _create_spe_charge_line
+        spe = self._create_spe()
+
+        charge_line = _create_spe_charge_line(
+            spe_db=spe,
+            charge={
+                'code': 'NORMAL_LINE',
+                'description': 'normal standard label',
+                'amount': 50.00,
+                'currency': 'SGD',
+                'unit': 'flat',
+                'bucket': 'origin_charges',
+                'source_reference': 'REF-REV-5'
+            },
+            entered_by=self.user,
+            entered_at=timezone.now(),
+            shipment_context=spe.shipment_context_json
+        )
+        self.assertEqual(charge_line.normalization_status, 'MATCHED')
+        self.assertIsNone(charge_line.normalization_review_reason)
+
+    def test_manual_resolution_preserves_review_reason(self):
+        """Verify that reconciliation preserves existing review reason if a line has manual resolution."""
+        from django.utils import timezone
+        from quotes.spot_views import _create_spe_charge_line, _build_spe_charge_line_field_values
+        spe = self._create_spe()
+
+        # Create line that starts as unmapped with canonical_type_missing
+        charge_data = {
+            'code': 'UNMAPPED_LINE',
+            'description': 'random unknown label for manual resolution',
+            'amount': 50.00,
+            'currency': 'SGD',
+            'unit': 'flat',
+            'bucket': 'origin_charges',
+            'source_reference': 'REF-REV-6'
+        }
+
+        charge_line = _create_spe_charge_line(
+            spe_db=spe,
+            charge=charge_data,
+            entered_by=self.user,
+            entered_at=timezone.now(),
+            shipment_context=spe.shipment_context_json
+        )
+        self.assertEqual(charge_line.normalization_review_reason, 'canonical_type_missing')
+
+        # Apply manual resolution
+        charge_line.manual_resolved_product_code = self.pc
+        charge_line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+        charge_line.manual_resolution_by = self.user
+        charge_line.manual_resolution_at = timezone.now()
+        charge_line.save()
+
+        # Reconcile / rebuild fields
+        fields = _build_spe_charge_line_field_values(
+            spe_db=spe,
+            charge=charge_data,
+            entered_by=self.user,
+            entered_at=timezone.now(),
+            shipment_context=spe.shipment_context_json,
+            existing_line=charge_line
+        )
+
+        # Check existing review reason is preserved instead of being recalculated/cleared
+        self.assertEqual(fields['normalization_review_reason'], 'canonical_type_missing')
+
+
+

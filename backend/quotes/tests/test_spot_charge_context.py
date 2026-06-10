@@ -145,7 +145,7 @@ class SpotChargeContextMetadataTests(TestCase):
         )
 
         self.assertEqual(charge_line.normalization_status, 'UNMAPPED')
-        self.assertEqual(charge_line.normalization_review_reason, 'No active alias matching raw label found in registry.')
+        self.assertEqual(charge_line.normalization_review_reason, 'canonical_type_missing')
         self.assertIsNone(charge_line.normalization_confidence)
 
     def test_ambiguous_charge_line_stores_review_reason(self):
@@ -191,7 +191,7 @@ class SpotChargeContextMetadataTests(TestCase):
         )
 
         self.assertEqual(charge_line.normalization_status, 'AMBIGUOUS')
-        self.assertEqual(charge_line.normalization_review_reason, 'Multiple active aliases matched raw label with conflicting product codes.')
+        self.assertEqual(charge_line.normalization_review_reason, 'ambiguous_product_mapping')
 
     def test_manual_resolved_product_code_survives_reconciliation(self):
         """User manual selections must survive reconciliation updates."""
