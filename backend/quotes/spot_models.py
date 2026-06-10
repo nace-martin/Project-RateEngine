@@ -424,6 +424,14 @@ class SPEChargeLineDB(models.Model):
         related_name='spe_resolved_charge_lines',
         help_text='Resolved canonical ProductCode from deterministic normalization.',
     )
+    canonical_charge_type = models.ForeignKey(
+        'pricing_v4.CanonicalChargeType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='spe_charge_lines',
+        help_text='CanonicalChargeType classification associated with this charge line.',
+    )
     manual_resolution_status = models.CharField(
         max_length=20,
         choices=ManualResolutionStatus.choices,
