@@ -2485,6 +2485,8 @@ class ReplyAnalysisService:
             }
             source_section_label = section_mapping.get(category, "Other Charges")
 
+            final_source_ref = source_reference
+
             charges.append({
                 "code": component_code,
                 "description": a.text,
