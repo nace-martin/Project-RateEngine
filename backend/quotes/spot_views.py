@@ -473,6 +473,71 @@ def _build_spe_charge_line_field_values(
             existing_line is not None and conditional_acknowledged
         ) else None
 
+    # Resolve normalization fields
+    norm_fields = _resolve_spe_charge_normalization_fields(
+        charge,
+        shipment_context=shipment_context,
+        existing_line=audit_source_line,
+        manual_resolution_source=existing_line,
+    )
+
+    # Inferred calculation basis
+    unit_raw = charge.get("unit")
+    calculation_basis = "unknown"
+    if unit_raw:
+        u = str(unit_raw).strip().lower()
+        if u in {"per_kg", "kg"}:
+            calculation_basis = "per_kg"
+        elif u in {"flat", "per_shipment", "shipment"}:
+            calculation_basis = "flat"
+        elif u in {"percentage", "percent"}:
+            calculation_basis = "percentage"
+        elif u in {"per_awb", "awb"}:
+            calculation_basis = "per_awb"
+        elif u in {"per_entry", "entry"}:
+            calculation_basis = "per_entry"
+
+    # Context snapshot
+    ctx = shipment_context or spe_db.shipment_context_json or {}
+    service_scope_snapshot = ctx.get("service_scope")
+    origin_code_snapshot = ctx.get("origin_code")
+    destination_code_snapshot = ctx.get("destination_code")
+    
+    route_context = None
+    if origin_code_snapshot and destination_code_snapshot:
+        route_context = f"{origin_code_snapshot}-{destination_code_snapshot}"
+
+    # Agent/Supplier name snapshot
+    agent_name_snapshot = ctx.get("agent_name") or ctx.get("supplier_name") or charge.get("agent_name")
+    if not agent_name_snapshot and source_batch:
+        agent_name_snapshot = source_batch.label or source_batch.file_name
+
+    # Source section label
+    source_section_label = (
+        charge.get("source_section_label")
+        or charge.get("section_label")
+        or charge.get("source_section")
+        or charge.get("section")
+    )
+
+    # Normalization confidence (numeric only)
+    normalization_confidence = None
+    raw_confidence = charge.get("confidence")
+    if raw_confidence is not None:
+        try:
+            from decimal import Decimal, InvalidOperation
+            normalization_confidence = Decimal(str(raw_confidence))
+        except (ValueError, TypeError, InvalidOperation):
+            pass
+
+    # Normalization review reason
+    normalization_review_reason = None
+    norm_status = norm_fields.get("normalization_status")
+    if norm_status == "UNMAPPED":
+        normalization_review_reason = "No active alias matching raw label found in registry."
+    elif norm_status == "AMBIGUOUS":
+        normalization_review_reason = "Multiple active aliases matched raw label with conflicting product codes."
+
     return {
         "envelope": spe_db,
         "source_batch": source_batch if source_batch is not None else (
@@ -507,12 +572,19 @@ def _build_spe_charge_line_field_values(
         "source_line_identity": _incoming_charge_source_line_identity(charge),
         "entered_by": entered_by,
         "entered_at": entered_at,
-        **_resolve_spe_charge_normalization_fields(
-            charge,
-            shipment_context=shipment_context,
-            existing_line=audit_source_line,
-            manual_resolution_source=existing_line,
-        ),
+        
+        # New Context Metadata fields
+        "calculation_basis": calculation_basis,
+        "service_scope_snapshot": service_scope_snapshot,
+        "agent_name_snapshot": agent_name_snapshot,
+        "origin_code_snapshot": origin_code_snapshot,
+        "destination_code_snapshot": destination_code_snapshot,
+        "route_context": route_context,
+        "source_section_label": source_section_label,
+        "normalization_confidence": normalization_confidence,
+        "normalization_review_reason": normalization_review_reason,
+        
+        **norm_fields,
     }
 
 

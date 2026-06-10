@@ -2477,6 +2477,14 @@ class ReplyAnalysisService:
             if shipment_type == "IMPORT" and "export declaration" in desc_lower:
                 continue
 
+            # Map category to display-friendly section name for source_section_label
+            section_mapping = {
+                AssertionCategory.RATE: "Airfreight",
+                AssertionCategory.ORIGIN_CHARGES: "Origin Charges",
+                AssertionCategory.DEST_CHARGES: "Destination Charges",
+            }
+            source_section_label = section_mapping.get(category, "Other Charges")
+
             final_source_ref = source_reference
 
             charges.append({
@@ -2505,6 +2513,8 @@ class ReplyAnalysisService:
                     a.source_line_identity
                     or (f"assertion-line:{a.source_line}" if a.source_line is not None else None)
                 ),
+                "confidence": a.confidence,
+                "source_section_label": source_section_label,
             })
 
         return charges
