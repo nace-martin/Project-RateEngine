@@ -70,6 +70,10 @@ from quotes.quote_result_contract import (
 from quotes.selectors import get_quote_for_user, get_spes_for_user
 from quotes.currency_rules import determine_quote_currency
 from quotes.services.charge_normalization import resolve_charge_alias
+from quotes.services.spot_learning_service import (
+    record_manual_resolution_event,
+    record_conditional_resolution_event,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1804,6 +1808,17 @@ class SpotChargeLineManualResolutionAPIView(APIView):
             ]
         )
 
+        # Record learning event for future confidence scoring
+        try:
+            record_manual_resolution_event(
+                charge_line=charge_line,
+                envelope=spe_db,
+                resolved_product_code=manual_product_code,
+                user=request.user,
+            )
+        except Exception:
+            logger.exception("Failed to record manual resolution learning event")
+
         if charge_line.source_batch:
             _sync_batch_analysis_summary(charge_line.source_batch)
 
@@ -1846,6 +1861,23 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
             )
 
         action = str(request.data.get("action") or "").strip().upper()
+        if action not in ("KEEP", "REMOVE"):
+            return Response(
+                {'error': "action must be KEEP or REMOVE."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Record learning event BEFORE potential delete (REMOVE deletes the line)
+        try:
+            record_conditional_resolution_event(
+                charge_line=charge_line,
+                envelope=spe_db,
+                action=action,
+                user=request.user,
+            )
+        except Exception:
+            logger.exception("Failed to record conditional resolution learning event")
+
         if action == "KEEP":
             charge_line.conditional_acknowledged = True
             charge_line.conditional_acknowledged_by = request.user
@@ -1864,11 +1896,6 @@ class SpotChargeLineConditionalResolutionAPIView(APIView):
             charge_line.delete()
             if batch:
                 _sync_batch_analysis_summary(batch)
-        else:
-            return Response(
-                {'error': "action must be KEEP or REMOVE."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         spe_db.refresh_from_db()
         serializer = SpotPricingEnvelopeSerializer(spe_db)
