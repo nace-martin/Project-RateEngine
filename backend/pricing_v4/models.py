@@ -308,6 +308,14 @@ class ChargeAlias(models.Model):
         on_delete=models.PROTECT,
         related_name='charge_aliases',
     )
+    canonical_charge_type = models.ForeignKey(
+        'CanonicalChargeType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='charge_aliases',
+        help_text='Associated CanonicalChargeType semantic layer mapping.',
+    )
     priority = models.PositiveIntegerField(
         default=100,
         db_index=True,
@@ -420,6 +428,45 @@ class ChargeAlias(models.Model):
 
     def __str__(self):
         return f"{self.alias_text} -> {self.product_code.code}"
+
+
+class CanonicalChargeType(models.Model):
+    """
+    Semantic middle layer representing a standardized charge classification.
+    Allows resolving Raw Agent Surcharges into common categories before ProductCode mapping.
+    """
+    code = models.CharField(max_length=50, unique=True, db_index=True)
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, default='')
+    category = models.CharField(max_length=50, db_index=True)
+    
+    mode_scope = models.CharField(
+        max_length=10,
+        choices=ChargeAlias.ModeScope.choices,
+        default=ChargeAlias.ModeScope.ANY,
+        db_index=True,
+    )
+    direction_scope = models.CharField(
+        max_length=15,
+        choices=ChargeAlias.DirectionScope.choices,
+        default=ChargeAlias.DirectionScope.ANY,
+        db_index=True,
+    )
+    is_system = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    sort_order = models.IntegerField(default=100)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'canonical_charge_types'
+        ordering = ['sort_order', 'code']
+        verbose_name = 'Canonical Charge Type'
+        verbose_name_plural = 'Canonical Charge Types'
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
 
 
 # =============================================================================
