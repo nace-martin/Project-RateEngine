@@ -454,6 +454,62 @@ class SPEChargeLineDB(models.Model):
         help_text='Timestamp when manual SPOT charge review was saved.',
     )
     
+    # === Diagnostic / Audit Metadata (Phase 10.3b) ===
+    calculation_basis = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        help_text="Inferred calculation basis for the charge (e.g. per_kg, flat, percentage)."
+    )
+    service_scope_snapshot = models.CharField(
+        max_length=10,
+        null=True,
+        blank=True,
+        help_text="Snapshot of the shipment service scope (e.g. D2D, P2P)."
+    )
+    agent_name_snapshot = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Snapshot of the agent/supplier/airline name."
+    )
+    origin_code_snapshot = models.CharField(
+        max_length=10,
+        null=True,
+        blank=True,
+        help_text="Snapshot of the origin airport/port code."
+    )
+    destination_code_snapshot = models.CharField(
+        max_length=10,
+        null=True,
+        blank=True,
+        help_text="Snapshot of the destination airport/port code."
+    )
+    route_context = models.CharField(
+        max_length=30,
+        null=True,
+        blank=True,
+        help_text="Snapshot of the route string (e.g. SIN-POM)."
+    )
+    source_section_label = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Verbatim section heading from the raw source document."
+    )
+    normalization_confidence = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text="Numeric confidence score from resolver if available."
+    )
+    normalization_review_reason = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Detailed reason for manual review triggers (e.g. unmapped or ambiguous alias)."
+    )
+    
     # === Original fields ===
     
     source_reference = models.CharField(
