@@ -5,7 +5,8 @@ from .models import (
     Quote, QuoteVersion, QuoteLine, QuoteTotal, OverrideNote
 )
 from .spot_models import (
-    SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB
+    SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB,
+    ExpectedChargeTemplate, ExpectedTemplateLine, SpotTemplateValidationReview
 )
 
 class QuoteLineInline(admin.TabularInline):
@@ -116,3 +117,35 @@ class SpotPricingEnvelopeAdmin(admin.ModelAdmin):
 admin.site.register(Quote, QuoteAdmin)
 admin.site.register(QuoteVersion, QuoteVersionAdmin)
 admin.site.register(SpotPricingEnvelopeDB, SpotPricingEnvelopeAdmin)
+
+
+class ExpectedTemplateLineInline(admin.TabularInline):
+    model = ExpectedTemplateLine
+    extra = 1
+
+
+@admin.register(ExpectedChargeTemplate)
+class ExpectedChargeTemplateAdmin(admin.ModelAdmin):
+    list_display = ('name', 'mode', 'transport_mode', 'service_scope', 'origin_country', 'destination_country', 'is_active', 'created_at')
+    list_filter = ('mode', 'transport_mode', 'service_scope', 'is_active')
+    search_fields = ('name', 'origin_code', 'destination_code', 'origin_country', 'destination_country')
+    inlines = [ExpectedTemplateLineInline]
+
+
+@admin.register(ExpectedTemplateLine)
+class ExpectedTemplateLineAdmin(admin.ModelAdmin):
+    list_display = ('template', 'canonical_charge_type', 'requirement_level', 'expected_basis', 'is_active')
+    list_filter = ('requirement_level', 'expected_basis', 'is_active')
+    search_fields = ('template__name', 'canonical_charge_type__code', 'canonical_charge_type__name')
+
+
+@admin.register(SpotTemplateValidationReview)
+class SpotTemplateValidationReviewAdmin(admin.ModelAdmin):
+    list_display = ('envelope', 'finding_code', 'canonical_type', 'reviewed_by', 'reviewed_at')
+    list_filter = ('finding_code', 'canonical_type', 'reviewed_by', 'reviewed_at')
+    search_fields = ('envelope__id', 'finding_code', 'canonical_type', 'finding_fingerprint', 'comment', 'reviewed_by__username')
+    readonly_fields = (
+        'id', 'envelope', 'finding_code', 'canonical_type', 'template_line_id',
+        'charge_line_id', 'finding_fingerprint', 'comment', 'reviewed_by', 'reviewed_at'
+    )
+
