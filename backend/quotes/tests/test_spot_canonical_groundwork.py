@@ -1022,7 +1022,8 @@ class SpotExpectedTemplateValidationTests(TestCase):
             # Ensure exact set of expected keys
             expected_keys = {
                 "code", "severity", "message", "canonical_type", 
-                "template_line_id", "charge_line_id", "metadata"
+                "template_line_id", "charge_line_id", "metadata",
+                "is_reviewed", "review"
             }
             self.assertEqual(set(finding.keys()), expected_keys)
             

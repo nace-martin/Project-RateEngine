@@ -755,3 +755,33 @@ class ExpectedTemplateLine(models.Model):
     def __str__(self):
         return f"{self.canonical_charge_type} ({self.requirement_level})"
 
+
+class SpotTemplateValidationReview(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    envelope = models.ForeignKey(
+        'quotes.SpotPricingEnvelopeDB',
+        on_delete=models.CASCADE,
+        related_name='template_validation_reviews'
+    )
+    finding_code = models.CharField(max_length=50)
+    canonical_type = models.CharField(max_length=50, null=True, blank=True)
+    template_line_id = models.IntegerField(null=True, blank=True)
+    charge_line_id = models.UUIDField(null=True, blank=True)
+    
+    # Stable string combining identifying attributes to prevent duplicates
+    finding_fingerprint = models.CharField(max_length=255, db_index=True)
+    
+    comment = models.TextField(blank=True, null=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='+'
+    )
+    reviewed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'spot_template_validation_reviews'
+        unique_together = ('envelope', 'finding_fingerprint')
+
+

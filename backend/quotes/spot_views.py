@@ -62,7 +62,7 @@ from quotes.intake_safety import (
     normalize_source_analysis_summary,
     sync_source_analysis_summary_counts,
 )
-from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer
+from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer, SpotTemplateValidationReviewSerializer
 from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
@@ -2940,4 +2940,30 @@ class SpotSourceBatchReviewAPIView(APIView):
         spe_db.refresh_from_db()
         serializer = SpotPricingEnvelopeSerializer(spe_db)
         return Response(serializer.data)
+
+
+class SpotTemplateValidationFindingReviewedAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, envelope_id):
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
+            SpotPricingEnvelopeDB.objects.all(),
+        )
+
+        payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        payload['envelope'] = spe_db.id
+
+        serializer = SpotTemplateValidationReviewSerializer(
+            data=payload,
+            context={'request': request}
+        )
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
