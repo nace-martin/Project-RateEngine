@@ -21,3 +21,5 @@ export { AssertionReviewCard } from './AssertionReviewCard';
 
 export { QuoteVerificationPanel } from './QuoteVerificationPanel';
 
+export { SpotTemplateValidationCard } from './SpotTemplateValidationCard';
+

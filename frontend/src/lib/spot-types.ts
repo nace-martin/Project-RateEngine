@@ -248,6 +248,22 @@ export interface CreateSPERequest {
     validity_hours?: number;
 }
 
+export interface TemplateFinding {
+    code: string;
+    severity: 'warning' | 'review' | 'info' | 'passed';
+    message: string;
+    canonical_type: string | null;
+    template_line_id: number | null;
+    charge_line_id: string | null;
+    metadata: Record<string, unknown>;
+}
+
+export interface TemplateValidation {
+    status: 'passed' | 'warnings' | 'review';
+    template_id: number | null;
+    findings: TemplateFinding[];
+}
+
 /** Full SPE response from API */
 export interface SpotPricingEnvelope {
     id: string;
@@ -269,6 +285,7 @@ export interface SpotPricingEnvelope {
     sources: SPESourceBatch[];
     charges: SPEChargeLine[];
     customer_name?: string; // from backend/quotes/spot_schemas.py
+    template_validation?: TemplateValidation;
 }
 
 /** SPE compute request */
