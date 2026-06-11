@@ -629,4 +629,94 @@ class SpotCanonicalReviewStatesTests(TestCase):
         self.assertEqual(fields['normalization_review_reason'], 'canonical_type_missing')
 
 
+class SpotExpectedTemplateGroundworkTests(TestCase):
+    """
+    Test suite for Phase 10.3i — Expected Charge Template Framework Model Groundwork.
+    """
+
+    def setUp(self):
+        # Fetch or create a test CanonicalChargeType
+        self.ct_awb, _ = CanonicalChargeType.objects.get_or_create(
+            code='AWB_DOCUMENTATION',
+            defaults={
+                'name': 'AWB Fee',
+                'category': 'DOCUMENTATION'
+            }
+        )
+
+    def test_expected_charge_template_creation(self):
+        """Verify we can create ExpectedChargeTemplate with valid attributes."""
+        from quotes.spot_models import ExpectedChargeTemplate
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export D2D Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="SG",
+            origin_code="SIN",
+            destination_country="PG",
+            destination_code="POM"
+        )
+        self.assertIsNotNone(template.pk)
+        self.assertEqual(template.name, "Airfreight Export D2D Template")
+
+    def test_expected_template_line_creation(self):
+        """Verify we can create ExpectedTemplateLine associated with template and canonical type."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export D2D Template",
+            mode="EXPORT"
+        )
+        line = ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_awb,
+            requirement_level="REQUIRED",
+            expected_basis="flat"
+        )
+        self.assertIsNotNone(line.pk)
+        self.assertEqual(line.template, template)
+        self.assertEqual(line.canonical_charge_type, self.ct_awb)
+
+    def test_duplicate_line_constraint(self):
+        """Verify that adding two lines with the same canonical type triggers uniqueness IntegrityError."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine
+        template = ExpectedChargeTemplate.objects.create(
+            name="Duplicate Test Template",
+            mode="EXPORT"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_awb,
+            requirement_level="REQUIRED"
+        )
+        with self.assertRaises(IntegrityError):
+            ExpectedTemplateLine.objects.create(
+                template=template,
+                canonical_charge_type=self.ct_awb,
+                requirement_level="OPTIONAL"
+            )
+
+    def test_protect_behavior_on_canonical_charge_type_delete(self):
+        """Verify deleting a CanonicalChargeType referenced by a Template Line raises ProtectedError."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine
+        from django.db.models import ProtectedError
+        template = ExpectedChargeTemplate.objects.create(
+            name="Protect Test Template",
+            mode="EXPORT"
+        )
+        ct_to_delete = CanonicalChargeType.objects.create(
+            code="TEMP_TEST_PROTECT",
+            name="Temp Test",
+            category="TEST"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=ct_to_delete,
+            requirement_level="REQUIRED"
+        )
+        with self.assertRaises(ProtectedError):
+            ct_to_delete.delete()
+
+
+
 
