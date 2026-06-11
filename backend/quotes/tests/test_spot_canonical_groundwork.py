@@ -1076,6 +1076,76 @@ class SpotExpectedTemplateValidationTests(TestCase):
         self.assertEqual(result["status"], "passed")
         self.assertEqual(len(result["findings"]), 0)
 
+    def test_serializer_includes_template_validation_passed(self):
+        """Verify SpotPricingEnvelopeSerializer includes template_validation with passed status and clean schema structure."""
+        from quotes.serializers import SpotPricingEnvelopeSerializer
+        spe = self._create_spe()
+        
+        # We don't have a template seeded so template_not_found is expected, which resolves to review status.
+        # Let's seed a matching template and charge to achieve passed status.
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine, SPEChargeLineDB
+        from django.utils import timezone
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_awb,
+            requirement_level="REQUIRED",
+            expected_basis="any"
+        )
+        
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="AWB_LINE",
+            description="AWB Fee",
+            amount=50.0,
+            currency="SGD",
+            unit="flat",
+            bucket="airfreight",
+            canonical_charge_type=self.ct_awb,
+            source_reference="REF-PASS",
+            entered_by=self.user,
+            entered_at=timezone.now()
+        )
+        
+        serializer = SpotPricingEnvelopeSerializer(spe)
+        data = serializer.data
+        self.assertIn("template_validation", data)
+        validation = data["template_validation"]
+        self.assertEqual(validation["status"], "passed")
+        self.assertEqual(validation["template_id"], template.id)
+        self.assertEqual(len(validation["findings"]), 0)
+
+    def test_serializer_includes_template_validation_review(self):
+        """Verify SpotPricingEnvelopeSerializer includes template_validation with review/warning status and correct finding structures."""
+        from quotes.serializers import SpotPricingEnvelopeSerializer
+        spe = self._create_spe()
+        
+        # template_not_found is triggered (review severity)
+        serializer = SpotPricingEnvelopeSerializer(spe)
+        data = serializer.data
+        self.assertIn("template_validation", data)
+        validation = data["template_validation"]
+        self.assertEqual(validation["status"], "review")
+        self.assertIsNone(validation["template_id"])
+        self.assertEqual(len(validation["findings"]), 1)
+        
+        finding = validation["findings"][0]
+        self.assertEqual(finding["code"], "template_not_found")
+        self.assertEqual(finding["severity"], "review")
+        self.assertIn("message", finding)
+        self.assertIsNone(finding["canonical_type"])
+        self.assertIsNone(finding["template_line_id"])
+        self.assertIsNone(finding["charge_line_id"])
+        self.assertEqual(finding["metadata"], {})
+
+
 
 
 

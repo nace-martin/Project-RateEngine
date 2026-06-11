@@ -777,11 +777,12 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     sources = SPESourceBatchSerializer(source='source_batches', many=True, read_only=True)
     acknowledgement = SPEAcknowledgementSerializer(read_only=True)
     
-    missing_mandatory_fields = serializers.SerializerMethodField()
-    can_proceed = serializers.SerializerMethodField()
     has_acknowledgement = serializers.SerializerMethodField()
     context_integrity_valid = serializers.SerializerMethodField()
     intake_safety = serializers.SerializerMethodField()
+    template_validation = serializers.SerializerMethodField(read_only=True)
+    missing_mandatory_fields = serializers.SerializerMethodField(read_only=True)
+    can_proceed = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = SpotPricingEnvelopeDB
@@ -792,9 +793,10 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
             'shipment_context_hash', 'context_integrity_valid',
             'has_acknowledgement', 'acknowledgement',
             'missing_mandatory_fields', 'can_proceed', 'intake_safety',
-            'sources', 'charges'
+            'template_validation', 'sources', 'charges'
         )
         read_only_fields = fields
+
 
     def get_customer_name(self, obj):
         if obj.quote and obj.quote.customer:
@@ -835,4 +837,9 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
 
     def get_intake_safety(self, obj):
         return evaluate_envelope_intake_safety(obj.source_batches.all())
+
+    def get_template_validation(self, obj):
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        return validate_envelope_charges(obj)
+
 
