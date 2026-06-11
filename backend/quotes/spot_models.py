@@ -663,3 +663,95 @@ class SPEManagerApprovalDB(models.Model):
     def __str__(self):
         status = "Approved" if self.approved else "Rejected"
         return f"{status} by {self.manager} for SPE-{str(self.envelope_id)[:8]}"
+    
+class ExpectedChargeTemplate(models.Model):
+    """
+    Defines the context criteria under which a set of charge expectations is applicable.
+    """
+    name = models.CharField(max_length=150, help_text="e.g., Airfreight Export D2D Template")
+    is_active = models.BooleanField(default=True, db_index=True)
+    is_system = models.BooleanField(default=False, help_text="System-seeded templates protected from deletion")
+    
+    # Shipment Context Criteria
+    mode = models.CharField(
+        max_length=20,
+        choices=[('IMPORT', 'Import'), ('EXPORT', 'Export'), ('DOMESTIC', 'Domestic')],
+        db_index=True
+    )
+    transport_mode = models.CharField(
+        max_length=20,
+        choices=[('AIR', 'Air'), ('SEA', 'Sea'), ('ROAD', 'Road'), ('ANY', 'Any')],
+        default='ANY',
+        db_index=True
+    )
+    service_scope = models.CharField(
+        max_length=20,
+        choices=[('A2A', 'Airport-to-Airport'), ('D2D', 'Door-to-Door'), 
+                 ('D2A', 'Door-to-Airport'), ('A2D', 'Airport-to-Door'),
+                 ('P2P', 'Port-to-Port'), ('ANY', 'Any')],
+        default='ANY',
+        db_index=True
+    )
+    
+    # Route Specificity (Hierarchical)
+    origin_country = models.CharField(max_length=2, blank=True, null=True, help_text="ISO 2-letter code")
+    origin_code = models.CharField(max_length=10, blank=True, null=True, help_text="Port/Airport Code (e.g., SIN)")
+    destination_country = models.CharField(max_length=2, blank=True, null=True, help_text="ISO 2-letter code")
+    destination_code = models.CharField(max_length=10, blank=True, null=True, help_text="Port/Airport Code (e.g., POM)")
+
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'expected_charge_templates'
+        verbose_name = 'Expected Charge Template'
+        verbose_name_plural = 'Expected Charge Templates'
+
+    def __str__(self):
+        return f"{self.name} ({self.mode} {self.transport_mode})"
+
+
+class ExpectedTemplateLine(models.Model):
+    class RequirementLevel(models.TextChoices):
+        REQUIRED = 'REQUIRED', 'Expected / Must be accounted for'
+        OPTIONAL = 'OPTIONAL', 'Optional (Can be billed, ignore if absent)'
+        CONDITIONAL = 'CONDITIONAL', 'Conditional (Storage, Demurrage, etc.)'
+        EXCLUDED = 'EXCLUDED', 'Excluded (Must not be billed under this scope)'
+
+    template = models.ForeignKey(
+        ExpectedChargeTemplate, 
+        on_delete=models.CASCADE, 
+        related_name='lines'
+    )
+    canonical_charge_type = models.ForeignKey(
+        'pricing_v4.CanonicalChargeType', 
+        on_delete=models.PROTECT
+    )
+    requirement_level = models.CharField(
+        max_length=20, 
+        choices=RequirementLevel.choices, 
+        default=RequirementLevel.REQUIRED
+    )
+    expected_basis = models.CharField(
+        max_length=20, 
+        choices=[('per_kg', 'Per Kilogram'), ('flat', 'Flat Charge'), 
+                 ('percentage', 'Percentage Basis'), ('any', 'Any')], 
+        default='any',
+        help_text="Expected calculation unit basis if deterministic"
+    )
+    
+    notes = models.TextField(blank=True, null=True, help_text="Explanation/Context rules")
+    sort_order = models.IntegerField(default=10)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'expected_template_lines'
+        # unique_together is acceptable for MVP but may need relaxing later if the same canonical 
+        # type can appear more than once by leg, basis, or service component.
+        unique_together = ('template', 'canonical_charge_type')
+        ordering = ['sort_order']
+
+    def __str__(self):
+        return f"{self.canonical_charge_type} ({self.requirement_level})"
+
