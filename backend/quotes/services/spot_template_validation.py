@@ -6,6 +6,27 @@ from quotes.spot_models import SpotPricingEnvelopeDB, ExpectedChargeTemplate, Ex
 logger = logging.getLogger(__name__)
 
 
+def _build_finding(
+    code: str,
+    severity: str,
+    message: str,
+    canonical_type: Optional[str] = None,
+    template_line_id: Optional[int] = None,
+    charge_line_id: Optional[str] = None,
+    metadata: Optional[dict] = None
+) -> dict:
+    """Helper to build a standardized finding dictionary with the full key set."""
+    return {
+        "code": code,
+        "severity": severity,
+        "message": message,
+        "canonical_type": canonical_type,
+        "template_line_id": template_line_id,
+        "charge_line_id": charge_line_id,
+        "metadata": metadata or {}
+    }
+
+
 def resolve_expected_charge_template(shipment_context: dict) -> Optional[ExpectedChargeTemplate]:
     """
     Resolves the most specific ExpectedChargeTemplate for a given shipment context.
@@ -93,17 +114,22 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
     template = resolve_expected_charge_template(context)
     
     if not template:
-        findings.append({
-            "code": "template_not_found",
-            "severity": "Review",
-            "message": "No applicable expectation template resolved for this shipment context.",
-            "canonical_charge_type_code": None
-        })
+        findings.append(
+            _build_finding(
+                code="template_not_found",
+                severity="review",
+                message="No applicable expectation template resolved for this shipment context."
+            )
+        )
+        # Deduce status dynamically to support lowercase 'review' status
+        severities = {f["severity"] for f in findings}
+        status = "review" if "review" in severities else "warnings"
         return {
-            "status": "WARNINGS",
+            "status": status,
             "template_id": None,
             "findings": findings
         }
+
 
     # 2. Gather actual charge lines
     actual_lines = envelope.charge_lines.all()
@@ -125,59 +151,91 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
         has_actual = canonical_type in actual_by_canonical
         
         if level == ExpectedTemplateLine.RequirementLevel.REQUIRED and not has_actual:
-            findings.append({
-                "code": "expected_charge_missing",
-                "severity": "Warning",
-                "message": f"Expected charge of type '{canonical_type.name}' ({canonical_type.code}) is missing.",
-                "canonical_charge_type_code": canonical_type.code
-            })
+            findings.append(
+                _build_finding(
+                    code="expected_charge_missing",
+                    severity="warning",
+                    message=f"Expected charge of type '{canonical_type.name}' ({canonical_type.code}) is missing.",
+                    canonical_type=canonical_type.code,
+                    template_line_id=t_line.id
+                )
+            )
             
         elif level == ExpectedTemplateLine.RequirementLevel.EXCLUDED and has_actual:
-            findings.append({
-                "code": "unexpected_charge_present",
-                "severity": "Warning",
-                "message": f"Excluded charge of type '{canonical_type.name}' ({canonical_type.code}) was included.",
-                "canonical_charge_type_code": canonical_type.code
-            })
+            for act_line in actual_by_canonical[canonical_type]:
+                findings.append(
+                    _build_finding(
+                        code="unexpected_charge_present",
+                        severity="warning",
+                        message=f"Excluded charge of type '{canonical_type.name}' ({canonical_type.code}) was included.",
+                        canonical_type=canonical_type.code,
+                        template_line_id=t_line.id,
+                        charge_line_id=str(act_line.id)
+                    )
+                )
             
         elif level == ExpectedTemplateLine.RequirementLevel.CONDITIONAL and has_actual:
-            findings.append({
-                "code": "conditional_charge_present",
-                "severity": "Review",
-                "message": f"Conditional charge of type '{canonical_type.name}' ({canonical_type.code}) is present and requires confirmation.",
-                "canonical_charge_type_code": canonical_type.code
-            })
+            for act_line in actual_by_canonical[canonical_type]:
+                findings.append(
+                    _build_finding(
+                        code="conditional_charge_present",
+                        severity="review",
+                        message=f"Conditional charge of type '{canonical_type.name}' ({canonical_type.code}) is present and requires confirmation.",
+                        canonical_type=canonical_type.code,
+                        template_line_id=t_line.id,
+                        charge_line_id=str(act_line.id)
+                    )
+                )
             
         # Check calculation basis mismatch if actual is present
         if has_actual and expected_basis != "any":
             for act_line in actual_by_canonical[canonical_type]:
                 if act_line.calculation_basis != expected_basis:
-                    findings.append({
-                        "code": "expected_basis_mismatch",
-                        "severity": "Review",
-                        "message": (
-                            f"Basis mismatch for '{canonical_type.name}': "
-                            f"Expected basis '{expected_basis}' but actual was '{act_line.calculation_basis}'."
-                        ),
-                        "canonical_charge_type_code": canonical_type.code
-                    })
+                    findings.append(
+                        _build_finding(
+                            code="expected_basis_mismatch",
+                            severity="review",
+                            message=(
+                                f"Basis mismatch for '{canonical_type.name}': "
+                                f"Expected basis '{expected_basis}' but actual was '{act_line.calculation_basis}'."
+                            ),
+                            canonical_type=canonical_type.code,
+                            template_line_id=t_line.id,
+                            charge_line_id=str(act_line.id),
+                            metadata={
+                                "expected_basis": expected_basis,
+                                "actual_basis": act_line.calculation_basis
+                            }
+                        )
+                    )
 
     # 4. Check for duplicates in actual charge lines
     for canonical_type, lines in actual_by_canonical.items():
         if len(lines) > 1:
-            findings.append({
-                "code": "duplicate_charge_family",
-                "severity": "Review",
-                "message": f"Multiple lines detected resolving to canonical charge family '{canonical_type.name}' ({canonical_type.code}).",
-                "canonical_charge_type_code": canonical_type.code
-            })
+            for act_line in lines:
+                findings.append(
+                    _build_finding(
+                        code="duplicate_charge_family",
+                        severity="review",
+                        message=f"Multiple lines detected resolving to canonical charge family '{canonical_type.name}' ({canonical_type.code}).",
+                        canonical_type=canonical_type.code,
+                        charge_line_id=str(act_line.id)
+                    )
+                )
 
     # Deduce final status
-    has_warnings = any(f["severity"] in ("Warning", "Review") for f in findings)
-    status = "WARNINGS" if has_warnings else "PASSED"
+    severities = {f["severity"] for f in findings}
+    if "review" in severities:
+        status = "review"
+    elif "warning" in severities or "info" in severities:
+        status = "warnings"
+    else:
+        status = "passed"
 
     return {
         "status": status,
         "template_id": template.id,
         "findings": findings
     }
+
+
