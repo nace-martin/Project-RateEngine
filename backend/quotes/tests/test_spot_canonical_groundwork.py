@@ -776,11 +776,16 @@ class SpotExpectedTemplateValidationTests(TestCase):
         spe = self._create_spe()
         
         result = validate_envelope_charges(spe)
-        self.assertEqual(result["status"], "WARNINGS")
+        self.assertEqual(result["status"], "review")
         self.assertIsNone(result["template_id"])
         self.assertEqual(len(result["findings"]), 1)
-        self.assertEqual(result["findings"][0]["code"], "template_not_found")
-        self.assertEqual(result["findings"][0]["severity"], "Review")
+        finding = result["findings"][0]
+        self.assertEqual(finding["code"], "template_not_found")
+        self.assertEqual(finding["severity"], "review")
+        self.assertIsNone(finding["canonical_type"])
+        self.assertIsNone(finding["template_line_id"])
+        self.assertIsNone(finding["charge_line_id"])
+        self.assertEqual(finding["metadata"], {})
 
     def test_missing_expected_charge(self):
         """Verify validation flags expected_charge_missing if REQUIRED line is absent."""
@@ -794,7 +799,7 @@ class SpotExpectedTemplateValidationTests(TestCase):
             origin_country="PG",
             destination_country="SG"
         )
-        ExpectedTemplateLine.objects.create(
+        t_line = ExpectedTemplateLine.objects.create(
             template=template,
             canonical_charge_type=self.ct_awb,
             requirement_level="REQUIRED"
@@ -802,10 +807,16 @@ class SpotExpectedTemplateValidationTests(TestCase):
         
         spe = self._create_spe()
         result = validate_envelope_charges(spe)
-        self.assertEqual(result["status"], "WARNINGS")
+        self.assertEqual(result["status"], "warnings")
         self.assertEqual(result["template_id"], template.id)
-        findings = {f["code"] for f in result["findings"]}
-        self.assertIn("expected_charge_missing", findings)
+        findings = result["findings"]
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["code"], "expected_charge_missing")
+        self.assertEqual(finding["severity"], "warning")
+        self.assertEqual(finding["canonical_type"], self.ct_awb.code)
+        self.assertEqual(finding["template_line_id"], t_line.id)
+        self.assertIsNone(finding["charge_line_id"])
 
     def test_unexpected_charge_present(self):
         """Verify validation flags unexpected_charge_present if EXCLUDED line is present."""
@@ -820,14 +831,14 @@ class SpotExpectedTemplateValidationTests(TestCase):
             origin_country="PG",
             destination_country="SG"
         )
-        ExpectedTemplateLine.objects.create(
+        t_line = ExpectedTemplateLine.objects.create(
             template=template,
             canonical_charge_type=self.ct_delivery,
             requirement_level="EXCLUDED"
         )
         
         spe = self._create_spe()
-        SPEChargeLineDB.objects.create(
+        charge_line = SPEChargeLineDB.objects.create(
             envelope=spe,
             code="EXCLUDED_LINE",
             description="some delivery charge",
@@ -842,9 +853,15 @@ class SpotExpectedTemplateValidationTests(TestCase):
         )
         
         result = validate_envelope_charges(spe)
-        self.assertEqual(result["status"], "WARNINGS")
-        findings = {f["code"] for f in result["findings"]}
-        self.assertIn("unexpected_charge_present", findings)
+        self.assertEqual(result["status"], "warnings")
+        findings = result["findings"]
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["code"], "unexpected_charge_present")
+        self.assertEqual(finding["severity"], "warning")
+        self.assertEqual(finding["canonical_type"], self.ct_delivery.code)
+        self.assertEqual(finding["template_line_id"], t_line.id)
+        self.assertEqual(finding["charge_line_id"], str(charge_line.id))
 
     def test_conditional_charge_present(self):
         """Verify validation flags conditional_charge_present if CONDITIONAL line is present."""
@@ -859,14 +876,14 @@ class SpotExpectedTemplateValidationTests(TestCase):
             origin_country="PG",
             destination_country="SG"
         )
-        ExpectedTemplateLine.objects.create(
+        t_line = ExpectedTemplateLine.objects.create(
             template=template,
             canonical_charge_type=self.ct_storage,
             requirement_level="CONDITIONAL"
         )
         
         spe = self._create_spe()
-        SPEChargeLineDB.objects.create(
+        charge_line = SPEChargeLineDB.objects.create(
             envelope=spe,
             code="STORAGE_LINE",
             description="warehouse storage",
@@ -881,9 +898,15 @@ class SpotExpectedTemplateValidationTests(TestCase):
         )
         
         result = validate_envelope_charges(spe)
-        self.assertEqual(result["status"], "WARNINGS")
-        findings = {f["code"] for f in result["findings"]}
-        self.assertIn("conditional_charge_present", findings)
+        self.assertEqual(result["status"], "review")
+        findings = result["findings"]
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["code"], "conditional_charge_present")
+        self.assertEqual(finding["severity"], "review")
+        self.assertEqual(finding["canonical_type"], self.ct_storage.code)
+        self.assertEqual(finding["template_line_id"], t_line.id)
+        self.assertEqual(finding["charge_line_id"], str(charge_line.id))
 
     def test_duplicate_charge_family(self):
         """Verify validation flags duplicate_charge_family when actual canonical type is duplicated."""
@@ -905,9 +928,10 @@ class SpotExpectedTemplateValidationTests(TestCase):
         )
         
         spe = self._create_spe()
+        charge_lines = []
         # Add two fuel surcharge lines
         for ref in ["REF-A", "REF-B"]:
-            SPEChargeLineDB.objects.create(
+            cl = SPEChargeLineDB.objects.create(
                 envelope=spe,
                 code="FUEL_LINE",
                 description="airline fuel",
@@ -920,11 +944,18 @@ class SpotExpectedTemplateValidationTests(TestCase):
                 entered_by=self.user,
                 entered_at=timezone.now()
             )
+            charge_lines.append(cl)
             
         result = validate_envelope_charges(spe)
-        self.assertEqual(result["status"], "WARNINGS")
-        findings = {f["code"] for f in result["findings"]}
-        self.assertIn("duplicate_charge_family", findings)
+        self.assertEqual(result["status"], "review")
+        findings = result["findings"]
+        # There should be 2 duplicate charge findings (one for each actual line)
+        self.assertEqual(len(findings), 2)
+        for finding in findings:
+            self.assertEqual(finding["code"], "duplicate_charge_family")
+            self.assertEqual(finding["severity"], "review")
+            self.assertEqual(finding["canonical_type"], self.ct_fuel.code)
+            self.assertIn(finding["charge_line_id"], [str(c.id) for c in charge_lines])
 
     def test_basis_mismatch(self):
         """Verify validation flags expected_basis_mismatch when actual basis differs from expected."""
@@ -939,7 +970,7 @@ class SpotExpectedTemplateValidationTests(TestCase):
             origin_country="PG",
             destination_country="SG"
         )
-        ExpectedTemplateLine.objects.create(
+        t_line = ExpectedTemplateLine.objects.create(
             template=template,
             canonical_charge_type=self.ct_fuel,
             requirement_level="REQUIRED",
@@ -948,7 +979,7 @@ class SpotExpectedTemplateValidationTests(TestCase):
         
         spe = self._create_spe()
         # Add actual line with flat calculation_basis snapshot
-        SPEChargeLineDB.objects.create(
+        charge_line = SPEChargeLineDB.objects.create(
             envelope=spe,
             code="FUEL_LINE",
             description="airline fuel flat",
@@ -964,9 +995,88 @@ class SpotExpectedTemplateValidationTests(TestCase):
         )
         
         result = validate_envelope_charges(spe)
-        self.assertEqual(result["status"], "WARNINGS")
-        findings = {f["code"] for f in result["findings"]}
-        self.assertIn("expected_basis_mismatch", findings)
+        self.assertEqual(result["status"], "review")
+        findings = result["findings"]
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["code"], "expected_basis_mismatch")
+        self.assertEqual(finding["severity"], "review")
+        self.assertEqual(finding["canonical_type"], self.ct_fuel.code)
+        self.assertEqual(finding["template_line_id"], t_line.id)
+        self.assertEqual(finding["charge_line_id"], str(charge_line.id))
+        self.assertEqual(finding["metadata"], {"expected_basis": "per_kg", "actual_basis": "flat"})
+
+    def test_standardized_finding_shape_completeness(self):
+        """Verify that every finding includes the full key set with correct types and lowercase statuses."""
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        spe = self._create_spe()
+        
+        result = validate_envelope_charges(spe)
+        self.assertIn("status", result)
+        self.assertIn("template_id", result)
+        self.assertIn("findings", result)
+        
+        self.assertEqual(result["status"], "review")
+        
+        for finding in result["findings"]:
+            # Ensure exact set of expected keys
+            expected_keys = {
+                "code", "severity", "message", "canonical_type", 
+                "template_line_id", "charge_line_id", "metadata"
+            }
+            self.assertEqual(set(finding.keys()), expected_keys)
+            
+            # Severity must be lowercase
+            self.assertIn(finding["severity"], ["info", "warning", "review"])
+            # Types
+            self.assertIsInstance(finding["metadata"], dict)
+            if finding["canonical_type"] is not None:
+                self.assertIsInstance(finding["canonical_type"], str)
+            if finding["template_line_id"] is not None:
+                self.assertIsInstance(finding["template_line_id"], int)
+            if finding["charge_line_id"] is not None:
+                self.assertIsInstance(finding["charge_line_id"], str)
+
+    def test_validation_passed_status(self):
+        """Verify status is 'passed' when a matching template exists and all required charges are present with no anomalies."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine, SPEChargeLineDB
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        from django.utils import timezone
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_awb,
+            requirement_level="REQUIRED",
+            expected_basis="any"
+        )
+        
+        spe = self._create_spe()
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="AWB_LINE",
+            description="AWB Fee",
+            amount=50.0,
+            currency="SGD",
+            unit="flat",
+            bucket="airfreight",
+            canonical_charge_type=self.ct_awb,
+            source_reference="REF-PASS",
+            entered_by=self.user,
+            entered_at=timezone.now()
+        )
+        
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(len(result["findings"]), 0)
+
+
 
 
 
