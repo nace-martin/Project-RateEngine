@@ -27,6 +27,7 @@ import {
     ExpiredBanner,
     RejectedBanner,
     ReplyPasteCard,
+    SpotTemplateValidationCard,
 } from "@/components/spot";
 import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import { SpotWorkspaceSummary } from "@/components/spot/SpotWorkspaceSummary";
@@ -1036,6 +1037,10 @@ export default function SpotRateEntryPage() {
                     >
                         {"<-"} Back to Intake
                     </Button>
+
+                    {state.spe?.template_validation && (
+                        <SpotTemplateValidationCard validation={state.spe.template_validation} />
+                    )}
 
                     <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
                         <CardHeader className="border-b border-primary/20 bg-primary pb-5 text-primary-foreground">
