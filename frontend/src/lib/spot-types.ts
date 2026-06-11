@@ -250,12 +250,18 @@ export interface CreateSPERequest {
 
 export interface TemplateFinding {
     code: string;
-    severity: 'warning' | 'review' | 'info' | 'passed';
+    severity: 'warning' | 'review' | 'info';
     message: string;
     canonical_type: string | null;
     template_line_id: number | null;
     charge_line_id: string | null;
     metadata: Record<string, unknown>;
+    is_reviewed: boolean;
+    review?: {
+        comment: string | null;
+        reviewed_by: string | null;
+        reviewed_at: string;
+    } | null;
 }
 
 export interface TemplateValidation {

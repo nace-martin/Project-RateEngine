@@ -33,9 +33,9 @@ import { SpotRateEntryForm } from "@/components/spot/SpotRateEntryForm";
 import { SpotWorkspaceSummary } from "@/components/spot/SpotWorkspaceSummary";
 import { SourceComparisonSheet } from "@/components/spot/SourceComparisonSheet";
 import { IssueDetailsSheet } from "@/components/spot/IssueDetailsSheet";
-import type { SPEChargeLine, SPECommodity } from "@/lib/spot-types";
+import type { SPEChargeLine, SPECommodity, TemplateFinding } from "@/lib/spot-types";
 import type { ReplyAnalysisResult } from "@/lib/spot-types";
-import { getSpotStandardCharges } from "@/lib/api";
+import { getSpotStandardCharges, reviewSpotFinding } from "@/lib/api";
 import { getEffectiveProductCode, getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 import { getSpotFinalizeDisabledReason } from "@/lib/spot-finalization";
 import {
@@ -178,6 +178,24 @@ export default function SpotRateEntryPage() {
     const { loadSPE } = actions;
     const [currentStep, setCurrentStep] = useState<Step>("intake");
     const [analysisResult, setAnalysisResult] = useState<ReplyAnalysisResult | null>(null);
+
+    const handleReviewFinding = useCallback(async (finding: TemplateFinding, comment: string) => {
+        if (!state.spe) return;
+        try {
+            await reviewSpotFinding(state.spe.id, {
+                finding_code: finding.code,
+                canonical_type: finding.canonical_type,
+                template_line_id: finding.template_line_id,
+                charge_line_id: finding.charge_line_id,
+                comment: comment || undefined
+            });
+            await loadSPE(state.spe.id);
+        } catch (err) {
+            console.error("Failed to review finding:", err);
+            alert(err instanceof Error ? err.message : "Failed to submit review");
+        }
+    }, [state.spe, loadSPE]);
+
     const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
     const [intakeDirtyMap, setIntakeDirtyMap] = useState<Record<string, boolean>>({});
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
@@ -1039,7 +1057,10 @@ export default function SpotRateEntryPage() {
                     </Button>
 
                     {state.spe?.template_validation && (
-                        <SpotTemplateValidationCard validation={state.spe.template_validation} />
+                        <SpotTemplateValidationCard 
+                            validation={state.spe.template_validation} 
+                            onReviewFinding={handleReviewFinding}
+                        />
                     )}
 
                     <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
