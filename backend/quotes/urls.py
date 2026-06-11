@@ -30,6 +30,7 @@ from .spot_views import (
     SpotReplyAnalysisAPIView,
     SpotEnvelopeCreateQuoteAPIView,
     SpotSourceBatchReviewAPIView,
+    SpotTemplateValidationFindingReviewedAPIView,
 )
 
 app_name = 'quotes'
@@ -68,4 +69,5 @@ urlpatterns = [
     path('v3/spot/envelopes/<uuid:envelope_id>/sources/<uuid:source_batch_id>/review/', SpotSourceBatchReviewAPIView.as_view(), name='spot-source-batch-review'),
     path('v3/spot/analyze-reply/', SpotReplyAnalysisAPIView.as_view(), name='spot-analyze-reply'),
     path('v3/spot/envelopes/<uuid:envelope_id>/create-quote/', SpotEnvelopeCreateQuoteAPIView.as_view(), name='spot-envelope-create-quote'),
+    path('v3/spot/envelopes/<uuid:envelope_id>/findings/reviewed/', SpotTemplateValidationFindingReviewedAPIView.as_view(), name='spot-envelope-finding-reviewed'),
 ]

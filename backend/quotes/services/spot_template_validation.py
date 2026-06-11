@@ -1,9 +1,30 @@
 import logging
 from typing import Dict, Any, Optional
 from core.business_rules import classify_png_shipment
-from quotes.spot_models import SpotPricingEnvelopeDB, ExpectedChargeTemplate, ExpectedTemplateLine
+from quotes.spot_models import (
+    SpotPricingEnvelopeDB,
+    ExpectedChargeTemplate,
+    ExpectedTemplateLine,
+    SpotTemplateValidationReview
+)
 
 logger = logging.getLogger(__name__)
+
+
+def compute_finding_fingerprint(
+    finding_code: str,
+    canonical_type: Optional[str] = None,
+    template_line_id: Optional[int] = None,
+    charge_line_id: Optional[str] = None
+) -> str:
+    """
+    Computes a deterministic fingerprint string for a finding identity.
+    Format: finding_code:canonical_type:template_line_id:charge_line_id
+    """
+    c_type = canonical_type or ""
+    t_line_id = str(template_line_id) if template_line_id is not None else ""
+    c_line_id = str(charge_line_id) if charge_line_id is not None else ""
+    return f"{finding_code}:{c_type}:{t_line_id}:{c_line_id}"
 
 
 def _build_finding(
@@ -23,8 +44,11 @@ def _build_finding(
         "canonical_type": canonical_type,
         "template_line_id": template_line_id,
         "charge_line_id": charge_line_id,
-        "metadata": metadata or {}
+        "metadata": metadata or {},
+        "is_reviewed": False,
+        "review": None
     }
+
 
 
 def resolve_expected_charge_template(shipment_context: dict) -> Optional[ExpectedChargeTemplate]:
@@ -109,6 +133,33 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
     """
     findings = []
     
+    # Fetch existing reviews for this envelope
+    reviews = {
+        r.finding_fingerprint: r
+        for r in SpotTemplateValidationReview.objects.filter(envelope=envelope).select_related('reviewed_by')
+    }
+
+    def annotate_findings(lst):
+        for f in lst:
+            fingerprint = compute_finding_fingerprint(
+                finding_code=f["code"],
+                canonical_type=f["canonical_type"],
+                template_line_id=f["template_line_id"],
+                charge_line_id=f["charge_line_id"]
+            )
+            review_obj = reviews.get(fingerprint)
+            if review_obj:
+                f["is_reviewed"] = True
+                f["review"] = {
+                    "comment": review_obj.comment,
+                    "reviewed_by": review_obj.reviewed_by.username if review_obj.reviewed_by else None,
+                    "reviewed_at": review_obj.reviewed_at.isoformat()
+                }
+            else:
+                f["is_reviewed"] = False
+                f["review"] = None
+        return lst
+
     # 1. Resolve Template
     context = envelope.shipment_context_json or {}
     template = resolve_expected_charge_template(context)
@@ -127,8 +178,9 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
         return {
             "status": status,
             "template_id": None,
-            "findings": findings
+            "findings": annotate_findings(findings)
         }
+
 
 
     # 2. Gather actual charge lines
@@ -235,7 +287,7 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
     return {
         "status": status,
         "template_id": template.id,
-        "findings": findings
+        "findings": annotate_findings(findings)
     }
 
 

@@ -538,6 +538,7 @@ from quotes.spot_models import (
     SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
+    SpotTemplateValidationReview,
 )
 
 class SPESourceBatchSerializer(serializers.ModelSerializer):
@@ -841,5 +842,52 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
     def get_template_validation(self, obj):
         from quotes.services.spot_template_validation import validate_envelope_charges
         return validate_envelope_charges(obj)
+
+
+class SpotTemplateValidationReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SpotTemplateValidationReview
+        fields = [
+            'id', 'envelope', 'finding_code', 'canonical_type',
+            'template_line_id', 'charge_line_id', 'finding_fingerprint',
+            'comment', 'reviewed_by', 'reviewed_at'
+        ]
+        read_only_fields = ['id', 'finding_fingerprint', 'reviewed_by', 'reviewed_at']
+
+    def create(self, validated_data):
+        from quotes.services.spot_template_validation import compute_finding_fingerprint
+        
+        envelope = validated_data['envelope']
+        finding_code = validated_data['finding_code']
+        canonical_type = validated_data.get('canonical_type')
+        template_line_id = validated_data.get('template_line_id')
+        charge_line_id = validated_data.get('charge_line_id')
+        comment = validated_data.get('comment')
+        
+        user = self.context['request'].user
+        
+        # Compute fingerprint
+        fingerprint = compute_finding_fingerprint(
+            finding_code=finding_code,
+            canonical_type=canonical_type,
+            template_line_id=template_line_id,
+            charge_line_id=charge_line_id
+        )
+        
+        # update_or_create to handle idempotency / comment updates safely
+        instance, created = SpotTemplateValidationReview.objects.update_or_create(
+            envelope=envelope,
+            finding_fingerprint=fingerprint,
+            defaults={
+                'finding_code': finding_code,
+                'canonical_type': canonical_type,
+                'template_line_id': template_line_id,
+                'charge_line_id': charge_line_id,
+                'comment': comment,
+                'reviewed_by': user,
+            }
+        )
+        return instance
+
 
 
