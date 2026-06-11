@@ -660,6 +660,10 @@ class SPEManagerApprovalDB(models.Model):
         verbose_name = 'SPE Manager Approval'
         verbose_name_plural = 'SPE Manager Approvals'
     
+    def __str__(self):
+        status = "Approved" if self.approved else "Rejected"
+        return f"{status} by {self.manager} for SPE-{str(self.envelope_id)[:8]}"
+    
 class ExpectedChargeTemplate(models.Model):
     """
     Defines the context criteria under which a set of charge expectations is applicable.

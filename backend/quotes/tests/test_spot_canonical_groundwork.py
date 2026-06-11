@@ -718,5 +718,257 @@ class SpotExpectedTemplateGroundworkTests(TestCase):
             ct_to_delete.delete()
 
 
+class SpotExpectedTemplateValidationTests(TestCase):
+    """
+    Test suite for Phase 10.3j — SPOT Expected-vs-Actual Validation Engine.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        cls.user = User.objects.create_user(
+            username='validation_analyst',
+            email='validation@rateengine.com',
+            password='testpassword',
+            role='sales'
+        )
+        # Seed Canonical Charge Types
+        cls.ct_awb = CanonicalChargeType.objects.create(
+            code='AWB_DOCUMENTATION_VAL',
+            name='AWB Fee',
+            category='DOCUMENTATION'
+        )
+        cls.ct_fuel = CanonicalChargeType.objects.create(
+            code='AIRLINE_FUEL_VAL',
+            name='Airline Fuel Surcharge',
+            category='FUEL'
+        )
+        cls.ct_delivery = CanonicalChargeType.objects.create(
+            code='DEST_DELIVERY_VAL',
+            name='Destination Delivery',
+            category='DELIVERY'
+        )
+        cls.ct_storage = CanonicalChargeType.objects.create(
+            code='CONDITIONAL_STORAGE_VAL',
+            name='Conditional Storage',
+            category='STORAGE'
+        )
+
+    def _create_spe(self, origin_code='POM', destination_code='SIN', origin_country='PG', destination_country='SG'):
+        from django.utils import timezone
+        return SpotPricingEnvelopeDB.objects.create(
+            status='draft',
+            shipment_context_json={
+                'origin_code': origin_code,
+                'destination_code': destination_code,
+                'origin_country': origin_country,
+                'destination_country': destination_country,
+                'service_scope': 'D2D',
+                'transport_mode': 'AIR'
+            },
+            expires_at=timezone.now() + timezone.timedelta(hours=72)
+        )
+
+    def test_template_not_found(self):
+        """Verify validation registers template_not_found if no active template matches."""
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        spe = self._create_spe()
+        
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "WARNINGS")
+        self.assertIsNone(result["template_id"])
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual(result["findings"][0]["code"], "template_not_found")
+        self.assertEqual(result["findings"][0]["severity"], "Review")
+
+    def test_missing_expected_charge(self):
+        """Verify validation flags expected_charge_missing if REQUIRED line is absent."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_awb,
+            requirement_level="REQUIRED"
+        )
+        
+        spe = self._create_spe()
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "WARNINGS")
+        self.assertEqual(result["template_id"], template.id)
+        findings = {f["code"] for f in result["findings"]}
+        self.assertIn("expected_charge_missing", findings)
+
+    def test_unexpected_charge_present(self):
+        """Verify validation flags unexpected_charge_present if EXCLUDED line is present."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine, SPEChargeLineDB
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        from django.utils import timezone
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_delivery,
+            requirement_level="EXCLUDED"
+        )
+        
+        spe = self._create_spe()
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="EXCLUDED_LINE",
+            description="some delivery charge",
+            amount=500.0,
+            currency="SGD",
+            unit="flat",
+            bucket="destination_charges",
+            canonical_charge_type=self.ct_delivery,
+            source_reference="REF-1",
+            entered_by=self.user,
+            entered_at=timezone.now()
+        )
+        
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "WARNINGS")
+        findings = {f["code"] for f in result["findings"]}
+        self.assertIn("unexpected_charge_present", findings)
+
+    def test_conditional_charge_present(self):
+        """Verify validation flags conditional_charge_present if CONDITIONAL line is present."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine, SPEChargeLineDB
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        from django.utils import timezone
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_storage,
+            requirement_level="CONDITIONAL"
+        )
+        
+        spe = self._create_spe()
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="STORAGE_LINE",
+            description="warehouse storage",
+            amount=150.0,
+            currency="SGD",
+            unit="flat",
+            bucket="destination_charges",
+            canonical_charge_type=self.ct_storage,
+            source_reference="REF-2",
+            entered_by=self.user,
+            entered_at=timezone.now()
+        )
+        
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "WARNINGS")
+        findings = {f["code"] for f in result["findings"]}
+        self.assertIn("conditional_charge_present", findings)
+
+    def test_duplicate_charge_family(self):
+        """Verify validation flags duplicate_charge_family when actual canonical type is duplicated."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine, SPEChargeLineDB
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        from django.utils import timezone
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_fuel,
+            requirement_level="REQUIRED"
+        )
+        
+        spe = self._create_spe()
+        # Add two fuel surcharge lines
+        for ref in ["REF-A", "REF-B"]:
+            SPEChargeLineDB.objects.create(
+                envelope=spe,
+                code="FUEL_LINE",
+                description="airline fuel",
+                amount=50.0,
+                currency="SGD",
+                unit="flat",
+                bucket="airfreight",
+                canonical_charge_type=self.ct_fuel,
+                source_reference=ref,
+                entered_by=self.user,
+                entered_at=timezone.now()
+            )
+            
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "WARNINGS")
+        findings = {f["code"] for f in result["findings"]}
+        self.assertIn("duplicate_charge_family", findings)
+
+    def test_basis_mismatch(self):
+        """Verify validation flags expected_basis_mismatch when actual basis differs from expected."""
+        from quotes.spot_models import ExpectedChargeTemplate, ExpectedTemplateLine, SPEChargeLineDB
+        from quotes.services.spot_template_validation import validate_envelope_charges
+        from django.utils import timezone
+        template = ExpectedChargeTemplate.objects.create(
+            name="Airfreight Export SG->PG Template",
+            mode="EXPORT",
+            transport_mode="AIR",
+            service_scope="D2D",
+            origin_country="PG",
+            destination_country="SG"
+        )
+        ExpectedTemplateLine.objects.create(
+            template=template,
+            canonical_charge_type=self.ct_fuel,
+            requirement_level="REQUIRED",
+            expected_basis="per_kg"
+        )
+        
+        spe = self._create_spe()
+        # Add actual line with flat calculation_basis snapshot
+        SPEChargeLineDB.objects.create(
+            envelope=spe,
+            code="FUEL_LINE",
+            description="airline fuel flat",
+            amount=100.0,
+            currency="SGD",
+            unit="flat",
+            bucket="airfreight",
+            calculation_basis="flat",  # Mismatches expected_basis = 'per_kg'
+            canonical_charge_type=self.ct_fuel,
+            source_reference="REF-3",
+            entered_by=self.user,
+            entered_at=timezone.now()
+        )
+        
+        result = validate_envelope_charges(spe)
+        self.assertEqual(result["status"], "WARNINGS")
+        findings = {f["code"] for f in result["findings"]}
+        self.assertIn("expected_basis_mismatch", findings)
+
+
+
 
 
