@@ -1854,3 +1854,34 @@ export async function deleteSpotEnvelopeDraft(id: string): Promise<void> {
     throw new Error(`Failed to delete SPE draft: ${detail}`);
   }
 }
+
+export interface SpotFindingReviewRequest {
+  finding_code: string;
+  canonical_type: string | null;
+  template_line_id: number | null;
+  charge_line_id: string | null;
+  comment?: string | null;
+}
+
+export async function reviewSpotFinding(
+  envelopeId: string,
+  request: SpotFindingReviewRequest
+): Promise<unknown> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/findings/reviewed/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Reviewing finding failed: ${detail}`);
+  }
+
+  return response.json();
+}
+
