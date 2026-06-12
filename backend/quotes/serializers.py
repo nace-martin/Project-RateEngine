@@ -949,5 +949,14 @@ class SpotTemplateValidationSnapshotMetricsSerializer(serializers.Serializer):
     stability_metrics = serializers.DictField(child=serializers.IntegerField(), read_only=True)
 
 
+class SpotTemplateValidationComparisonMetricsSerializer(serializers.Serializer):
+    period = serializers.DictField(child=serializers.CharField(), read_only=True)
+    filters_applied = serializers.DictField(child=serializers.CharField(allow_null=True), read_only=True)
+    summary = serializers.DictField(child=serializers.FloatField(), read_only=True)
+    finding_code_comparison = serializers.ListField(child=serializers.DictField(), read_only=True)
+    canonical_type_comparison = serializers.ListField(child=serializers.DictField(), read_only=True)
+
+
+
 
 
