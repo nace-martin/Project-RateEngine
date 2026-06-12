@@ -32,6 +32,7 @@ from .spot_views import (
     SpotSourceBatchReviewAPIView,
     SpotTemplateValidationFindingReviewedAPIView,
     SpotTemplateValidationReviewMetricsAPIView,
+    SpotTemplateValidationSnapshotMetricsAPIView,
 )
 
 app_name = 'quotes'
@@ -72,4 +73,5 @@ urlpatterns = [
     path('v3/spot/envelopes/<uuid:envelope_id>/create-quote/', SpotEnvelopeCreateQuoteAPIView.as_view(), name='spot-envelope-create-quote'),
     path('v3/spot/envelopes/<uuid:envelope_id>/findings/reviewed/', SpotTemplateValidationFindingReviewedAPIView.as_view(), name='spot-envelope-finding-reviewed'),
     path('v3/spot/template-validation/review-metrics/', SpotTemplateValidationReviewMetricsAPIView.as_view(), name='spot-validation-review-metrics'),
+    path('v3/spot/template-validation/snapshot-metrics/', SpotTemplateValidationSnapshotMetricsAPIView.as_view(), name='spot-validation-snapshot-metrics'),
 ]
