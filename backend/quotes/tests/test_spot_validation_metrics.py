@@ -29,7 +29,8 @@ class SpotTemplateValidationReviewMetricsTests(APITestCase):
             shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
             expires_at=timezone.now() + datetime.timedelta(days=2),
             spot_trigger_reason_code="MANUAL",
-            spot_trigger_reason_text="Manual trigger"
+            spot_trigger_reason_text="Manual trigger",
+            created_by=self.manager_user
         )
 
         self.metrics_url = reverse("quotes:spot-validation-review-metrics")
@@ -145,3 +146,83 @@ class SpotTemplateValidationReviewMetricsTests(APITestCase):
         response = self.client.get(f"{self.metrics_url}?start_date={start}&end_date={end}")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"], "end_date cannot be before start_date.")
+
+    def test_departmental_rbac_isolation(self):
+        """Verify that a manager can only see review metrics for envelopes in their department."""
+        User = get_user_model()
+        
+        manager_air = User.objects.create_user(
+            username="manager_air",
+            password="password123",
+            email="manager_air@example.com",
+            role="manager",
+            department="Air"
+        )
+        manager_ocean = User.objects.create_user(
+            username="manager_ocean",
+            password="password123",
+            email="manager_ocean@example.com",
+            role="manager",
+            department="Ocean"
+        )
+        
+        sales_air = User.objects.create_user(
+            username="sales_air",
+            password="password123",
+            email="sales_air@example.com",
+            role="sales",
+            department="Air"
+        )
+        sales_ocean = User.objects.create_user(
+            username="sales_ocean",
+            password="password123",
+            email="sales_ocean@example.com",
+            role="sales",
+            department="Ocean"
+        )
+        
+        envelope_air = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
+            expires_at=timezone.now() + datetime.timedelta(days=2),
+            spot_trigger_reason_code="MANUAL",
+            spot_trigger_reason_text="Manual trigger",
+            created_by=sales_air
+        )
+        envelope_ocean = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
+            expires_at=timezone.now() + datetime.timedelta(days=2),
+            spot_trigger_reason_code="MANUAL",
+            spot_trigger_reason_text="Manual trigger",
+            created_by=sales_ocean
+        )
+        
+        SpotTemplateValidationEvent.objects.create(
+            envelope=envelope_air,
+            event_type="finding_reviewed",
+            finding_code="expected_charge_missing",
+            finding_fingerprint="fp_air",
+            user=sales_air
+        )
+        SpotTemplateValidationEvent.objects.create(
+            envelope=envelope_ocean,
+            event_type="finding_reviewed",
+            finding_code="unexpected_charge_present",
+            finding_fingerprint="fp_ocean",
+            user=sales_ocean
+        )
+        
+        self.client.force_authenticate(user=manager_air)
+        response = self.client.get(self.metrics_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_reviewed_events"], 1)
+        self.assertIn("expected_charge_missing", response.data["reviewed_by_finding_code"])
+        self.assertNotIn("unexpected_charge_present", response.data["reviewed_by_finding_code"])
+        
+        self.client.force_authenticate(user=manager_ocean)
+        response = self.client.get(self.metrics_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_reviewed_events"], 1)
+        self.assertIn("unexpected_charge_present", response.data["reviewed_by_finding_code"])
+        self.assertNotIn("expected_charge_missing", response.data["reviewed_by_finding_code"])

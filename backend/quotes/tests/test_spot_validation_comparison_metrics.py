@@ -33,14 +33,16 @@ class SpotTemplateValidationComparisonMetricsTests(APITestCase):
             shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
             expires_at=timezone.now() + datetime.timedelta(days=2),
             spot_trigger_reason_code="MANUAL",
-            spot_trigger_reason_text="Manual trigger"
+            spot_trigger_reason_text="Manual trigger",
+            created_by=self.manager_user
         )
         self.envelope_2 = SpotPricingEnvelopeDB.objects.create(
             status="draft",
             shipment_context_json={"origin_country": "AU", "destination_country": "NZ"},
             expires_at=timezone.now() + datetime.timedelta(days=2),
             spot_trigger_reason_code="MANUAL",
-            spot_trigger_reason_text="Manual trigger"
+            spot_trigger_reason_text="Manual trigger",
+            created_by=self.manager_user
         )
 
         self.metrics_url = reverse("quotes:spot-validation-comparison-metrics")
@@ -219,7 +221,8 @@ class SpotTemplateValidationComparisonMetricsTests(APITestCase):
                 shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
                 expires_at=timezone.now() + datetime.timedelta(days=2),
                 spot_trigger_reason_code="MANUAL",
-                spot_trigger_reason_text="Manual trigger"
+                spot_trigger_reason_text="Manual trigger",
+                created_by=self.manager_user
             )
             self._create_snapshot(
                 env,
@@ -296,3 +299,74 @@ class SpotTemplateValidationComparisonMetricsTests(APITestCase):
         self.assertEqual(cct_comp[0]["envelopes_generated_count"], 2)
         self.assertEqual(cct_comp[0]["envelopes_reviewed_count"], 1)
         self.assertEqual(cct_comp[0]["review_rate_percentage"], 50.0)
+
+    def test_departmental_rbac_isolation(self):
+        """Verify that a manager can only see comparison metrics for envelopes in their department."""
+        User = get_user_model()
+        
+        manager_air = User.objects.create_user(
+            username="manager_air",
+            password="password123",
+            email="manager_air@example.com",
+            role="manager",
+            department="Air"
+        )
+        manager_ocean = User.objects.create_user(
+            username="manager_ocean",
+            password="password123",
+            email="manager_ocean@example.com",
+            role="manager",
+            department="Ocean"
+        )
+        
+        sales_air = User.objects.create_user(
+            username="sales_air",
+            password="password123",
+            email="sales_air@example.com",
+            role="sales",
+            department="Air"
+        )
+        sales_ocean = User.objects.create_user(
+            username="sales_ocean",
+            password="password123",
+            email="sales_ocean@example.com",
+            role="sales",
+            department="Ocean"
+        )
+        
+        envelope_air = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
+            expires_at=timezone.now() + datetime.timedelta(days=2),
+            spot_trigger_reason_code="MANUAL",
+            spot_trigger_reason_text="Manual trigger",
+            created_by=sales_air
+        )
+        envelope_ocean = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
+            expires_at=timezone.now() + datetime.timedelta(days=2),
+            spot_trigger_reason_code="MANUAL",
+            spot_trigger_reason_text="Manual trigger",
+            created_by=sales_ocean
+        )
+        
+        self._create_snapshot(envelope_air, finding_codes=["expected_charge_missing"], canonical_types=["AWB"], findings_hash="fp_air")
+        self._create_event(envelope_air, finding_code="expected_charge_missing", canonical_type="AWB")
+        
+        self._create_snapshot(envelope_ocean, finding_codes=["unexpected_charge_present"], canonical_types=["FUEL"], findings_hash="fp_ocean")
+        self._create_event(envelope_ocean, finding_code="unexpected_charge_present", canonical_type="FUEL")
+        
+        self.client.force_authenticate(user=manager_air)
+        response = self.client.get(self.metrics_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["summary"]["total_envelopes_with_snapshots"], 1)
+        self.assertEqual(len(response.data["finding_code_comparison"]), 1)
+        self.assertEqual(response.data["finding_code_comparison"][0]["finding_code"], "expected_charge_missing")
+        
+        self.client.force_authenticate(user=manager_ocean)
+        response = self.client.get(self.metrics_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["summary"]["total_envelopes_with_snapshots"], 1)
+        self.assertEqual(len(response.data["finding_code_comparison"]), 1)
+        self.assertEqual(response.data["finding_code_comparison"][0]["finding_code"], "unexpected_charge_present")

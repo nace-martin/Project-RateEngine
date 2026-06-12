@@ -3028,7 +3028,7 @@ class SpotTemplateValidationReviewMetricsAPIView(APIView):
             return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
 
         from quotes.services.spot_validation_metrics import SpotTemplateValidationMetricsService
-        metrics = SpotTemplateValidationMetricsService.get_review_metrics(start_dt, end_dt)
+        metrics = SpotTemplateValidationMetricsService.get_review_metrics(request.user, start_dt, end_dt)
 
         from quotes.serializers import SpotTemplateValidationReviewMetricsSerializer
         serializer = SpotTemplateValidationReviewMetricsSerializer(metrics)
@@ -3120,6 +3120,7 @@ class SpotTemplateValidationSnapshotMetricsAPIView(APIView):
 
         from quotes.services.spot_validation_snapshot_metrics import SpotTemplateValidationSnapshotMetricsService
         metrics = SpotTemplateValidationSnapshotMetricsService.get_snapshot_metrics(
+            user=request.user,
             start_date=start_dt,
             end_date=end_dt,
             filters=filters,
@@ -3207,6 +3208,7 @@ class SpotTemplateValidationComparisonMetricsAPIView(APIView):
 
         from quotes.services.spot_validation_comparison_metrics import SpotTemplateValidationComparisonMetricsService
         metrics = SpotTemplateValidationComparisonMetricsService.get_comparison_metrics(
+            user=request.user,
             start_date=start_dt,
             end_date=end_dt,
             filters=filters,
@@ -3300,6 +3302,7 @@ class SpotTemplateValidationMaintenanceInsightsAPIView(APIView):
 
         from quotes.services.spot_validation_maintenance_insights import SpotTemplateValidationMaintenanceInsightsService
         insights = SpotTemplateValidationMaintenanceInsightsService.get_maintenance_insights(
+            user=request.user,
             start_date=start_dt,
             end_date=end_dt,
             filters=filters,

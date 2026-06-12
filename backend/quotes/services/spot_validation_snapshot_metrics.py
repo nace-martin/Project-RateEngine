@@ -6,17 +6,21 @@ logger = logging.getLogger(__name__)
 
 class SpotTemplateValidationSnapshotMetricsService:
     @classmethod
-    def get_snapshot_metrics(cls, start_date, end_date, filters=None, limit=10):
+    def get_snapshot_metrics(cls, user, start_date, end_date, filters=None, limit=10):
         """
         Aggregates operational validation metrics strictly from SpotTemplateValidationSnapshot records.
         """
         if filters is None:
             filters = {}
 
+        from quotes.selectors import get_spes_for_user
+        visible_envelopes = get_spes_for_user(user)
+
         # Base query with date range
         queryset = SpotTemplateValidationSnapshot.objects.filter(
             created_at__gte=start_date,
-            created_at__lte=end_date
+            created_at__lte=end_date,
+            envelope__in=visible_envelopes
         )
 
         # Apply database filters
