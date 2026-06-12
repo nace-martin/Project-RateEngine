@@ -792,7 +792,7 @@ class SpotTemplateValidationEvent(models.Model):
         on_delete=models.CASCADE,
         related_name="template_validation_events"
     )
-    event_type = models.CharField(max_length=50, default="finding_reviewed")
+    event_type = models.CharField(max_length=50, default="finding_reviewed", db_index=True)
     finding_code = models.CharField(max_length=100)
     canonical_type = models.CharField(max_length=100, null=True, blank=True)
     template_line_id = models.IntegerField(null=True, blank=True)
@@ -805,7 +805,7 @@ class SpotTemplateValidationEvent(models.Model):
         on_delete=models.SET_NULL,
         related_name="+"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -829,8 +829,8 @@ class SpotTemplateValidationSnapshot(models.Model):
         on_delete=models.CASCADE,
         related_name="validation_snapshots"
     )
-    trigger = models.CharField(max_length=50) # envelope_created, envelope_updated, sales_acknowledged
-    validation_status = models.CharField(max_length=50) # passed, warnings, review
+    trigger = models.CharField(max_length=50, db_index=True) # envelope_created, envelope_updated, sales_acknowledged
+    validation_status = models.CharField(max_length=50, db_index=True) # passed, warnings, review
     
     template_id = models.IntegerField(null=True, blank=True)
     template_hash = models.CharField(max_length=64, default="", db_index=True) # SHA256 of template definition
@@ -843,7 +843,7 @@ class SpotTemplateValidationSnapshot(models.Model):
     finding_codes = models.JSONField(default=list) # Unique finding codes present in this snapshot
     canonical_types = models.JSONField(default=list) # Unique canonical types present in this snapshot
     
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         db_table = 'spot_template_validation_snapshots'

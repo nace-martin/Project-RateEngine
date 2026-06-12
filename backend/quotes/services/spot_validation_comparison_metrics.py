@@ -21,7 +21,7 @@ class SpotTemplateValidationComparisonMetricsService:
             created_at__gte=start_date,
             created_at__lte=end_date,
             envelope__in=visible_envelopes
-        )
+        ).defer("findings_json")
 
         template_id = filters.get("template_id")
         if template_id is not None:
