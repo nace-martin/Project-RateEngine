@@ -34,7 +34,8 @@ class SpotTemplateValidationMaintenanceInsightsTests(APITestCase):
             shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
             expires_at=timezone.now() + datetime.timedelta(days=2),
             spot_trigger_reason_code="MANUAL",
-            spot_trigger_reason_text="Manual trigger"
+            spot_trigger_reason_text="Manual trigger",
+            created_by=self.manager_user
         )
 
         # Create 2 dummy templates
@@ -255,3 +256,89 @@ class SpotTemplateValidationMaintenanceInsightsTests(APITestCase):
         self.assertEqual(t_insight["finding_codes_breakdown"][0]["snapshot_count"], 5)
         self.assertEqual(t_insight["canonical_types_breakdown"][0]["canonical_type"], "AWB")
         self.assertEqual(t_insight["canonical_types_breakdown"][0]["snapshot_count"], 3)
+
+    def test_departmental_rbac_isolation(self):
+        """Verify that a manager can only see maintenance insights for envelopes in their department."""
+        User = get_user_model()
+        
+        manager_air = User.objects.create_user(
+            username="manager_air",
+            password="password123",
+            email="manager_air@example.com",
+            role="manager",
+            department="Air"
+        )
+        manager_ocean = User.objects.create_user(
+            username="manager_ocean",
+            password="password123",
+            email="manager_ocean@example.com",
+            role="manager",
+            department="Ocean"
+        )
+        
+        sales_air = User.objects.create_user(
+            username="sales_air",
+            password="password123",
+            email="sales_air@example.com",
+            role="sales",
+            department="Air"
+        )
+        sales_ocean = User.objects.create_user(
+            username="sales_ocean",
+            password="password123",
+            email="sales_ocean@example.com",
+            role="sales",
+            department="Ocean"
+        )
+        
+        envelope_air = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
+            expires_at=timezone.now() + datetime.timedelta(days=2),
+            spot_trigger_reason_code="MANUAL",
+            spot_trigger_reason_text="Manual trigger",
+            created_by=sales_air
+        )
+        envelope_ocean = SpotPricingEnvelopeDB.objects.create(
+            status="draft",
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG"},
+            expires_at=timezone.now() + datetime.timedelta(days=2),
+            spot_trigger_reason_code="MANUAL",
+            spot_trigger_reason_text="Manual trigger",
+            created_by=sales_ocean
+        )
+        
+        # Create a single snapshot for each department using min_snapshots=1 filter
+        self._create_snapshot(
+            envelope_air,
+            template_id=self.template_1.id,
+            validation_status="warnings",
+            finding_count=1,
+            finding_codes=["expected_charge_missing"],
+            canonical_types=["AWB"],
+            findings_hash="fp_air"
+        )
+        
+        self._create_snapshot(
+            envelope_ocean,
+            template_id=self.template_2.id,
+            validation_status="warnings",
+            finding_count=1,
+            finding_codes=["unexpected_charge_present"],
+            canonical_types=["FUEL"],
+            findings_hash="fp_ocean"
+        )
+        
+        self.client.force_authenticate(user=manager_air)
+        response = self.client.get(f"{self.metrics_url}?min_snapshots=1")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        insights = response.data["insights"]
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]["template_id"], self.template_1.id)
+        
+        self.client.force_authenticate(user=manager_ocean)
+        response = self.client.get(f"{self.metrics_url}?min_snapshots=1")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        insights = response.data["insights"]
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]["template_id"], self.template_2.id)

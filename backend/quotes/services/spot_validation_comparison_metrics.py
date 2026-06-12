@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 class SpotTemplateValidationComparisonMetricsService:
     @classmethod
-    def get_comparison_metrics(cls, start_date, end_date, filters=None, limit=10):
+    def get_comparison_metrics(cls, user, start_date, end_date, filters=None, limit=10):
         """
         Calculates comparison metrics between validation snapshots and reviewed findings.
         Aggregates at the distinct envelope level to prevent updates/lifecycles from skewing metrics.
@@ -13,10 +13,14 @@ class SpotTemplateValidationComparisonMetricsService:
         if filters is None:
             filters = {}
 
+        from quotes.selectors import get_spes_for_user
+        visible_envelopes = get_spes_for_user(user)
+
         # 1. Query snapshots matching date range and filters
         snapshots_qs = SpotTemplateValidationSnapshot.objects.filter(
             created_at__gte=start_date,
-            created_at__lte=end_date
+            created_at__lte=end_date,
+            envelope__in=visible_envelopes
         )
 
         template_id = filters.get("template_id")

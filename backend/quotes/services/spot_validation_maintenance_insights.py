@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class SpotTemplateValidationMaintenanceInsightsService:
     @classmethod
-    def get_maintenance_insights(cls, start_date, end_date, filters=None, limit=10, min_snapshots=5):
+    def get_maintenance_insights(cls, user, start_date, end_date, filters=None, limit=10, min_snapshots=5):
         """
         Gathers template validation snapshots, calculates Maintenance Priority Scores,
         and aggregates pressure signals / finding breakdowns.
@@ -18,10 +18,14 @@ class SpotTemplateValidationMaintenanceInsightsService:
         if filters is None:
             filters = {}
 
+        from quotes.selectors import get_spes_for_user
+        visible_envelopes = get_spes_for_user(user)
+
         # 1. Base query for snapshots
         snapshots_qs = SpotTemplateValidationSnapshot.objects.filter(
             created_at__gte=start_date,
-            created_at__lte=end_date
+            created_at__lte=end_date,
+            envelope__in=visible_envelopes
         )
 
         template_id = filters.get("template_id")

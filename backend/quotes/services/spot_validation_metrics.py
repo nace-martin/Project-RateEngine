@@ -6,13 +6,19 @@ logger = logging.getLogger(__name__)
 
 class SpotTemplateValidationMetricsService:
     @classmethod
-    def get_review_metrics(cls, start_date=None, end_date=None):
+    def get_review_metrics(cls, user, start_date=None, end_date=None):
         """
         Aggregates review metrics strictly from SpotTemplateValidationEvent records
         where event_type = "finding_reviewed".
         """
+        from quotes.selectors import get_spes_for_user
+        visible_envelopes = get_spes_for_user(user)
+
         # Base queryset
-        queryset = SpotTemplateValidationEvent.objects.filter(event_type="finding_reviewed")
+        queryset = SpotTemplateValidationEvent.objects.filter(
+            event_type="finding_reviewed",
+            envelope__in=visible_envelopes
+        )
 
         # Date range filtering
         if start_date:
