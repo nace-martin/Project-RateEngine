@@ -924,4 +924,13 @@ class SpotTemplateValidationReviewSerializer(serializers.ModelSerializer):
         return instance
 
 
+class SpotTemplateValidationReviewMetricsSerializer(serializers.Serializer):
+    total_reviewed_events = serializers.IntegerField(read_only=True)
+    reviewed_by_finding_code = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+    reviewed_by_canonical_type = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+    reviewed_by_user = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+    latest_events = serializers.ListField(child=serializers.DictField(), read_only=True)
+    top_reviewed_fingerprints = serializers.ListField(child=serializers.DictField(), read_only=True)
+
+
 

@@ -2967,3 +2967,55 @@ class SpotTemplateValidationFindingReviewedAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class SpotTemplateValidationReviewMetricsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _user_is_manager_or_admin(request.user):
+            raise PermissionDenied("Only managers and admins can view validation metrics.")
+
+        from django.utils.dateparse import parse_date
+        import datetime
+        from django.utils import timezone
+        
+        start_date_str = request.query_params.get("start_date")
+        end_date_str = request.query_params.get("end_date")
+
+        now = timezone.now()
+
+        if start_date_str:
+            try:
+                start_date = parse_date(start_date_str)
+                if not start_date:
+                    raise ValueError
+                start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
+            except ValueError:
+                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            start_dt = now - datetime.timedelta(days=30)
+
+        if end_date_str:
+            try:
+                end_date = parse_date(end_date_str)
+                if not end_date:
+                    raise ValueError
+                end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
+            except ValueError:
+                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            end_dt = now
+
+        if end_dt < start_dt:
+            return Response({"error": "end_date cannot be before start_date."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if (end_dt - start_dt).days > 180:
+            return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from quotes.services.spot_validation_metrics import SpotTemplateValidationMetricsService
+        metrics = SpotTemplateValidationMetricsService.get_review_metrics(start_dt, end_dt)
+
+        from quotes.serializers import SpotTemplateValidationReviewMetricsSerializer
+        serializer = SpotTemplateValidationReviewMetricsSerializer(metrics)
+        return Response(serializer.data)
+
+
