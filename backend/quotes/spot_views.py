@@ -3218,5 +3218,100 @@ class SpotTemplateValidationComparisonMetricsAPIView(APIView):
         return Response(serializer.data)
 
 
+class SpotTemplateValidationMaintenanceInsightsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _user_is_manager_or_admin(request.user):
+            raise PermissionDenied("Only managers and admins can view validation metrics.")
+
+        from django.utils.dateparse import parse_date
+        import datetime
+        from django.utils import timezone
+        
+        start_date_str = request.query_params.get("start_date")
+        end_date_str = request.query_params.get("end_date")
+
+        now = timezone.now()
+
+        # Parse start_date
+        if start_date_str:
+            try:
+                start_date = parse_date(start_date_str)
+                if not start_date:
+                    raise ValueError
+                start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
+            except ValueError:
+                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            start_dt = now - datetime.timedelta(days=30)
+
+        # Parse end_date
+        if end_date_str:
+            try:
+                end_date = parse_date(end_date_str)
+                if not end_date:
+                    raise ValueError
+                end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
+            except ValueError:
+                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            end_dt = now
+
+        if end_dt < start_dt:
+            return Response({"error": "end_date cannot be before start_date."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if (end_dt - start_dt).days > 180:
+            return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Parse limit
+        limit_str = request.query_params.get("limit", "10")
+        try:
+            limit = int(limit_str)
+            if limit <= 0:
+                raise ValueError
+            # Cap at 50
+            if limit > 50:
+                limit = 50
+        except ValueError:
+            return Response({"error": "limit must be a positive integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Parse template_id if provided
+        template_id_str = request.query_params.get("template_id")
+        template_id = None
+        if template_id_str:
+            try:
+                template_id = int(template_id_str)
+            except ValueError:
+                return Response({"error": "template_id must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Parse min_snapshots
+        min_snapshots_str = request.query_params.get("min_snapshots", "5")
+        try:
+            min_snapshots = int(min_snapshots_str)
+            if min_snapshots <= 0:
+                raise ValueError
+        except ValueError:
+            return Response({"error": "min_snapshots must be a positive integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+        filters = {
+            "template_id": template_id,
+        }
+
+        from quotes.services.spot_validation_maintenance_insights import SpotTemplateValidationMaintenanceInsightsService
+        insights = SpotTemplateValidationMaintenanceInsightsService.get_maintenance_insights(
+            start_date=start_dt,
+            end_date=end_dt,
+            filters=filters,
+            limit=limit,
+            min_snapshots=min_snapshots
+        )
+
+        from quotes.serializers import SpotTemplateValidationMaintenanceInsightsSerializer
+        serializer = SpotTemplateValidationMaintenanceInsightsSerializer(insights)
+        return Response(serializer.data)
+
+
+
 
 

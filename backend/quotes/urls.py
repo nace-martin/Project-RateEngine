@@ -34,6 +34,7 @@ from .spot_views import (
     SpotTemplateValidationReviewMetricsAPIView,
     SpotTemplateValidationSnapshotMetricsAPIView,
     SpotTemplateValidationComparisonMetricsAPIView,
+    SpotTemplateValidationMaintenanceInsightsAPIView,
 )
 
 app_name = 'quotes'
@@ -76,4 +77,5 @@ urlpatterns = [
     path('v3/spot/template-validation/review-metrics/', SpotTemplateValidationReviewMetricsAPIView.as_view(), name='spot-validation-review-metrics'),
     path('v3/spot/template-validation/snapshot-metrics/', SpotTemplateValidationSnapshotMetricsAPIView.as_view(), name='spot-validation-snapshot-metrics'),
     path('v3/spot/template-validation/comparison-metrics/', SpotTemplateValidationComparisonMetricsAPIView.as_view(), name='spot-validation-comparison-metrics'),
+    path('v3/spot/template-validation/maintenance-insights/', SpotTemplateValidationMaintenanceInsightsAPIView.as_view(), name='spot-validation-maintenance-insights'),
 ]
