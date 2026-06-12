@@ -239,3 +239,58 @@ class SpotTemplateValidationReviewAPITest(APITestCase):
         fp = compute_finding_fingerprint("expected_charge_missing", "AWB_DOCUMENTATION", 123, "ba259968-f2c4-4725-b264-3da6d5a166ca")
         self.assertEqual(fp, "expected_charge_missing:AWB_DOCUMENTATION:123:ba259968-f2c4-4725-b264-3da6d5a166ca")
 
+    def test_spot_template_validation_event_created_on_review(self):
+        """Verify SpotTemplateValidationEvent is correctly created on review creation & repeated POSTs."""
+        from quotes.spot_models import SpotTemplateValidationEvent, SpotTemplateValidationReview
+
+        payload = {
+            "finding_code": "expected_charge_missing",
+            "canonical_type": "AWB_DOCUMENTATION",
+            "template_line_id": self.template_line.id,
+            "charge_line_id": None,
+            "comment": "Initial audit event comment"
+        }
+
+        # 1. First POST
+        response1 = self.client.post(self.review_url, payload, format="json")
+        self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
+
+        reviews = SpotTemplateValidationReview.objects.filter(envelope=self.envelope)
+        events = SpotTemplateValidationEvent.objects.filter(envelope=self.envelope)
+
+        self.assertEqual(reviews.count(), 1)
+        self.assertEqual(events.count(), 1)
+
+        review = reviews.first()
+        event = events.first()
+
+        # Check event identity fields
+        self.assertEqual(event.event_type, "finding_reviewed")
+        self.assertEqual(event.finding_code, "expected_charge_missing")
+        self.assertEqual(event.canonical_type, "AWB_DOCUMENTATION")
+        self.assertEqual(event.template_line_id, self.template_line.id)
+        self.assertIsNone(event.charge_line_id)
+        self.assertEqual(event.finding_fingerprint, review.finding_fingerprint)
+        self.assertEqual(event.user, self.user)
+        
+        # Check validation_status is null/blank as per guidelines
+        self.assertTrue(event.validation_status is None or event.validation_status == "")
+
+        # Check metadata
+        self.assertEqual(event.metadata["comment"], "Initial audit event comment")
+        self.assertEqual(event.metadata["review_id"], str(review.id))
+
+        # 2. Second/repeated POST updates the comment on the single review record, but appends a new event
+        payload["comment"] = "Updated comment version"
+        response2 = self.client.post(self.review_url, payload, format="json")
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+
+        self.assertEqual(reviews.count(), 1) # Only one review remains due to update_or_create
+        self.assertEqual(events.count(), 2)  # Two events recorded (append-only ledger)
+
+        # Check second event properties
+        latest_event = SpotTemplateValidationEvent.objects.filter(envelope=self.envelope).order_by("-created_at").first()
+        self.assertEqual(latest_event.metadata["comment"], "Updated comment version")
+        self.assertEqual(latest_event.metadata["review_id"], str(review.id))
+
+

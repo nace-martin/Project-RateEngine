@@ -6,7 +6,8 @@ from .models import (
 )
 from .spot_models import (
     SpotPricingEnvelopeDB, SPEChargeLineDB, SPEAcknowledgementDB,
-    ExpectedChargeTemplate, ExpectedTemplateLine, SpotTemplateValidationReview
+    ExpectedChargeTemplate, ExpectedTemplateLine, SpotTemplateValidationReview,
+    SpotTemplateValidationEvent
 )
 
 class QuoteLineInline(admin.TabularInline):
@@ -148,4 +149,25 @@ class SpotTemplateValidationReviewAdmin(admin.ModelAdmin):
         'id', 'envelope', 'finding_code', 'canonical_type', 'template_line_id',
         'charge_line_id', 'finding_fingerprint', 'comment', 'reviewed_by', 'reviewed_at'
     )
+
+
+@admin.register(SpotTemplateValidationEvent)
+class SpotTemplateValidationEventAdmin(admin.ModelAdmin):
+    list_display = ('event_type', 'envelope', 'finding_code', 'canonical_type', 'user', 'created_at')
+    list_filter = ('event_type', 'finding_code', 'canonical_type', 'created_at')
+    search_fields = ('envelope__id', 'finding_code', 'canonical_type', 'finding_fingerprint', 'user__username')
+    readonly_fields = (
+        'id', 'envelope', 'event_type', 'finding_code', 'canonical_type',
+        'template_line_id', 'charge_line_id', 'finding_fingerprint',
+        'validation_status', 'user', 'created_at', 'metadata'
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 

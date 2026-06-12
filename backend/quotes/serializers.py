@@ -903,6 +903,24 @@ class SpotTemplateValidationReviewSerializer(serializers.ModelSerializer):
                 'reviewed_by': user,
             }
         )
+
+        from quotes.spot_models import SpotTemplateValidationEvent
+        SpotTemplateValidationEvent.objects.create(
+            envelope=envelope,
+            event_type="finding_reviewed",
+            finding_code=finding_code,
+            canonical_type=canonical_type,
+            template_line_id=template_line_id,
+            charge_line_id=charge_line_id,
+            finding_fingerprint=fingerprint,
+            validation_status=None,
+            user=user,
+            metadata={
+                "comment": comment,
+                "review_id": str(instance.id)
+            }
+        )
+
         return instance
 
 

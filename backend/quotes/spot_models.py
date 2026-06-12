@@ -785,3 +785,34 @@ class SpotTemplateValidationReview(models.Model):
         unique_together = ('envelope', 'finding_fingerprint')
 
 
+class SpotTemplateValidationEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    envelope = models.ForeignKey(
+        'quotes.SpotPricingEnvelopeDB',
+        on_delete=models.CASCADE,
+        related_name="template_validation_events"
+    )
+    event_type = models.CharField(max_length=50, default="finding_reviewed")
+    finding_code = models.CharField(max_length=100)
+    canonical_type = models.CharField(max_length=100, null=True, blank=True)
+    template_line_id = models.IntegerField(null=True, blank=True)
+    charge_line_id = models.UUIDField(null=True, blank=True)
+    finding_fingerprint = models.CharField(max_length=255)
+    validation_status = models.CharField(max_length=50, null=True, blank=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'spot_template_validation_events'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.event_type} - {self.finding_code} ({self.created_at})"
+
+
