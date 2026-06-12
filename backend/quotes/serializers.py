@@ -957,6 +957,14 @@ class SpotTemplateValidationComparisonMetricsSerializer(serializers.Serializer):
     canonical_type_comparison = serializers.ListField(child=serializers.DictField(), read_only=True)
 
 
+class SpotTemplateValidationMaintenanceInsightsSerializer(serializers.Serializer):
+    period = serializers.DictField(child=serializers.CharField(), read_only=True)
+    filters_applied = serializers.DictField(child=serializers.IntegerField(allow_null=True), read_only=True)
+    score_basis = serializers.DictField(child=serializers.FloatField(), read_only=True)
+    insights = serializers.ListField(child=serializers.DictField(), read_only=True)
+
+
+
 
 
 
