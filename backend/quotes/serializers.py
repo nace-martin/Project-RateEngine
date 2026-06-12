@@ -933,4 +933,21 @@ class SpotTemplateValidationReviewMetricsSerializer(serializers.Serializer):
     top_reviewed_fingerprints = serializers.ListField(child=serializers.DictField(), read_only=True)
 
 
+class SpotTemplateValidationSnapshotMetricsSerializer(serializers.Serializer):
+    period = serializers.DictField(child=serializers.CharField(), read_only=True)
+    filters_applied = serializers.DictField(child=serializers.CharField(allow_null=True), read_only=True)
+    total_snapshots = serializers.IntegerField(read_only=True)
+    unique_envelopes_count = serializers.IntegerField(read_only=True)
+    by_validation_status = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+    by_trigger = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+    snapshots_without_template = serializers.IntegerField(read_only=True)
+    review_or_warning_snapshot_count = serializers.IntegerField(read_only=True)
+    review_or_warning_percentage = serializers.FloatField(read_only=True)
+    top_finding_codes = serializers.ListField(child=serializers.DictField(), read_only=True)
+    top_canonical_types = serializers.ListField(child=serializers.DictField(), read_only=True)
+    templates_requiring_attention = serializers.ListField(child=serializers.DictField(), read_only=True)
+    stability_metrics = serializers.DictField(child=serializers.IntegerField(), read_only=True)
+
+
+
 
