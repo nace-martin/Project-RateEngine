@@ -21,7 +21,7 @@ class SpotTemplateValidationSnapshotMetricsService:
             created_at__gte=start_date,
             created_at__lte=end_date,
             envelope__in=visible_envelopes
-        )
+        ).defer("findings_json")
 
         # Apply database filters
         trigger = filters.get("trigger")

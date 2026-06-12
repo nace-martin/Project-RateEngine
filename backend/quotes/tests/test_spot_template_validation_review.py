@@ -293,4 +293,18 @@ class SpotTemplateValidationReviewAPITest(APITestCase):
         self.assertEqual(latest_event.metadata["comment"], "Updated comment version")
         self.assertEqual(latest_event.metadata["review_id"], str(review.id))
 
+    def test_spot_template_validation_review_admin_read_only(self):
+        """Verify that SpotTemplateValidationReviewAdmin is fully read-only."""
+        from django.contrib.admin.sites import AdminSite
+        from quotes.spot_models import SpotTemplateValidationReview
+        from quotes.admin import SpotTemplateValidationReviewAdmin
+        
+        site = AdminSite()
+        admin_instance = SpotTemplateValidationReviewAdmin(SpotTemplateValidationReview, site)
+        
+        self.assertFalse(admin_instance.has_add_permission(None))
+        self.assertFalse(admin_instance.has_change_permission(None))
+        self.assertFalse(admin_instance.has_delete_permission(None))
+
+
 
