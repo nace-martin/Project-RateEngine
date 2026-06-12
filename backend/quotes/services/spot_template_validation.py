@@ -10,6 +10,45 @@ from quotes.spot_models import (
 
 logger = logging.getLogger(__name__)
 
+# Validation Finding Codes
+FINDING_TEMPLATE_NOT_FOUND = "template_not_found"
+FINDING_EXPECTED_CHARGE_MISSING = "expected_charge_missing"
+FINDING_UNEXPECTED_CHARGE_PRESENT = "unexpected_charge_present"
+FINDING_CONDITIONAL_CHARGE_PRESENT = "conditional_charge_present"
+FINDING_EXPECTED_BASIS_MISMATCH = "expected_basis_mismatch"
+FINDING_DUPLICATE_CHARGE_FAMILY = "duplicate_charge_family"
+
+VALID_FINDING_CODES = {
+    FINDING_TEMPLATE_NOT_FOUND,
+    FINDING_EXPECTED_CHARGE_MISSING,
+    FINDING_UNEXPECTED_CHARGE_PRESENT,
+    FINDING_CONDITIONAL_CHARGE_PRESENT,
+    FINDING_EXPECTED_BASIS_MISMATCH,
+    FINDING_DUPLICATE_CHARGE_FAMILY,
+}
+
+# Validation Severities
+SEVERITY_INFO = "info"
+SEVERITY_WARNING = "warning"
+SEVERITY_REVIEW = "review"
+
+VALID_SEVERITIES = {
+    SEVERITY_INFO,
+    SEVERITY_WARNING,
+    SEVERITY_REVIEW,
+}
+
+# Validation Statuses
+STATUS_PASSED = "passed"
+STATUS_WARNINGS = "warnings"
+STATUS_REVIEW = "review"
+
+VALID_STATUSES = {
+    STATUS_PASSED,
+    STATUS_WARNINGS,
+    STATUS_REVIEW,
+}
+
 
 def compute_finding_fingerprint(
     finding_code: str,
@@ -167,14 +206,14 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
     if not template:
         findings.append(
             _build_finding(
-                code="template_not_found",
-                severity="review",
+                code=FINDING_TEMPLATE_NOT_FOUND,
+                severity=SEVERITY_REVIEW,
                 message="No applicable expectation template resolved for this shipment context."
             )
         )
         # Deduce status dynamically to support lowercase 'review' status
         severities = {f["severity"] for f in findings}
-        status = "review" if "review" in severities else "warnings"
+        status = STATUS_REVIEW if SEVERITY_REVIEW in severities else STATUS_WARNINGS
         return {
             "status": status,
             "template_id": None,
@@ -205,8 +244,8 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
         if level == ExpectedTemplateLine.RequirementLevel.REQUIRED and not has_actual:
             findings.append(
                 _build_finding(
-                    code="expected_charge_missing",
-                    severity="warning",
+                    code=FINDING_EXPECTED_CHARGE_MISSING,
+                    severity=SEVERITY_WARNING,
                     message=f"Expected charge of type '{canonical_type.name}' ({canonical_type.code}) is missing.",
                     canonical_type=canonical_type.code,
                     template_line_id=t_line.id
@@ -217,8 +256,8 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
             for act_line in actual_by_canonical[canonical_type]:
                 findings.append(
                     _build_finding(
-                        code="unexpected_charge_present",
-                        severity="warning",
+                        code=FINDING_UNEXPECTED_CHARGE_PRESENT,
+                        severity=SEVERITY_WARNING,
                         message=f"Excluded charge of type '{canonical_type.name}' ({canonical_type.code}) was included.",
                         canonical_type=canonical_type.code,
                         template_line_id=t_line.id,
@@ -230,8 +269,8 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
             for act_line in actual_by_canonical[canonical_type]:
                 findings.append(
                     _build_finding(
-                        code="conditional_charge_present",
-                        severity="review",
+                        code=FINDING_CONDITIONAL_CHARGE_PRESENT,
+                        severity=SEVERITY_REVIEW,
                         message=f"Conditional charge of type '{canonical_type.name}' ({canonical_type.code}) is present and requires confirmation.",
                         canonical_type=canonical_type.code,
                         template_line_id=t_line.id,
@@ -245,8 +284,8 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
                 if act_line.calculation_basis != expected_basis:
                     findings.append(
                         _build_finding(
-                            code="expected_basis_mismatch",
-                            severity="review",
+                            code=FINDING_EXPECTED_BASIS_MISMATCH,
+                            severity=SEVERITY_REVIEW,
                             message=(
                                 f"Basis mismatch for '{canonical_type.name}': "
                                 f"Expected basis '{expected_basis}' but actual was '{act_line.calculation_basis}'."
@@ -267,8 +306,8 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
             for act_line in lines:
                 findings.append(
                     _build_finding(
-                        code="duplicate_charge_family",
-                        severity="review",
+                        code=FINDING_DUPLICATE_CHARGE_FAMILY,
+                        severity=SEVERITY_REVIEW,
                         message=f"Multiple lines detected resolving to canonical charge family '{canonical_type.name}' ({canonical_type.code}).",
                         canonical_type=canonical_type.code,
                         charge_line_id=str(act_line.id)
@@ -277,12 +316,12 @@ def validate_envelope_charges(envelope: SpotPricingEnvelopeDB) -> Dict[str, Any]
 
     # Deduce final status
     severities = {f["severity"] for f in findings}
-    if "review" in severities:
-        status = "review"
-    elif "warning" in severities or "info" in severities:
-        status = "warnings"
+    if SEVERITY_REVIEW in severities:
+        status = STATUS_REVIEW
+    elif SEVERITY_WARNING in severities or SEVERITY_INFO in severities:
+        status = STATUS_WARNINGS
     else:
-        status = "passed"
+        status = STATUS_PASSED
 
     return {
         "status": status,

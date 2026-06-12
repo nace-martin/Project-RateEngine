@@ -190,3 +190,52 @@ class SpotTemplateValidationReviewAPITest(APITestCase):
         self.assertIsNotNone(finding_after["review"])
         self.assertEqual(finding_after["review"]["comment"], "Reviewed and approved")
         self.assertEqual(finding_after["review"]["reviewed_by"], self.user.username)
+
+    def test_invalid_finding_code_rejected(self):
+        """Verify that validation review endpoint rejects invalid/unknown finding codes."""
+        payload = {
+            "finding_code": "invalid_finding_code_foo",
+            "canonical_type": "AWB_DOCUMENTATION",
+            "template_line_id": self.template_line.id,
+            "charge_line_id": None,
+            "comment": "Nice try"
+        }
+        response = self.client.post(self.review_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("finding_code", response.data)
+
+    def test_long_comment_rejected(self):
+        """Verify that validation review endpoint rejects comments over 2000 characters."""
+        payload = {
+            "finding_code": "expected_charge_missing",
+            "canonical_type": "AWB_DOCUMENTATION",
+            "template_line_id": self.template_line.id,
+            "charge_line_id": None,
+            "comment": "x" * 2001
+        }
+        response = self.client.post(self.review_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("comment", response.data)
+
+    def test_whitespace_comment_stripped(self):
+        """Verify that validation review endpoint strips leading/trailing comment whitespace."""
+        payload = {
+            "finding_code": "expected_charge_missing",
+            "canonical_type": "AWB_DOCUMENTATION",
+            "template_line_id": self.template_line.id,
+            "charge_line_id": None,
+            "comment": "   Hello world!  \n "
+        }
+        response = self.client.post(self.review_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["comment"], "Hello world!")
+
+        review = SpotTemplateValidationReview.objects.get(id=response.data["id"])
+        self.assertEqual(review.comment, "Hello world!")
+
+    def test_fingerprint_remains_stable(self):
+        """Verify compute_finding_fingerprint output format remains stable."""
+        from quotes.services.spot_template_validation import compute_finding_fingerprint
+        fp = compute_finding_fingerprint("expected_charge_missing", "AWB_DOCUMENTATION", 123, "ba259968-f2c4-4725-b264-3da6d5a166ca")
+        self.assertEqual(fp, "expected_charge_missing:AWB_DOCUMENTATION:123:ba259968-f2c4-4725-b264-3da6d5a166ca")
+

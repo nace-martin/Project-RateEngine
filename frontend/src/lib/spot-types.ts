@@ -248,9 +248,21 @@ export interface CreateSPERequest {
     validity_hours?: number;
 }
 
+export type TemplateFindingCode =
+  | 'template_not_found'
+  | 'expected_charge_missing'
+  | 'unexpected_charge_present'
+  | 'conditional_charge_present'
+  | 'expected_basis_mismatch'
+  | 'duplicate_charge_family';
+
+export type TemplateFindingSeverity = 'warning' | 'review' | 'info';
+
+export type TemplateValidationStatus = 'passed' | 'warnings' | 'review';
+
 export interface TemplateFinding {
-    code: string;
-    severity: 'warning' | 'review' | 'info';
+    code: TemplateFindingCode;
+    severity: TemplateFindingSeverity;
     message: string;
     canonical_type: string | null;
     template_line_id: number | null;
@@ -265,7 +277,7 @@ export interface TemplateFinding {
 }
 
 export interface TemplateValidation {
-    status: 'passed' | 'warnings' | 'review';
+    status: TemplateValidationStatus;
     template_id: number | null;
     findings: TemplateFinding[];
 }

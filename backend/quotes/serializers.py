@@ -845,6 +845,8 @@ class SpotPricingEnvelopeSerializer(serializers.ModelSerializer):
 
 
 class SpotTemplateValidationReviewSerializer(serializers.ModelSerializer):
+    comment = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
     class Meta:
         model = SpotTemplateValidationReview
         fields = [
@@ -853,6 +855,20 @@ class SpotTemplateValidationReviewSerializer(serializers.ModelSerializer):
             'comment', 'reviewed_by', 'reviewed_at'
         ]
         read_only_fields = ['id', 'finding_fingerprint', 'reviewed_by', 'reviewed_at']
+
+    def validate_finding_code(self, value):
+        from quotes.services.spot_template_validation import VALID_FINDING_CODES
+        if value not in VALID_FINDING_CODES:
+            raise serializers.ValidationError(f"Invalid finding code: {value}")
+        return value
+
+    def validate_comment(self, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if len(value) > 2000:
+            raise serializers.ValidationError("Comment cannot exceed 2000 characters.")
+        return value
 
     def create(self, validated_data):
         from quotes.services.spot_template_validation import compute_finding_fingerprint
