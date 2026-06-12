@@ -816,3 +816,47 @@ class SpotTemplateValidationEvent(models.Model):
         return f"{self.event_type} - {self.finding_code} ({self.created_at})"
 
 
+# Snapshot Trigger Constants
+TRIGGER_ENVELOPE_CREATED = 'envelope_created'
+TRIGGER_ENVELOPE_UPDATED = 'envelope_updated'
+TRIGGER_SALES_ACKNOWLEDGED = 'sales_acknowledged'
+
+
+class SpotTemplateValidationSnapshot(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    envelope = models.ForeignKey(
+        'quotes.SpotPricingEnvelopeDB',
+        on_delete=models.CASCADE,
+        related_name="validation_snapshots"
+    )
+    trigger = models.CharField(max_length=50) # envelope_created, envelope_updated, sales_acknowledged
+    validation_status = models.CharField(max_length=50) # passed, warnings, review
+    
+    template_id = models.IntegerField(null=True, blank=True)
+    template_hash = models.CharField(max_length=64, default="", db_index=True) # SHA256 of template definition
+    
+    findings_hash = models.CharField(max_length=64, db_index=True) # SHA256 of sorted findings
+    findings_json = models.JSONField(default=list) # Full array of findings at this point in time
+    
+    # Summary fields for metrics
+    finding_count = models.PositiveIntegerField(default=0)
+    finding_codes = models.JSONField(default=list) # Unique finding codes present in this snapshot
+    canonical_types = models.JSONField(default=list) # Unique canonical types present in this snapshot
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'spot_template_validation_snapshots'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['envelope', 'validation_status', 'template_hash', 'findings_hash'],
+                name='unique_spot_envelope_validation_snapshot'
+            )
+        ]
+
+    def __str__(self):
+        return f"Snapshot ({self.trigger}) for SPE-{str(self.envelope_id)[:8]} - Status: {self.validation_status} ({self.created_at})"
+
+
+

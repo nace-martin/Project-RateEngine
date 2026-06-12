@@ -54,7 +54,12 @@ from quotes.spot_models import (
     SPESourceBatchDB,
     SPEChargeLineDB,
     SPEAcknowledgementDB,
+    TRIGGER_ENVELOPE_CREATED,
+    TRIGGER_ENVELOPE_UPDATED,
+    TRIGGER_SALES_ACKNOWLEDGED,
 )
+from quotes.services.spot_validation_snapshot_service import capture_validation_snapshot
+
 from quotes.intake_safety import (
     build_source_analysis_summary_payload,
     evaluate_envelope_intake_safety,
@@ -1568,8 +1573,12 @@ class SpotEnvelopeListCreateAPIView(APIView):
             
             logger.info("Created SPE %s for user %s", spe_db.id, request.user.username)
             
+            # Capture snapshot best-effort on creation
+            capture_validation_snapshot(spe_db, TRIGGER_ENVELOPE_CREATED)
+
             serializer = SpotPricingEnvelopeSerializer(spe_db)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+
 
         except PermissionDenied as e:
             raise e
@@ -1755,8 +1764,12 @@ class SpotEnvelopeDetailAPIView(APIView):
             )
 
         spe_db.refresh_from_db()
+        # Capture snapshot best-effort on update
+        capture_validation_snapshot(spe_db, TRIGGER_ENVELOPE_UPDATED)
+        
         serializer = SpotPricingEnvelopeSerializer(spe_db)
         return Response(serializer.data)
+
 
     def delete(self, request, envelope_id):
         """Delete a DRAFT SPE."""
@@ -2004,6 +2017,8 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
         spe_db.save()
         
         spe_db.refresh_from_db()
+        # Capture snapshot best-effort on sales acknowledgment
+        capture_validation_snapshot(spe_db, TRIGGER_SALES_ACKNOWLEDGED)
         
         logger.info("SPE %s acknowledged by %s", spe_db.id, request.user.username)
         
@@ -2011,6 +2026,7 @@ class SpotEnvelopeAcknowledgeAPIView(APIView):
             'success': True,
             'status': spe_db.status,
         })
+
 
 
 class SpotEnvelopeComputeAPIView(APIView):
