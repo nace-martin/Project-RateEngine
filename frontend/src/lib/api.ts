@@ -1885,3 +1885,6 @@ export async function reviewSpotFinding(
   return response.json();
 }
 
+export * from './api/spot-validation';
+
+

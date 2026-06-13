@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu, Building2, Settings2 } from 'lucide-react';
+import { Home, FileText, Users, Database, Plus, Settings, LogOut, User, ChevronDown, Menu, Building2, Settings2, BarChart3 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -78,6 +78,11 @@ export default function AppHeader() {
   // User Management (Manager/Admin only)
   if (isManager || isAdmin) {
     moreItems.push({ href: '/settings/users', label: 'Users', icon: Users });
+  }
+
+  // SPOT Analytics (Manager/Admin only)
+  if (isManager || isAdmin) {
+    moreItems.push({ href: '/dashboard/management/spot-validation', label: 'SPOT Analytics', icon: BarChart3 });
   }
 
   // Role badge styling
