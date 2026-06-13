@@ -16,6 +16,7 @@ import {
     Plane,
     ChevronLeft,
     PackageCheck,
+    BarChart3,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -65,6 +66,13 @@ export function AppSidebar() {
             color: 'text-slate-600',
             role: ['sales', 'manager', 'admin'],
             badge: 'CRM'
+        },
+        {
+            label: 'SPOT Analytics',
+            icon: BarChart3,
+            href: '/dashboard/management/spot-validation',
+            color: 'text-indigo-600',
+            role: ['manager', 'admin']
         },
         {
             label: 'Settings',
