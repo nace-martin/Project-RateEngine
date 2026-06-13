@@ -437,6 +437,30 @@ class RawExtractedCharge(BaseModel):
         max_length=255,
         description="Stable source-line identity from extractor when available"
     )
+    raw_unit: Optional[str] = Field(
+        None,
+        description="Verbatim unit from table column"
+    )
+    raw_minimum: Optional[str] = Field(
+        None,
+        description="Verbatim minimum charge amount from table column"
+    )
+    raw_rate: Optional[str] = Field(
+        None,
+        description="Verbatim per-unit rate amount from table column"
+    )
+    raw_percentage: Optional[str] = Field(
+        None,
+        description="Verbatim percentage from table column"
+    )
+    section_context: Optional[str] = Field(
+        None,
+        description="Heading/section where this row was located"
+    )
+    raw_notes: Optional[str] = Field(
+        None,
+        description="Verbatim notes or footnote descriptions attached to this charge"
+    )
 
     @field_validator("currency_hint")
     @classmethod
