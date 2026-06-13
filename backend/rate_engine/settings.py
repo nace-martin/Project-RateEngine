@@ -493,3 +493,6 @@ LOGGING = {
         'level': os.environ.get('LOG_LEVEL', 'INFO'),
     },
 }
+
+SPOT_VALIDATION_METRICS_ENABLED = True
+

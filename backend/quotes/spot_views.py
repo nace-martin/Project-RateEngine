@@ -22,6 +22,7 @@ from uuid import UUID
 
 from django.utils import timezone
 from django.db import transaction
+from django.conf import settings
 
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -90,6 +91,72 @@ def _user_is_manager_or_admin(user) -> bool:
     if getattr(user, "is_manager", False) or getattr(user, "is_admin", False):
         return True
     return getattr(user, "role", None) in ("manager", "admin")
+
+
+def _parse_validation_metrics_params(request):
+    """
+    Parses and validates standard parameters for SPOT validation metrics:
+    - start_date and end_date (default 30 days, max 180 days)
+    - limit (default 10, max 50)
+    - min_snapshots (default 5)
+    """
+    from django.utils.dateparse import parse_date
+    import datetime
+    from django.utils import timezone
+    from rest_framework.exceptions import ValidationError
+
+    start_date_str = request.query_params.get("start_date")
+    end_date_str = request.query_params.get("end_date")
+    now = timezone.now()
+
+    if start_date_str:
+        try:
+            start_date = parse_date(start_date_str)
+            if not start_date:
+                raise ValueError
+            start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
+        except ValueError:
+            raise ValidationError({"error": "Invalid start_date format. Use YYYY-MM-DD."})
+    else:
+        start_dt = now - datetime.timedelta(days=30)
+
+    if end_date_str:
+        try:
+            end_date = parse_date(end_date_str)
+            if not end_date:
+                raise ValueError
+            end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
+        except ValueError:
+            raise ValidationError({"error": "Invalid end_date format. Use YYYY-MM-DD."})
+    else:
+        end_dt = now
+
+    if end_dt < start_dt:
+        raise ValidationError({"error": "end_date cannot be before start_date."})
+
+    if (end_dt - start_dt).days > 180:
+        raise ValidationError({"error": "The maximum date range allowed is 180 days."})
+
+    limit_str = request.query_params.get("limit", "10")
+    try:
+        limit = int(limit_str)
+        if limit <= 0:
+            raise ValueError
+        if limit > 50:
+            limit = 50
+    except ValueError:
+        raise ValidationError({"error": "limit must be a positive integer."})
+
+    min_snapshots_str = request.query_params.get("min_snapshots", "5")
+    try:
+        min_snapshots = int(min_snapshots_str)
+        if min_snapshots <= 0:
+            raise ValueError
+    except ValueError:
+        raise ValidationError({"error": "min_snapshots must be a positive integer."})
+
+    return start_dt, end_dt, limit, min_snapshots
+
 
 
 def _get_spe_or_404(user, envelope_id, queryset=None):
@@ -2987,45 +3054,16 @@ class SpotTemplateValidationReviewMetricsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not getattr(settings, "SPOT_VALIDATION_METRICS_ENABLED", True):
+            return Response(
+                {"detail": "SPOT validation metrics are temporarily disabled."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         if not _user_is_manager_or_admin(request.user):
             raise PermissionDenied("Only managers and admins can view validation metrics.")
 
-        from django.utils.dateparse import parse_date
-        import datetime
-        from django.utils import timezone
-        
-        start_date_str = request.query_params.get("start_date")
-        end_date_str = request.query_params.get("end_date")
-
-        now = timezone.now()
-
-        if start_date_str:
-            try:
-                start_date = parse_date(start_date_str)
-                if not start_date:
-                    raise ValueError
-                start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
-            except ValueError:
-                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            start_dt = now - datetime.timedelta(days=30)
-
-        if end_date_str:
-            try:
-                end_date = parse_date(end_date_str)
-                if not end_date:
-                    raise ValueError
-                end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
-            except ValueError:
-                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            end_dt = now
-
-        if end_dt < start_dt:
-            return Response({"error": "end_date cannot be before start_date."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if (end_dt - start_dt).days > 180:
-            return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
+        start_dt, end_dt, limit, min_snapshots = _parse_validation_metrics_params(request)
 
         from quotes.services.spot_validation_metrics import SpotTemplateValidationMetricsService
         metrics = SpotTemplateValidationMetricsService.get_review_metrics(request.user, start_dt, end_dt)
@@ -3039,59 +3077,16 @@ class SpotTemplateValidationSnapshotMetricsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not getattr(settings, "SPOT_VALIDATION_METRICS_ENABLED", True):
+            return Response(
+                {"detail": "SPOT validation metrics are temporarily disabled."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         if not _user_is_manager_or_admin(request.user):
             raise PermissionDenied("Only managers and admins can view validation metrics.")
 
-        from django.utils.dateparse import parse_date
-        import datetime
-        from django.utils import timezone
-        
-        start_date_str = request.query_params.get("start_date")
-        end_date_str = request.query_params.get("end_date")
-
-        now = timezone.now()
-
-        # Parse start_date
-        if start_date_str:
-            try:
-                start_date = parse_date(start_date_str)
-                if not start_date:
-                    raise ValueError
-                start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
-            except ValueError:
-                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            start_dt = now - datetime.timedelta(days=30)
-
-        # Parse end_date
-        if end_date_str:
-            try:
-                end_date = parse_date(end_date_str)
-                if not end_date:
-                    raise ValueError
-                end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
-            except ValueError:
-                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            end_dt = now
-
-        if end_dt < start_dt:
-            return Response({"error": "end_date cannot be before start_date."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if (end_dt - start_dt).days > 180:
-            return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Parse limit
-        limit_str = request.query_params.get("limit", "10")
-        try:
-            limit = int(limit_str)
-            if limit <= 0:
-                raise ValueError
-            # Cap at 50
-            if limit > 50:
-                limit = 50
-        except ValueError:
-            return Response({"error": "limit must be a positive integer."}, status=status.HTTP_400_BAD_REQUEST)
+        start_dt, end_dt, limit, min_snapshots = _parse_validation_metrics_params(request)
 
         # Parse template_id if provided
         template_id_str = request.query_params.get("template_id")
@@ -3136,59 +3131,16 @@ class SpotTemplateValidationComparisonMetricsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not getattr(settings, "SPOT_VALIDATION_METRICS_ENABLED", True):
+            return Response(
+                {"detail": "SPOT validation metrics are temporarily disabled."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         if not _user_is_manager_or_admin(request.user):
             raise PermissionDenied("Only managers and admins can view validation metrics.")
 
-        from django.utils.dateparse import parse_date
-        import datetime
-        from django.utils import timezone
-        
-        start_date_str = request.query_params.get("start_date")
-        end_date_str = request.query_params.get("end_date")
-
-        now = timezone.now()
-
-        # Parse start_date
-        if start_date_str:
-            try:
-                start_date = parse_date(start_date_str)
-                if not start_date:
-                    raise ValueError
-                start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
-            except ValueError:
-                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            start_dt = now - datetime.timedelta(days=30)
-
-        # Parse end_date
-        if end_date_str:
-            try:
-                end_date = parse_date(end_date_str)
-                if not end_date:
-                    raise ValueError
-                end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
-            except ValueError:
-                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            end_dt = now
-
-        if end_dt < start_dt:
-            return Response({"error": "end_date cannot be before start_date."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if (end_dt - start_dt).days > 180:
-            return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Parse limit
-        limit_str = request.query_params.get("limit", "10")
-        try:
-            limit = int(limit_str)
-            if limit <= 0:
-                raise ValueError
-            # Cap at 50
-            if limit > 50:
-                limit = 50
-        except ValueError:
-            return Response({"error": "limit must be a positive integer."}, status=status.HTTP_400_BAD_REQUEST)
+        start_dt, end_dt, limit, min_snapshots = _parse_validation_metrics_params(request)
 
         # Parse template_id if provided
         template_id_str = request.query_params.get("template_id")
@@ -3224,59 +3176,16 @@ class SpotTemplateValidationMaintenanceInsightsAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not getattr(settings, "SPOT_VALIDATION_METRICS_ENABLED", True):
+            return Response(
+                {"detail": "SPOT validation metrics are temporarily disabled."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         if not _user_is_manager_or_admin(request.user):
             raise PermissionDenied("Only managers and admins can view validation metrics.")
 
-        from django.utils.dateparse import parse_date
-        import datetime
-        from django.utils import timezone
-        
-        start_date_str = request.query_params.get("start_date")
-        end_date_str = request.query_params.get("end_date")
-
-        now = timezone.now()
-
-        # Parse start_date
-        if start_date_str:
-            try:
-                start_date = parse_date(start_date_str)
-                if not start_date:
-                    raise ValueError
-                start_dt = timezone.make_aware(datetime.datetime.combine(start_date, datetime.time.min))
-            except ValueError:
-                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            start_dt = now - datetime.timedelta(days=30)
-
-        # Parse end_date
-        if end_date_str:
-            try:
-                end_date = parse_date(end_date_str)
-                if not end_date:
-                    raise ValueError
-                end_dt = timezone.make_aware(datetime.datetime.combine(end_date, datetime.time.max))
-            except ValueError:
-                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            end_dt = now
-
-        if end_dt < start_dt:
-            return Response({"error": "end_date cannot be before start_date."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if (end_dt - start_dt).days > 180:
-            return Response({"error": "The maximum date range allowed is 180 days."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Parse limit
-        limit_str = request.query_params.get("limit", "10")
-        try:
-            limit = int(limit_str)
-            if limit <= 0:
-                raise ValueError
-            # Cap at 50
-            if limit > 50:
-                limit = 50
-        except ValueError:
-            return Response({"error": "limit must be a positive integer."}, status=status.HTTP_400_BAD_REQUEST)
+        start_dt, end_dt, limit, min_snapshots = _parse_validation_metrics_params(request)
 
         # Parse template_id if provided
         template_id_str = request.query_params.get("template_id")
@@ -3286,15 +3195,6 @@ class SpotTemplateValidationMaintenanceInsightsAPIView(APIView):
                 template_id = int(template_id_str)
             except ValueError:
                 return Response({"error": "template_id must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Parse min_snapshots
-        min_snapshots_str = request.query_params.get("min_snapshots", "5")
-        try:
-            min_snapshots = int(min_snapshots_str)
-            if min_snapshots <= 0:
-                raise ValueError
-        except ValueError:
-            return Response({"error": "min_snapshots must be a positive integer."}, status=status.HTTP_400_BAD_REQUEST)
 
         filters = {
             "template_id": template_id,
