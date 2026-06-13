@@ -342,3 +342,27 @@ class SpotTemplateValidationMaintenanceInsightsTests(APITestCase):
         insights = response.data["insights"]
         self.assertEqual(len(insights), 1)
         self.assertEqual(insights[0]["template_id"], self.template_2.id)
+
+    def test_disabled_flag_returns_503(self):
+        """Verify the endpoint returns HTTP 503 if the operational toggle is disabled."""
+        from django.test import override_settings
+        self.client.force_authenticate(user=self.manager_user)
+        with override_settings(SPOT_VALIDATION_METRICS_ENABLED=False):
+            response = self.client.get(self.metrics_url)
+            self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+            self.assertEqual(response.data, {"detail": "SPOT validation metrics are temporarily disabled."})
+
+    def test_invalid_limit(self):
+        """Verify invalid limit values are rejected with 400."""
+        self.client.force_authenticate(user=self.manager_user)
+        response = self.client.get(f"{self.metrics_url}?limit=-5")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "limit must be a positive integer.")
+
+    def test_invalid_min_snapshots(self):
+        """Verify invalid min_snapshots values are rejected with 400."""
+        self.client.force_authenticate(user=self.manager_user)
+        response = self.client.get(f"{self.metrics_url}?min_snapshots=-2")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "min_snapshots must be a positive integer.")
+
