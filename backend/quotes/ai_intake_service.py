@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from collections import Counter
+from decimal import Decimal
 from typing import Optional, List
 
 from pydantic import BaseModel, Field, ValidationError
@@ -379,6 +380,122 @@ def get_gemini_client():
         return None
 
 
+def _sanitize_json_text(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.strip()
+    # 1. Strip markdown JSON code blocks if present
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = cleaned.strip()
+    
+    # 2. Trim surrounding non-JSON text by finding outer-most { ... } or [ ... ]
+    first_brace = cleaned.find('{')
+    last_brace = cleaned.rfind('}')
+    first_bracket = cleaned.find('[')
+    last_bracket = cleaned.rfind(']')
+    
+    start_idx, end_idx = -1, -1
+    if first_brace != -1 and last_brace != -1:
+        if first_bracket == -1 or first_brace < first_bracket:
+            start_idx = first_brace
+            end_idx = last_brace + 1
+        else:
+            start_idx = first_bracket
+            end_idx = last_bracket + 1
+    elif first_bracket != -1 and last_bracket != -1:
+        start_idx = first_bracket
+        end_idx = last_bracket + 1
+        
+    if start_idx != -1 and end_idx != -1:
+        cleaned = cleaned[start_idx:end_idx]
+        
+    # 3. Clean control characters except whitespace (tab, newline, carriage return)
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", cleaned)
+    
+    # 4. Escape raw newlines, carriage returns, and tabs inside double-quoted string values
+    pattern = r'"((?:[^"\\]|\\.)*)"'
+    def repl(match):
+        content = match.group(1)
+        content = content.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+        return f'"{content}"'
+    cleaned = re.sub(pattern, repl, cleaned)
+    
+    return cleaned
+
+
+def _generate_fallback_normalized_charges(
+    raw_charges: List[RawExtractedCharge],
+    shipment_context: Optional[dict] = None,
+    quote_currency_hint: Optional[str] = None,
+) -> List[NormalizedCharge]:
+    """
+    Generate low-confidence, unmapped NormalizedCharge fallbacks from RawExtractedCharges.
+    This runs only when the AI Normalizer fails, preserving the extracted rows.
+    """
+    normalized: List[NormalizedCharge] = []
+    context_payload = dict(shipment_context or {})
+    missing_components = context_payload.get("missing_components") or []
+    
+    def _is_freight_charge(label: str) -> bool:
+        lbl = label.lower()
+        return any(kw in lbl for kw in ["freight", "airfreight", "af", "a/f", "frt"])
+
+    default_bucket: SpotChargeBucket = "ORIGIN"
+    if missing_components:
+        missing_set = {str(item).upper() for item in missing_components}
+        if "DESTINATION_LOCAL" in missing_set and "ORIGIN_LOCAL" not in missing_set:
+            default_bucket = "DESTINATION"
+        elif "ORIGIN_LOCAL" in missing_set:
+            default_bucket = "ORIGIN"
+
+    for raw in raw_charges:
+        if _is_freight_charge(raw.raw_label):
+            bucket: SpotChargeBucket = "FREIGHT"
+        else:
+            bucket = default_bucket
+            
+        currency = raw.currency_hint or quote_currency_hint or "USD"
+        if not currency or len(currency.strip()) != 3:
+            currency_match = re.search(r"\b[A-Z]{3}\b", raw.raw_amount_string.upper())
+            currency = currency_match.group(0) if currency_match else "USD"
+            
+        clean_amount_str = raw.raw_amount_string.replace(",", "")
+        number_match = re.search(r"[0-9]+(?:\.[0-9]+)?", clean_amount_str)
+        if number_match:
+            try:
+                amount = Decimal(number_match.group(0))
+            except Exception:
+                amount = Decimal("0.00")
+        else:
+            amount = Decimal("0.00")
+            
+        raw_amt_lower = raw.raw_amount_string.lower()
+        if "/kg" in raw_amt_lower or "per kg" in raw_amt_lower or "per-kg" in raw_amt_lower or "/ kg" in raw_amt_lower:
+            unit_basis: UnitBasis = "PER_KG"
+            rate_per_unit = amount
+            amount_val = amount
+        else:
+            unit_basis = "PER_SHIPMENT"
+            rate_per_unit = None
+            amount_val = amount
+            
+        norm = NormalizedCharge(
+            original_raw_label=raw.raw_label,
+            v4_product_code="UNMAPPED",
+            friendly_description=raw.raw_label,
+            v4_bucket=bucket,
+            unit_basis=unit_basis,
+            amount=amount_val,
+            rate_per_unit=rate_per_unit,
+            currency=currency,
+            confidence="LOW",
+        )
+        normalized.append(norm)
+        
+    return normalized
+
+
 def parse_rate_quote_text(
     text: str,
     source_type: str = "TEXT",
@@ -409,22 +526,61 @@ def parse_rate_quote_text(
 
     quote_currency = _infer_quote_currency_from_text(text)
     warnings: List[str] = []
+    raw_charges = []
+    normalized_charges = []
+    audit_result = None
+    normalization_failed = False
 
     try:
         model = genai.GenerativeModel(GEMINI_MODEL)
 
-        raw_charges = _extract_raw_charges(model, text, shipment_context=context)
+        # Stage 1: Extractor
+        try:
+            raw_charges = _extract_raw_charges(model, text, shipment_context=context)
+        except Exception as e:
+            logger.warning("AI Intake Extractor failed, using pattern extraction only: %s", e)
+            raw_charges = []
         raw_charges = _merge_pattern_fallback_charges(
             raw_charges,
             _extract_pattern_charge_candidates(text),
         )
-        normalized_charges = _normalize_charges(
-            model,
-            raw_charges,
-            shipment_context=context,
-            quote_currency_hint=quote_currency,
-        )
-        audit_result = _audit_extraction(model, text, normalized_charges)
+
+        # Stage 2: Normalizer
+        try:
+            normalized_charges = _normalize_charges(
+                model,
+                raw_charges,
+                shipment_context=context,
+                quote_currency_hint=quote_currency,
+            )
+        except Exception as e:
+            logger.warning("AI Normalizer failed. Recovering raw charges as unmapped lines: %s", e, exc_info=True)
+            warnings.append("AI normalization failed; raw charge extraction preserved for manual review.")
+            normalization_failed = True
+            normalized_charges = _generate_fallback_normalized_charges(
+                raw_charges=raw_charges,
+                shipment_context=context,
+                quote_currency_hint=quote_currency,
+            )
+
+        # Stage 3: Critic/Audit
+        if not normalization_failed:
+            try:
+                audit_result = _audit_extraction(model, text, normalized_charges)
+            except Exception as e:
+                logger.warning("AI Critic/Audit failed. Proceeding with normalized charges: %s", e, exc_info=True)
+                warnings.append(f"AI Critic/Audit failed: {str(e)}")
+                audit_result = ExtractionAuditResult(
+                    is_safe_to_proceed=False,
+                    missed_charges=[],
+                    hallucinations_detected=[],
+                )
+        else:
+            audit_result = ExtractionAuditResult(
+                is_safe_to_proceed=False,
+                missed_charges=[],
+                hallucinations_detected=[],
+            )
 
         charge_lines, line_warnings = _build_final_spot_charge_lines(
             normalized_charges=normalized_charges,
@@ -445,14 +601,16 @@ def parse_rate_quote_text(
         if raw_charges and not normalized_charges:
             warnings.append("Raw charges were extracted but none were normalized")
 
+        success = audit_result.is_safe_to_proceed and not normalization_failed
+
         return AIRateIntakePipelineResult(
-            success=audit_result.is_safe_to_proceed,
+            success=success,
             quote_input=QuoteInputPayload(
                 quote_currency=quote_currency,
                 charge_lines=charge_lines,
             ),
             warnings=warnings,
-            error=None if audit_result.is_safe_to_proceed else "Extraction audit marked result unsafe to proceed",
+            error=None if success else "Extraction audit marked result unsafe to proceed or normalization failed",
             raw_text_length=len(text),
             source_type=source_type,
             model_used=GEMINI_MODEL,
@@ -472,6 +630,8 @@ def parse_rate_quote_text(
             source_type=source_type,
             model_used=GEMINI_MODEL,
             quote_currency=quote_currency,
+            raw_extracted_charges=raw_charges,
+            normalized_charges=normalized_charges,
         )
 
 
@@ -495,7 +655,17 @@ def _call_gemini_structured(model, prompt: str, response_schema: type[BaseModel]
             json_text = (response.text or "").strip()
             if not json_text:
                 raise ValueError(f"{stage_name}: empty Gemini response")
-            return response_schema.model_validate(json.loads(json_text))
+                
+            sanitized = _sanitize_json_text(json_text)
+            logger.info(
+                "%s attempt %s/%s parsing: raw_len=%s, sanitized_len=%s",
+                stage_name,
+                attempt + 1,
+                MAX_RETRIES + 1,
+                len(json_text),
+                len(sanitized),
+            )
+            return response_schema.model_validate(json.loads(sanitized))
         except (json.JSONDecodeError, ValidationError, ValueError) as e:
             last_error = e
             logger.warning(
