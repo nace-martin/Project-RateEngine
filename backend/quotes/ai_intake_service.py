@@ -75,7 +75,7 @@ CURRENCY_SYMBOL_MAP = {
 
 PATTERN_CHARGE_LINE_RE = re.compile(
     r"(?im)^\s*(?:[-*]\s*)?"
-    r"(?P<label>[A-Za-z][A-Za-z0-9/&+().,\- ]{1,80}?)"
+    r"(?P<label>[A-Za-z][A-Za-z0-9/&+().,\-\u2013\u2014 ]{1,80}?)"
     r"\s*[:：]\s*"
     r"(?P<amount>"
     r"(?P<currency>US\$|A\$|NZ\$|S\$|HK\$|[A-Z]{3}|\$)"

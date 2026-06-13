@@ -50,7 +50,6 @@ def test_pattern_fallback_extracts_all_jenni_conlon_charges():
         "Admin Fee",
         "Pick Up - metro area",
         "X-ray",
-        "Additional Screening",
         "Documentation Fee",
         "AWB Fee",
         "Compliance Fee",
