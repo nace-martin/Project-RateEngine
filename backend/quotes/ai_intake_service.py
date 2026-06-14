@@ -276,6 +276,7 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
     candidates: List[RawExtractedCharge] = []
     current_section = None
     header_indices = {}
+    marker_candidates = {}
 
     lines = [line.strip() for line in text.splitlines()]
     last_candidate = None
@@ -290,12 +291,23 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
 
         # Check for footnote comments (lines starting with * or ** and having 1 or fewer columns after split)
         if (line.startswith("*") or line.startswith("**")) and len(parts) <= 1:
-            if last_candidate:
-                note_text = line.lstrip("* ").strip()
-                if last_candidate.raw_notes:
-                    last_candidate.raw_notes += f"; {note_text}"
+            marker = "**" if line.startswith("**") else "*"
+            note_text = line.lstrip("* ").strip()
+            is_cond_note = any(term in note_text.lower() for term in [
+                "if required", "optional", "poa", "subject to", "screening"
+            ])
+            
+            matched_charges = marker_candidates.get(marker, [])
+            if not matched_charges and last_candidate:
+                matched_charges = [last_candidate]
+                
+            for mc in matched_charges:
+                if mc.raw_notes:
+                    mc.raw_notes += f"; {note_text}"
                 else:
-                    last_candidate.raw_notes = note_text
+                    mc.raw_notes = note_text
+                if is_cond_note:
+                    mc.is_conditional = True
             continue
 
         # If a line doesn't have multiple parts, it might be a section heading
@@ -309,32 +321,35 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
         # If it is a header row, we detect column positions
         is_header = False
         lower_parts = [p.lower() for p in parts]
-        if any("charge description" in lp or "description" in lp for lp in lower_parts) or \
-           any("currency" in lp or "ccy" in lp for lp in lower_parts) or \
-           any("unit" in lp for lp in lower_parts) or \
-           any("minimum" in lp or "min" in lp for lp in lower_parts):
+        if any(re.search(r'\b(charge|description)\b', lp) for lp in lower_parts) or \
+           any(re.search(r'\b(currency|ccy)\b', lp) for lp in lower_parts) or \
+           any(re.search(r'\bunit\b', lp) for lp in lower_parts) or \
+           any(re.search(r'\b(minimum|min)\b', lp) for lp in lower_parts):
             is_header = True
 
         if is_header:
             header_indices = {}
             for i, p in enumerate(lower_parts):
-                if "description" in p or "charge" in p:
+                if re.search(r'\b(description|charge)\b', p):
                     header_indices["description"] = i
-                elif "currency" in p or "ccy" in p:
+                elif re.search(r'\b(currency|ccy)\b', p):
                     header_indices["currency"] = i
-                elif "unit" in p:
-                    header_indices["unit"] = i
-                elif "minimum" in p or "min" in p:
-                    header_indices["minimum"] = i
-                elif "per unit" in p or "rate" in p or "per-unit" in p:
+                elif re.search(r'\b(per\s+unit|rate|per-unit)\b', p):
                     header_indices["rate"] = i
+                elif re.search(r'\bunit\b', p):
+                    header_indices["unit"] = i
+                elif re.search(r'\b(minimum|min)\b', p):
+                    header_indices["minimum"] = i
             continue
 
         # Otherwise, parse as a data row
         label_part = parts[0]
+        marker = None
         if label_part.startswith("**"):
+            marker = "**"
             label_part = label_part[2:].strip()
         elif label_part.startswith("*"):
+            marker = "*"
             label_part = label_part[1:].strip()
 
         raw_label = label_part
@@ -346,7 +361,7 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
 
         # Value-based heuristics if header mapping is not fully populated or column count doesn't match
         use_heuristics = True
-        if header_indices and len(parts) >= 3:
+        if header_indices and len(parts) >= 4:
             try:
                 desc_idx = header_indices.get("description", 0)
                 curr_idx = header_indices.get("currency")
@@ -356,8 +371,10 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
 
                 raw_label = parts[desc_idx]
                 if raw_label.startswith("**"):
+                    marker = "**"
                     raw_label = raw_label[2:].strip()
                 elif raw_label.startswith("*"):
+                    marker = "*"
                     raw_label = raw_label[1:].strip()
 
                 if curr_idx is not None and curr_idx < len(parts):
@@ -386,7 +403,7 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
                 remaining_parts = parts[1:]
                 for p in remaining_parts[:]:
                     norm_curr = _normalize_currency_value(p)
-                    if norm_curr and len(p) == 3:
+                    if norm_curr and len(p) == 3 and norm_curr in VALID_CURRENCIES:
                         currency_hint = norm_curr
                         remaining_parts.remove(p)
                         break
@@ -445,8 +462,27 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
         )
         candidates.append(charge)
         last_candidate = charge
+        if marker:
+            marker_candidates.setdefault(marker, []).append(charge)
 
     return candidates
+
+
+def _sections_overlap(sec1: Optional[str], sec2: Optional[str]) -> bool:
+    s1 = _normalize_fallback_label(sec1 or "")
+    s2 = _normalize_fallback_label(sec2 or "")
+    if not s1 or not s2:
+        return True
+    return s1 == s2
+
+
+def _normalize_label_tolerant(label: str) -> str:
+    if not label:
+        return ""
+    lbl = label.lower()
+    lbl = re.sub(r'\b(fee|fees|charge|charges|surcharge|surcharges|rate|rates)\b', '', lbl)
+    lbl = re.sub(r'[^a-z0-9]', '', lbl)
+    return lbl.strip()
 
 
 def _merge_all_charge_candidates(
@@ -455,27 +491,75 @@ def _merge_all_charge_candidates(
     pattern_charges: List[RawExtractedCharge],
 ) -> List[RawExtractedCharge]:
     merged: List[RawExtractedCharge] = []
-    seen = {}
 
+    def find_overlapping(new_c: RawExtractedCharge) -> Optional[RawExtractedCharge]:
+        new_label = _normalize_label_tolerant(new_c.raw_label)
+        new_sec = new_c.section_context
+        for existing in merged:
+            existing_label = _normalize_label_tolerant(existing.raw_label)
+            if new_label == existing_label:
+                if _sections_overlap(new_sec, existing.section_context):
+                    return existing
+        return None
+
+    def merge_two_raw(existing: RawExtractedCharge, new_c: RawExtractedCharge):
+        # Merge properties into existing charge
+        if not existing.currency_hint:
+            existing.currency_hint = new_c.currency_hint
+        if not existing.raw_unit:
+            existing.raw_unit = new_c.raw_unit
+        if not existing.raw_minimum:
+            existing.raw_minimum = new_c.raw_minimum
+        if not existing.raw_rate:
+            existing.raw_rate = new_c.raw_rate
+        if not existing.raw_percentage:
+            existing.raw_percentage = new_c.raw_percentage
+        if not existing.section_context:
+            existing.section_context = new_c.section_context
+            
+        existing.is_conditional = existing.is_conditional or new_c.is_conditional
+        
+        # Merge raw_notes
+        notes_parts = []
+        if getattr(existing, "raw_notes", None):
+            notes_parts.append(existing.raw_notes)
+        if getattr(new_c, "raw_notes", None):
+            notes_parts.append(new_c.raw_notes)
+        if notes_parts:
+            existing.raw_notes = "; ".join(notes_parts)
+            
+        # Update raw_amount_string
+        ext_amt = (existing.raw_amount_string or "").strip()
+        new_amt = (new_c.raw_amount_string or "").strip()
+        if new_amt and new_amt not in ext_amt:
+            existing.raw_amount_string = f"{ext_amt} {new_amt}"
+
+    # First add tabular charges (highest priority)
     for charge in tabular_charges:
-        key = _raw_charge_dedupe_key(charge)
-        if key not in seen:
-            seen[key] = charge
+        existing = find_overlapping(charge)
+        if existing:
+            merge_two_raw(existing, charge)
+        else:
             merged.append(charge)
 
+    # Next add AI charges
     for charge in ai_charges:
-        key = _raw_charge_dedupe_key(charge)
-        if key not in seen:
-            seen[key] = charge
+        existing = find_overlapping(charge)
+        if existing:
+            merge_two_raw(existing, charge)
+        else:
             merged.append(charge)
 
+    # Finally pattern charges
     for charge in pattern_charges:
-        key = _raw_charge_dedupe_key(charge)
-        if key not in seen:
-            seen[key] = charge
+        existing = find_overlapping(charge)
+        if existing:
+            merge_two_raw(existing, charge)
+        else:
             merged.append(charge)
 
     return merged
+
 
 
 def _extract_pattern_charge_candidates(text: str) -> List[RawExtractedCharge]:
@@ -647,6 +731,7 @@ def _generate_fallback_normalized_charges(
     Generate low-confidence, unmapped NormalizedCharge fallbacks from RawExtractedCharges.
     This runs only when the AI Normalizer fails, preserving the extracted rows.
     """
+    print("FALLBACK RAW:", [(r.raw_label, r.section_context) for r in raw_charges])
     normalized: List[NormalizedCharge] = []
     context_payload = dict(shipment_context or {})
     missing_components = context_payload.get("missing_components") or []
@@ -728,10 +813,17 @@ def _generate_fallback_normalized_charges(
                 rate_per_unit = raw_rate_dec
                 minimum_amount = None
             else:
-                unit_basis = "PER_SHIPMENT"
-                amount_val = raw_min_dec or to_decimal(raw.raw_amount_string) or Decimal("0.00")
-                rate_per_unit = None
-                minimum_amount = None
+                raw_amt_lower = raw.raw_amount_string.lower()
+                if any(x in raw_amt_lower for x in ["/kg", "per kg", "per-kg", "/ kg"]):
+                    unit_basis = "PER_KG"
+                    amount_val = to_decimal(raw.raw_amount_string) or Decimal("0.00")
+                    rate_per_unit = amount_val
+                    minimum_amount = None
+                else:
+                    unit_basis = "PER_SHIPMENT"
+                    amount_val = raw_min_dec or to_decimal(raw.raw_amount_string) or Decimal("0.00")
+                    rate_per_unit = None
+                    minimum_amount = None
             percentage = None
             percent_applies_to = None
             
@@ -752,6 +844,61 @@ def _generate_fallback_normalized_charges(
         normalized.append(norm)
         
     return normalized
+
+
+def _deduplicate_normalized_charges(charges: List[NormalizedCharge]) -> List[NormalizedCharge]:
+    if not charges:
+        return []
+        
+    groups: dict[str, List[NormalizedCharge]] = {}
+    for c in charges:
+        key = _normalize_label_tolerant(c.original_raw_label)
+        groups.setdefault(key, []).append(c)
+        
+    deduplicated: List[NormalizedCharge] = []
+    for key, group in groups.items():
+        if len(group) == 1:
+            deduplicated.append(group[0])
+            continue
+            
+        rate_charge = None
+        flat_charge = None
+        percentage_charge = None
+        
+        for c in group:
+            if c.unit_basis in ("PER_KG", "MIN_OR_PER_KG"):
+                if rate_charge is None or (rate_charge.unit_basis == "PER_KG" and c.unit_basis == "MIN_OR_PER_KG"):
+                    rate_charge = c
+            elif c.unit_basis == "PERCENTAGE":
+                percentage_charge = c
+            elif c.unit_basis == "PER_SHIPMENT":
+                if flat_charge is None:
+                    flat_charge = c
+                else:
+                    existing_amt = flat_charge.amount or flat_charge.minimum_amount or Decimal("0.00")
+                    new_amt = c.amount or c.minimum_amount or Decimal("0.00")
+                    if existing_amt == Decimal("0.00") and new_amt > Decimal("0.00"):
+                        flat_charge = c
+                        
+        if rate_charge and flat_charge:
+            merged_charge = rate_charge.model_copy()
+            merged_charge.unit_basis = "MIN_OR_PER_KG"
+            merged_charge.rate_per_unit = rate_charge.rate_per_unit or rate_charge.amount
+            merged_charge.minimum_amount = flat_charge.minimum_amount or flat_charge.amount
+            merged_charge.amount = merged_charge.rate_per_unit
+            if flat_charge.confidence == "LOW":
+                merged_charge.confidence = "LOW"
+            deduplicated.append(merged_charge)
+        elif rate_charge:
+            deduplicated.append(rate_charge)
+        elif percentage_charge:
+            deduplicated.append(percentage_charge)
+        elif flat_charge:
+            deduplicated.append(flat_charge)
+        else:
+            deduplicated.append(group[0])
+            
+    return deduplicated
 
 
 def parse_rate_quote_text(
@@ -826,6 +973,8 @@ def parse_rate_quote_text(
                 quote_currency_hint=quote_currency,
             )
 
+        normalized_charges = _deduplicate_normalized_charges(normalized_charges)
+
         # Stage 3: Critic/Audit
         if not normalization_failed:
             try:
@@ -851,6 +1000,7 @@ def parse_rate_quote_text(
             quote_currency_hint=quote_currency,
         )
         warnings.extend(line_warnings)
+
 
         if audit_result.missed_charges:
             warnings.append("Audit flagged possible missed charges: " + "; ".join(audit_result.missed_charges))
@@ -1297,9 +1447,22 @@ def _build_final_spot_charge_lines(
             )
             payload["source_line_number"] = raw_match.source_line_number
             payload["source_line_identity"] = raw_match.source_line_identity
+            
             raw_notes = _extract_parenthetical_notes(raw_match.raw_amount_string)
+            notes_parts = []
             if raw_notes:
-                payload["notes"] = raw_notes
+                notes_parts.append(raw_notes)
+            if getattr(raw_match, "raw_notes", None):
+                notes_parts.append(raw_match.raw_notes)
+            
+            # Check for POA in raw minimum or raw amount string to mark review warning
+            raw_amt_lower = (raw_match.raw_amount_string or "").lower()
+            raw_min_lower = (raw_match.raw_minimum or "").lower()
+            if "poa" in raw_amt_lower or "poa" in raw_min_lower:
+                notes_parts.append("POA - manual review required")
+                
+            if notes_parts:
+                payload["notes"] = "; ".join(notes_parts)[:500]
 
         if normalized.unit_basis == "PER_SHIPMENT":
             payload["amount"] = normalized.amount

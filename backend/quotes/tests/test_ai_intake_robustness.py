@@ -174,10 +174,31 @@ def test_tabular_intake_preserves_table_structure(monkeypatch):
         "quotes.ai_intake_service.get_gemini_client",
         lambda: _FakeGeminiClient(),
     )
-    # Mock extractor to return empty so we fall back to pattern extraction + tabular extraction
+    # Mock extractor to return duplicate AI charges (representing split/duplicate extractions)
+    def mock_extract_raw_charges(*_args, **_kwargs):
+        return [
+            RawExtractedCharge(
+                raw_label="Airfreight AKL – POM via PX(BNE)",
+                raw_amount_string="7.30 per KG",
+                currency_hint="NZD",
+                source_excerpt="Airfreight AKL – POM via PX(BNE) 7.30"
+            ),
+            RawExtractedCharge(
+                raw_label="Airfreight AKL – POM via PX(BNE)",
+                raw_amount_string="min 315.00",
+                currency_hint="NZD",
+                source_excerpt="Airfreight AKL – POM via PX(BNE) min 315.00"
+            ),
+            RawExtractedCharge(
+                raw_label="Compliance Fee",
+                raw_amount_string="NZD 15.00/shipment",
+                currency_hint="NZD",
+                source_excerpt="Compliance Fee 15.00"
+            )
+        ]
     monkeypatch.setattr(
         "quotes.ai_intake_service._extract_raw_charges",
-        lambda *_args, **_kwargs: [],
+        mock_extract_raw_charges,
     )
     # Force Normalizer to raise Exception simulating malformed output
     def mock_normalize_failed(*_args, **_kwargs):
@@ -338,3 +359,25 @@ def test_tabular_intake_preserves_table_structure(monkeypatch):
     add_norm = norm_map["Additional Screening"]
     assert add_norm.unit_basis == "PER_SHIPMENT"
     assert add_norm.amount == Decimal("0.00")
+
+    # Check that each expected label has exactly 1 entry (duplicates collapsed)
+    raw_labels = [c.raw_label for c in result.raw_extracted_charges]
+    norm_labels = [c.original_raw_label for c in result.normalized_charges]
+    final_labels = [c.description for c in result.lines]
+
+    def count_occurrences(lst, val):
+        return sum(1 for item in lst if item.strip().lower() == val.lower())
+
+    # Assert specific charges appear exactly once
+    for label in [
+        "Airfreight AKL – POM via PX(BNE)",
+        "Airport Security Fee",
+        "PX AWB FEE",
+        "Compliance Fee",
+    ]:
+        assert count_occurrences(raw_labels, label) == 1, f"Expected {label} to appear once in raw extracted charges, found: {count_occurrences(raw_labels, label)}"
+        assert count_occurrences(norm_labels, label) == 1, f"Expected {label} to appear once in normalized charges, found: {count_occurrences(norm_labels, label)}"
+        assert count_occurrences(final_labels, label) == 1, f"Expected {label} to appear once in final SpotChargeLine list, found: {count_occurrences(final_labels, label)}"
+
+    # Assert no duplicate final SpotChargeLines by description
+    assert len(final_labels) == len(set(final_labels)), f"Found duplicate descriptions in final SpotChargeLines: {final_labels}"
