@@ -257,11 +257,225 @@ def _normalize_fallback_amount(value: str) -> str:
     return re.sub(r"\s+", "", amount_without_notes)
 
 
-def _raw_charge_dedupe_key(charge: RawExtractedCharge) -> tuple[str, str]:
+def _raw_charge_dedupe_key(charge: RawExtractedCharge) -> tuple:
     return (
         _normalize_fallback_label(charge.raw_label),
         _normalize_fallback_amount(charge.raw_amount_string),
+        _normalize_fallback_label(charge.section_context or ""),
+        _normalize_fallback_label(charge.raw_unit or ""),
+        _normalize_fallback_label(charge.raw_minimum or ""),
+        _normalize_fallback_label(charge.raw_rate or ""),
+        _normalize_fallback_label(charge.raw_percentage or ""),
     )
+
+
+def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
+    if not text:
+        return []
+
+    candidates: List[RawExtractedCharge] = []
+    current_section = None
+    header_indices = {}
+
+    lines = [line.strip() for line in text.splitlines()]
+    last_candidate = None
+
+    for line_number, line in enumerate(lines, start=1):
+        if not line:
+            continue
+
+        # Split line by tab or 2+ spaces
+        parts = re.split(r'\t|\s{2,}', line)
+        parts = [p.strip() for p in parts if p.strip()]
+
+        # Check for footnote comments (lines starting with * or ** and having 1 or fewer columns after split)
+        if (line.startswith("*") or line.startswith("**")) and len(parts) <= 1:
+            if last_candidate:
+                note_text = line.lstrip("* ").strip()
+                if last_candidate.raw_notes:
+                    last_candidate.raw_notes += f"; {note_text}"
+                else:
+                    last_candidate.raw_notes = note_text
+            continue
+
+        # If a line doesn't have multiple parts, it might be a section heading
+        if len(parts) == 1:
+            val = parts[0]
+            # Exclude header-like or charge-like lines
+            if not any(kw in val.lower() for kw in ["currency", "minimum", "per unit", "%"]):
+                current_section = val
+            continue
+
+        # If it is a header row, we detect column positions
+        is_header = False
+        lower_parts = [p.lower() for p in parts]
+        if any("charge description" in lp or "description" in lp for lp in lower_parts) or \
+           any("currency" in lp or "ccy" in lp for lp in lower_parts) or \
+           any("unit" in lp for lp in lower_parts) or \
+           any("minimum" in lp or "min" in lp for lp in lower_parts):
+            is_header = True
+
+        if is_header:
+            header_indices = {}
+            for i, p in enumerate(lower_parts):
+                if "description" in p or "charge" in p:
+                    header_indices["description"] = i
+                elif "currency" in p or "ccy" in p:
+                    header_indices["currency"] = i
+                elif "unit" in p:
+                    header_indices["unit"] = i
+                elif "minimum" in p or "min" in p:
+                    header_indices["minimum"] = i
+                elif "per unit" in p or "rate" in p or "per-unit" in p:
+                    header_indices["rate"] = i
+            continue
+
+        # Otherwise, parse as a data row
+        label_part = parts[0]
+        if label_part.startswith("**"):
+            label_part = label_part[2:].strip()
+        elif label_part.startswith("*"):
+            label_part = label_part[1:].strip()
+
+        raw_label = label_part
+        raw_unit = None
+        raw_minimum = None
+        raw_rate = None
+        raw_percentage = None
+        currency_hint = None
+
+        # Value-based heuristics if header mapping is not fully populated or column count doesn't match
+        use_heuristics = True
+        if header_indices and len(parts) >= 3:
+            try:
+                desc_idx = header_indices.get("description", 0)
+                curr_idx = header_indices.get("currency")
+                unit_idx = header_indices.get("unit")
+                min_idx = header_indices.get("minimum")
+                rate_idx = header_indices.get("rate")
+
+                raw_label = parts[desc_idx]
+                if raw_label.startswith("**"):
+                    raw_label = raw_label[2:].strip()
+                elif raw_label.startswith("*"):
+                    raw_label = raw_label[1:].strip()
+
+                if curr_idx is not None and curr_idx < len(parts):
+                    currency_hint = _normalize_currency_value(parts[curr_idx])
+                if unit_idx is not None and unit_idx < len(parts):
+                    raw_unit = parts[unit_idx]
+                if min_idx is not None and min_idx < len(parts):
+                    raw_minimum = parts[min_idx]
+                    if raw_minimum == "-":
+                        raw_minimum = None
+                if rate_idx is not None and rate_idx < len(parts):
+                    raw_rate = parts[rate_idx]
+                    if raw_rate == "-":
+                        raw_rate = None
+                use_heuristics = False
+            except Exception:
+                use_heuristics = True
+
+        if use_heuristics:
+            if len(parts) == 2:
+                if "%" in parts[1]:
+                    raw_percentage = parts[1]
+                else:
+                    raw_minimum = parts[1]
+            elif len(parts) >= 3:
+                remaining_parts = parts[1:]
+                for p in remaining_parts[:]:
+                    norm_curr = _normalize_currency_value(p)
+                    if norm_curr and len(p) == 3:
+                        currency_hint = norm_curr
+                        remaining_parts.remove(p)
+                        break
+                
+                for p in remaining_parts[:]:
+                    if "%" in p:
+                        raw_percentage = p
+                        remaining_parts.remove(p)
+                        break
+
+                for p in remaining_parts[:]:
+                    if any(uk in p.lower() for uk in ["kg", "awb", "shipment", "entry", "trip", "cbm"]):
+                        raw_unit = p
+                        remaining_parts.remove(p)
+                        break
+
+                if len(remaining_parts) == 1:
+                    raw_minimum = remaining_parts[0]
+                elif len(remaining_parts) >= 2:
+                    raw_minimum = remaining_parts[0]
+                    raw_rate = remaining_parts[1]
+
+        amt_parts = []
+        if currency_hint:
+            amt_parts.append(currency_hint)
+        if raw_rate:
+            amt_parts.append(f"{raw_rate} per {raw_unit or 'KG'}")
+        if raw_minimum:
+            amt_parts.append(f"min {raw_minimum}")
+        if raw_percentage:
+            amt_parts.append(raw_percentage)
+        if not amt_parts:
+            amt_parts = parts[1:]
+
+        raw_amount_string = " ".join(amt_parts)
+
+        # Mark rows conditional if section/header/notes/label/line contain optional/if required/POA/subject to/screening
+        cond_check_str = f"{current_section or ''} {raw_label} {raw_amount_string} {line}".lower()
+        is_conditional = any(term in cond_check_str for term in [
+            "if required", "optional", "poa", "subject to", "screening"
+        ])
+
+        charge = RawExtractedCharge(
+            raw_label=raw_label,
+            raw_amount_string=raw_amount_string,
+            currency_hint=currency_hint,
+            is_conditional=is_conditional,
+            source_excerpt=line,
+            source_line_number=line_number,
+            source_line_identity=f"tabular-line:{line_number}:{_normalize_fallback_label(raw_label)}",
+            raw_unit=raw_unit,
+            raw_minimum=raw_minimum,
+            raw_rate=raw_rate,
+            raw_percentage=raw_percentage,
+            section_context=current_section,
+        )
+        candidates.append(charge)
+        last_candidate = charge
+
+    return candidates
+
+
+def _merge_all_charge_candidates(
+    ai_charges: List[RawExtractedCharge],
+    tabular_charges: List[RawExtractedCharge],
+    pattern_charges: List[RawExtractedCharge],
+) -> List[RawExtractedCharge]:
+    merged: List[RawExtractedCharge] = []
+    seen = {}
+
+    for charge in tabular_charges:
+        key = _raw_charge_dedupe_key(charge)
+        if key not in seen:
+            seen[key] = charge
+            merged.append(charge)
+
+    for charge in ai_charges:
+        key = _raw_charge_dedupe_key(charge)
+        if key not in seen:
+            seen[key] = charge
+            merged.append(charge)
+
+    for charge in pattern_charges:
+        key = _raw_charge_dedupe_key(charge)
+        if key not in seen:
+            seen[key] = charge
+            merged.append(charge)
+
+    return merged
 
 
 def _extract_pattern_charge_candidates(text: str) -> List[RawExtractedCharge]:
@@ -270,7 +484,7 @@ def _extract_pattern_charge_candidates(text: str) -> List[RawExtractedCharge]:
         return []
 
     candidates: List[RawExtractedCharge] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple] = set()
     line_starts: list[tuple[int, int]] = []
     offset = 0
     for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
@@ -450,35 +664,76 @@ def _generate_fallback_normalized_charges(
             default_bucket = "ORIGIN"
 
     for raw in raw_charges:
+        # Determine bucket contextually:
+        # Default EXPORT/export-side sections to ORIGIN unless shipment context clearly says otherwise.
+        # Classify Airfreight AKL - POM via PX(BNE) as FREIGHT.
+        # Do not classify Customs Clearance and EDI Fee as PNG destination charges just because of their names;
+        # in this sample they are under EXPORT and should be origin/export-side (ORIGIN) or ambiguous.
         if _is_freight_charge(raw.raw_label):
             bucket: SpotChargeBucket = "FREIGHT"
         else:
-            bucket = default_bucket
+            sec = (raw.section_context or "").upper()
+            if "EXPORT" in sec or "ORIGIN" in sec:
+                bucket = "ORIGIN"
+            elif "IMPORT" in sec or "DESTINATION" in sec:
+                bucket = "DESTINATION"
+            else:
+                bucket = default_bucket
             
         currency = raw.currency_hint or quote_currency_hint or "USD"
         if not currency or len(currency.strip()) != 3:
             currency_match = re.search(r"\b[A-Z]{3}\b", raw.raw_amount_string.upper())
             currency = currency_match.group(0) if currency_match else "USD"
-            
-        clean_amount_str = raw.raw_amount_string.replace(",", "")
-        number_match = re.search(r"[0-9]+(?:\.[0-9]+)?", clean_amount_str)
-        if number_match:
-            try:
-                amount = Decimal(number_match.group(0))
-            except Exception:
-                amount = Decimal("0.00")
-        else:
-            amount = Decimal("0.00")
-            
-        raw_amt_lower = raw.raw_amount_string.lower()
-        if "/kg" in raw_amt_lower or "per kg" in raw_amt_lower or "per-kg" in raw_amt_lower or "/ kg" in raw_amt_lower:
-            unit_basis: UnitBasis = "PER_KG"
-            rate_per_unit = amount
-            amount_val = amount
-        else:
-            unit_basis = "PER_SHIPMENT"
+
+        # Helper to parse decimal safely
+        def to_decimal(val_str: Optional[str]) -> Optional[Decimal]:
+            if not val_str:
+                return None
+            val_str = val_str.replace(",", "").strip()
+            if "poa" in val_str.lower():
+                return Decimal("0.00")
+            num_match = re.search(r"[0-9]+(?:\.[0-9]+)?", val_str)
+            if num_match:
+                try:
+                    return Decimal(num_match.group(0))
+                except Exception:
+                    return Decimal("0.00")
+            return None
+
+        raw_rate_dec = to_decimal(raw.raw_rate)
+        raw_min_dec = to_decimal(raw.raw_minimum)
+        raw_percentage_dec = to_decimal(raw.raw_percentage)
+
+        # Percentage check
+        if raw_percentage_dec is not None or "%" in raw.raw_amount_string:
+            unit_basis: UnitBasis = "PERCENTAGE"
+            amount_val = raw_percentage_dec or to_decimal(raw.raw_amount_string) or Decimal("0.00")
+            percentage = amount_val
             rate_per_unit = None
-            amount_val = amount
+            minimum_amount = None
+            percent_applies_to = "FREIGHT"
+        # MIN_OR_PER_KG check (if raw_rate and raw_minimum exist and unit is KG/per KG)
+        elif raw_rate_dec is not None and raw_min_dec is not None and raw.raw_unit and any(uk in raw.raw_unit.lower() for uk in ["kg", "per kg"]):
+            unit_basis = "MIN_OR_PER_KG"
+            amount_val = raw_rate_dec
+            rate_per_unit = raw_rate_dec
+            minimum_amount = raw_min_dec
+            percentage = None
+            percent_applies_to = None
+        else:
+            # If only raw_minimum exists or POA (default to PER_SHIPMENT)
+            if raw_rate_dec is not None:
+                unit_basis = "PER_KG"
+                amount_val = raw_rate_dec
+                rate_per_unit = raw_rate_dec
+                minimum_amount = None
+            else:
+                unit_basis = "PER_SHIPMENT"
+                amount_val = raw_min_dec or to_decimal(raw.raw_amount_string) or Decimal("0.00")
+                rate_per_unit = None
+                minimum_amount = None
+            percentage = None
+            percent_applies_to = None
             
         norm = NormalizedCharge(
             original_raw_label=raw.raw_label,
@@ -488,6 +743,9 @@ def _generate_fallback_normalized_charges(
             unit_basis=unit_basis,
             amount=amount_val,
             rate_per_unit=rate_per_unit,
+            minimum_amount=minimum_amount,
+            percentage=percentage,
+            percent_applies_to=percent_applies_to,
             currency=currency,
             confidence="LOW",
         )
@@ -536,13 +794,18 @@ def parse_rate_quote_text(
 
         # Stage 1: Extractor
         try:
-            raw_charges = _extract_raw_charges(model, text, shipment_context=context)
+            ai_charges = _extract_raw_charges(model, text, shipment_context=context)
         except Exception as e:
             logger.warning("AI Intake Extractor failed, using pattern extraction only: %s", e)
-            raw_charges = []
-        raw_charges = _merge_pattern_fallback_charges(
-            raw_charges,
-            _extract_pattern_charge_candidates(text),
+            ai_charges = []
+            
+        tabular_charges = _extract_tabular_charge_candidates(text)
+        pattern_charges = _extract_pattern_charge_candidates(text)
+        
+        raw_charges = _merge_all_charge_candidates(
+            ai_charges=ai_charges,
+            tabular_charges=tabular_charges,
+            pattern_charges=pattern_charges,
         )
 
         # Stage 2: Normalizer
