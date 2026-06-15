@@ -1047,6 +1047,7 @@ export {
   deleteCustomerDiscount,
   bulkUpsertCustomerDiscounts,
   getProductCodes,
+  createProductCodeRequest,
 } from './api/customers';
 
 export type {
@@ -1054,6 +1055,8 @@ export type {
   CustomerDiscount,
   CustomerDiscountBulkLine,
   ProductCodeOption,
+  ProductCodeRequestPayload,
+  ProductCodeRequestResponse,
 } from './api/customers';
 
 
