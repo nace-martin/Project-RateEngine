@@ -258,7 +258,7 @@ export function SpotChargeLineManualReviewSheet({
                             <div>
                                 <div className="text-sm font-semibold text-slate-950">Select canonical ProductCode</div>
                                 <p className="mt-1 text-sm text-slate-600">
-                                    Search the current {productDomain || "relevant"} ProductCode list and save the manual mapping for this line only.
+                                    Search the current {productDomain || "relevant"} ProductCode list and save the manual mapping for this line only. Manual resolution requires selecting an existing ProductCode.
                                 </p>
                             </div>
                             <Combobox
@@ -280,7 +280,7 @@ export function SpotChargeLineManualReviewSheet({
                                     {requestSuccessMessage.split('|')[1]}
                                 </p>
                                 <p className="text-xs text-slate-600">
-                                    This charge remains unresolved until an admin approves or links the ProductCode.
+                                    This charge remains unresolved until an admin reviews it in Settings → ProductCode Requests.
                                 </p>
                             </div>
                         ) : (
