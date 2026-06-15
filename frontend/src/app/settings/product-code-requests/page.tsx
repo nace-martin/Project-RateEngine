@@ -60,8 +60,8 @@ export default function ProductCodeRequestsPage() {
   const [newCategory, setNewCategory] = useState("HANDLING");
   const [newIsGstApplicable, setNewIsGstApplicable] = useState(false);
   const [newGstTreatment, setNewGstTreatment] = useState("STANDARD");
-  const [newGlRevenueCode, setNewGlRevenueCode] = useState("4000");
-  const [newGlCostCode, setNewGlCostCode] = useState("5000");
+  const [newGlRevenueCode, setNewGlRevenueCode] = useState("REVENUE-PENDING");
+  const [newGlCostCode, setNewGlCostCode] = useState("COST-PENDING");
   const [newDefaultUnit, setNewDefaultUnit] = useState("SHIPMENT");
 
   // Rejection Modal state
@@ -188,8 +188,8 @@ export default function ProductCodeRequestsPage() {
     setNewIsGstApplicable(resolvedDomain !== "EXPORT");
     setNewGstTreatment(resolvedDomain === "EXPORT" ? "ZERO_RATED" : "STANDARD");
 
-    setNewGlRevenueCode("4000");
-    setNewGlCostCode("5000");
+    setNewGlRevenueCode("REVENUE-PENDING");
+    setNewGlCostCode("COST-PENDING");
 
     setApproveOpen(true);
     void loadProductCodes();
@@ -542,6 +542,7 @@ export default function ProductCodeRequestsPage() {
                       placeholder="e.g. 1005"
                       disabled={submittingAction}
                     />
+                    <span className="text-[10px] text-slate-400 block mt-0.5">Suggested only. Final validation happens on save.</span>
                   </div>
                 </div>
 
@@ -655,6 +656,7 @@ export default function ProductCodeRequestsPage() {
                       disabled={newGstTreatment === "EXEMPT" || submittingAction}
                     />
                   </div>
+                  <span className="text-[10px] text-slate-400 block mt-1 col-span-2">Temporary RateEngine placeholder. Finance can replace this later if required.</span>
                 </div>
               </div>
             )}
