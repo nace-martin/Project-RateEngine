@@ -202,3 +202,42 @@ export async function getProductCodes(params?: {
     throw new Error('Failed to fetch product codes');
   }
 }
+
+export interface ProductCodeRequestPayload {
+  source_label: string;
+  suggested_name: string;
+  suggested_bucket: string;
+  suggested_basis: string;
+  suggested_reason: string;
+}
+
+export interface ProductCodeRequestResponse {
+  id: number;
+  source_label: string;
+  suggested_name: string;
+  suggested_bucket: string;
+  suggested_basis: string;
+  suggested_reason: string;
+  status: string;
+  created_by: number;
+  created_by_username: string;
+  approved_by: number | null;
+  approved_by_username: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  duplicate_reused?: boolean;
+}
+
+export async function createProductCodeRequest(
+  payload: ProductCodeRequestPayload
+): Promise<ProductCodeRequestResponse> {
+  try {
+    return await sendJson(API_BASE_URL + '/api/v4/product-code-requests/', 'POST', payload);
+  } catch (error) {
+    throw new Error(`Failed to submit product code request: ${(error as Error).message}`);
+  }
+}
+
