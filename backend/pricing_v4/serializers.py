@@ -638,4 +638,54 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
         ]
 
 
+class ProductCodeCreationDataSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductCode
+        fields = [
+            'id',
+            'code',
+            'description',
+            'domain',
+            'category',
+            'is_gst_applicable',
+            'gst_treatment',
+            'gl_revenue_code',
+            'gl_cost_code',
+            'default_unit',
+        ]
+
+    def validate_code(self, value):
+        if value:
+            return value.strip().upper()
+        return value
+
+    def validate(self, data):
+        domain = data.get('domain')
+        pc_id = data.get('id')
+        if domain == ProductCode.DOMAIN_EXPORT and not (1000 <= pc_id < 2000):
+            raise serializers.ValidationError({"id": f"Export ProductCode ID must be 1xxx (1000-1999), got {pc_id}"})
+        elif domain == ProductCode.DOMAIN_IMPORT and not (2000 <= pc_id < 3000):
+            raise serializers.ValidationError({"id": f"Import ProductCode ID must be 2xxx (2000-2999), got {pc_id}"})
+        elif domain == ProductCode.DOMAIN_DOMESTIC and not (3000 <= pc_id < 4000):
+            raise serializers.ValidationError({"id": f"Domestic ProductCode ID must be 3xxx (3000-3999), got {pc_id}"})
+        return data
+
+
+class ProductCodeCreationApprovalSerializer(serializers.Serializer):
+    product_code_id = serializers.IntegerField(required=False, allow_null=True)
+    create_product_code_data = ProductCodeCreationDataSerializer(required=False, allow_null=True)
+
+    def validate(self, data):
+        product_code_id = data.get('product_code_id')
+        create_product_code_data = data.get('create_product_code_data')
+
+        if product_code_id is not None and create_product_code_data is not None:
+            raise serializers.ValidationError("Specify exactly one of product_code_id or create_product_code_data, not both.")
+        if product_code_id is None and create_product_code_data is None:
+            raise serializers.ValidationError("Either product_code_id or create_product_code_data must be specified.")
+        
+        return data
+
+
+
 
