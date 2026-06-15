@@ -65,6 +65,7 @@ export function SpotChargeLineManualReviewSheet({
     const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
     const [requestSuccessMessage, setRequestSuccessMessage] = useState<string | null>(null);
     const [requestErrorMessage, setRequestErrorMessage] = useState<string | null>(null);
+    const [requestSubmitted, setRequestSubmitted] = useState(false);
 
     useEffect(() => {
         if (!open || !chargeLine) {
@@ -72,6 +73,7 @@ export function SpotChargeLineManualReviewSheet({
             setShowRequestForm(false);
             setRequestSuccessMessage(null);
             setRequestErrorMessage(null);
+            setRequestSubmitted(false);
             return;
         }
 
@@ -99,6 +101,7 @@ export function SpotChargeLineManualReviewSheet({
         setRequestSuggestedReason("Requested from SPOT review UI");
         setRequestSuccessMessage(null);
         setRequestErrorMessage(null);
+        setRequestSubmitted(false);
         setShowRequestForm(false);
     }, [chargeLine, open]);
 
@@ -155,10 +158,11 @@ export function SpotChargeLineManualReviewSheet({
             });
 
             if (res.duplicate_reused) {
-                setRequestSuccessMessage("Reused existing pending request: A matching pending request already exists in the queue.");
+                setRequestSuccessMessage(`Existing pending ProductCode request found.|Request ID: ${res.id}`);
             } else {
-                setRequestSuccessMessage(`Request created successfully! Request ID: ${res.id}`);
+                setRequestSuccessMessage(`ProductCode request submitted successfully.|Request ID: ${res.id}`);
             }
+            setRequestSubmitted(true);
             setShowRequestForm(false);
         } catch (error) {
             setRequestErrorMessage(error instanceof Error ? error.message : "Failed to create product code request");
@@ -267,126 +271,135 @@ export function SpotChargeLineManualReviewSheet({
                             />
                         </section>
 
-                        {requestSuccessMessage ? (
-                            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950">
-                                <AlertCircle className="h-4 w-4 text-emerald-600" />
-                                <AlertDescription>{requestSuccessMessage}</AlertDescription>
-                            </Alert>
-                        ) : null}
-
-                        {requestErrorMessage ? (
-                            <Alert variant="destructive">
-                                <AlertCircle className="h-4 w-4" />
-                                <AlertDescription>{requestErrorMessage}</AlertDescription>
-                            </Alert>
-                        ) : null}
-
-                        {!showRequestForm ? (
-                            <div className="pt-2">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="w-full text-slate-700 hover:text-slate-900"
-                                    onClick={() => setShowRequestForm(true)}
-                                    disabled={loadingProducts || isSaving}
-                                >
-                                    Can&apos;t find a matching product code? Create ProductCode Request
-                                </Button>
+                        {requestSubmitted && requestSuccessMessage ? (
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 text-sm text-slate-800 space-y-1.5">
+                                <p className="font-semibold text-emerald-800">
+                                    {requestSuccessMessage.split('|')[0]}
+                                </p>
+                                <p className="text-xs font-mono font-semibold text-slate-700">
+                                    {requestSuccessMessage.split('|')[1]}
+                                </p>
+                                <p className="text-xs text-slate-600">
+                                    This charge remains unresolved until an admin approves or links the ProductCode.
+                                </p>
                             </div>
                         ) : (
-                            <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                    Request New ProductCode
-                                </div>
-                                <div className="space-y-3">
-                                    <div className="grid gap-1.5">
-                                        <Label htmlFor="req-source-label" className="text-xs font-semibold text-slate-600">Source Label</Label>
-                                        <Input
-                                            id="req-source-label"
-                                            value={requestSourceLabel}
-                                            onChange={(e) => setRequestSourceLabel(e.target.value)}
-                                            placeholder="e.g. Local Handling Fee"
-                                            className="bg-white"
-                                        />
-                                    </div>
-                                    <div className="grid gap-1.5">
-                                        <Label htmlFor="req-suggested-name" className="text-xs font-semibold text-slate-600">Suggested Name</Label>
-                                        <Input
-                                            id="req-suggested-name"
-                                            value={requestSuggestedName}
-                                            onChange={(e) => setRequestSuggestedName(e.target.value)}
-                                            placeholder="e.g. Local Handling"
-                                            className="bg-white"
-                                        />
-                                    </div>
-                                    <div className="grid gap-3 sm:grid-cols-2">
-                                        <div className="grid gap-1.5">
-                                            <Label htmlFor="req-bucket" className="text-xs font-semibold text-slate-600">Category Bucket</Label>
-                                            <select
-                                                id="req-bucket"
-                                                value={requestSuggestedBucket}
-                                                onChange={(e) => setRequestSuggestedBucket(e.target.value)}
-                                                className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                                            >
-                                                <option value="FREIGHT">Freight</option>
-                                                <option value="HANDLING">Handling & Terminal</option>
-                                                <option value="CLEARANCE">Customs Clearance</option>
-                                                <option value="DOCUMENTATION">Documentation</option>
-                                                <option value="REGULATORY">Regulatory / Permit</option>
-                                                <option value="CARTAGE">Pickup & Delivery</option>
-                                                <option value="AGENCY">Agency Fees</option>
-                                                <option value="SCREENING">Security & Screening</option>
-                                                <option value="SURCHARGE">Surcharges</option>
-                                            </select>
-                                        </div>
-                                        <div className="grid gap-1.5">
-                                            <Label htmlFor="req-basis" className="text-xs font-semibold text-slate-600">Charge Basis</Label>
-                                            <select
-                                                id="req-basis"
-                                                value={requestSuggestedBasis}
-                                                onChange={(e) => setRequestSuggestedBasis(e.target.value)}
-                                                className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                                            >
-                                                <option value="SHIPMENT">Per Shipment</option>
-                                                <option value="KG">Per Kilogram</option>
-                                                <option value="PERCENT">Percentage</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div className="grid gap-1.5">
-                                        <Label htmlFor="req-reason" className="text-xs font-semibold text-slate-600">Reason / Context</Label>
-                                        <Textarea
-                                            id="req-reason"
-                                            value={requestSuggestedReason}
-                                            onChange={(e) => setRequestSuggestedReason(e.target.value)}
-                                            placeholder="Reason for requesting this product code..."
-                                            className="min-h-[60px] bg-white"
-                                        />
-                                    </div>
-                                    <div className="flex gap-2 pt-2">
+                            <>
+                                {requestErrorMessage ? (
+                                    <Alert variant="destructive">
+                                        <AlertCircle className="h-4 w-4" />
+                                        <AlertDescription>{requestErrorMessage}</AlertDescription>
+                                    </Alert>
+                                ) : null}
+
+                                {!showRequestForm ? (
+                                    <div className="pt-2">
                                         <Button
                                             type="button"
                                             variant="outline"
                                             size="sm"
-                                            onClick={() => setShowRequestForm(false)}
-                                            disabled={isSubmittingRequest}
+                                            className="w-full text-slate-700 hover:text-slate-900"
+                                            onClick={() => setShowRequestForm(true)}
+                                            disabled={loadingProducts || isSaving}
                                         >
-                                            Cancel
-                                        </Button>
-                                        <Button
-                                            type="button"
-                                            size="sm"
-                                            onClick={handleSubmitRequest}
-                                            loading={isSubmittingRequest}
-                                            loadingText="Submitting..."
-                                            disabled={!requestSourceLabel.trim() || !requestSuggestedName.trim()}
-                                        >
-                                            Submit Request
+                                            Can&apos;t find a matching product code? Create ProductCode Request
                                         </Button>
                                     </div>
-                                </div>
-                            </section>
+                                ) : (
+                                    <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
+                                        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                            Request New ProductCode
+                                        </div>
+                                        <div className="space-y-3">
+                                            <div className="grid gap-1.5">
+                                                <Label htmlFor="req-source-label" className="text-xs font-semibold text-slate-600">Source Label</Label>
+                                                <Input
+                                                    id="req-source-label"
+                                                    value={requestSourceLabel}
+                                                    onChange={(e) => setRequestSourceLabel(e.target.value)}
+                                                    placeholder="e.g. Local Handling Fee"
+                                                    className="bg-white"
+                                                />
+                                            </div>
+                                            <div className="grid gap-1.5">
+                                                <Label htmlFor="req-suggested-name" className="text-xs font-semibold text-slate-600">Suggested Name</Label>
+                                                <Input
+                                                    id="req-suggested-name"
+                                                    value={requestSuggestedName}
+                                                    onChange={(e) => setRequestSuggestedName(e.target.value)}
+                                                    placeholder="e.g. Local Handling"
+                                                    className="bg-white"
+                                                />
+                                            </div>
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <div className="grid gap-1.5">
+                                                    <Label htmlFor="req-bucket" className="text-xs font-semibold text-slate-600">Category Bucket</Label>
+                                                    <select
+                                                        id="req-bucket"
+                                                        value={requestSuggestedBucket}
+                                                        onChange={(e) => setRequestSuggestedBucket(e.target.value)}
+                                                        className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                                    >
+                                                        <option value="FREIGHT">Freight</option>
+                                                        <option value="HANDLING">Handling & Terminal</option>
+                                                        <option value="CLEARANCE">Customs Clearance</option>
+                                                        <option value="DOCUMENTATION">Documentation</option>
+                                                        <option value="REGULATORY">Regulatory / Permit</option>
+                                                        <option value="CARTAGE">Pickup & Delivery</option>
+                                                        <option value="AGENCY">Agency Fees</option>
+                                                        <option value="SCREENING">Security & Screening</option>
+                                                        <option value="SURCHARGE">Surcharges</option>
+                                                    </select>
+                                                </div>
+                                                <div className="grid gap-1.5">
+                                                    <Label htmlFor="req-basis" className="text-xs font-semibold text-slate-600">Charge Basis</Label>
+                                                    <select
+                                                        id="req-basis"
+                                                        value={requestSuggestedBasis}
+                                                        onChange={(e) => setRequestSuggestedBasis(e.target.value)}
+                                                        className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                                    >
+                                                        <option value="SHIPMENT">Per Shipment</option>
+                                                        <option value="KG">Per Kilogram</option>
+                                                        <option value="PERCENT">Percentage</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="grid gap-1.5">
+                                                <Label htmlFor="req-reason" className="text-xs font-semibold text-slate-600">Reason / Context</Label>
+                                                <Textarea
+                                                    id="req-reason"
+                                                    value={requestSuggestedReason}
+                                                    onChange={(e) => setRequestSuggestedReason(e.target.value)}
+                                                    placeholder="Reason for requesting this product code..."
+                                                    className="min-h-[60px] bg-white"
+                                                />
+                                            </div>
+                                            <div className="flex gap-2 pt-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => setShowRequestForm(false)}
+                                                    disabled={isSubmittingRequest}
+                                                >
+                                                    Cancel
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    onClick={handleSubmitRequest}
+                                                    loading={isSubmittingRequest}
+                                                    loadingText="Submitting..."
+                                                    disabled={!requestSourceLabel.trim() || !requestSuggestedName.trim()}
+                                                >
+                                                    Submit Request
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </section>
+                                )}
+                            </>
                         )}
                     </div>
                 ) : null}
