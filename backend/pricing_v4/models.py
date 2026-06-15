@@ -1701,6 +1701,11 @@ class ProductCodeCreationRequest(models.Model):
 
     source_label = models.CharField(max_length=100, help_text="Original raw label from ingestion source")
     suggested_name = models.CharField(max_length=200, help_text="Suggested human-friendly description/name")
+    
+    # Normalized fields for duplicate detection lookup
+    normalized_source_label = models.CharField(max_length=255, blank=True, db_index=True)
+    normalized_suggested_name = models.CharField(max_length=255, blank=True, db_index=True)
+
     suggested_bucket = models.CharField(max_length=50, help_text="Suggested category bucket (e.g. FREIGHT, Terminal, Customs)")
     suggested_basis = models.CharField(max_length=50, help_text="Suggested charge basis (e.g. per Shipment, per KG)")
     suggested_reason = models.TextField(blank=True, help_text="Reason/context for suggesting this product code")
@@ -1733,9 +1738,20 @@ class ProductCodeCreationRequest(models.Model):
         verbose_name = 'Product Code Creation Request'
         verbose_name_plural = 'Product Code Creation Requests'
         indexes = [
-            models.Index(fields=['status'], name='pc_req_status_idx'),
             models.Index(fields=['created_at'], name='pc_req_created_at_idx'),
+            models.Index(fields=['status', 'normalized_source_label', 'normalized_suggested_name'], name='pc_req_dedupe_idx'),
         ]
+
+    @staticmethod
+    def normalize_label(value):
+        if not value:
+            return ""
+        return " ".join(str(value).split()).lower()
+
+    def save(self, *args, **kwargs):
+        self.normalized_source_label = self.normalize_label(self.source_label)
+        self.normalized_suggested_name = self.normalize_label(self.suggested_name)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Request for '{self.source_label}' -> '{self.suggested_name}' ({self.status})"

@@ -605,6 +605,8 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
             'id',
             'source_label',
             'suggested_name',
+            'normalized_source_label',
+            'normalized_suggested_name',
             'suggested_bucket',
             'suggested_basis',
             'suggested_reason',
@@ -622,6 +624,8 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id',
             'status',
+            'normalized_source_label',
+            'normalized_suggested_name',
             'created_by',
             'approved_by',
             'approved_at',
