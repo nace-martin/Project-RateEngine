@@ -18,6 +18,7 @@ from .models import (
     DomesticSellRate,
     CustomerDiscount,
     CommodityChargeRule,
+    ProductCodeCreationRequest,
 )
 from .services.pricing_rate_scope import LOCAL_CATEGORIES, PricingRateScope
 from .services.import_cogs_scope import ImportCOGSScope
@@ -490,3 +491,21 @@ class LocalCOGSRateAdmin(admin.ModelAdmin):
             return 'Primary export local buy'
         return 'Primary local buy'
     architecture_role.short_description = 'Architecture Role'
+
+
+@admin.register(ProductCodeCreationRequest)
+class ProductCodeCreationRequestAdmin(admin.ModelAdmin):
+    list_display = [
+        'source_label',
+        'suggested_name',
+        'suggested_bucket',
+        'suggested_basis',
+        'status',
+        'created_by',
+        'created_at',
+    ]
+    list_filter = ['status', 'suggested_bucket', 'suggested_basis']
+    search_fields = ['source_label', 'suggested_name', 'suggested_reason', 'rejection_reason']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+

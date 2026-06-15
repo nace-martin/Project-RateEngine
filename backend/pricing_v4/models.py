@@ -1684,3 +1684,60 @@ class CommodityChargeRule(models.Model):
             f"{self.product_code.code} ({self.trigger_mode}) [{lane_display}]"
         )
 
+
+class ProductCodeCreationRequest(models.Model):
+    """
+    Tracks requests to create a new ProductCode in the master catalog.
+    Admin reviews and approves/rejects these requests.
+    """
+    STATUS_PENDING = 'PENDING'
+    STATUS_APPROVED = 'APPROVED'
+    STATUS_REJECTED = 'REJECTED'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    source_label = models.CharField(max_length=100, help_text="Original raw label from ingestion source")
+    suggested_name = models.CharField(max_length=200, help_text="Suggested human-friendly description/name")
+    suggested_bucket = models.CharField(max_length=50, help_text="Suggested category bucket (e.g. FREIGHT, Terminal, Customs)")
+    suggested_basis = models.CharField(max_length=50, help_text="Suggested charge basis (e.g. per Shipment, per KG)")
+    suggested_reason = models.TextField(blank=True, help_text="Reason/context for suggesting this product code")
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='product_code_creation_requests_created',
+        help_text="User who requested the creation"
+    )
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='product_code_creation_requests_approved',
+        help_text="User (Admin) who approved/rejected the request"
+    )
+    approved_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp of approval")
+    rejected_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp of rejection")
+    rejection_reason = models.TextField(null=True, blank=True, help_text="Reason for rejection")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'product_code_creation_requests'
+        ordering = ['-created_at']
+        verbose_name = 'Product Code Creation Request'
+        verbose_name_plural = 'Product Code Creation Requests'
+        indexes = [
+            models.Index(fields=['status'], name='pc_req_status_idx'),
+            models.Index(fields=['created_at'], name='pc_req_created_at_idx'),
+        ]
+
+    def __str__(self):
+        return f"Request for '{self.source_label}' -> '{self.suggested_name}' ({self.status})"
+
+
