@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APITestCase
-from pricing_v4.models import ProductCodeCreationRequest
+from pricing_v4.models import ProductCodeCreationRequest, ProductCode
 
 
 class ProductCodeCreationRequestTests(APITestCase):
@@ -39,6 +39,17 @@ class ProductCodeCreationRequestTests(APITestCase):
             suggested_basis="KG",
             suggested_reason="Required for rising fuel costs",
             created_by=self.manager_user,
+        )
+        self.product_code_1 = ProductCode.objects.create(
+            id=1004,
+            code="EXP-TERM-POM",
+            description="POM Terminal Handling Fee",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gl_revenue_code="4000",
+            gl_cost_code="5000",
+            default_unit="SHIPMENT",
         )
 
     def test_model_fields_and_string_representation(self):
@@ -267,3 +278,139 @@ class ProductCodeCreationRequestTests(APITestCase):
         # Delete not allowed
         response = self.client.delete(f"/api/v4/product-code-requests/{self.request_1.id}/")
         self.assertEqual(response.status_code, 405)
+
+    def test_sales_and_manager_cannot_approve_or_reject(self):
+        # Sales approve blocked
+        self.client.force_authenticate(user=self.sales_user)
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"product_code_id": self.product_code_1.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        # Sales reject blocked
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {"rejection_reason": "Not allowed"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        # Manager approve blocked
+        self.client.force_authenticate(user=self.manager_user)
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"product_code_id": self.product_code_1.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        # Manager reject blocked
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {"rejection_reason": "Not allowed"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_approve_by_linking_product_code(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"product_code_id": self.product_code_1.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "APPROVED")
+        self.assertEqual(response.data["approved_product_code"], self.product_code_1.id)
+        self.assertEqual(response.data["approved_by"], self.admin_user.id)
+        self.assertIsNotNone(response.data["approved_at"])
+
+        # Check DB
+        self.request_1.refresh_from_db()
+        self.assertEqual(self.request_1.status, "APPROVED")
+        self.assertEqual(self.request_1.approved_product_code, self.product_code_1)
+        self.assertEqual(self.request_1.approved_by, self.admin_user)
+
+    def test_admin_can_reject_with_reason(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {"rejection_reason": "   Replaced by existing code   "},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "REJECTED")
+        self.assertEqual(response.data["rejection_reason"], "Replaced by existing code")
+        self.assertEqual(response.data["approved_by"], self.admin_user.id)
+        self.assertIsNotNone(response.data["rejected_at"])
+
+        # Check DB
+        self.request_1.refresh_from_db()
+        self.assertEqual(self.request_1.status, "REJECTED")
+        self.assertEqual(self.request_1.rejection_reason, "Replaced by existing code")
+
+    def test_rejection_reason_validation(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Empty reason
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {"rejection_reason": ""},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+        # Whitespace-only reason
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {"rejection_reason": "    "},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+        # Missing reason
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_approve_or_reject_requires_pending_status(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Approve it first
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"product_code_id": self.product_code_1.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+        # Try to approve again
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"product_code_id": self.product_code_1.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+        # Try to reject approved request
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/reject/",
+            {"rejection_reason": "Duplicate"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_approve_with_invalid_product_code_id(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"product_code_id": 9999},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+

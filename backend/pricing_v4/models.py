@@ -1728,6 +1728,14 @@ class ProductCodeCreationRequest(models.Model):
     approved_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp of approval")
     rejected_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp of rejection")
     rejection_reason = models.TextField(null=True, blank=True, help_text="Reason for rejection")
+    approved_product_code = models.ForeignKey(
+        'ProductCode',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='creation_requests',
+        help_text="ProductCode linked to this request upon approval"
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

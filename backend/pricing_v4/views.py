@@ -1170,6 +1170,8 @@ class ProductCodeCreationRequestViewSet(
     def get_permissions(self):
         if self.action == 'create':
             return [permissions.IsAuthenticated(), IsSalesManagerOrAdmin()]
+        if self.action in ['approve', 'reject']:
+            return [permissions.IsAuthenticated(), IsAdmin()]
         return [permissions.IsAuthenticated(), IsAdmin()]
 
     def perform_create(self, serializer):
@@ -1195,6 +1197,79 @@ class ProductCodeCreationRequestViewSet(
             return Response(data, status=status.HTTP_200_OK)
             
         return super().create(request, *args, **kwargs)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        product_code_id = request.data.get('product_code_id')
+        if not product_code_id:
+            return Response(
+                {"detail": "product_code_id is required for approval."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            product_code = ProductCode.objects.get(id=product_code_id)
+        except ProductCode.DoesNotExist:
+            return Response(
+                {"detail": f"ProductCode with id {product_code_id} does not exist."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            obj = self.get_queryset().select_for_update().filter(pk=pk).first()
+            if not obj:
+                return Response(
+                    {"detail": "Not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if obj.status != ProductCodeCreationRequest.STATUS_PENDING:
+                return Response(
+                    {"detail": f"Only PENDING requests can be approved. Current status: {obj.status}."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            obj.status = ProductCodeCreationRequest.STATUS_APPROVED
+            obj.approved_by = request.user
+            obj.approved_at = timezone.now()
+            obj.approved_product_code = product_code
+            obj.save()
+
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        rejection_reason = request.data.get('rejection_reason')
+        if not rejection_reason or not rejection_reason.strip():
+            return Response(
+                {"detail": "A non-empty rejection_reason is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            obj = self.get_queryset().select_for_update().filter(pk=pk).first()
+            if not obj:
+                return Response(
+                    {"detail": "Not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if obj.status != ProductCodeCreationRequest.STATUS_PENDING:
+                return Response(
+                    {"detail": f"Only PENDING requests can be rejected. Current status: {obj.status}."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            obj.status = ProductCodeCreationRequest.STATUS_REJECTED
+            obj.approved_by = request.user
+            obj.rejected_at = timezone.now()
+            obj.rejection_reason = rejection_reason.strip()
+            obj.save()
+
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 
 
