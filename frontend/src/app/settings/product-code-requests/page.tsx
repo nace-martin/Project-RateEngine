@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   getProductCodeRequests,
   approveProductCodeRequest,
@@ -46,6 +48,21 @@ export default function ProductCodeRequestsPage() {
   const [submittingAction, setSubmittingAction] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Approval mode toggle: LINK = Link existing, CREATE = Create new inline
+  const [approveMode, setApproveMode] = useState<"LINK" | "CREATE">("LINK");
+
+  // Create New Form fields
+  const [newId, setNewId] = useState("");
+  const [newCode, setNewCode] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newDomain, setNewDomain] = useState("EXPORT");
+  const [newCategory, setNewCategory] = useState("HANDLING");
+  const [newIsGstApplicable, setNewIsGstApplicable] = useState(false);
+  const [newGstTreatment, setNewGstTreatment] = useState("STANDARD");
+  const [newGlRevenueCode, setNewGlRevenueCode] = useState("4000");
+  const [newGlCostCode, setNewGlCostCode] = useState("5000");
+  const [newDefaultUnit, setNewDefaultUnit] = useState("SHIPMENT");
 
   // Rejection Modal state
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -85,6 +102,34 @@ export default function ProductCodeRequestsPage() {
     }
   };
 
+  // Suggest ID dynamically based on domain and existing productCodes
+  useEffect(() => {
+    if (!productCodes.length || !newDomain) return;
+    let min = 1000, max = 1999;
+    if (newDomain === "IMPORT") { min = 2000; max = 2999; }
+    else if (newDomain === "DOMESTIC") { min = 3000; max = 3999; }
+
+    const ids = productCodes
+      .map(pc => Number(pc.id))
+      .filter(id => !isNaN(id) && id >= min && id <= max);
+    const nextId = ids.length > 0 ? Math.max(...ids) + 1 : min;
+    setNewId(String(nextId <= max ? nextId : min));
+  }, [newDomain, productCodes]);
+
+  // Keep prefix and user input normalized on domain changes
+  useEffect(() => {
+    if (!newDomain) return;
+    const prefix = newDomain === "EXPORT" ? "EXP-" : newDomain === "IMPORT" ? "IMP-" : "DOM-";
+    
+    if (newCode && newCode.length >= 4 && newCode[3] === '-') {
+      const remaining = newCode.substring(4);
+      setNewCode(`${prefix}${remaining}`);
+    } else if (!newCode) {
+      setNewCode(prefix);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newDomain]);
+
   const productOptions = useMemo(() => {
     return productCodes.map((pc) => ({
       value: String(pc.id),
@@ -97,6 +142,55 @@ export default function ProductCodeRequestsPage() {
     setSelectedProductCodeId("");
     setActionError(null);
     setActionSuccess(null);
+    setApproveMode("LINK");
+
+    // Prefill heuristics
+    const nameToUse = req.suggested_name || req.source_label || "";
+    setNewDescription(nameToUse);
+
+    let resolvedDomain = "EXPORT";
+    const lowerName = nameToUse.toLowerCase();
+    if (lowerName.includes("import") || lowerName.includes("imp")) {
+      resolvedDomain = "IMPORT";
+    } else if (lowerName.includes("domestic") || lowerName.includes("dom")) {
+      resolvedDomain = "DOMESTIC";
+    }
+    setNewDomain(resolvedDomain);
+
+    const cleanCode = nameToUse
+      .toUpperCase()
+      .replace(/[^A-Z0-9\s-]/g, "")
+      .trim()
+      .replace(/[\s_]+/g, "-");
+    
+    const prefix = resolvedDomain === "EXPORT" ? "EXP-" : resolvedDomain === "IMPORT" ? "IMP-" : "DOM-";
+    const finalCode = cleanCode.startsWith(prefix) ? cleanCode : `${prefix}${cleanCode}`;
+    setNewCode(finalCode.substring(0, 30));
+
+    let resolvedCategory = "HANDLING";
+    const bucket = (req.suggested_bucket || "").toUpperCase();
+    if (bucket.includes("FREIGHT")) resolvedCategory = "FREIGHT";
+    else if (bucket.includes("CLEARANCE") || bucket.includes("CUSTOMS")) resolvedCategory = "CLEARANCE";
+    else if (bucket.includes("DOC") || bucket.includes("PAPER")) resolvedCategory = "DOCUMENTATION";
+    else if (bucket.includes("REGULATORY") || bucket.includes("PERMIT")) resolvedCategory = "REGULATORY";
+    else if (bucket.includes("CARTAGE") || bucket.includes("PICKUP") || bucket.includes("DELIVERY")) resolvedCategory = "CARTAGE";
+    else if (bucket.includes("AGENCY")) resolvedCategory = "AGENCY";
+    else if (bucket.includes("SCREENING") || bucket.includes("SECURITY")) resolvedCategory = "SCREENING";
+    else if (bucket.includes("SURCHARGE")) resolvedCategory = "SURCHARGE";
+    setNewCategory(resolvedCategory);
+
+    let resolvedUnit = "SHIPMENT";
+    const basis = (req.suggested_basis || "").toLowerCase();
+    if (basis.includes("kg") || basis.includes("kilogram")) resolvedUnit = "KG";
+    else if (basis.includes("percent")) resolvedUnit = "PERCENT";
+    setNewDefaultUnit(resolvedUnit);
+
+    setNewIsGstApplicable(resolvedDomain !== "EXPORT");
+    setNewGstTreatment(resolvedDomain === "EXPORT" ? "ZERO_RATED" : "STANDARD");
+
+    setNewGlRevenueCode("4000");
+    setNewGlCostCode("5000");
+
     setApproveOpen(true);
     void loadProductCodes();
   };
@@ -110,12 +204,52 @@ export default function ProductCodeRequestsPage() {
   };
 
   const handleApproveConfirm = async () => {
-    if (!selectedRequest || !selectedProductCodeId) return;
+    if (!selectedRequest) return;
     setSubmittingAction(true);
     setActionError(null);
+
+    let payload: { product_code_id?: number; create_product_code_data?: Record<string, unknown> } = {};
+    if (approveMode === "LINK") {
+      if (!selectedProductCodeId) {
+        setActionError("Please select a ProductCode to link.");
+        setSubmittingAction(false);
+        return;
+      }
+      payload = { product_code_id: Number(selectedProductCodeId) };
+    } else {
+      const pcId = Number(newId);
+      if (isNaN(pcId) || pcId <= 0) {
+        setActionError("Please enter a valid numeric ProductCode ID.");
+        setSubmittingAction(false);
+        return;
+      }
+
+      const normalizedCode = newCode.trim().toUpperCase();
+      if (!normalizedCode) {
+        setActionError("Please enter a ProductCode code.");
+        setSubmittingAction(false);
+        return;
+      }
+
+      payload = {
+        create_product_code_data: {
+          id: pcId,
+          code: normalizedCode,
+          description: newDescription,
+          domain: newDomain,
+          category: newCategory,
+          is_gst_applicable: newIsGstApplicable,
+          gst_treatment: newGstTreatment,
+          gl_revenue_code: newGlRevenueCode,
+          gl_cost_code: newGstTreatment === "EXEMPT" ? "" : newGlCostCode,
+          default_unit: newDefaultUnit,
+        }
+      };
+    }
+
     try {
-      await approveProductCodeRequest(selectedRequest.id, Number(selectedProductCodeId));
-      setActionSuccess("Request approved and linked successfully.");
+      await approveProductCodeRequest(selectedRequest.id, payload);
+      setActionSuccess("Request approved and ProductCode associated successfully.");
       setApproveOpen(false);
       void fetchRequests();
     } catch (err) {
@@ -318,11 +452,11 @@ export default function ProductCodeRequestsPage() {
 
       {/* Approval Dialog */}
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
-        <DialogContent className="sm:max-w-md bg-white">
+        <DialogContent className="sm:max-w-lg bg-white">
           <DialogHeader>
-            <DialogTitle>Approve & Link ProductCode</DialogTitle>
+            <DialogTitle>Approve & Associate ProductCode</DialogTitle>
             <DialogDescription>
-              Map request &quot;{selectedRequest?.suggested_name}&quot; to a canonical code in the catalogue.
+              Resolve request &quot;{selectedRequest?.suggested_name}&quot; by linking to an existing code or creating a new one inline.
             </DialogDescription>
           </DialogHeader>
 
@@ -333,27 +467,197 @@ export default function ProductCodeRequestsPage() {
             </Alert>
           )}
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-2">
             <div className="grid gap-1.5">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Request Details</span>
-              <div className="rounded-lg bg-slate-50 p-3 text-sm space-y-1 border border-slate-100">
-                <div><span className="font-semibold text-slate-700">Source label:</span> {selectedRequest?.source_label}</div>
-                <div><span className="font-semibold text-slate-700">Suggested bucket:</span> {selectedRequest?.suggested_bucket}</div>
-                <div><span className="font-semibold text-slate-700">Suggested basis:</span> {selectedRequest?.suggested_basis}</div>
+              <div className="rounded-lg bg-slate-50 p-3 text-sm space-y-1 border border-slate-100 grid grid-cols-3 gap-2">
+                <div><span className="font-semibold text-slate-700 block text-xs">Source label:</span> {selectedRequest?.source_label}</div>
+                <div><span className="font-semibold text-slate-700 block text-xs">Suggested bucket:</span> {selectedRequest?.suggested_bucket}</div>
+                <div><span className="font-semibold text-slate-700 block text-xs">Suggested basis:</span> {selectedRequest?.suggested_basis}</div>
               </div>
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="pc-combobox" className="text-xs font-semibold text-slate-600">Select Canonical ProductCode</Label>
-              <Combobox
-                options={productOptions}
-                value={selectedProductCodeId}
-                onChange={setSelectedProductCodeId}
-                placeholder={loadingProductCodes ? "Loading product codes..." : "Search catalogue codes..."}
-                emptyMessage={loadingProductCodes ? "Loading catalogue..." : "No product codes found."}
-                disabled={loadingProductCodes || submittingAction}
-              />
+            {/* Approval Mode Toggle Tabs */}
+            <div className="flex border-b border-slate-150">
+              <button
+                type="button"
+                onClick={() => setApproveMode("LINK")}
+                className={`flex-1 pb-2 text-sm font-semibold border-b-2 text-center transition-colors ${
+                  approveMode === "LINK"
+                    ? "border-emerald-600 text-emerald-700"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Link Existing Code
+              </button>
+              <button
+                type="button"
+                onClick={() => setApproveMode("CREATE")}
+                className={`flex-1 pb-2 text-sm font-semibold border-b-2 text-center transition-colors ${
+                  approveMode === "CREATE"
+                    ? "border-emerald-600 text-emerald-700"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Create New Code
+              </button>
             </div>
+
+            {approveMode === "LINK" ? (
+              <div className="grid gap-2 pt-2">
+                <Label htmlFor="pc-combobox" className="text-xs font-semibold text-slate-600">Select Canonical ProductCode</Label>
+                <Combobox
+                  options={productOptions}
+                  value={selectedProductCodeId}
+                  onChange={setSelectedProductCodeId}
+                  placeholder={loadingProductCodes ? "Loading product codes..." : "Search catalogue codes..."}
+                  emptyMessage={loadingProductCodes ? "Loading catalogue..." : "No product codes found."}
+                  disabled={loadingProductCodes || submittingAction}
+                />
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1 pt-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="new-domain" className="text-xs font-semibold text-slate-600">Domain</Label>
+                    <select
+                      id="new-domain"
+                      value={newDomain}
+                      onChange={(e) => setNewDomain(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                      disabled={submittingAction}
+                    >
+                      <option value="EXPORT">Export (1xxx)</option>
+                      <option value="IMPORT">Import (2xxx)</option>
+                      <option value="DOMESTIC">Domestic (3xxx)</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="new-id" className="text-xs font-semibold text-slate-600">ProductCode ID</Label>
+                    <Input
+                      id="new-id"
+                      type="number"
+                      value={newId}
+                      onChange={(e) => setNewId(e.target.value)}
+                      placeholder="e.g. 1005"
+                      disabled={submittingAction}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="new-code" className="text-xs font-semibold text-slate-600">Code</Label>
+                  <Input
+                    id="new-code"
+                    type="text"
+                    value={newCode}
+                    onChange={(e) => setNewCode(e.target.value)}
+                    placeholder="e.g. EXP-FUEL-SUR"
+                    disabled={submittingAction}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="new-description" className="text-xs font-semibold text-slate-600">Description</Label>
+                  <Input
+                    id="new-description"
+                    type="text"
+                    value={newDescription}
+                    onChange={(e) => setNewDescription(e.target.value)}
+                    placeholder="e.g. Export Fuel Surcharge"
+                    disabled={submittingAction}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="new-category" className="text-xs font-semibold text-slate-600">Category</Label>
+                    <select
+                      id="new-category"
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                      disabled={submittingAction}
+                    >
+                      <option value="FREIGHT">Freight</option>
+                      <option value="HANDLING">Handling & Terminal</option>
+                      <option value="CLEARANCE">Customs Clearance</option>
+                      <option value="DOCUMENTATION">Documentation</option>
+                      <option value="REGULATORY">Regulatory / Permit</option>
+                      <option value="CARTAGE">Pickup & Delivery</option>
+                      <option value="AGENCY">Agency Fees</option>
+                      <option value="SCREENING">Security & Screening</option>
+                      <option value="SURCHARGE">Surcharges</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="new-unit" className="text-xs font-semibold text-slate-600">Default Unit</Label>
+                    <select
+                      id="new-unit"
+                      value={newDefaultUnit}
+                      onChange={(e) => setNewDefaultUnit(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                      disabled={submittingAction}
+                    >
+                      <option value="SHIPMENT">Per Shipment</option>
+                      <option value="KG">Per Kilogram</option>
+                      <option value="PERCENT">Percentage</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="new-gst-treatment" className="text-xs font-semibold text-slate-600">GST Treatment</Label>
+                    <select
+                      id="new-gst-treatment"
+                      value={newGstTreatment}
+                      onChange={(e) => setNewGstTreatment(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                      disabled={submittingAction}
+                    >
+                      <option value="STANDARD">Standard (10% GST)</option>
+                      <option value="ZERO_RATED">Zero-Rated (Export)</option>
+                      <option value="EXEMPT">Exempt (Disbursement)</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between pt-6 px-1">
+                    <Label htmlFor="new-gst-applicable" className="text-xs font-semibold text-slate-600 cursor-pointer">GST Applicable</Label>
+                    <Switch
+                      id="new-gst-applicable"
+                      checked={newIsGstApplicable}
+                      onCheckedChange={setNewIsGstApplicable}
+                      disabled={submittingAction}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="new-revenue-code" className="text-xs font-semibold text-slate-600">GL Revenue Code</Label>
+                    <Input
+                      id="new-revenue-code"
+                      type="text"
+                      value={newGlRevenueCode}
+                      onChange={(e) => setNewGlRevenueCode(e.target.value)}
+                      placeholder="e.g. 4000"
+                      disabled={submittingAction}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="new-cost-code" className="text-xs font-semibold text-slate-600">GL Cost Code</Label>
+                    <Input
+                      id="new-cost-code"
+                      type="text"
+                      value={newGlCostCode}
+                      onChange={(e) => setNewGlCostCode(e.target.value)}
+                      placeholder="e.g. 5000"
+                      disabled={newGstTreatment === "EXEMPT" || submittingAction}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -368,12 +672,16 @@ export default function ProductCodeRequestsPage() {
             <Button
               type="button"
               onClick={handleApproveConfirm}
-              disabled={!selectedProductCodeId || submittingAction}
+              disabled={
+                approveMode === "LINK"
+                  ? !selectedProductCodeId || submittingAction
+                  : !newId || !newCode || !newDescription || submittingAction
+              }
               loading={submittingAction}
-              loadingText="Linking..."
+              loadingText="Saving..."
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
-              Approve & Link
+              Confirm Approval
             </Button>
           </DialogFooter>
         </DialogContent>
