@@ -115,6 +115,25 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         )}
+
+        {isAdmin && (
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5 text-primary" />
+                ProductCode Governance
+              </CardTitle>
+              <CardDescription>
+                Review and approve/reject custom ProductCode creation requests from the ingestion queue.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link href="/settings/product-code-requests">Open Governance Queue</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {!showPricingEngine && !canEditRateCards && !showBranding && !showUsers && (

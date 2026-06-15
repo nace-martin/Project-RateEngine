@@ -223,6 +223,7 @@ export interface ProductCodeRequestResponse {
   created_by_username: string;
   approved_by: number | null;
   approved_by_username: string | null;
+  approved_product_code: number | null;
   approved_at: string | null;
   rejected_at: string | null;
   rejection_reason: string | null;
@@ -240,4 +241,49 @@ export async function createProductCodeRequest(
     throw new Error(`Failed to submit product code request: ${(error as Error).message}`);
   }
 }
+
+export async function getProductCodeRequests(params?: {
+  status?: string;
+}): Promise<ProductCodeRequestResponse[]> {
+  const url = new URL(API_BASE_URL + '/api/v4/product-code-requests/');
+  if (params && params.status) {
+    url.searchParams.append('status', params.status);
+  }
+  try {
+    return await getJson<ProductCodeRequestResponse[]>(url.toString());
+  } catch (error) {
+    throw new Error(`Failed to fetch product code requests: ${(error as Error).message}`);
+  }
+}
+
+export async function approveProductCodeRequest(
+  id: number,
+  productCodeId: number
+): Promise<ProductCodeRequestResponse> {
+  try {
+    return await sendJson(
+      API_BASE_URL + `/api/v4/product-code-requests/${id}/approve/`,
+      'POST',
+      { product_code_id: productCodeId }
+    );
+  } catch (error) {
+    throw new Error(`Failed to approve request: ${(error as Error).message}`);
+  }
+}
+
+export async function rejectProductCodeRequest(
+  id: number,
+  reason: string
+): Promise<ProductCodeRequestResponse> {
+  try {
+    return await sendJson(
+      API_BASE_URL + `/api/v4/product-code-requests/${id}/reject/`,
+      'POST',
+      { rejection_reason: reason }
+    );
+  } catch (error) {
+    throw new Error(`Failed to reject request: ${(error as Error).message}`);
+  }
+}
+
 

@@ -1048,6 +1048,9 @@ export {
   bulkUpsertCustomerDiscounts,
   getProductCodes,
   createProductCodeRequest,
+  getProductCodeRequests,
+  approveProductCodeRequest,
+  rejectProductCodeRequest,
 } from './api/customers';
 
 export type {
