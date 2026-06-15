@@ -502,10 +502,10 @@ class ProductCodeCreationRequestTests(APITestCase):
 
     def test_approve_inline_creation_duplicate_code_fails(self):
         self.client.force_authenticate(user=self.admin_user)
-        # Try to use same code as product_code_1 (EXP-TERM-POM)
+        # Try to use same code as product_code_1 (EXP-TERM-POM) but in lowercase/mixedcase
         creation_data = {
             "id": 1007,
-            "code": "EXP-TERM-POM",
+            "code": "exp-term-pom",
             "description": "Another POM Term",
             "domain": "EXPORT",
             "category": "HANDLING",
@@ -521,6 +521,7 @@ class ProductCodeCreationRequestTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
+        self.assertIn("already exists", response.data.get("detail", ""))
 
     def test_approve_inline_creation_duplicate_id_fails(self):
         self.client.force_authenticate(user=self.admin_user)

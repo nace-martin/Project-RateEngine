@@ -1224,7 +1224,7 @@ class ProductCodeCreationRequestViewSet(
 
             if product_code_id is not None:
                 try:
-                    product_code = ProductCode.objects.get(id=product_code_id)
+                    product_code = ProductCode.objects.select_for_update().get(id=product_code_id)
                 except ProductCode.DoesNotExist:
                     return Response(
                         {"detail": f"ProductCode with id {product_code_id} does not exist."},
@@ -1242,7 +1242,7 @@ class ProductCodeCreationRequestViewSet(
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 # Check duplicate normalized code
-                if ProductCode.objects.filter(code=pc_code).exists():
+                if ProductCode.objects.filter(code__iexact=pc_code).exists():
                     return Response(
                         {"detail": f"ProductCode with code {pc_code} already exists."},
                         status=status.HTTP_400_BAD_REQUEST
