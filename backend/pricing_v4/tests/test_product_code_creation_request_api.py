@@ -99,24 +99,138 @@ class ProductCodeCreationRequestTests(APITestCase):
         response = self.client.get(f"/api/v4/product-code-requests/{self.request_1.id}/")
         self.assertEqual(response.status_code, 401)
 
-    def test_no_write_actions_allowed(self):
-        self.client.force_authenticate(user=self.admin_user)
-        
-        # Create not allowed
+    def test_role_creation_permissions(self):
+        # 1. Sales can create request
+        self.client.force_authenticate(user=self.sales_user)
         response = self.client.post(
             "/api/v4/product-code-requests/",
             {
-                "source_label": "New Inbound Fee",
-                "suggested_name": "Inbound Fee",
+                "source_label": "Origin Fee",
+                "suggested_name": "Origin Handling",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+                "suggested_reason": "Sales required",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["created_by"], self.sales_user.id)
+        self.assertEqual(response.data["status"], "PENDING")
+
+        # 2. Manager can create request
+        self.client.force_authenticate(user=self.manager_user)
+        response = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "Destination Fee",
+                "suggested_name": "Destination Handling",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+                "suggested_reason": "Manager required",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["created_by"], self.manager_user.id)
+
+        # 3. Admin can create request
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "Admin Fee",
+                "suggested_name": "Admin Handling",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+                "suggested_reason": "Admin required",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["created_by"], self.admin_user.id)
+
+    def test_unauthenticated_create_blocked(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "Unauth Fee",
+                "suggested_name": "Unauth Handling",
                 "suggested_bucket": "HANDLING",
                 "suggested_basis": "SHIPMENT",
             },
             format="json",
         )
-        self.assertEqual(response.status_code, 405)  # Method Not Allowed
+        self.assertEqual(response.status_code, 401)
+
+    def test_client_cannot_override_status_or_created_by(self):
+        self.client.force_authenticate(user=self.sales_user)
+        response = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "Fake Fee",
+                "suggested_name": "Fake Handling",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+                "status": "APPROVED",
+                "created_by": self.admin_user.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["status"], "PENDING")
+        self.assertEqual(response.data["created_by"], self.sales_user.id)
+
+    def test_duplicate_pending_request_handling(self):
+        self.client.force_authenticate(user=self.sales_user)
+        
+        # First creation
+        response1 = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "   Duplicate Fee   ",
+                "suggested_name": "Duplicate Handling",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+            },
+            format="json",
+        )
+        self.assertEqual(response1.status_code, 201)
+        initial_id = response1.data["id"]
+
+        # Duplicate creation with trailing space and different casing
+        response2 = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "duplicate fee",
+                "suggested_name": "   duplicate handling   ",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+            },
+            format="json",
+        )
+        self.assertEqual(response2.status_code, 200)
+        self.assertEqual(response2.data["id"], initial_id)
+        self.assertTrue(response2.data.get("duplicate_reused"))
+
+        # Verify no new row was actually created
+        self.assertEqual(
+            ProductCodeCreationRequest.objects.filter(suggested_name__icontains="duplicate").count(),
+            1
+        )
+
+    def test_no_put_patch_delete_actions_allowed(self):
+        self.client.force_authenticate(user=self.admin_user)
         
         # Update not allowed
         response = self.client.put(
+            f"/api/v4/product-code-requests/{self.request_1.id}/",
+            {"status": "APPROVED"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 405)
+        
+        response = self.client.patch(
             f"/api/v4/product-code-requests/{self.request_1.id}/",
             {"status": "APPROVED"},
             format="json",

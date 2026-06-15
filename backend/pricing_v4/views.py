@@ -1138,13 +1138,68 @@ class LogicalRateCardsView(APIView):
         return {}
 
 
-class ProductCodeCreationRequestViewSet(viewsets.ReadOnlyModelViewSet):
+class IsSalesManagerOrAdmin(permissions.BasePermission):
     """
-    Admin-only endpoint for listing and retrieving ProductCodeCreationRequests.
+    Allows access only to Sales, Manager, or Admin users.
+    """
+    message = "Only Sales, Manager, or Admin users can perform this action."
+    
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated and
+            request.user.role in ['sales', 'manager', 'admin']
+        )
+
+
+from rest_framework import mixins
+
+class ProductCodeCreationRequestViewSet(
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    viewsets.GenericViewSet
+):
+    """
+    Endpoint for listing, retrieving, and creating ProductCodeCreationRequests.
+    - list/retrieve: Admin only
+    - create: Sales, Manager, Admin
     """
     queryset = ProductCodeCreationRequest.objects.all().order_by('-created_at')
     serializer_class = ProductCodeCreationRequestSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
+    def get_permissions(self):
+        if self.action == 'create':
+            return [permissions.IsAuthenticated(), IsSalesManagerOrAdmin()]
+        return [permissions.IsAuthenticated(), IsAdmin()]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        source_label = request.data.get('source_label', '')
+        suggested_name = request.data.get('suggested_name', '')
+        
+        norm_source = str(source_label).strip().lower()
+        norm_suggested = str(suggested_name).strip().lower()
+        
+        existing_requests = ProductCodeCreationRequest.objects.filter(
+            status=ProductCodeCreationRequest.STATUS_PENDING
+        )
+        matched = None
+        for req in existing_requests:
+            if (req.source_label.strip().lower() == norm_source and
+                req.suggested_name.strip().lower() == norm_suggested):
+                matched = req
+                break
+        
+        if matched:
+            serializer = self.get_serializer(matched)
+            data = dict(serializer.data)
+            data['duplicate_reused'] = True
+            return Response(data, status=status.HTTP_200_OK)
+            
+        return super().create(request, *args, **kwargs)
+
 
 
 
