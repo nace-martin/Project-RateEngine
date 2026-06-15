@@ -640,6 +640,7 @@ from .serializers import (
     RateChangeLogSerializer,
     RateRevisionRequestSerializer,
     ProductCodeCreationRequestSerializer,
+    ProductCodeCreationApprovalSerializer,
 )
 
 
@@ -1200,20 +1201,12 @@ class ProductCodeCreationRequestViewSet(
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        product_code_id = request.data.get('product_code_id')
-        if not product_code_id:
-            return Response(
-                {"detail": "product_code_id is required for approval."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            product_code = ProductCode.objects.get(id=product_code_id)
-        except ProductCode.DoesNotExist:
-            return Response(
-                {"detail": f"ProductCode with id {product_code_id} does not exist."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        approval_serializer = ProductCodeCreationApprovalSerializer(data=request.data)
+        if not approval_serializer.is_valid():
+            return Response(approval_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        product_code_id = approval_serializer.validated_data.get('product_code_id')
+        create_product_code_data = approval_serializer.validated_data.get('create_product_code_data')
 
         with transaction.atomic():
             obj = self.get_queryset().select_for_update().filter(pk=pk).first()
@@ -1228,6 +1221,35 @@ class ProductCodeCreationRequestViewSet(
                     {"detail": f"Only PENDING requests can be approved. Current status: {obj.status}."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+            if product_code_id is not None:
+                try:
+                    product_code = ProductCode.objects.get(id=product_code_id)
+                except ProductCode.DoesNotExist:
+                    return Response(
+                        {"detail": f"ProductCode with id {product_code_id} does not exist."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                # Direct creation path
+                pc_id = create_product_code_data['id']
+                pc_code = create_product_code_data['code']
+                
+                # Check duplicate id
+                if ProductCode.objects.filter(id=pc_id).exists():
+                    return Response(
+                        {"detail": f"ProductCode with id {pc_id} already exists."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                # Check duplicate normalized code
+                if ProductCode.objects.filter(code=pc_code).exists():
+                    return Response(
+                        {"detail": f"ProductCode with code {pc_code} already exists."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Create the product code
+                product_code = ProductCode.objects.create(**create_product_code_data)
 
             obj.status = ProductCodeCreationRequest.STATUS_APPROVED
             obj.approved_by = request.user

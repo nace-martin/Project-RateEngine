@@ -414,3 +414,219 @@ class ProductCodeCreationRequestTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_approve_by_inline_creation_works(self):
+        self.client.force_authenticate(user=self.admin_user)
+        creation_data = {
+            "id": 1005,
+            "code": "EXP-FUEL-SUD",
+            "description": "Fuel surcharge Sudan",
+            "domain": "EXPORT",
+            "category": "SURCHARGE",
+            "is_gst_applicable": False,
+            "gst_treatment": "ZERO_RATED",
+            "gl_revenue_code": "4100",
+            "gl_cost_code": "5100",
+            "default_unit": "KG",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "APPROVED")
+        self.assertEqual(response.data["approved_product_code"], 1005)
+        self.assertEqual(response.data["approved_by"], self.admin_user.id)
+        self.assertIsNotNone(response.data["approved_at"])
+
+        # Verify DB ProductCode is created and linked
+        pc = ProductCode.objects.get(id=1005)
+        self.assertEqual(pc.code, "EXP-FUEL-SUD")
+        self.assertEqual(pc.description, "Fuel surcharge Sudan")
+        self.assertEqual(pc.domain, "EXPORT")
+        self.assertEqual(pc.category, "SURCHARGE")
+        self.assertEqual(pc.default_unit, "KG")
+        self.assertEqual(pc.gl_revenue_code, "4100")
+        
+        self.request_1.refresh_from_db()
+        self.assertEqual(self.request_1.status, "APPROVED")
+        self.assertEqual(self.request_1.approved_product_code, pc)
+        self.assertEqual(self.request_1.approved_by, self.admin_user)
+        self.assertIsNotNone(self.request_1.approved_at)
+
+    def test_approve_inline_creation_code_normalization(self):
+        self.client.force_authenticate(user=self.admin_user)
+        creation_data = {
+            "id": 1006,
+            "code": "  exp-fuel-norm  ",
+            "description": "Fuel surcharge Normalized",
+            "domain": "EXPORT",
+            "category": "SURCHARGE",
+            "is_gst_applicable": False,
+            "gst_treatment": "ZERO_RATED",
+            "gl_revenue_code": "4100",
+            "gl_cost_code": "5100",
+            "default_unit": "KG",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        pc = ProductCode.objects.get(id=1006)
+        self.assertEqual(pc.code, "EXP-FUEL-NORM")
+
+    def test_approve_inline_creation_invalid_id_range_fails(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # 1. Export domain with Domestic range ID (3xxx)
+        creation_data = {
+            "id": 3005,
+            "code": "EXP-INVALID-RANGE",
+            "description": "Invalid range",
+            "domain": "EXPORT",
+            "category": "SURCHARGE",
+            "is_gst_applicable": False,
+            "gst_treatment": "ZERO_RATED",
+            "gl_revenue_code": "4100",
+            "gl_cost_code": "5100",
+            "default_unit": "KG",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("id", response.data.get("create_product_code_data", {}))
+
+    def test_approve_inline_creation_duplicate_code_fails(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # Try to use same code as product_code_1 (EXP-TERM-POM)
+        creation_data = {
+            "id": 1007,
+            "code": "EXP-TERM-POM",
+            "description": "Another POM Term",
+            "domain": "EXPORT",
+            "category": "HANDLING",
+            "is_gst_applicable": True,
+            "gst_treatment": "STANDARD",
+            "gl_revenue_code": "4000",
+            "gl_cost_code": "5000",
+            "default_unit": "SHIPMENT",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_approve_inline_creation_duplicate_id_fails(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # Try to use same ID as product_code_1 (1004)
+        creation_data = {
+            "id": 1004,
+            "code": "EXP-DUPLICATE-ID",
+            "description": "Duplicate ID desc",
+            "domain": "EXPORT",
+            "category": "HANDLING",
+            "is_gst_applicable": True,
+            "gst_treatment": "STANDARD",
+            "gl_revenue_code": "4000",
+            "gl_cost_code": "5000",
+            "default_unit": "SHIPMENT",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_approve_both_modes_supplied_fails(self):
+        self.client.force_authenticate(user=self.admin_user)
+        creation_data = {
+            "id": 1008,
+            "code": "EXP-BOTH-MODES",
+            "description": "Both modes",
+            "domain": "EXPORT",
+            "category": "HANDLING",
+            "is_gst_applicable": True,
+            "gst_treatment": "STANDARD",
+            "gl_revenue_code": "4000",
+            "gl_cost_code": "5000",
+            "default_unit": "SHIPMENT",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {
+                "product_code_id": self.product_code_1.id,
+                "create_product_code_data": creation_data
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_approve_neither_mode_supplied_fails(self):
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_admin_cannot_approve_create(self):
+        self.client.force_authenticate(user=self.sales_user)
+        creation_data = {
+            "id": 1009,
+            "code": "EXP-SALES-CREATE",
+            "description": "Sales create",
+            "domain": "EXPORT",
+            "category": "HANDLING",
+            "is_gst_applicable": True,
+            "gst_treatment": "STANDARD",
+            "gl_revenue_code": "4000",
+            "gl_cost_code": "5000",
+            "default_unit": "SHIPMENT",
+        }
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_transaction_rollback_on_failed_creation(self):
+        self.client.force_authenticate(user=self.admin_user)
+        # Supplying some bad data to trigger a DB-level or serializer validation error.
+        # However, serializer checks ID range. Let's make an ID validation succeed, but code length fail at the database level:
+        # e.g., code length is > max_length (30). ProductCode model code has max_length=30.
+        creation_data = {
+            "id": 1010,
+            "code": "EXP-LONG-CODE-" * 5,  # 70 chars long
+            "description": "Failed creation due to long code",
+            "domain": "EXPORT",
+            "category": "HANDLING",
+            "is_gst_applicable": True,
+            "gst_treatment": "STANDARD",
+            "gl_revenue_code": "4000",
+            "gl_cost_code": "5000",
+            "default_unit": "SHIPMENT",
+        }
+        
+        response = self.client.post(
+            f"/api/v4/product-code-requests/{self.request_1.id}/approve/",
+            {"create_product_code_data": creation_data},
+            format="json",
+        )
+        # Serializer validation might catch it (due to max_length limit from ModelSerializer), 
+        # but the request status must still be PENDING:
+        self.assertEqual(response.status_code, 400)
+        
+        self.request_1.refresh_from_db()
+        self.assertEqual(self.request_1.status, "PENDING")
+        self.assertIsNone(self.request_1.approved_product_code)
+
+
