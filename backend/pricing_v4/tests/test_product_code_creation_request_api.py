@@ -50,11 +50,31 @@ class ProductCodeCreationRequestTests(APITestCase):
         self.assertIsNone(req.rejection_reason)
         self.assertIsNotNone(req.created_at)
         self.assertIsNotNone(req.updated_at)
+        self.assertEqual(req.normalized_source_label, "local handling fee")
+        self.assertEqual(req.normalized_suggested_name, "local handling")
         
         # Test __str__
         self.assertEqual(
             str(req),
             f"Request for 'Local Handling Fee' -> 'Local Handling' (PENDING)"
+        )
+
+    def test_normalize_label_helper(self):
+        self.assertEqual(
+            ProductCodeCreationRequest.normalize_label("  Admin   Fee "),
+            "admin fee"
+        )
+        self.assertEqual(
+            ProductCodeCreationRequest.normalize_label("\n\t  Spaced    Out   Label \t"),
+            "spaced out label"
+        )
+        self.assertEqual(
+            ProductCodeCreationRequest.normalize_label(""),
+            ""
+        )
+        self.assertEqual(
+            ProductCodeCreationRequest.normalize_label(None),
+            ""
         )
 
     def test_admin_can_list_and_retrieve_requests(self):
@@ -73,6 +93,7 @@ class ProductCodeCreationRequestTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["source_label"], "Local Handling Fee")
         self.assertEqual(response.data["created_by_username"], "sales-user")
+        self.assertEqual(response.data["normalized_source_label"], "local handling fee")
 
     def test_manager_forbidden_to_list_or_retrieve(self):
         self.client.force_authenticate(user=self.manager_user)
@@ -116,6 +137,7 @@ class ProductCodeCreationRequestTests(APITestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["created_by"], self.sales_user.id)
         self.assertEqual(response.data["status"], "PENDING")
+        self.assertEqual(response.data["normalized_source_label"], "origin fee")
 
         # 2. Manager can create request
         self.client.force_authenticate(user=self.manager_user)
@@ -174,12 +196,17 @@ class ProductCodeCreationRequestTests(APITestCase):
                 "suggested_basis": "SHIPMENT",
                 "status": "APPROVED",
                 "created_by": self.admin_user.id,
+                "normalized_source_label": "overridden source",
+                "normalized_suggested_name": "overridden name",
             },
             format="json",
         )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["status"], "PENDING")
         self.assertEqual(response.data["created_by"], self.sales_user.id)
+        # Server-side population must ignore client payload overrides
+        self.assertEqual(response.data["normalized_source_label"], "fake fee")
+        self.assertEqual(response.data["normalized_suggested_name"], "fake handling")
 
     def test_duplicate_pending_request_handling(self):
         self.client.force_authenticate(user=self.sales_user)
@@ -188,7 +215,7 @@ class ProductCodeCreationRequestTests(APITestCase):
         response1 = self.client.post(
             "/api/v4/product-code-requests/",
             {
-                "source_label": "   Duplicate Fee   ",
+                "source_label": "   Duplicate    Fee   ",
                 "suggested_name": "Duplicate Handling",
                 "suggested_bucket": "HANDLING",
                 "suggested_basis": "SHIPMENT",
@@ -198,12 +225,12 @@ class ProductCodeCreationRequestTests(APITestCase):
         self.assertEqual(response1.status_code, 201)
         initial_id = response1.data["id"]
 
-        # Duplicate creation with trailing space and different casing
+        # Duplicate creation with trailing space, casing difference, and multiple internal spaces
         response2 = self.client.post(
             "/api/v4/product-code-requests/",
             {
                 "source_label": "duplicate fee",
-                "suggested_name": "   duplicate handling   ",
+                "suggested_name": "   duplicate     handling   ",
                 "suggested_bucket": "HANDLING",
                 "suggested_basis": "SHIPMENT",
             },
@@ -213,9 +240,9 @@ class ProductCodeCreationRequestTests(APITestCase):
         self.assertEqual(response2.data["id"], initial_id)
         self.assertTrue(response2.data.get("duplicate_reused"))
 
-        # Verify no new row was actually created
+        # Verify no new row was actually created in DB
         self.assertEqual(
-            ProductCodeCreationRequest.objects.filter(suggested_name__icontains="duplicate").count(),
+            ProductCodeCreationRequest.objects.filter(normalized_suggested_name="duplicate handling").count(),
             1
         )
 

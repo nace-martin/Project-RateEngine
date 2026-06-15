@@ -1179,18 +1179,14 @@ class ProductCodeCreationRequestViewSet(
         source_label = request.data.get('source_label', '')
         suggested_name = request.data.get('suggested_name', '')
         
-        norm_source = str(source_label).strip().lower()
-        norm_suggested = str(suggested_name).strip().lower()
+        norm_source = ProductCodeCreationRequest.normalize_label(source_label)
+        norm_suggested = ProductCodeCreationRequest.normalize_label(suggested_name)
         
-        existing_requests = ProductCodeCreationRequest.objects.filter(
-            status=ProductCodeCreationRequest.STATUS_PENDING
-        )
-        matched = None
-        for req in existing_requests:
-            if (req.source_label.strip().lower() == norm_source and
-                req.suggested_name.strip().lower() == norm_suggested):
-                matched = req
-                break
+        matched = ProductCodeCreationRequest.objects.filter(
+            status=ProductCodeCreationRequest.STATUS_PENDING,
+            normalized_source_label=norm_source,
+            normalized_suggested_name=norm_suggested
+        ).first()
         
         if matched:
             serializer = self.get_serializer(matched)
