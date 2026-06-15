@@ -10,7 +10,8 @@ from .views import (
     ImportCOGSViewSet, ImportSellRateViewSet,
     DomesticCOGSViewSet, DomesticSellRateViewSet,
     LocalSellRateViewSet, LocalCOGSRateViewSet,
-    LogicalRateCardsView, V4RateCardUploadView
+    LogicalRateCardsView, V4RateCardUploadView,
+    ProductCodeCreationRequestViewSet
 )
 
 
@@ -18,6 +19,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r'discounts', CustomerDiscountViewSet, basename='customer-discounts')
 router.register(r'product-codes', ProductCodeListViewSet, basename='product-codes')
+router.register(r'product-code-requests', ProductCodeCreationRequestViewSet, basename='product-code-requests')
 router.register(r'agents', AgentViewSet, basename='agents')
 router.register(r'carriers', CarrierViewSet, basename='carriers')
 

@@ -24,6 +24,7 @@ from .models import (
     ComponentMargin,
     CustomerDiscount,
     RateChangeLog,
+    ProductCodeCreationRequest,
 )
 from parties.models import Company
 
@@ -592,3 +593,31 @@ class QuoteRequestSerializerV4(serializers.Serializer):
     quote_date = serializers.DateField(required=False, help_text="Defaults to today")
     def validate(self, data):
         return data
+
+
+class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    approved_by_username = serializers.CharField(source='approved_by.username', read_only=True, allow_null=True)
+
+    class Meta:
+        model = ProductCodeCreationRequest
+        fields = [
+            'id',
+            'source_label',
+            'suggested_name',
+            'suggested_bucket',
+            'suggested_basis',
+            'suggested_reason',
+            'status',
+            'created_by',
+            'created_by_username',
+            'approved_by',
+            'approved_by_username',
+            'approved_at',
+            'rejected_at',
+            'rejection_reason',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
+

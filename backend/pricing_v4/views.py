@@ -626,6 +626,7 @@ from .models import (
     LocalCOGSRate,
     LocalSellRate,
     RateChangeLog,
+    ProductCodeCreationRequest,
 )
 from .serializers import (
     DomesticCOGSSerializer,
@@ -638,6 +639,7 @@ from .serializers import (
     LocalCOGSRateSerializer,
     RateChangeLogSerializer,
     RateRevisionRequestSerializer,
+    ProductCodeCreationRequestSerializer,
 )
 
 
@@ -1134,6 +1136,16 @@ class LogicalRateCardsView(APIView):
             }
 
         return {}
+
+
+class ProductCodeCreationRequestViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Admin-only endpoint for listing and retrieving ProductCodeCreationRequests.
+    """
+    queryset = ProductCodeCreationRequest.objects.all().order_by('-created_at')
+    serializer_class = ProductCodeCreationRequestSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
 
 
 
