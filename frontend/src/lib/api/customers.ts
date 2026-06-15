@@ -258,13 +258,13 @@ export async function getProductCodeRequests(params?: {
 
 export async function approveProductCodeRequest(
   id: number,
-  productCodeId: number
+  payload: { product_code_id?: number; create_product_code_data?: Record<string, unknown> }
 ): Promise<ProductCodeRequestResponse> {
   try {
     return await sendJson(
       API_BASE_URL + `/api/v4/product-code-requests/${id}/approve/`,
       'POST',
-      { product_code_id: productCodeId }
+      payload
     );
   } catch (error) {
     throw new Error(`Failed to approve request: ${(error as Error).message}`);
