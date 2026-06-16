@@ -930,6 +930,88 @@ def line_item_from_quote_line(
     }
 
 
+def _group_canonical_line_items(line_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group compatible canonical line items that share the same ProductCode, currency, tax_code, and component."""
+    grouped_map = {}
+    other_items = []
+
+    for item in line_items:
+        pcode = item.get("product_code")
+        if not pcode:
+            other_items.append(item)
+            continue
+
+        currency = item.get("currency")
+        tax_code = item.get("tax_code")
+        component = item.get("component")
+
+        key = (pcode, currency, tax_code, component)
+        if key not in grouped_map:
+            grouped_map[key] = {
+                **item,
+                "_original_items": [item]
+            }
+        else:
+            grouped_map[key]["_original_items"].append(item)
+
+    final_items = []
+    ordered_keys = sorted(grouped_map.keys(), key=lambda k: grouped_map[k]["_original_items"][0]["sort_order"])
+
+    for key in ordered_keys:
+        group_item = grouped_map[key]
+        orig_list = group_item["_original_items"]
+
+        if len(orig_list) == 1:
+            group_item.pop("_original_items")
+            final_items.append(group_item)
+            continue
+
+        # Merge multiple items
+        cost_sum = sum(Decimal(str(x.get("cost_amount") or 0)) for x in orig_list)
+        sell_sum = sum(Decimal(str(x.get("sell_amount") or 0)) for x in orig_list)
+        tax_sum = sum(Decimal(str(x.get("tax_amount") or 0)) for x in orig_list)
+        margin_sum = sum(Decimal(str(x.get("margin_amount") or 0)) for x in orig_list)
+
+        if sell_sum > 0:
+            margin_percent_val = (margin_sum / sell_sum) * 100
+        else:
+            margin_percent_val = Decimal("0.00")
+
+        group_item["cost_amount"] = cost_sum
+        group_item["sell_amount"] = sell_sum
+        group_item["tax_amount"] = tax_sum
+        group_item["margin_amount"] = margin_sum
+        group_item["margin_percent"] = margin_percent_val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        all_rates = {str(x.get("rate")) for x in orig_list}
+        all_bases = {str(x.get("basis")) for x in orig_list}
+        all_units = {str(x.get("unit_type")) for x in orig_list}
+
+        if len(all_rates) == 1 and len(all_bases) == 1 and len(all_units) == 1:
+            group_item["quantity"] = sum(Decimal(str(x.get("quantity") or 0)) for x in orig_list)
+        else:
+            group_item["rate"] = None
+            group_item["quantity"] = Decimal("1.00")
+            group_item["basis"] = "Combined"
+            group_item["unit_type"] = "Combined"
+
+        from pricing_v4.models import ProductCode
+        pcode_obj = ProductCode.objects.filter(code=key[0]).first()
+        if pcode_obj and pcode_obj.description:
+            group_item["description"] = pcode_obj.description
+
+        group_item["calculation_notes"] = f"Combined from {len(orig_list)} source charge lines."
+        group_item["is_grouped"] = True
+        group_item["grouped_source_count"] = len(orig_list)
+
+        group_item.pop("_original_items")
+        final_items.append(group_item)
+
+    final_items.extend(other_items)
+    final_items.sort(key=lambda item: item["sort_order"])
+    return final_items
+
+
 def build_quote_result_from_quote(quote: Any, version: Any = None) -> dict[str, Any]:
     active_version = version or getattr(quote, "latest_version", None)
     if active_version is None and hasattr(quote, "versions"):
@@ -959,6 +1041,7 @@ def build_quote_result_from_quote(quote: Any, version: Any = None) -> dict[str, 
         line_item["sort_order"] = (COMPONENT_SORT_ORDER.get(line_item["component"], 9) * 100) + index
         line_items.append(line_item)
     line_items.sort(key=lambda item: item["sort_order"])
+    line_items = _group_canonical_line_items(line_items)
     coverage = evaluate_from_lines(lines, getattr(quote, "shipment_type", None), getattr(quote, "service_scope", None))
 
     warnings: list[str] = []

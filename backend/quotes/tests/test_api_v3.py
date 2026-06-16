@@ -651,3 +651,126 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         pickup_line = next((l for l in line_items if l['description'] == "Test Pickup"), None)
         self.assertIsNotNone(pickup_line)
         self.assertEqual(pickup_line['subcategory'], "Local Transport / Cartage")
+
+    def test_canonical_line_items_are_grouped(self):
+        # Create quote
+        quote = Quote.objects.create(
+            customer=self.quote.customer,
+            mode="AIR",
+            shipment_type=Quote.ShipmentType.EXPORT,
+            payment_term=Quote.PaymentTerm.PREPAID,
+            origin_location=self.quote.origin_location,
+            destination_location=self.quote.destination_location,
+            status=Quote.Status.DRAFT,
+            created_by=self.user,
+        )
+        version = QuoteVersion.objects.create(
+            quote=quote,
+            version_number=1,
+            created_by=self.user,
+        )
+        QuoteTotal.objects.create(
+            quote_version=version,
+            total_cost_pgk=Decimal("100.00"),
+            total_sell_pgk=Decimal("200.00"),
+            total_sell_pgk_incl_gst=Decimal("220.00"),
+        )
+
+        from services.models import ServiceComponent, ServiceCode
+        from pricing_v4.models import ProductCode
+        
+        code = ServiceCode.objects.create(
+            code="ORG-AWB-FEE",
+            description="Stored Freight Service Code",
+            location_type="ORIGIN",
+            service_category="DOCUMENTATION",
+            pricing_method="PASSTHROUGH",
+        )
+        comp = ServiceComponent.objects.create(
+            code="IMP-AWB-ORIGIN",
+            description="Origin AWB Fee",
+            service_code=code,
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+            unit="SHIPMENT",
+        )
+        ProductCode.objects.create(
+            id=7788,
+            code="IMP-AWB-ORIGIN",
+            description="Combined Origin AWB Fee",
+            domain="IMPORT",
+            category="DOCUMENTATION",
+            is_gst_applicable=True,
+            gst_treatment="STANDARD",
+            gl_revenue_code="REV-1",
+            gl_cost_code="COS-1",
+            default_unit="SHIPMENT"
+        )
+
+        # Create two duplicate lines in the same leg, currency, tax
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            sell_pgk=Decimal("25.00"),
+            sell_pgk_incl_gst=Decimal("27.50"),
+            cost_pgk=Decimal("15.00"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Line 1",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            sell_pgk=Decimal("25.00"),
+            sell_pgk_incl_gst=Decimal("27.50"),
+            cost_pgk=Decimal("15.00"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Line 2",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        # Incompatible line: different currency
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            sell_pgk=Decimal("30.00"),
+            sell_pgk_incl_gst=Decimal("30.00"),
+            sell_fcy=Decimal("10.00"),
+            sell_fcy_incl_gst=Decimal("10.00"),
+            sell_fcy_currency="USD",
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Line Currency Mismatch",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        url = reverse('quotes:quote-v3-compute-v3', kwargs={'pk': quote.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        quote_result = response.data['quote_result']
+        line_items = quote_result['line_items']
+
+        # Verify grouped lines
+        grouped_awb = next((l for l in line_items if l['product_code'] == "IMP-AWB-ORIGIN" and l['currency'] == "PGK"), None)
+        self.assertIsNotNone(grouped_awb)
+        self.assertEqual(Decimal(str(grouped_awb['sell_amount'])), Decimal("50.00"))
+        self.assertEqual(Decimal(str(grouped_awb['cost_amount'])), Decimal("30.00"))
+        self.assertEqual(grouped_awb['description'], "Combined Origin AWB Fee")
+        self.assertTrue(grouped_awb['is_grouped'])
+        self.assertEqual(grouped_awb['grouped_source_count'], 2)
+
+        # Verify incompatible USD line is separate
+        usd_awb = next((l for l in line_items if l['product_code'] == "IMP-AWB-ORIGIN" and l['currency'] == "USD"), None)
+        self.assertIsNotNone(usd_awb)
+        self.assertEqual(Decimal(str(usd_awb['sell_amount'])), Decimal("10.00"))
+        self.assertFalse(usd_awb.get('is_grouped', False))

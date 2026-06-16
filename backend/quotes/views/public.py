@@ -306,11 +306,18 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
         if leg not in buckets:
             leg = 'MAIN'
         sell_value = _resolve_line_sell_value(line, currency)
+        
+        pcode = getattr(line, "product_code", None) or (line.service_component.code if line.service_component else None) or ""
+        tax_code = getattr(line, "gst_category", None) or (line.service_component.tax_code if line.service_component else None) or "GST"
         line_data = {
             'description': description,
             'source': source[:20] if source else '-',
             'sell': _format_decimal(sell_value),
             'is_informational': line.is_informational,
+            'product_code': pcode,
+            'currency': (line.sell_fcy_currency or currency or "PGK").upper(),
+            'tax_code': tax_code,
+            '_sell_decimal': sell_value,
         }
         subcategory = classify_quote_line_public_subcategory(line)
         line_data['subcategory'] = subcategory
@@ -330,6 +337,67 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
                 {'name': subcategory, 'lines': [], 'subtotal': Decimal('0')},
             )
             group['lines'].append(line_data)
+
+    # Perform grouping of compatible lines per subcategory
+    for leg in buckets:
+        for subcategory in buckets[leg]['groups']:
+            group = buckets[leg]['groups'][subcategory]
+            
+            orig_lines = group['lines']
+            grouped_lines_map = {}
+            other_lines = []
+            
+            for ld in orig_lines:
+                pc = ld.get('product_code')
+                if not pc:
+                    other_lines.append(ld)
+                    continue
+                
+                key = (pc, ld.get('currency'), ld.get('tax_code'))
+                if key not in grouped_lines_map:
+                    grouped_lines_map[key] = {
+                        **ld,
+                        '_original': [ld]
+                    }
+                else:
+                    grouped_lines_map[key]['_original'].append(ld)
+            
+            new_lines = []
+            # We preserve the order of the first occurrences
+            for ld in orig_lines:
+                pc = ld.get('product_code')
+                if not pc:
+                    continue
+                key = (pc, ld.get('currency'), ld.get('tax_code'))
+                if key in grouped_lines_map:
+                    g_ld = grouped_lines_map.pop(key)
+                    orig_list = g_ld['_original']
+                    if len(orig_list) == 1:
+                        g_ld.pop('_original')
+                        g_ld.pop('_sell_decimal', None)
+                        new_lines.append(g_ld)
+                        continue
+                    
+                    sell_sum = sum(x['_sell_decimal'] for x in orig_list)
+                    
+                    from pricing_v4.models import ProductCode
+                    pcode_obj = ProductCode.objects.filter(code=key[0]).first()
+                    if pcode_obj and pcode_obj.description:
+                        g_ld['description'] = pcode_obj.description
+                    
+                    g_ld['sell'] = _format_decimal(sell_sum)
+                    g_ld['is_grouped'] = True
+                    g_ld['grouped_source_count'] = len(orig_list)
+                    g_ld.pop('_original')
+                    g_ld.pop('_sell_decimal', None)
+                    new_lines.append(g_ld)
+            
+            # Add back items that didn't have a product code
+            for ld in other_lines:
+                ld.pop('_sell_decimal', None)
+                new_lines.append(ld)
+                
+            group['lines'] = new_lines
 
     response_buckets = []
     for bucket in buckets.values():
