@@ -882,6 +882,7 @@ def line_item_from_quote_line(
 
     return {
         "line_id": str(getattr(line, "id", "") or ""),
+        "_grouping_product_code": getattr(line, "product_code", None) or "",
         "product_code": getattr(line, "product_code", None) or getattr(service_component, "code", None) or "",
         "description": (
             getattr(line, "description", None)
@@ -936,8 +937,9 @@ def _group_canonical_line_items(line_items: list[dict[str, Any]]) -> list[dict[s
     other_items = []
 
     for item in line_items:
-        pcode = item.get("product_code")
-        if not pcode:
+        pcode = item.pop("_grouping_product_code", "")
+        included_in_total = item.get("included_in_total", False)
+        if not pcode or not included_in_total:
             other_items.append(item)
             continue
 

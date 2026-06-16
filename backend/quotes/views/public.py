@@ -318,6 +318,8 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
             'currency': (line.sell_fcy_currency or currency or "PGK").upper(),
             'tax_code': tax_code,
             '_sell_decimal': sell_value,
+            '_grouping_product_code': getattr(line, "product_code", None) or "",
+            '_include_in_subtotal': should_include_quote_line_in_subtotal(line, currency),
         }
         subcategory = classify_quote_line_public_subcategory(line)
         line_data['subcategory'] = subcategory
@@ -348,8 +350,9 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
             other_lines = []
             
             for ld in orig_lines:
-                pc = ld.get('product_code')
-                if not pc:
+                pc = ld.get('_grouping_product_code', '')
+                is_subtotal = ld.get('_include_in_subtotal', False)
+                if not pc or not is_subtotal:
                     other_lines.append(ld)
                     continue
                 
@@ -365,8 +368,9 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
             new_lines = []
             # We preserve the order of the first occurrences
             for ld in orig_lines:
-                pc = ld.get('product_code')
-                if not pc:
+                pc = ld.get('_grouping_product_code', '')
+                is_subtotal = ld.get('_include_in_subtotal', False)
+                if not pc or not is_subtotal:
                     continue
                 key = (pc, ld.get('currency'), ld.get('tax_code'))
                 if key in grouped_lines_map:
@@ -375,6 +379,8 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
                     if len(orig_list) == 1:
                         g_ld.pop('_original')
                         g_ld.pop('_sell_decimal', None)
+                        g_ld.pop('_grouping_product_code', None)
+                        g_ld.pop('_include_in_subtotal', None)
                         new_lines.append(g_ld)
                         continue
                     
@@ -390,11 +396,15 @@ def _build_public_charge_buckets(lines, currency: str) -> list[dict]:
                     g_ld['grouped_source_count'] = len(orig_list)
                     g_ld.pop('_original')
                     g_ld.pop('_sell_decimal', None)
+                    g_ld.pop('_grouping_product_code', None)
+                    g_ld.pop('_include_in_subtotal', None)
                     new_lines.append(g_ld)
             
-            # Add back items that didn't have a product code
+            # Add back items that didn't have a product code or were excluded
             for ld in other_lines:
                 ld.pop('_sell_decimal', None)
+                ld.pop('_grouping_product_code', None)
+                ld.pop('_include_in_subtotal', None)
                 new_lines.append(ld)
                 
             group['lines'] = new_lines

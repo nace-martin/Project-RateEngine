@@ -753,6 +753,56 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
             gst_category="GST"
         )
 
+        # Scenario 1: two lines with same service_component.code but no explicit product_code are NOT grouped
+        comp_unmapped = ServiceComponent.objects.create(
+            code="IMP-UNMAPPED-FEE",
+            description="Unmapped Fee",
+            service_code=code,
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+            unit="SHIPMENT",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp_unmapped,
+            product_code=None,
+            sell_pgk=Decimal("15.00"),
+            sell_pgk_incl_gst=Decimal("16.50"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Unmapped 1",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp_unmapped,
+            product_code=None,
+            sell_pgk=Decimal("15.00"),
+            sell_pgk_incl_gst=Decimal("16.50"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Unmapped 2",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        # Scenario 2: billable line and informational/non-total line with same ProductCode are NOT grouped
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            is_informational=True,
+            sell_pgk=Decimal("20.00"),
+            sell_pgk_incl_gst=Decimal("22.00"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Informational Line",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
         url = reverse('quotes:quote-v3-compute-v3', kwargs={'pk': quote.id})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -760,9 +810,10 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         quote_result = response.data['quote_result']
         line_items = quote_result['line_items']
 
-        # Verify grouped lines
-        grouped_awb = next((l for l in line_items if l['product_code'] == "IMP-AWB-ORIGIN" and l['currency'] == "PGK"), None)
-        self.assertIsNotNone(grouped_awb)
+        # Verify grouped lines (existing positive test still passes)
+        grouped_awbs = [l for l in line_items if l['product_code'] == "IMP-AWB-ORIGIN" and l['currency'] == "PGK" and l.get('included_in_total')]
+        self.assertEqual(len(grouped_awbs), 1)
+        grouped_awb = grouped_awbs[0]
         self.assertEqual(Decimal(str(grouped_awb['sell_amount'])), Decimal("50.00"))
         self.assertEqual(Decimal(str(grouped_awb['cost_amount'])), Decimal("30.00"))
         self.assertEqual(grouped_awb['description'], "Combined Origin AWB Fee")
@@ -774,3 +825,15 @@ class QuoteCanonicalResultContractAPITest(APITestCase):
         self.assertIsNotNone(usd_awb)
         self.assertEqual(Decimal(str(usd_awb['sell_amount'])), Decimal("10.00"))
         self.assertFalse(usd_awb.get('is_grouped', False))
+
+        # Verify unmapped lines are separate
+        unmapped_items = [l for l in line_items if l['product_code'] == "IMP-UNMAPPED-FEE" and l['currency'] == "PGK"]
+        self.assertEqual(len(unmapped_items), 2)
+        for ui in unmapped_items:
+            self.assertFalse(ui.get('is_grouped', False))
+
+        # Verify informational line is separate
+        info_items = [l for l in line_items if l['product_code'] == "IMP-AWB-ORIGIN" and l['currency'] == "PGK" and not l.get('included_in_total')]
+        self.assertEqual(len(info_items), 1)
+        self.assertEqual(Decimal(str(info_items[0]['sell_amount'])), Decimal("20.00"))
+        self.assertFalse(info_items[0].get('is_grouped', False))
