@@ -137,6 +137,83 @@ export default function ProductCodeRequestsPage() {
     }));
   }, [productCodes]);
 
+  const suggestedProductCodes = useMemo(() => {
+    if (!selectedRequest) return [];
+
+    const sourceLabelText = selectedRequest.source_label || "";
+    const suggestedNameText = selectedRequest.suggested_name || "";
+    const combinedRequestText = `${sourceLabelText} ${suggestedNameText}`.toLowerCase();
+
+    // Stop words to remove from token checks
+    const stopWords = new Set(["fee", "charge", "charges", "rate", "rates", "the", "and", "of", "per"]);
+    const requestTokens = combinedRequestText
+      .split(/[^a-z0-9]+/i)
+      .filter((t) => t.length > 0 && !stopWords.has(t));
+
+    const candidates = productCodes.map((pc) => {
+      let score = 0;
+
+      // Same domain constraint
+      const pcDomain = (pc.domain || "").toUpperCase();
+      const targetDomain = newDomain.toUpperCase();
+      if (pcDomain === targetDomain) {
+        score += 50;
+      } else {
+        score -= 200;
+      }
+
+      // Same category/bucket
+      const pcCategory = (pc.category || "").toUpperCase();
+      const targetCategory = newCategory.toUpperCase();
+      if (pcCategory === targetCategory) {
+        score += 15;
+      }
+
+      // Same default unit
+      const pcUnit = (pc.default_unit || "").toUpperCase();
+      const targetUnit = newDefaultUnit.toUpperCase();
+      if (pcUnit === targetUnit) {
+        score += 10;
+      }
+
+      // Token matching
+      const pcCodeText = (pc.code || "").toLowerCase();
+      const pcDescText = (pc.description || "").toLowerCase();
+      const pcCodeTokens = pcCodeText.split(/[^a-z0-9]+/i).filter(Boolean);
+      const pcDescTokens = pcDescText.split(/[^a-z0-9]+/i).filter(Boolean);
+      const pcAllTokens = new Set([...pcCodeTokens, ...pcDescTokens]);
+
+      let tokenMatches = 0;
+      requestTokens.forEach((token) => {
+        if (pcAllTokens.has(token)) {
+          tokenMatches++;
+        }
+      });
+      score += tokenMatches * 20;
+
+      // Substring matching
+      const lowerSuggested = suggestedNameText.toLowerCase();
+      const lowerSource = sourceLabelText.toLowerCase();
+      if (lowerSuggested && (pcCodeText.includes(lowerSuggested) || pcDescText.includes(lowerSuggested))) {
+        score += 30;
+      }
+      if (lowerSource && (pcCodeText.includes(lowerSource) || pcDescText.includes(lowerSource))) {
+        score += 30;
+      }
+
+      return {
+        productCode: pc,
+        score,
+      };
+    });
+
+    return candidates
+      .filter((c) => c.score >= 60)
+      .sort((a, b) => b.score - a.score)
+      .map((c) => c.productCode)
+      .slice(0, 5);
+  }, [selectedRequest, productCodes, newDomain, newCategory, newDefaultUnit]);
+
   const handleOpenApprove = (req: ProductCodeRequestResponse) => {
     setSelectedRequest(req);
     setSelectedProductCodeId("");
@@ -517,6 +594,54 @@ export default function ProductCodeRequestsPage() {
               </div>
             ) : (
               <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1 pt-2">
+                {suggestedProductCodes.length > 0 && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-2">
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-semibold text-emerald-950 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                        Possible existing ProductCodes found
+                      </h4>
+                      <p className="text-[11px] text-emerald-800 leading-normal">
+                        Review these before creating a new ProductCode. Multiple source charges can use the same ProductCode. Create a new ProductCode only if this is genuinely a different charge category.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                      {suggestedProductCodes.map((pc) => (
+                        <div key={pc.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-lg border border-emerald-100 bg-white p-2 shadow-sm">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-mono font-bold text-slate-900">{pc.code}</div>
+                            <div className="text-[11px] text-slate-600 leading-tight">{pc.description}</div>
+                            <div className="flex flex-wrap gap-1 pt-0.5">
+                              <Badge variant="outline" className="text-[8px] px-1 py-0 uppercase bg-slate-50 text-slate-500 font-semibold border-slate-200">
+                                {pc.domain}
+                              </Badge>
+                              <Badge variant="outline" className="text-[8px] px-1 py-0 uppercase bg-slate-50 text-slate-500 font-semibold border-slate-200">
+                                {pc.category}
+                              </Badge>
+                              {pc.default_unit && (
+                                <Badge variant="outline" className="text-[8px] px-1 py-0 uppercase bg-slate-50 text-slate-500 font-semibold border-slate-200">
+                                  {pc.default_unit}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[10px] px-2.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 self-end sm:self-center"
+                            onClick={() => {
+                              setSelectedProductCodeId(String(pc.id));
+                              setApproveMode("LINK");
+                            }}
+                          >
+                            Use this existing ProductCode
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label htmlFor="new-domain" className="text-xs font-semibold text-slate-600">Domain</Label>
