@@ -1172,6 +1172,7 @@ class ProductCodeCreationRequestViewSet(
         queryset = super().get_queryset()
         status_param = self.request.query_params.get('status')
         if status_param is not None:
+            status_param = status_param.upper()
             valid_statuses = [choice[0] for choice in ProductCodeCreationRequest.STATUS_CHOICES]
             if status_param in valid_statuses:
                 queryset = queryset.filter(status=status_param)

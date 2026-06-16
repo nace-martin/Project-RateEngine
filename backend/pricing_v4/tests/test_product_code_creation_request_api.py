@@ -136,6 +136,13 @@ class ProductCodeCreationRequestTests(APITestCase):
         statuses = [req["status"] for req in response.data]
         self.assertTrue(all(status == "PENDING" for status in statuses))
 
+        # Test lowercase query param ?status=pending
+        response = self.client.get("/api/v4/product-code-requests/?status=pending")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
+        statuses = [req["status"] for req in response.data]
+        self.assertTrue(all(status == "PENDING" for status in statuses))
+
         # 2. APPROVED filter returns only approved
         response = self.client.get("/api/v4/product-code-requests/?status=APPROVED")
         self.assertEqual(response.status_code, 200)
