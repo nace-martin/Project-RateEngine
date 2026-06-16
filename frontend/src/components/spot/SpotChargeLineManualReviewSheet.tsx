@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Search } from "lucide-react";
+import Link from "next/link";
+import { usePermissions } from "@/hooks/usePermissions";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -50,6 +52,8 @@ export function SpotChargeLineManualReviewSheet({
     saveError = null,
     onSave,
 }: SpotChargeLineManualReviewSheetProps) {
+    const { isAdmin } = usePermissions();
+
     const [productCodes, setProductCodes] = useState<ProductCodeOption[]>([]);
     const [loadingProducts, setLoadingProducts] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
@@ -66,6 +70,7 @@ export function SpotChargeLineManualReviewSheet({
     const [requestSuccessMessage, setRequestSuccessMessage] = useState<string | null>(null);
     const [requestErrorMessage, setRequestErrorMessage] = useState<string | null>(null);
     const [requestSubmitted, setRequestSubmitted] = useState(false);
+    const [showSelectorAfterSubmit, setShowSelectorAfterSubmit] = useState(false);
 
     useEffect(() => {
         if (!open || !chargeLine) {
@@ -74,6 +79,7 @@ export function SpotChargeLineManualReviewSheet({
             setRequestSuccessMessage(null);
             setRequestErrorMessage(null);
             setRequestSubmitted(false);
+            setShowSelectorAfterSubmit(false);
             return;
         }
 
@@ -103,6 +109,7 @@ export function SpotChargeLineManualReviewSheet({
         setRequestErrorMessage(null);
         setRequestSubmitted(false);
         setShowRequestForm(false);
+        setShowSelectorAfterSubmit(false);
     }, [chargeLine, open]);
 
 
@@ -164,6 +171,7 @@ export function SpotChargeLineManualReviewSheet({
             }
             setRequestSubmitted(true);
             setShowRequestForm(false);
+            setShowSelectorAfterSubmit(false);
         } catch (error) {
             setRequestErrorMessage(error instanceof Error ? error.message : "Failed to create product code request");
         } finally {
@@ -182,9 +190,13 @@ export function SpotChargeLineManualReviewSheet({
                         Manual charge review
                     </div>
                     <div>
-                        <SheetTitle>Resolve this charge line</SheetTitle>
+                        <SheetTitle>
+                            {requestSubmitted ? "ProductCode request pending review" : "Resolve this charge line"}
+                        </SheetTitle>
                         <SheetDescription className="mt-2 leading-6">
-                            Keep the deterministic audit trail unchanged and attach a manual ProductCode only for this SPOT line.
+                            {requestSubmitted
+                                ? "This charge cannot be resolved until the requested ProductCode is approved or linked by an admin."
+                                : "Keep the deterministic audit trail unchanged and attach a manual ProductCode only for this SPOT line."}
                         </SheetDescription>
                     </div>
                 </SheetHeader>
@@ -254,34 +266,71 @@ export function SpotChargeLineManualReviewSheet({
                             </Alert>
                         ) : null}
 
-                        <section className="space-y-3">
-                            <div>
-                                <div className="text-sm font-semibold text-slate-950">Select canonical ProductCode</div>
-                                <p className="mt-1 text-sm text-slate-600">
-                                    Search the current {productDomain || "relevant"} ProductCode list and save the manual mapping for this line only. Manual resolution requires selecting an existing ProductCode.
-                                </p>
-                            </div>
-                            <Combobox
-                                options={productOptions}
-                                value={selectedProductCodeId}
-                                onChange={setSelectedProductCodeId}
-                                placeholder={loadingProducts ? "Loading product codes..." : "Search product codes"}
-                                emptyMessage={loadingProducts ? "Loading product codes..." : "No product codes found."}
-                                disabled={loadingProducts || isSaving}
-                            />
-                        </section>
+                        {(!requestSubmitted || showSelectorAfterSubmit) && (
+                            <section className="space-y-3">
+                                <div>
+                                    <div className="text-sm font-semibold text-slate-950">Select canonical ProductCode</div>
+                                    <p className="mt-1 text-sm text-slate-600">
+                                        Search the current {productDomain || "relevant"} ProductCode list and save the manual mapping for this line only. Manual resolution requires selecting an existing ProductCode.
+                                    </p>
+                                </div>
+                                <Combobox
+                                    options={productOptions}
+                                    value={selectedProductCodeId}
+                                    onChange={setSelectedProductCodeId}
+                                    placeholder={loadingProducts ? "Loading product codes..." : "Search product codes"}
+                                    emptyMessage={loadingProducts ? "Loading product codes..." : "No product codes found."}
+                                    disabled={loadingProducts || isSaving}
+                                />
+                            </section>
+                        )}
 
                         {requestSubmitted && requestSuccessMessage ? (
-                            <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 text-sm text-slate-800 space-y-1.5">
-                                <p className="font-semibold text-emerald-800">
-                                    {requestSuccessMessage.split('|')[0]}
-                                </p>
-                                <p className="text-xs font-mono font-semibold text-slate-700">
-                                    {requestSuccessMessage.split('|')[1]}
-                                </p>
-                                <p className="text-xs text-slate-600">
-                                    This charge remains unresolved until an admin reviews it in Settings → ProductCode Requests.
-                                </p>
+                            <div className="space-y-4">
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 text-sm text-slate-800 space-y-2">
+                                    <div className="flex flex-col gap-1">
+                                        <p className="font-semibold text-emerald-800">
+                                            {requestSuccessMessage.split('|')[0]}
+                                        </p>
+                                        <p className="text-xs font-mono font-semibold text-slate-700">
+                                            {requestSuccessMessage.split('|')[1]}
+                                        </p>
+                                    </div>
+                                    <div className="border-t border-amber-200/50 pt-2 space-y-1">
+                                        <p className="font-medium text-slate-900">This charge is not resolved yet.</p>
+                                        <p className="text-xs text-slate-600">
+                                            An admin must review it in Settings → ProductCode Requests.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {!showSelectorAfterSubmit && (
+                                    <div className="space-y-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="w-full text-slate-700 hover:text-slate-900"
+                                            onClick={() => setShowSelectorAfterSubmit(true)}
+                                        >
+                                            Resolve now with an existing ProductCode instead
+                                        </Button>
+
+                                        {isAdmin && (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="w-full text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 border-emerald-200"
+                                                asChild
+                                            >
+                                                <Link href="/settings/product-code-requests" onClick={() => onOpenChange(false)}>
+                                                    Go to Settings → ProductCode Requests
+                                                </Link>
+                                            </Button>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <>
@@ -406,17 +455,19 @@ export function SpotChargeLineManualReviewSheet({
 
                 <SheetFooter className="border-t border-slate-200 pt-4">
                     <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSaving}>
-                        Cancel
+                        {requestSubmitted ? "Close" : "Cancel"}
                     </Button>
-                    <Button
-                        type="button"
-                        onClick={() => void onSave(selectedProductCodeId)}
-                        disabled={!canSave}
-                        loading={isSaving}
-                        loadingText="Saving review..."
-                    >
-                        Save manual resolution
-                    </Button>
+                    {(!requestSubmitted || showSelectorAfterSubmit) && (
+                        <Button
+                            type="button"
+                            onClick={() => void onSave(selectedProductCodeId)}
+                            disabled={!canSave}
+                            loading={isSaving}
+                            loadingText="Saving review..."
+                        >
+                            Save manual resolution
+                        </Button>
+                    )}
                 </SheetFooter>
             </SheetContent>
         </Sheet>

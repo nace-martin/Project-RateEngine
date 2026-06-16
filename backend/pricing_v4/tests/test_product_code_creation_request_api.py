@@ -106,6 +106,62 @@ class ProductCodeCreationRequestTests(APITestCase):
         self.assertEqual(response.data["created_by_username"], "sales-user")
         self.assertEqual(response.data["normalized_source_label"], "local handling fee")
 
+    def test_admin_can_filter_requests_by_status(self):
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Create an APPROVED request
+        req_approved = ProductCodeCreationRequest.objects.create(
+            source_label="Approved Fee",
+            suggested_name="Approved Name",
+            suggested_bucket="HANDLING",
+            suggested_basis="SHIPMENT",
+            status=ProductCodeCreationRequest.STATUS_APPROVED,
+            created_by=self.sales_user,
+        )
+
+        # Create a REJECTED request
+        req_rejected = ProductCodeCreationRequest.objects.create(
+            source_label="Rejected Fee",
+            suggested_name="Rejected Name",
+            suggested_bucket="HANDLING",
+            suggested_basis="SHIPMENT",
+            status=ProductCodeCreationRequest.STATUS_REJECTED,
+            created_by=self.sales_user,
+        )
+
+        # 1. PENDING filter returns only pending
+        response = self.client.get("/api/v4/product-code-requests/?status=PENDING")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
+        statuses = [req["status"] for req in response.data]
+        self.assertTrue(all(status == "PENDING" for status in statuses))
+
+        # Test lowercase query param ?status=pending
+        response = self.client.get("/api/v4/product-code-requests/?status=pending")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
+        statuses = [req["status"] for req in response.data]
+        self.assertTrue(all(status == "PENDING" for status in statuses))
+
+        # 2. APPROVED filter returns only approved
+        response = self.client.get("/api/v4/product-code-requests/?status=APPROVED")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], req_approved.id)
+        self.assertEqual(response.data[0]["status"], "APPROVED")
+
+        # 3. REJECTED filter returns only rejected
+        response = self.client.get("/api/v4/product-code-requests/?status=REJECTED")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["id"], req_rejected.id)
+        self.assertEqual(response.data[0]["status"], "REJECTED")
+
+        # 4. Invalid status does not return all records (should return empty)
+        response = self.client.get("/api/v4/product-code-requests/?status=INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 0)
+
     def test_manager_forbidden_to_list_or_retrieve(self):
         self.client.force_authenticate(user=self.manager_user)
         
