@@ -656,6 +656,7 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
     manual_resolved_product_code = serializers.SerializerMethodField()
     manual_resolution_by_user_id = serializers.SerializerMethodField()
     manual_resolution_by_username = serializers.SerializerMethodField()
+    suggested_approved_product_code = serializers.SerializerMethodField()
     
     class Meta:
         model = SPEChargeLineDB
@@ -672,7 +673,7 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
             'requires_review',
             'manual_resolution_status', 'manual_resolved_product_code',
             'manual_resolution_by_user_id', 'manual_resolution_by_username',
-            'manual_resolution_at',
+            'manual_resolution_at', 'suggested_approved_product_code',
             'source_batch_id', 'source_batch_label',
             'calculation_type', 'unit_type', 'rate', 'min_amount', 'max_amount',
             'percent', 'percent_basis', 'rule_meta', 'rule_display'
@@ -709,6 +710,47 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
         if not obj.manual_resolution_by_id:
             return None
         return getattr(obj.manual_resolution_by, 'username', None)
+
+    def get_suggested_approved_product_code(self, obj):
+        # Skip if already manually resolved
+        if obj.manual_resolution_status == 'RESOLVED' and obj.manual_resolved_product_code_id:
+            return None
+
+        # The source label that the frontend uses is obj.normalized_label or obj.description or ""
+        label_to_normalize = obj.normalized_label or obj.description or ""
+        if not label_to_normalize:
+            return None
+
+        from pricing_v4.models import ProductCodeCreationRequest
+        norm_label = ProductCodeCreationRequest.normalize_label(label_to_normalize)
+        if not norm_label:
+            return None
+
+        # Optional domain matching based on envelope shipment context
+        domain = None
+        if obj.envelope_id and obj.envelope.shipment_context_json:
+            from core.business_rules import classify_png_shipment
+            ctx = obj.envelope.shipment_context_json or {}
+            org_code = ctx.get("origin_country") or ctx.get("origin_country_code")
+            dest_code = ctx.get("destination_country") or ctx.get("destination_country_code")
+            try:
+                domain = classify_png_shipment(org_code, dest_code)
+            except ValueError:
+                pass
+
+        # Query ProductCodeCreationRequest for latest APPROVED request matching normalized_source_label
+        filters = {
+            'status': ProductCodeCreationRequest.STATUS_APPROVED,
+            'normalized_source_label': norm_label,
+            'approved_product_code__isnull': False
+        }
+        if domain:
+            filters['approved_product_code__domain'] = domain
+
+        req = ProductCodeCreationRequest.objects.filter(**filters).first()
+        if req:
+            return _serialize_spe_product_code_summary(req.approved_product_code)
+        return None
 
     def get_amount(self, obj):
         # Return as string to match original serialization

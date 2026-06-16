@@ -266,6 +266,41 @@ export function SpotChargeLineManualReviewSheet({
                             </Alert>
                         ) : null}
 
+                        {chargeLine.suggested_approved_product_code && chargeLine.manual_resolution_status !== "RESOLVED" && (
+                            <section className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-3">
+                                <div className="flex items-start gap-2.5">
+                                    <div className="mt-0.5 rounded-full bg-emerald-100 p-1 text-emerald-800">
+                                        <Search className="h-4 w-4 text-emerald-600" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h4 className="text-sm font-semibold text-emerald-950">
+                                            Approved ProductCode suggestion available
+                                        </h4>
+                                        <p className="text-xs text-emerald-800 leading-normal">
+                                            An approved ProductCode request matches this charge label. Review and apply if correct.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="rounded-lg border border-emerald-200/60 bg-white/80 px-3 py-2 text-xs font-mono font-semibold text-emerald-900">
+                                    {chargeLine.suggested_approved_product_code.code} - {chargeLine.suggested_approved_product_code.description}
+                                </div>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    className="w-full bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-500"
+                                    onClick={() => {
+                                        if (chargeLine.suggested_approved_product_code) {
+                                            setSelectedProductCodeId(String(chargeLine.suggested_approved_product_code.id));
+                                            setShowRequestForm(false);
+                                            setShowSelectorAfterSubmit(true);
+                                        }
+                                    }}
+                                >
+                                    Apply to this charge line
+                                </Button>
+                            </section>
+                        )}
+
                         {(!requestSubmitted || showSelectorAfterSubmit) && (
                             <section className="space-y-3">
                                 <div>

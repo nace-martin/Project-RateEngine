@@ -180,6 +180,7 @@ export interface SPEChargeLine {
     manual_resolution_by_user_id?: string | null;
     manual_resolution_by_username?: string | null;
     manual_resolution_at?: string | null;
+    suggested_approved_product_code?: SPEProductCodeSummary | null;
 }
 
 /** SPE conditions */
