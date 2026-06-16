@@ -314,6 +314,8 @@ class CanonicalQuoteLineItemSerializer(serializers.Serializer):
     fx_applied = serializers.BooleanField(required=False)
     subcategory = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     sort_order = serializers.IntegerField()
+    is_grouped = serializers.BooleanField(required=False, default=False)
+    grouped_source_count = serializers.IntegerField(required=False, default=1)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

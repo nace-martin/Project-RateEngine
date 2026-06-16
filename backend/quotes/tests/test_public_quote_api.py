@@ -535,3 +535,176 @@ class QuotePublicDetailAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         payload = response.json()
         self.assertTrue(payload["branding"]["logo_url"].endswith("/static/images/efm_logo_cropped.png"))
+
+    def test_public_quote_charges_are_grouped(self):
+        # Create a quote
+        quote = self._create_quote(service_scope="D2D")
+        version = quote.versions.first()
+        
+        # Create service component
+        from services.models import ServiceComponent, ServiceCode
+        from pricing_v4.models import ProductCode
+        
+        code = ServiceCode.objects.create(
+            code="ORG-AWB-FEE",
+            description="Stored Freight Service Code",
+            location_type="ORIGIN",
+            service_category="DOCUMENTATION",
+            pricing_method="PASSTHROUGH",
+        )
+        comp = ServiceComponent.objects.create(
+            code="IMP-AWB-ORIGIN",
+            description="Origin AWB Fee",
+            service_code=code,
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+            unit="SHIPMENT",
+        )
+        
+        # Create ProductCode matching code for lookup
+        ProductCode.objects.create(
+            id=7788,
+            code="IMP-AWB-ORIGIN",
+            description="Combined Origin AWB Fee",
+            domain="IMPORT",
+            category="DOCUMENTATION",
+            is_gst_applicable=True,
+            gst_treatment="STANDARD",
+            gl_revenue_code="REV-1",
+            gl_cost_code="COS-1",
+            default_unit="SHIPMENT"
+        )
+
+        # Create two duplicate lines in the same leg, currency, tax
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            sell_pgk=Decimal("25.00"),
+            sell_pgk_incl_gst=Decimal("27.50"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Line 1",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            sell_pgk=Decimal("25.00"),
+            sell_pgk_incl_gst=Decimal("27.50"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Line 2",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        # Incompatible line: different ProductCode
+        comp2 = ServiceComponent.objects.create(
+            code="IMP-HANDLING-ORIGIN",
+            description="Origin Handling Fee",
+            service_code=code,
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+            unit="SHIPMENT",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp2,
+            product_code="IMP-HANDLING-ORIGIN",
+            description="Origin Handling Fee",
+            sell_pgk=Decimal("30.00"),
+            sell_pgk_incl_gst=Decimal("33.00"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Origin Handling Fee",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        # Scenario 1: two lines with same service component code but no explicit product code are NOT grouped
+        comp_unmapped = ServiceComponent.objects.create(
+            code="IMP-UNMAPPED-FEE",
+            description="Unmapped Fee",
+            service_code=code,
+            mode="AIR",
+            leg="ORIGIN",
+            category="LOCAL",
+            unit="SHIPMENT",
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp_unmapped,
+            product_code=None,
+            sell_pgk=Decimal("15.00"),
+            sell_pgk_incl_gst=Decimal("16.50"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Unmapped 1",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp_unmapped,
+            product_code=None,
+            sell_pgk=Decimal("15.00"),
+            sell_pgk_incl_gst=Decimal("16.50"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Unmapped 2",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        # Scenario 2: billable line and informational/non-total line with same ProductCode are NOT grouped
+        QuoteLine.objects.create(
+            quote_version=version,
+            service_component=comp,
+            product_code="IMP-AWB-ORIGIN",
+            is_informational=True,
+            sell_pgk=Decimal("20.00"),
+            sell_pgk_incl_gst=Decimal("22.00"),
+            leg="ORIGIN",
+            cost_source="MANUAL",
+            cost_source_description="Informational Line",
+            component="ORIGIN_LOCAL",
+            gst_category="GST"
+        )
+
+        token = build_public_quote_token(str(quote.id))
+        response = self.client.get(self.url, {"token": token})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        payload = response.json()
+        origin_bucket = next(b for b in payload["charge_buckets"] if b["name"] == "Origin Charges")
+        
+        # Verify IMP-AWB-ORIGIN is grouped (summed to 50.00, excluding informational line)
+        awb_lines = [l for l in origin_bucket["lines"] if l.get("product_code") == "IMP-AWB-ORIGIN" and not l.get("is_informational")]
+        self.assertEqual(len(awb_lines), 1)
+        awb_line = awb_lines[0]
+        self.assertEqual(awb_line["sell"], "50.00")
+        self.assertEqual(awb_line["description"], "Combined Origin AWB Fee")
+        self.assertTrue(awb_line.get("is_grouped"))
+        self.assertEqual(awb_line.get("grouped_source_count"), 2)
+
+        # Verify IMP-HANDLING-ORIGIN is not grouped with AWB
+        handling_line = next((l for l in origin_bucket["lines"] if l.get("product_code") == "IMP-HANDLING-ORIGIN"), None)
+        self.assertIsNotNone(handling_line)
+        self.assertEqual(handling_line["sell"], "30.00")
+        self.assertEqual(handling_line["description"], "Origin Handling Fee")
+        self.assertFalse(handling_line.get("is_grouped", False))
+
+        # Verify unmapped lines are separate
+        unmapped_items = [l for l in origin_bucket["lines"] if l.get("product_code") == "IMP-UNMAPPED-FEE"]
+        self.assertEqual(len(unmapped_items), 2)
+        for ui in unmapped_items:
+            self.assertFalse(ui.get('is_grouped', False))
+
+        # Verify informational line is not displayed
+        info_items = [l for l in origin_bucket["lines"] if l.get("product_code") == "IMP-AWB-ORIGIN" and l.get("is_informational")]
+        self.assertEqual(len(info_items), 0)
