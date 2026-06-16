@@ -1168,6 +1168,17 @@ class ProductCodeCreationRequestViewSet(
     queryset = ProductCodeCreationRequest.objects.all().order_by('-created_at')
     serializer_class = ProductCodeCreationRequestSerializer
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        status_param = self.request.query_params.get('status')
+        if status_param is not None:
+            valid_statuses = [choice[0] for choice in ProductCodeCreationRequest.STATUS_CHOICES]
+            if status_param in valid_statuses:
+                queryset = queryset.filter(status=status_param)
+            else:
+                queryset = queryset.none()
+        return queryset
+
     def get_permissions(self):
         if self.action == 'create':
             return [permissions.IsAuthenticated(), IsSalesManagerOrAdmin()]
