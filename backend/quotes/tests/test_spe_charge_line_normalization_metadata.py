@@ -200,3 +200,161 @@ class SPEChargeLineNormalizationMetadataTests(TestCase):
             SPEChargeLineDB.ManualResolutionStatus.RESOLVED,
         )
         self.assertFalse(refreshed.requires_review)
+
+    def test_suggested_approved_product_code_in_serializer(self):
+        from quotes.serializers import SPEChargeLineSerializer
+        from pricing_v4.models import ProductCodeCreationRequest
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        user = User.objects.create_user(username="testuser", password="password", role="sales")
+
+        # 1. Matching approved request exists -> returns product code details
+        req = ProductCodeCreationRequest.objects.create(
+            source_label="Local Handling Fee",
+            suggested_name="Local Handling",
+            suggested_bucket="HANDLING",
+            suggested_basis="SHIPMENT",
+            created_by=user,
+        )
+        req.status = ProductCodeCreationRequest.STATUS_APPROVED
+        req.approved_product_code = self.product_code
+        req.save()
+
+        line = SPEChargeLineDB.objects.create(
+            envelope=self._create_envelope(),
+            code='ORIGIN_LOCAL_SPOT',
+            description='Local Handling Fee',
+            amount='25.00',
+            currency='PGK',
+            unit=SPEChargeLineDB.Unit.PER_SHIPMENT,
+            bucket=SPEChargeLineDB.Bucket.ORIGIN_CHARGES,
+            source_label='Local Handling Fee',
+            entered_at=timezone.now(),
+        )
+
+        serializer = SPEChargeLineSerializer(instance=line)
+        data = serializer.data
+        self.assertIsNotNone(data['suggested_approved_product_code'])
+        self.assertEqual(data['suggested_approved_product_code']['id'], self.product_code.id)
+        self.assertEqual(data['suggested_approved_product_code']['code'], self.product_code.code)
+
+        # 2. Null when request is pending
+        req.status = ProductCodeCreationRequest.STATUS_PENDING
+        req.approved_product_code = None
+        req.save()
+        serializer = SPEChargeLineSerializer(instance=line)
+        self.assertIsNone(serializer.data['suggested_approved_product_code'])
+
+        # 3. Null when request is rejected
+        req.status = ProductCodeCreationRequest.STATUS_REJECTED
+        req.save()
+        serializer = SPEChargeLineSerializer(instance=line)
+        self.assertIsNone(serializer.data['suggested_approved_product_code'])
+
+        # 4. Null when line is already manually resolved
+        req.status = ProductCodeCreationRequest.STATUS_APPROVED
+        req.approved_product_code = self.product_code
+        req.save()
+        
+        line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+        line.manual_resolved_product_code = self.product_code
+        line.save()
+        
+        serializer = SPEChargeLineSerializer(instance=line)
+        self.assertIsNone(serializer.data['suggested_approved_product_code'])
+
+        # 5. Domain mismatch does not suggest
+        import_envelope = SpotPricingEnvelopeDB.objects.create(
+            status=SpotPricingEnvelopeDB.Status.DRAFT,
+            shipment_context_json={
+                'origin_country': 'AU',
+                'destination_country': 'PG',
+            },
+            expires_at=timezone.now() + timedelta(hours=4),
+        )
+        
+        line_import = SPEChargeLineDB.objects.create(
+            envelope=import_envelope,
+            code='ORIGIN_LOCAL_SPOT',
+            description='Local Handling Fee',
+            amount='25.00',
+            currency='PGK',
+            unit=SPEChargeLineDB.Unit.PER_SHIPMENT,
+            bucket=SPEChargeLineDB.Bucket.ORIGIN_CHARGES,
+            source_label='Local Handling Fee',
+            entered_at=timezone.now(),
+        )
+
+        req.status = ProductCodeCreationRequest.STATUS_APPROVED
+        req.approved_product_code = self.product_code  # domain is EXPORT
+        req.save()
+        
+        serializer = SPEChargeLineSerializer(instance=line_import)
+        self.assertIsNone(serializer.data['suggested_approved_product_code'])
+
+        # 6. If multiple approved requests match, return the latest approved one
+        from pricing_v4.models import ProductCode
+        older_product_code = ProductCode.objects.create(
+            id=1234,
+            code="OLDCODE",
+            description="Older Product Code",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gst_treatment="STANDARD",
+            gl_revenue_code="REV-OLD",
+            gl_cost_code="COS-OLD",
+            default_unit="flat"
+        )
+        newer_product_code = ProductCode.objects.create(
+            id=5678,
+            code="NEWCODE",
+            description="Newer Product Code",
+            domain="EXPORT",
+            category="HANDLING",
+            is_gst_applicable=True,
+            gst_treatment="STANDARD",
+            gl_revenue_code="REV-NEW",
+            gl_cost_code="COS-NEW",
+            default_unit="flat"
+        )
+        
+        # Clean up older request to avoid interference
+        req.delete()
+        
+        # Create older approved request (approved 2 days ago)
+        req_old = ProductCodeCreationRequest.objects.create(
+            source_label="Local Handling Fee",
+            suggested_name="Local Handling Old",
+            suggested_bucket="HANDLING",
+            suggested_basis="SHIPMENT",
+            created_by=user,
+        )
+        req_old.status = ProductCodeCreationRequest.STATUS_APPROVED
+        req_old.approved_product_code = older_product_code
+        req_old.approved_at = timezone.now() - timedelta(days=2)
+        req_old.save()
+
+        # Create newer approved request (approved 1 hour ago)
+        req_new = ProductCodeCreationRequest.objects.create(
+            source_label="Local Handling Fee",
+            suggested_name="Local Handling New",
+            suggested_bucket="HANDLING",
+            suggested_basis="SHIPMENT",
+            created_by=user,
+        )
+        req_new.status = ProductCodeCreationRequest.STATUS_APPROVED
+        req_new.approved_product_code = newer_product_code
+        req_new.approved_at = timezone.now() - timedelta(hours=1)
+        req_new.save()
+
+        # Reset line back to unresolved
+        line.manual_resolution_status = None
+        line.manual_resolved_product_code = None
+        line.save()
+
+        serializer = SPEChargeLineSerializer(instance=line)
+        self.assertIsNotNone(serializer.data['suggested_approved_product_code'])
+        self.assertEqual(serializer.data['suggested_approved_product_code']['id'], newer_product_code.id)
+        self.assertEqual(serializer.data['suggested_approved_product_code']['code'], newer_product_code.code)
