@@ -747,7 +747,7 @@ class SPEChargeLineSerializer(serializers.ModelSerializer):
         if domain:
             filters['approved_product_code__domain'] = domain
 
-        req = ProductCodeCreationRequest.objects.filter(**filters).first()
+        req = ProductCodeCreationRequest.objects.filter(**filters).order_by("-approved_at", "-created_at", "-id").first()
         if req:
             return _serialize_spe_product_code_summary(req.approved_product_code)
         return None
