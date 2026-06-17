@@ -9,12 +9,16 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import CustomUser, Role, UserMembership
-from accounts.scope import user_can_access_department
+from accounts.scope import get_active_memberships, user_can_access_department
 from core.models import Currency
 from parties.models import Branch, Company, Department, Organization
 from quotes.models import Quote, QuoteTotal, QuoteVersion
 from quotes.selectors import get_quote_for_user, get_quotes_for_user, get_spes_for_user
 from quotes.spot_models import SpotPricingEnvelopeDB
+from quotes.tests.rbac_selector_comparison import (
+    compare_quote_visibility,
+    compare_spe_visibility,
+)
 
 
 class QuoteAndSpotLegacyVisibilityTests(TestCase):
@@ -288,10 +292,13 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
             code="SEA",
             name="Sea Freight",
         )
-        manager_role = Role.objects.create(
+        manager_role, _ = Role.objects.get_or_create(
             code=CustomUser.ROLE_MANAGER,
-            name="Manager",
-            is_system=True,
+            organization=None,
+            defaults={
+                "name": "Manager",
+                "is_system": True,
+            },
         )
         UserMembership.objects.create(
             user=self.sea_manager,
@@ -309,3 +316,157 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
         )
         self.assertTrue(user_can_access_department(self.sea_manager, air_department))
         self.assertFalse(user_can_access_department(self.sea_manager, sea_department))
+
+
+class QuoteAndSpotScopeComparisonTests(QuoteAndSpotLegacyVisibilityTests):
+    def setUp(self):
+        self.pgk, _ = Currency.objects.get_or_create(
+            code="PGK",
+            defaults={"name": "Papua New Guinean Kina"},
+        )
+        self.organization = Organization.objects.create(
+            name="RBAC Selector Compare Org",
+            slug="rbac-selector-compare",
+            default_currency=self.pgk,
+        )
+        self.branch = Branch.objects.create(
+            organization=self.organization,
+            code="POM",
+            name="Port Moresby",
+        )
+        self.air_department = Department.objects.create(
+            organization=self.organization,
+            branch=self.branch,
+            code="AIR",
+            name="Air Freight",
+        )
+        self.sea_department = Department.objects.create(
+            organization=self.organization,
+            branch=self.branch,
+            code="SEA",
+            name="Sea Freight",
+        )
+        self.sales_role = Role.objects.create(
+            code=CustomUser.ROLE_SALES,
+            name="Sales",
+            is_system=True,
+        )
+        self.manager_role = Role.objects.create(
+            code=CustomUser.ROLE_MANAGER,
+            name="Manager",
+            is_system=True,
+        )
+        self.admin_role = Role.objects.create(
+            code=CustomUser.ROLE_ADMIN,
+            name="Admin",
+            is_system=True,
+        )
+        self.finance_role = Role.objects.create(
+            code=CustomUser.ROLE_FINANCE,
+            name="Finance",
+            is_system=True,
+        )
+
+    def _membership_for(self, user, role, department, *, active=True):
+        return UserMembership.objects.create(
+            user=user,
+            organization=self.organization,
+            branch=self.branch,
+            department=department,
+            role=role,
+            is_active=active,
+        )
+
+    def _assert_no_quote_or_spe_mismatch(self, user):
+        quote_comparison = compare_quote_visibility(user)
+        spe_comparison = compare_spe_visibility(user)
+
+        self.assertFalse(quote_comparison.has_mismatch)
+        self.assertFalse(spe_comparison.has_mismatch)
+        self.assertSetEqual(quote_comparison.legacy_ids, quote_comparison.scope_ids)
+        self.assertSetEqual(spe_comparison.legacy_ids, spe_comparison.scope_ids)
+
+    def test_no_active_memberships_fall_back_to_legacy_behavior(self):
+        self.assertEqual(list(get_active_memberships(self.air_manager)), [])
+
+        self._assert_no_quote_or_spe_mismatch(self.air_manager)
+
+    def test_active_membership_matching_legacy_department_has_no_mismatch(self):
+        self._membership_for(self.air_manager, self.manager_role, self.air_department)
+        self._membership_for(self.air_sales, self.sales_role, self.air_department)
+        self._membership_for(self.inactive_sales, self.sales_role, self.air_department)
+        self._membership_for(self.sea_sales, self.sales_role, self.sea_department)
+
+        self._assert_no_quote_or_spe_mismatch(self.air_manager)
+
+    def test_active_membership_different_from_legacy_department_reports_mismatch(self):
+        self._membership_for(self.sea_manager, self.manager_role, self.air_department)
+        self._membership_for(self.air_sales, self.sales_role, self.air_department)
+        self._membership_for(self.air_manager, self.manager_role, self.air_department)
+        self._membership_for(self.sea_sales, self.sales_role, self.sea_department)
+
+        quote_comparison = compare_quote_visibility(self.sea_manager)
+        spe_comparison = compare_spe_visibility(self.sea_manager)
+
+        self.assertTrue(quote_comparison.has_mismatch)
+        self.assertSetEqual(quote_comparison.legacy_ids, {self.quote_by_sea_sales.id})
+        self.assertSetEqual(
+            quote_comparison.scope_ids,
+            {self.quote_by_air_sales.id, self.quote_by_air_manager.id},
+        )
+        self.assertSetEqual(quote_comparison.only_legacy_ids, {self.quote_by_sea_sales.id})
+        self.assertSetEqual(
+            quote_comparison.only_scope_ids,
+            {self.quote_by_air_sales.id, self.quote_by_air_manager.id},
+        )
+
+        self.assertTrue(spe_comparison.has_mismatch)
+        self.assertSetEqual(spe_comparison.legacy_ids, {self.spe_by_sea_sales.id})
+        self.assertSetEqual(
+            spe_comparison.scope_ids,
+            {self.spe_by_air_sales.id, self.spe_by_air_manager.id},
+        )
+
+    def test_admin_and_finance_organization_wide_comparison_has_no_mismatch(self):
+        self._membership_for(self.admin_user, self.admin_role, None)
+        self._membership_for(self.finance_user, self.finance_role, None)
+
+        self._assert_no_quote_or_spe_mismatch(self.admin_user)
+        self._assert_no_quote_or_spe_mismatch(self.finance_user)
+
+    def test_sales_own_only_comparison_has_no_mismatch(self):
+        self._membership_for(self.air_sales, self.sales_role, self.air_department)
+
+        self._assert_no_quote_or_spe_mismatch(self.air_sales)
+
+    def test_manager_same_department_legacy_comparison_has_no_mismatch(self):
+        self._membership_for(self.air_manager, self.manager_role, self.air_department)
+        self._membership_for(self.air_sales, self.sales_role, self.air_department)
+        self._membership_for(self.inactive_sales, self.sales_role, self.air_department)
+
+        self._assert_no_quote_or_spe_mismatch(self.air_manager)
+
+    def test_anonymous_and_inactive_comparison_documents_current_difference(self):
+        anonymous_quote_comparison = compare_quote_visibility(AnonymousUser())
+        anonymous_spe_comparison = compare_spe_visibility(AnonymousUser())
+
+        self.assertFalse(anonymous_quote_comparison.has_mismatch)
+        self.assertFalse(anonymous_spe_comparison.has_mismatch)
+        self.assertSetEqual(anonymous_quote_comparison.legacy_ids, frozenset())
+        self.assertSetEqual(anonymous_spe_comparison.legacy_ids, frozenset())
+
+        self._membership_for(self.inactive_sales, self.sales_role, self.air_department)
+        inactive_quote_comparison = compare_quote_visibility(self.inactive_sales)
+        inactive_spe_comparison = compare_spe_visibility(self.inactive_sales)
+
+        self.assertTrue(inactive_quote_comparison.has_mismatch)
+        self.assertSetEqual(
+            inactive_quote_comparison.legacy_ids,
+            {self.quote_by_inactive_sales.id},
+        )
+        self.assertSetEqual(inactive_quote_comparison.scope_ids, frozenset())
+        self.assertSetEqual(
+            inactive_spe_comparison.legacy_ids,
+            {self.spe_by_inactive_sales.id},
+        )
+        self.assertSetEqual(inactive_spe_comparison.scope_ids, frozenset())
