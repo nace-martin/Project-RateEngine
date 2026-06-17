@@ -453,6 +453,68 @@ Tests:
 - Managers see only records allowed by explicit membership scope.
 - Finance/admin behavior is explicit and tested.
 
+#### Initial scope foundation helper PR
+
+The first implementation PR for this phase adds central helper functions and
+tests only. It does not enforce new row-level filtering for quotes, SPOT,
+customers, CRM, shipments, reports, pricing, or rate management.
+
+Current model commitments for this PR:
+
+- `accounts.UserMembership` is the target membership model. Do not create a
+  parallel `UserOrgMembership` model.
+- `parties.Organization` remains the tenant/workspace root and branding owner.
+  Do not rename it to `Organisation` in code.
+- `parties.Company` remains for external parties such as customers, suppliers,
+  agents, and carriers. It must not be reused for internal legal entities.
+- `LegalEntity` and `BranchDepartment` are deferred until the business
+  structure and migration rules are confirmed.
+
+Compatibility rules for the helper layer:
+
+- Prefer active `UserMembership` rows when they exist.
+- Fall back to `CustomUser.role`, `CustomUser.department`, and
+  `CustomUser.organization` only when no active membership exists.
+- Treat null branch or department memberships as organization-wide only for
+  roles or permissions that already represent organization-wide access. Normal
+  sales or manager memberships need explicit branch and department membership
+  before branch-aware enforcement begins.
+- Deny anonymous or inactive users, and avoid global access for ordinary users.
+
+#### Selector visibility regression test PR
+
+The next small PR adds read-only regression tests for current quote and SPE
+visibility. It does not change selectors, serializers, permissions, schema, or
+business visibility.
+
+Current legacy selector behavior captured by tests:
+
+- Quote and SPE list/detail access uses `quotes.selectors.get_quotes_for_user`,
+  `get_quote_for_user`, and `get_spes_for_user`.
+- Admin and finance users see broadly.
+- Managers see their own records and records created by users with the same
+  legacy `CustomUser.department`.
+- Managers without a legacy department fall back to own records only.
+- Sales users see own records only.
+- Anonymous users are denied by selectors or DRF authentication.
+- Inactive users are not denied by the legacy selector layer if they are already
+  treated as authenticated. This is a known compatibility/security risk to fix
+  during the permission-service cutover, not in the regression-test PR.
+
+Known mismatch documented for cutover:
+
+- Current quote and SPE selectors ignore `UserMembership` entirely.
+- The new `accounts.scope` helper can derive a different branch or department
+  from active membership than `CustomUser.department`.
+- Until selector cutover, legacy selector behavior remains authoritative for
+  quote, SPE, and report visibility.
+
+Report inheritance:
+
+- Reporting endpoints that call `get_quotes_for_user` inherit the same legacy
+  quote selector scope. Regression tests should pin this rather than duplicate
+  report-specific RBAC logic.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
@@ -478,7 +540,18 @@ Tests:
 
 After selectors are stable, fix the buy-cost and margin visibility mismatch.
 
-This phase should explicitly decide whether sales can view buy costs by default. The current code allows it, while existing comments say they should not. Because changing this is user-visible and workflow-sensitive, do not bury it inside schema work.
+Business decision: sales users should not be controlled by a blanket
+allow/deny rule. Buy cost and margin visibility must be permission-based. Some
+sales users may be allowed to see buy cost or margin, and others may not.
+
+Suggested future permission codes:
+
+- `quote.view_buy_cost`
+- `quote.view_margin`
+
+Do not change current COGS or buy-cost visibility in the selector-regression PR.
+Existing tests that assert sales can see COGS should remain as legacy
+compatibility coverage until the permission-based rollout is implemented.
 
 Tests:
 
@@ -617,4 +690,3 @@ The safest first implementation PR after this report is schema-only and behavior
 7. Do not change quote, SPOT, customer, CRM, shipment, reporting, or rate visibility in that PR.
 
 The second safest slice is central permission resolution and serializer masking tests, still with selectors kept equivalent. The buy-cost visibility mismatch should be fixed only after the expected sales behavior is explicitly confirmed, because current code allows sales buy-cost visibility while existing comments say the opposite.
-

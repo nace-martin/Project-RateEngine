@@ -11,6 +11,7 @@ import json
 from io import StringIO
 from io import BytesIO
 
+from django.contrib.auth.models import AnonymousUser
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -20,6 +21,15 @@ from PIL import Image
 from core.models import Currency
 from parties.models import Branch, Department, Organization, OrganizationBranding
 from .models import CustomUser, Permission, Role, RolePermission, UserMembership
+from .scope import (
+    get_active_memberships,
+    get_effective_user_scope,
+    user_can_access_branch,
+    user_can_access_department,
+    user_can_access_organization,
+    user_has_permission,
+    user_has_role,
+)
 
 
 class LoginTests(TestCase):
@@ -282,6 +292,244 @@ class RBACPermissionTests(TestCase):
         self.assertFalse(self.manager_user.can_access_system_settings)
         self.assertFalse(self.finance_user.can_access_system_settings)
         self.assertTrue(self.admin_user.can_access_system_settings)
+
+
+class RBACScopeHelperTests(TestCase):
+    def setUp(self):
+        self.pgk = Currency.objects.filter(code='PGK').first() or Currency.objects.create(
+            code='PGK',
+            name='Papua New Guinean Kina',
+        )
+        self.org_a = Organization.objects.create(
+            name='Scope Org A',
+            slug='scope-org-a',
+            default_currency=self.pgk,
+            is_active=True,
+        )
+        self.org_b = Organization.objects.create(
+            name='Scope Org B',
+            slug='scope-org-b',
+            default_currency=self.pgk,
+            is_active=True,
+        )
+        self.branch_a = Branch.objects.create(
+            organization=self.org_a,
+            code='POM',
+            name='Port Moresby',
+        )
+        self.branch_b = Branch.objects.create(
+            organization=self.org_b,
+            code='LAE',
+            name='Lae',
+        )
+        self.department_a = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a,
+            code='AIR',
+            name='Air Freight',
+        )
+        self.department_b = Department.objects.create(
+            organization=self.org_b,
+            branch=self.branch_b,
+            code='SEA',
+            name='Sea Freight',
+        )
+        self.department_a_land = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a,
+            code='LAND',
+            name='Land Freight',
+        )
+        self.department_permission = Permission.objects.create(
+            code='quote.view.department',
+            name='View department quotes',
+        )
+        self.organization_permission = Permission.objects.create(
+            code='quote.view.organization',
+            name='View organization quotes',
+        )
+        self.custom_permission = Permission.objects.create(
+            code='custom.scope.permission',
+            name='Custom scope permission',
+        )
+        self.sales_role = Role.objects.create(
+            code=CustomUser.ROLE_SALES,
+            name='Sales',
+            is_system=True,
+        )
+        self.manager_role = Role.objects.create(
+            code=CustomUser.ROLE_MANAGER,
+            name='Manager',
+            is_system=True,
+        )
+        self.admin_role = Role.objects.create(
+            code=CustomUser.ROLE_ADMIN,
+            name='Admin',
+            is_system=True,
+        )
+        RolePermission.objects.create(
+            role=self.manager_role,
+            permission=self.department_permission,
+        )
+        RolePermission.objects.create(
+            role=self.admin_role,
+            permission=self.organization_permission,
+        )
+        RolePermission.objects.create(
+            role=self.sales_role,
+            permission=self.custom_permission,
+        )
+
+    def _create_user(self, username='scope-user', **kwargs):
+        defaults = {
+            'password': 'test12345',
+            'role': CustomUser.ROLE_SALES,
+        }
+        defaults.update(kwargs)
+        return CustomUser.objects.create_user(username=username, **defaults)
+
+    def _create_membership(self, user, role=None, **kwargs):
+        defaults = {
+            'organization': self.org_a,
+            'branch': self.branch_a,
+            'department': self.department_a,
+            'role': role or self.manager_role,
+            'is_active': True,
+        }
+        defaults.update(kwargs)
+        return UserMembership.objects.create(user=user, **defaults)
+
+    def test_active_membership_resolution(self):
+        user = self._create_user()
+        membership = self._create_membership(user)
+
+        memberships = list(get_active_memberships(user))
+        scope = get_effective_user_scope(user)
+
+        self.assertEqual(memberships, [membership])
+        self.assertTrue(scope.has_active_memberships)
+        self.assertIn(self.org_a.id, scope.organization_ids)
+        self.assertIn(self.branch_a.id, scope.branch_ids)
+        self.assertIn(self.department_a.id, scope.department_ids)
+
+    def test_inactive_membership_ignored(self):
+        user = self._create_user()
+        self._create_membership(user, role=self.sales_role, is_active=False)
+
+        self.assertEqual(list(get_active_memberships(user)), [])
+        self.assertFalse(user_has_permission(user, 'custom.scope.permission'))
+
+    def test_fallback_to_legacy_custom_user_fields(self):
+        user = self._create_user(
+            role=CustomUser.ROLE_MANAGER,
+            department='AIR',
+            organization=self.org_a,
+        )
+
+        scope = get_effective_user_scope(user)
+
+        self.assertFalse(scope.has_active_memberships)
+        self.assertIn(self.org_a.id, scope.organization_ids)
+        self.assertIn('AIR', scope.department_codes)
+        self.assertTrue(user_has_role(user, CustomUser.ROLE_MANAGER))
+        self.assertTrue(user_can_access_department(user, self.department_a))
+        self.assertFalse(user_can_access_department(user, self.department_a_land))
+
+    def test_role_and_permission_lookup_through_role_permission(self):
+        user = self._create_user()
+        self._create_membership(user, role=self.manager_role)
+
+        self.assertTrue(user_has_role(user, CustomUser.ROLE_MANAGER))
+        self.assertTrue(user_has_permission(user, 'quote.view.department'))
+        self.assertFalse(user_has_permission(user, 'quote.view.organization'))
+
+    def test_organization_access_uses_membership_organization(self):
+        user = self._create_user()
+        self._create_membership(user)
+
+        self.assertTrue(user_can_access_organization(user, self.org_a))
+        self.assertFalse(user_can_access_organization(user, self.org_b))
+
+    def test_branch_access_uses_explicit_membership_branch(self):
+        user = self._create_user()
+        self._create_membership(user)
+
+        self.assertTrue(user_can_access_branch(user, self.branch_a))
+        self.assertFalse(user_can_access_branch(user, self.branch_b))
+
+    def test_department_access_uses_explicit_membership_department(self):
+        user = self._create_user()
+        self._create_membership(user)
+
+        self.assertTrue(user_can_access_department(user, self.department_a))
+        self.assertFalse(user_can_access_department(user, self.department_b))
+
+    def test_null_branch_and_department_broaden_only_organization_scoped_roles(self):
+        user = self._create_user()
+        self._create_membership(
+            user,
+            role=self.admin_role,
+            branch=None,
+            department=None,
+        )
+
+        scope = get_effective_user_scope(user)
+
+        self.assertTrue(scope.has_null_branch_scope)
+        self.assertTrue(scope.has_null_department_scope)
+        self.assertTrue(user_can_access_branch(user, self.branch_a))
+        self.assertTrue(user_can_access_department(user, self.department_a_land))
+        self.assertFalse(user_can_access_branch(user, self.branch_b))
+        self.assertFalse(user_can_access_department(user, self.department_b))
+
+    def test_null_branch_and_department_do_not_grant_manager_global_scope(self):
+        user = self._create_user()
+        self._create_membership(
+            user,
+            role=self.manager_role,
+            branch=None,
+            department=None,
+        )
+
+        scope = get_effective_user_scope(user)
+
+        self.assertFalse(scope.has_null_branch_scope)
+        self.assertFalse(scope.has_null_department_scope)
+        self.assertTrue(user_can_access_organization(user, self.org_a))
+        self.assertFalse(user_can_access_branch(user, self.branch_a))
+        self.assertFalse(user_can_access_department(user, self.department_a))
+
+    def test_anonymous_and_inactive_user_denied(self):
+        inactive_user = self._create_user(
+            username='inactive-scope-user',
+            organization=self.org_a,
+            is_active=False,
+        )
+
+        for user in (AnonymousUser(), inactive_user):
+            self.assertEqual(list(get_active_memberships(user)), [])
+            self.assertFalse(user_has_role(user, CustomUser.ROLE_SALES))
+            self.assertFalse(user_has_permission(user, 'quote.view.own'))
+            self.assertFalse(user_can_access_organization(user, self.org_a))
+            self.assertFalse(user_can_access_branch(user, self.branch_a))
+            self.assertFalse(user_can_access_department(user, self.department_a))
+
+    def test_no_accidental_global_access_for_ordinary_users(self):
+        member_user = self._create_user(username='ordinary-member')
+        self._create_membership(member_user, role=self.manager_role)
+        legacy_user = self._create_user(
+            username='ordinary-legacy',
+            role=CustomUser.ROLE_SALES,
+            department='AIR',
+            organization=self.org_a,
+        )
+
+        self.assertFalse(user_can_access_organization(member_user, self.org_b))
+        self.assertFalse(user_can_access_branch(member_user, self.branch_b))
+        self.assertFalse(user_can_access_department(member_user, self.department_b))
+        self.assertFalse(user_can_access_branch(legacy_user, self.branch_a))
+        self.assertFalse(user_can_access_branch(legacy_user, self.branch_b))
+        self.assertFalse(user_can_access_department(legacy_user, self.department_b))
 
 
 class UserManagementOrganizationTests(TestCase):
