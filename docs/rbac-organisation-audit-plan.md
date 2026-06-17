@@ -515,6 +515,29 @@ Report inheritance:
   quote selector scope. Regression tests should pin this rather than duplicate
   report-specific RBAC logic.
 
+#### Selector scope comparison harness PR
+
+The selector comparison harness is for tests and migration planning only. It
+compares current legacy selector results with membership-derived scope results
+without changing runtime enforcement.
+
+Rules for this PR:
+
+- Legacy selectors remain authoritative for quote, SPE, and report visibility
+  until an explicit cutover PR changes them.
+- Comparison results must not be used by production API views, serializers, or
+  services.
+- The harness may report mismatches where active `UserMembership.department`
+  differs from legacy `CustomUser.department`.
+- Active users with no active memberships should compare equal to legacy
+  behavior because `accounts.scope` intentionally falls back to legacy fields.
+- Anonymous users should compare as denied on both sides.
+- Inactive users are a known compatibility mismatch: legacy selectors may still
+  return own records if the user is already treated as authenticated, while the
+  scope helper denies inactive users.
+- No enforcement, schema, migration, customer, CRM, shipment, pricing, report,
+  rate, buy-cost, or margin behavior changes are made by the comparison harness.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
