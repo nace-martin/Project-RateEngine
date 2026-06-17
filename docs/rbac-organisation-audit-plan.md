@@ -546,8 +546,13 @@ sales users may be allowed to see buy cost or margin, and others may not.
 
 Suggested future permission codes:
 
-- `quote.view_buy_cost`
-- `quote.view_margin`
+RateEngine permission codes should use dot-separated namespaces, for example
+`domain.action.scope_or_field`.
+
+- `quote.view.buy_cost`
+- `quote.view.margin`
+- `rate.view.buy`
+- `report.view.financials`
 
 Do not change current COGS or buy-cost visibility in the selector-regression PR.
 Existing tests that assert sales can see COGS should remain as legacy
