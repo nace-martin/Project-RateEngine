@@ -15,7 +15,7 @@ from parties.models import Branch, Company, Department, Organization
 from quotes.models import Quote, QuoteTotal, QuoteVersion
 from quotes.selectors import get_quote_for_user, get_quotes_for_user, get_spes_for_user
 from quotes.spot_models import SpotPricingEnvelopeDB
-from quotes.tests.rbac_selector_comparison import (
+from quotes.rbac_selector_comparison import (
     compare_quote_visibility,
     compare_spe_visibility,
 )

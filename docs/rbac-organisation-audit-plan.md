@@ -538,6 +538,42 @@ Rules for this PR:
 - No enforcement, schema, migration, customer, CRM, shipment, pricing, report,
   rate, buy-cost, or margin behavior changes are made by the comparison harness.
 
+#### Visibility diagnostics command PR
+
+Add a read-only management command for comparing real-data quote and SPE
+visibility before selector cutover:
+
+```bash
+python backend/manage.py rbac_compare_visibility
+python backend/manage.py rbac_compare_visibility --format json --show-details
+python backend/manage.py rbac_compare_visibility --user USERNAME_OR_ID
+```
+
+The command is a pre-cutover diagnostic tool only. It reports, per user, current
+legacy selector visibility, membership-derived expected visibility, matching
+record counts, legacy-only counts, membership-only counts, and mismatch flags.
+Record ID lists are omitted by default and shown only with `--show-details`.
+
+Rules for the diagnostics command:
+
+- Legacy selectors remain authoritative until a later explicit enforcement PR.
+- The command must not write to the database or modify users, memberships,
+  quotes, SPEs, reports, pricing, or rates.
+- Mismatch output should be used to clean `UserMembership` data before changing
+  production selectors.
+- A common expected mismatch is active `UserMembership.department` differing
+  from legacy `CustomUser.department`.
+- Inactive users are excluded by default and included only with
+  `--include-inactive`.
+- This diagnostic PR does not change access behavior, buy-cost visibility,
+  margin visibility, schema, migrations, or frontend behavior.
+
+Suggested next step after diagnostics:
+
+- Run the command against non-production and production snapshots, review
+  mismatch counts by user, and prepare a data-cleanup/backfill PR before any
+  selector cutover.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
