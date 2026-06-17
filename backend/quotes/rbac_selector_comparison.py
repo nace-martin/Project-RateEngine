@@ -19,8 +19,36 @@ class SelectorComparison:
     only_scope_ids: frozenset
 
     @property
+    def matching_ids(self) -> frozenset:
+        return frozenset(self.legacy_ids.intersection(self.scope_ids))
+
+    @property
     def has_mismatch(self) -> bool:
         return bool(self.only_legacy_ids or self.only_scope_ids)
+
+    def as_counts(self) -> dict:
+        return {
+            "legacy_count": len(self.legacy_ids),
+            "membership_count": len(self.scope_ids),
+            "matching_count": len(self.matching_ids),
+            "legacy_only_count": len(self.only_legacy_ids),
+            "membership_only_count": len(self.only_scope_ids),
+            "has_mismatch": self.has_mismatch,
+        }
+
+    def as_dict(self, *, show_details: bool = False) -> dict:
+        payload = self.as_counts()
+        if show_details:
+            payload.update(
+                {
+                    "legacy_ids": _stringify_ids(self.legacy_ids),
+                    "membership_ids": _stringify_ids(self.scope_ids),
+                    "matching_ids": _stringify_ids(self.matching_ids),
+                    "legacy_only_ids": _stringify_ids(self.only_legacy_ids),
+                    "membership_only_ids": _stringify_ids(self.only_scope_ids),
+                }
+            )
+        return payload
 
 
 def compare_quote_visibility(user, queryset: QuerySet | None = None) -> SelectorComparison:
@@ -89,3 +117,7 @@ def _get_records_for_scope(user, queryset: QuerySet, *, legacy_selector) -> Quer
         return queryset.filter(created_by=user)
 
     return queryset.filter(created_by=user)
+
+
+def _stringify_ids(ids: frozenset) -> list[str]:
+    return sorted(str(item) for item in ids)
