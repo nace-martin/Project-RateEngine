@@ -48,6 +48,40 @@ class SpotPricingEnvelopeDB(models.Model):
         default=dict,
         help_text="SPE conditions (uncertainty tracking)."
     )
+
+    # Future RBAC scope fields. Nullable until explicit backfill and selector cutover.
+    organization = models.ForeignKey(
+        "parties.Organization",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="spot_envelopes",
+        help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
+    )
+    branch = models.ForeignKey(
+        "parties.Branch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="spot_envelopes",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        "parties.Department",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="spot_envelopes",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_spot_envelopes",
+        help_text="Future RBAC record owner. Nullable until ownership rules are enforced.",
+    )
     
     # Audit trail for SPOT trigger (Tweak #5)
     spot_trigger_reason_code = models.CharField(

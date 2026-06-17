@@ -54,12 +54,16 @@ class QuoteAdmin(admin.ModelAdmin):
         'commodity_code',
         'origin_location',
         'destination_location',
+        'organization',
+        'branch',
+        'department',
+        'owner',
         'status', 
         'created_at', 
         'created_by'
     )
-    list_filter = ('status', 'mode', 'shipment_type', 'created_at')
-    search_fields = ('quote_number', 'customer__name')
+    list_filter = ('status', 'mode', 'shipment_type', 'organization', 'branch', 'department', 'created_at')
+    search_fields = ('quote_number', 'customer__name', 'created_by__username', 'owner__username')
     # --- END UPDATES ---
     
     inlines = [QuoteVersionInline]
@@ -67,7 +71,8 @@ class QuoteAdmin(admin.ModelAdmin):
     # Make fields read-only in the admin, as they are set by the compute logic
     readonly_fields = (
         'quote_number', 'customer', 'contact', 'mode', 'shipment_type', 
-        'incoterm', 'payment_term', 'output_currency', 
+        'incoterm', 'payment_term', 'output_currency',
+        'organization', 'branch', 'department', 'owner',
         'origin_location', 'destination_location',
         'policy', 'fx_snapshot', 'commodity_code', 'is_dangerous_goods', 'status',
         'request_details_json', 'created_at', 'created_by', 'updated_at',
@@ -90,14 +95,18 @@ class SPEAcknowledgementInline(admin.StackedInline):
 
 class SpotPricingEnvelopeAdmin(admin.ModelAdmin):
     model = SpotPricingEnvelopeDB
-    list_display = ('__str__', 'status', 'spot_trigger_reason_code', 'created_by', 'created_at', 'expires_at')
-    list_filter = ('status', 'spot_trigger_reason_code', 'created_at')
-    search_fields = ('id', 'created_by__username', 'spot_trigger_reason_code')
+    list_display = (
+        '__str__', 'status', 'spot_trigger_reason_code', 'organization',
+        'branch', 'department', 'owner', 'created_by', 'created_at', 'expires_at'
+    )
+    list_filter = ('status', 'spot_trigger_reason_code', 'organization', 'branch', 'department', 'created_at')
+    search_fields = ('id', 'created_by__username', 'owner__username', 'spot_trigger_reason_code')
     
     inlines = [SPEChargeLineInline, SPEAcknowledgementInline]
     
     readonly_fields = (
         'id', 'status', 'shipment_context_json', 'shipment_context_hash',
+        'organization', 'branch', 'department', 'owner',
         'conditions_json', 'spot_trigger_reason_code', 'spot_trigger_reason_text',
         'created_at', 'created_by', 'expires_at', 'quote'
     )
@@ -105,6 +114,9 @@ class SpotPricingEnvelopeAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Lifecycle', {
             'fields': ('id', 'status', 'created_at', 'created_by', 'expires_at', 'quote')
+        }),
+        ('Future RBAC Scope', {
+            'fields': ('organization', 'branch', 'department', 'owner')
         }),
         ('Trigger Context', {
             'fields': ('spot_trigger_reason_code', 'spot_trigger_reason_text', 'shipment_context_json', 'shipment_context_hash')
