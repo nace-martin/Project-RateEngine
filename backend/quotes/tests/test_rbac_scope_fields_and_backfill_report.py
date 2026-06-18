@@ -401,6 +401,37 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         self.assertIn("reason=no_membership", output)
         self.assertIn("created_by=spot-unknown-no-membership", output)
 
+    def test_spot_hard_cutover_readiness_summary_counts_problem_rows(self):
+        test_user = self._create_user("testuser")
+        self._create_spe(organization=self.organization)
+        self._create_legacy_unscoped_spe(test_user, status=SpotPricingEnvelopeDB.Status.READY)
+        self._create_legacy_unscoped_spe(status=SpotPricingEnvelopeDB.Status.DRAFT)
+
+        output = self._call_report("--format", "json", "--model", "spot", "--show-problems")
+        payload = json.loads(output)
+        summary = payload["models"]["spot"]["summary"]
+
+        self.assertEqual(summary["total_records"], 3)
+        self.assertEqual(summary["scoped_records"], 1)
+        self.assertEqual(summary["unscoped_records"], 2)
+        self.assertEqual(summary["unscoped_ready_records"], 1)
+        self.assertEqual(summary["unscoped_draft_records"], 1)
+        self.assertEqual(summary["unscoped_test_dev_user_records"], 1)
+        self.assertEqual(summary["unscoped_no_created_by_records"], 1)
+        self.assertEqual(summary["ambiguous_records"], 0)
+        self.assertFalse(summary["hard_cutover_ready"])
+
+    def test_show_problems_includes_only_cutover_blocking_records(self):
+        scoped_spe = self._create_spe(organization=self.organization)
+        problem_spe = self._create_legacy_unscoped_spe()
+
+        output = self._call_report("--format", "json", "--model", "spot", "--show-problems")
+        payload = json.loads(output)
+        detail_ids = {detail["id"] for detail in payload["models"]["spot"]["details"]}
+
+        self.assertNotIn(str(scoped_spe.id), detail_ids)
+        self.assertSetEqual(detail_ids, {str(problem_spe.id)})
+
     def test_command_does_not_write_by_default(self):
         user = self._create_user("dry-run-user")
         self._membership_for(user, self.air_department)

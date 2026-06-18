@@ -617,6 +617,13 @@ such as `no_created_by` or `no_membership`. Use this to decide whether unknown
 SPOT rows need a valid creator, manual scope, legacy exemption, or exclusion
 from hard-cutover requirements.
 
+For hard-cutover planning, the report also includes read-only readiness counts:
+total records, scoped records, unscoped records, unscoped ready records,
+unscoped draft records, unscoped records created by test/dev users, unscoped
+records with no creator, ambiguous records, and `hard_cutover_ready`.
+Use `--show-problems` to list only rows that still depend on cleanup or legacy
+fallback before removing compatibility behavior.
+
 This PR does not change access behavior, buy-cost visibility, margin visibility,
 frontend behavior, selectors, customer access, CRM, shipments, reports, pricing,
 or rates.

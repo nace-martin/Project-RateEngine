@@ -40,6 +40,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Include per-record candidate details.",
         )
+        parser.add_argument(
+            "--show-problems",
+            action="store_true",
+            help="Include only records blocking hard cutover readiness.",
+        )
 
     def handle(self, *args, **options):
         limit = options.get("limit")
@@ -55,11 +60,13 @@ class Command(BaseCommand):
             payload["models"]["quote"] = inspect_quote_scope(
                 limit=limit,
                 show_details=options["show_details"],
+                show_problems=options["show_problems"],
             )
         if options["model"] in {"spot", "all"}:
             payload["models"]["spot"] = inspect_spot_scope(
                 limit=limit,
                 show_details=options["show_details"],
+                show_problems=options["show_problems"],
             )
 
         payload["summary"] = _combined_summary(payload["models"])
@@ -68,20 +75,26 @@ class Command(BaseCommand):
             self.stdout.write(json.dumps(payload, indent=2, sort_keys=True))
             return
 
-        self._write_text(payload, show_details=options["show_details"])
+        self._write_text(
+            payload,
+            show_details=options["show_details"],
+            show_problems=options["show_problems"],
+        )
 
-    def _write_text(self, payload: dict, *, show_details: bool):
+    def _write_text(self, payload: dict, *, show_details: bool, show_problems: bool):
         self.stdout.write("RBAC scope backfill dry-run report")
         self.stdout.write("==================================")
         self.stdout.write("Mode: read-only")
         self.stdout.write(
             "Combined totals: "
             f"total={payload['summary']['total_records']}, "
-            f"already_scoped={payload['summary']['already_scoped']}, "
+            f"scoped={payload['summary']['scoped_records']}, "
+            f"unscoped={payload['summary']['unscoped_records']}, "
             f"single_membership={payload['summary']['single_membership_candidates']}, "
             f"legacy_fallback={payload['summary']['legacy_fallback_candidates']}, "
-            f"ambiguous={payload['summary']['ambiguous_membership_candidates']}, "
-            f"unknown={payload['summary']['unknown_candidates']}"
+            f"ambiguous={payload['summary']['ambiguous_records']}, "
+            f"unknown={payload['summary']['unknown_candidates']}, "
+            f"hard_cutover_ready={payload['summary']['hard_cutover_ready']}"
         )
 
         for model_name, model_payload in payload["models"].items():
@@ -90,13 +103,19 @@ class Command(BaseCommand):
             self.stdout.write(f"{model_name}:")
             self.stdout.write(
                 f"  total={summary['total_records']}, "
-                f"already_scoped={summary['already_scoped']}, "
+                f"scoped={summary['scoped_records']}, "
+                f"unscoped={summary['unscoped_records']}, "
+                f"unscoped_ready={summary['unscoped_ready_records']}, "
+                f"unscoped_draft={summary['unscoped_draft_records']}, "
+                f"unscoped_test_dev={summary['unscoped_test_dev_user_records']}, "
+                f"unscoped_no_created_by={summary['unscoped_no_created_by_records']}, "
                 f"single_membership={summary['single_membership_candidates']}, "
                 f"legacy_fallback={summary['legacy_fallback_candidates']}, "
-                f"ambiguous={summary['ambiguous_membership_candidates']}, "
-                f"unknown={summary['unknown_candidates']}"
+                f"ambiguous={summary['ambiguous_records']}, "
+                f"unknown={summary['unknown_candidates']}, "
+                f"hard_cutover_ready={summary['hard_cutover_ready']}"
             )
-            if show_details:
+            if show_details or show_problems:
                 for detail in model_payload["details"]:
                     self.stdout.write(
                         f"  - {detail['model']} {detail['reference']} ({detail['id']}): "
@@ -107,7 +126,12 @@ class Command(BaseCommand):
                     )
 
 
-def inspect_quote_scope(*, limit: int | None = None, show_details: bool = False) -> dict:
+def inspect_quote_scope(
+    *,
+    limit: int | None = None,
+    show_details: bool = False,
+    show_problems: bool = False,
+) -> dict:
     queryset = Quote.objects.select_related(
         "organization",
         "branch",
@@ -118,10 +142,20 @@ def inspect_quote_scope(*, limit: int | None = None, show_details: bool = False)
     ).order_by("created_at", "id")
     if limit is not None:
         queryset = queryset[:limit]
-    return _inspect_records(queryset, model_name="quote", show_details=show_details)
+    return _inspect_records(
+        queryset,
+        model_name="quote",
+        show_details=show_details,
+        show_problems=show_problems,
+    )
 
 
-def inspect_spot_scope(*, limit: int | None = None, show_details: bool = False) -> dict:
+def inspect_spot_scope(
+    *,
+    limit: int | None = None,
+    show_details: bool = False,
+    show_problems: bool = False,
+) -> dict:
     queryset = SpotPricingEnvelopeDB.objects.select_related(
         "organization",
         "branch",
@@ -132,22 +166,28 @@ def inspect_spot_scope(*, limit: int | None = None, show_details: bool = False) 
     ).order_by("created_at", "id")
     if limit is not None:
         queryset = queryset[:limit]
-    return _inspect_records(queryset, model_name="spot", show_details=show_details)
+    return _inspect_records(
+        queryset,
+        model_name="spot",
+        show_details=show_details,
+        show_problems=show_problems,
+    )
 
 
-def _inspect_records(queryset, *, model_name: str, show_details: bool) -> dict:
+def _inspect_records(queryset, *, model_name: str, show_details: bool, show_problems: bool) -> dict:
     details = []
     summary = _empty_summary()
 
     for record in queryset:
         detail = _inspect_record(record, model_name=model_name, show_details=show_details)
         summary["total_records"] += 1
-        _increment_summary(summary, detail["status"])
-        if show_details:
+        _increment_summary(summary, detail, record)
+        if show_details or (show_problems and detail["status"] != STATUS_ALREADY_SCOPED):
             details.append(detail)
 
+    _finalize_summary(summary)
     payload = {"summary": summary}
-    if show_details:
+    if show_details or show_problems:
         payload["details"] = details
     return payload
 
@@ -251,24 +291,55 @@ def _empty_summary() -> dict:
     return {
         "total_records": 0,
         "already_scoped": 0,
+        "scoped_records": 0,
+        "unscoped_records": 0,
+        "unscoped_ready_records": 0,
+        "unscoped_draft_records": 0,
+        "unscoped_test_dev_user_records": 0,
+        "unscoped_no_created_by_records": 0,
         "single_membership_candidates": 0,
         "legacy_fallback_candidates": 0,
+        "ambiguous_records": 0,
         "ambiguous_membership_candidates": 0,
         "unknown_candidates": 0,
+        "hard_cutover_ready": True,
     }
 
 
-def _increment_summary(summary: dict, status: str):
+def _increment_summary(summary: dict, detail: dict, record):
+    status = detail["status"]
     if status == STATUS_ALREADY_SCOPED:
         summary["already_scoped"] += 1
-    elif status == STATUS_SINGLE_MEMBERSHIP:
+        summary["scoped_records"] += 1
+        return
+
+    summary["unscoped_records"] += 1
+    record_status = str(getattr(record, "status", "") or "").lower()
+    if record_status == "ready":
+        summary["unscoped_ready_records"] += 1
+    if record_status == "draft":
+        summary["unscoped_draft_records"] += 1
+    if detail.get("reason") == "no_created_by":
+        summary["unscoped_no_created_by_records"] += 1
+    if _is_test_or_dev_username(detail.get("created_by_username")):
+        summary["unscoped_test_dev_user_records"] += 1
+
+    if status == STATUS_SINGLE_MEMBERSHIP:
         summary["single_membership_candidates"] += 1
     elif status == STATUS_LEGACY_FALLBACK:
         summary["legacy_fallback_candidates"] += 1
     elif status == STATUS_AMBIGUOUS:
+        summary["ambiguous_records"] += 1
         summary["ambiguous_membership_candidates"] += 1
     elif status == STATUS_UNKNOWN:
         summary["unknown_candidates"] += 1
+
+
+def _finalize_summary(summary: dict):
+    summary["hard_cutover_ready"] = (
+        summary["unscoped_records"] == 0
+        and summary["ambiguous_membership_candidates"] == 0
+    )
 
 
 def _combined_summary(models: dict) -> dict:
@@ -276,8 +347,18 @@ def _combined_summary(models: dict) -> dict:
     for model_payload in models.values():
         model_summary = model_payload["summary"]
         for key in summary:
+            if key == "hard_cutover_ready":
+                continue
             summary[key] += model_summary[key]
+    _finalize_summary(summary)
     return summary
+
+
+def _is_test_or_dev_username(username: str | None) -> bool:
+    if not username:
+        return False
+    username = username.lower()
+    return username == "testuser" or username.startswith(("test", "dev"))
 
 
 def _string_or_none(value) -> str | None:
