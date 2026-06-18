@@ -728,6 +728,161 @@ Suggested next step after transitional selectors:
   manually scope any remaining unscoped rows, then prepare a later PR to remove
   the legacy fallback only after data cleanup is complete.
 
+#### Customer, CRM, Shipment, and Reports RBAC visibility audit
+
+Date: 2026-06-19
+
+Branch: `audit/rbac-customer-crm-report-scope`
+
+Scope: read-only audit of customer/company/contact, CRM, shipment, and report
+visibility after the Quote/SPOT transitional selector work. No runtime code,
+schema, migrations, selector logic, pricing, ProductCode, buy-cost, margin,
+frontend behavior, or business visibility was changed.
+
+Current Quote/SPOT context carried into this audit:
+
+- Quote: 60/60 scoped, `hard_cutover_ready=true`.
+- SPOT: 62/70 scoped, `hard_cutover_ready=false`.
+- 8 SPOT records remain unscoped: 4 ready records created by `testuser` with no
+  membership and 4 draft records with no `created_by`.
+- `rbac_compare_visibility` reports 0 mismatches.
+- Quote and SPE selectors now prefer durable scope fields and retain legacy
+  fallback. Hard cutover remains intentionally deferred.
+
+Fallow baseline for this audit:
+
+- `npx fallow --format json`: exit 0, Fallow 2.88.3, 99 total issues.
+- `npx fallow dead-code --format json`: exit 1 with valid findings JSON, 99
+  total issues including 1 unused file, 79 unused exports, 17 unused types, and
+  1 unused dev dependency.
+- `npx fallow dupes --format json`: exit 0, 224 files scanned, 57 files with
+  clones, 20 clone groups, 4,883 duplicated lines, 10.780677352408707 percent
+  duplication.
+- `npx fallow health --format json`: exit 1 with valid findings JSON. Relevant
+  hotspots include customer edit UI, CRM opportunity UI, shipment detail UI, and
+  dashboard/reporting UI. These are audit evidence only and were not cleaned up.
+
+Observed visibility by domain:
+
+- Customers, companies, and contacts are effectively authenticated-global reads.
+  `Company` and `Contact` have no organization, branch, department, or durable
+  owner scope fields. `Company.account_owner` exists but is not used for access
+  filtering. Customer writes are admin-only through `CustomerAccessPermission`.
+- Customer list and search use global active customer querysets. The contact
+  endpoint performs `get_object_or_404(Company, pk=company_id)` and then returns
+  active contacts for that company, so direct company ID lookup is not scoped.
+- CRM opportunities, interactions, and tasks are authenticated-global reads.
+  Sales, manager, and admin can write. Opportunities and tasks have `owner`
+  fields, interactions have `author`, but no CRM view filters by the current
+  user's owner, organization, branch, or department unless the client supplies a
+  query parameter.
+- CRM direct object access inherits the same global queryset. A user who knows
+  an opportunity, interaction, task, owner, or company ID can request it unless
+  blocked by authentication or write-role checks.
+- Shipments are organization-scoped in the primary viewsets through
+  `request.user.organization`: shipment list/detail/actions, address book,
+  templates, settings, and document download all filter through the user's
+  organization or a shipment already filtered by organization.
+- Shipment branch is a text field, not an FK to `parties.Branch`, and is not an
+  access boundary. Shipment role checks still use legacy `request.user.role`.
+- Shipment serializers use global related-object querysets for customer
+  company/contact links and locations. This does not bypass shipment object
+  scoping, but it can attach globally visible customer/contact records into an
+  organization-scoped shipment address book entry.
+- New reporting endpoints generally call `get_quotes_for_user`, so they inherit
+  the transitional Quote selector: durable scope fields first, legacy fallback
+  for unscoped records, broad admin/finance visibility, manager branch or
+  department visibility where scoped, and sales own-record visibility where
+  allowed by endpoint permissions.
+- Report endpoint permissions are still role-based via
+  `IsManagerOrAdmin | IsFinanceOrAdmin`. They do not use permission codes such
+  as `report.view.financials`.
+- Report outputs expose cost, gross profit, and margin metrics to permitted
+  report roles. There is no separate financial-field masking in the reporting
+  layer yet.
+- Legacy `dashboard` reporting mostly uses `get_quotes_for_user`, but its
+  `conversion` aggregate still calls `Quote.objects.exclude(is_archived=True)`
+  directly. That aggregate is a report leakage risk because it can count global
+  quote statuses outside the scoped quote queryset.
+
+Global access risks:
+
+- Customer/company/contact reads are global for every authenticated user.
+- CRM reads and direct ID access are global for every authenticated user.
+- CRM owner/company query parameters allow authenticated users to enumerate
+  another owner or company's CRM data.
+- Reporting financial outputs are role-gated but not permission-code gated, and
+  do not mask financial fields independently of endpoint access.
+- Legacy dashboard conversion totals are computed from a global `Quote.objects`
+  aggregate instead of the scoped quote queryset.
+
+Missing scope fields:
+
+- `Company`: missing organization, branch, department, and access policy fields.
+  `account_owner` exists but is not enough for branch or department RBAC.
+- `Contact`: missing independent organization, branch, department, and owner
+  fields; it only belongs to `Company`.
+- `CustomerCommercialProfile`: inherits only through `Company`; no direct scope.
+- `Opportunity`, `Interaction`, and `Task`: missing organization, branch, and
+  department fields. `Opportunity.owner`, `Task.owner`, and `Interaction.author`
+  are available for future owner-scoped filtering.
+- `Shipment`: has `organization` and a text `branch`; it is missing branch FK,
+  department FK, and owner field.
+- Reporting has no persisted model scope; it must be scoped through source
+  selectors and field-level financial permissions.
+
+Unclear relationships:
+
+- Customer scope is a product decision: customers may be organization-local,
+  branch-local, shared across branches, or shared globally. Current `Company`
+  uniqueness by name assumes a single global customer namespace.
+- Contact scope follows customer scope, but direct contact email uniqueness may
+  conflict with branch-specific customer records.
+- CRM scope likely needs to follow opportunity ownership and customer scope, but
+  quote-derived CRM logging must keep working when opportunities are created
+  from quote/SPOT workflows.
+- Shipment branch text currently looks operational and user-entered. It should
+  not be treated as an RBAC branch until mapped to `parties.Branch` by an
+  explicit data plan.
+- Reporting scope should continue to inherit quote selectors, but financial
+  fields need separate permission semantics before hardening.
+
+Direct ID access risks:
+
+- `/api/v3/parties/companies/<company_id>/contacts/` resolves `Company` by
+  primary key with no scope filter.
+- `/api/v3/crm/opportunities/<id>/`, `/api/v3/crm/interactions/<id>/`, and
+  `/api/v3/crm/tasks/<id>/` resolve through global CRM querysets.
+- CRM query params `company`, `opportunity`, and `owner` are not constrained to
+  the requester scope.
+- Shipment direct shipment/document IDs are organization-filtered and are not
+  currently a cross-organization IDOR risk, but branch-level IDOR remains
+  unenforced.
+
+Safe next PR order:
+
+1. Reports-only fix: replace the legacy dashboard `conversion` aggregate with
+   the already scoped quote queryset and add the smallest regression test for a
+   manager seeing only scoped conversion counts. Do not change report permissions
+   or financial masking in that PR.
+2. Customer/Company/Contact read-only diagnostics: add an audit command or tests
+   that count customers, contacts, quotes, shipments, and CRM links by possible
+   scope source. Do not add fields or filters yet.
+3. CRM read-only diagnostics: report opportunities, interactions, and tasks by
+   owner, author, linked company, linked quote-derived activity, and missing
+   owner/author. Do not enforce owner scope yet.
+4. Shipment branch diagnostics: compare `Shipment.branch` text values to
+   `parties.Branch.code` within the shipment organization and report unmapped or
+   ambiguous rows. Do not treat text branch as RBAC enforcement yet.
+5. Add nullable customer/CRM/shipment scope fields only after diagnostics prove
+   the backfill sources are safe. Keep selectors unchanged.
+6. Add create-time scope assignment for customer/CRM/shipment records. Keep old
+   rows on legacy behavior until backfill is approved.
+7. Cut over selectors domain by domain: reports first, then customer/contact,
+   then CRM, then shipment branch filtering.
+8. Add permission-code-based financial report masking after selector boundaries
+   are stable.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
