@@ -574,6 +574,53 @@ Suggested next step after diagnostics:
   mismatch counts by user, and prepare a data-cleanup/backfill PR before any
   selector cutover.
 
+#### Nullable Quote and SPE scope field PR
+
+Add nullable future-RBAC scope fields to `Quote` and `SpotPricingEnvelopeDB`
+without changing selector behavior:
+
+- `Quote.branch`
+- `Quote.department`
+- `Quote.owner`
+- `SpotPricingEnvelopeDB.organization`
+- `SpotPricingEnvelopeDB.branch`
+- `SpotPricingEnvelopeDB.department`
+- `SpotPricingEnvelopeDB.owner`
+
+These fields exist for future backfill and enforcement only. Current quote and
+SPE selectors remain legacy-authoritative until an explicit selector cutover PR.
+The fields must remain nullable until production data is audited and safely
+backfilled.
+
+Add a dry-run-only command:
+
+```bash
+python backend/manage.py rbac_scope_backfill_report
+python backend/manage.py rbac_scope_backfill_report --format json --show-details
+```
+
+The command reports possible backfill candidates and must not write to the
+database. Safe candidate sources are limited to existing record fields and the
+creator user's explicit RBAC data:
+
+- Existing `Quote.organization`.
+- Exactly one active `UserMembership` on `created_by`.
+- Legacy `CustomUser.organization` or `CustomUser.department`, reported
+  separately as fallback only.
+
+The command must not infer branch or department from route, origin,
+destination, station code, mode, customer, shipment lane, or pricing lane.
+
+This PR does not change access behavior, buy-cost visibility, margin visibility,
+frontend behavior, selectors, customer access, CRM, shipments, reports, pricing,
+or rates.
+
+Suggested next step after nullable fields:
+
+- Run the dry-run report against production-like data, review ambiguous and
+  unknown rows, then prepare a non-destructive data cleanup/backfill plan before
+  enabling any scope-based selectors.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:

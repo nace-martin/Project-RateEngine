@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Import models needed for V3 ForeignKeys
-from parties.models import Company, Contact, Organization
+from parties.models import Branch, Company, Contact, Department, Organization
 # --- UPDATED IMPORT ---
 from core.models import Policy, FxSnapshot, Location
 from core.commodity import COMMODITY_CHOICES, DEFAULT_COMMODITY_CODE
@@ -65,6 +65,30 @@ class Quote(models.Model):
         blank=True,
         related_name="quotes",
         help_text="Tenant/account branding context for this quote.",
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="quotes",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="quotes",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_quotes",
+        help_text="Future RBAC record owner. Nullable until ownership rules are enforced.",
     )
     contact = models.ForeignKey(
         Contact,
