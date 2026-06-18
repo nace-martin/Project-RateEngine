@@ -58,9 +58,9 @@ class SecretResolver:
             resource_name = f"projects/{self._project_id}/secrets/{secret_id}/versions/{version_id}"
 
         try:
-            # We specifically do NOT log the resolved value.
+            # We specifically do NOT log the resolved value or secret identifiers.
             # We only log that we are attempting to resolve a secret.
-            logger.info("Resolving secret from Google Secret Manager: %s", resource_name.split("/versions/")[0])
+            logger.info("Resolving secret from Google Secret Manager")
             
             response = self.client.access_secret_version(request={"name": resource_name})
             return response.payload.data.decode("UTF-8")
