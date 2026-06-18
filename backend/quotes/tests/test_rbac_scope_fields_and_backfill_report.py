@@ -374,6 +374,33 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         self.assertEqual(self._detail_for(payload, "quote", quote.id)["status"], STATUS_UNKNOWN)
         self.assertEqual(self._detail_for(payload, "spot", spe.id)["status"], STATUS_UNKNOWN)
 
+    def test_unknown_spot_details_identify_no_created_by_record(self):
+        spe = self._create_legacy_unscoped_spe()
+
+        output = self._call_report("--format", "json", "--model", "spot", "--show-details")
+        payload = json.loads(output)
+        detail = self._detail_for(payload, "spot", spe.id)
+
+        self.assertEqual(detail["status"], STATUS_UNKNOWN)
+        self.assertEqual(detail["reason"], "no_created_by")
+        self.assertEqual(detail["model"], "spot")
+        self.assertEqual(detail["reference"], str(spe))
+        self.assertIsNone(detail["created_by_id"])
+        self.assertIsNone(detail["created_by_username"])
+        self.assertIsNotNone(detail["created_at"])
+
+    def test_unknown_spot_details_identify_no_membership_record(self):
+        user = self._create_user("spot-unknown-no-membership")
+        spe = self._create_legacy_unscoped_spe(user)
+
+        output = self._call_report("--model", "spot", "--show-details")
+
+        self.assertIn("spot SPE-", output)
+        self.assertIn(str(spe.id), output)
+        self.assertIn("status=unknown", output)
+        self.assertIn("reason=no_membership", output)
+        self.assertIn("created_by=spot-unknown-no-membership", output)
+
     def test_command_does_not_write_by_default(self):
         user = self._create_user("dry-run-user")
         self._membership_for(user, self.air_department)

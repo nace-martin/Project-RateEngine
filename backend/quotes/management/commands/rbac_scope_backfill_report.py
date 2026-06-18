@@ -99,8 +99,11 @@ class Command(BaseCommand):
             if show_details:
                 for detail in model_payload["details"]:
                     self.stdout.write(
-                        f"  - {detail['id']}: status={detail['status']}, "
-                        f"created_by={detail['created_by_username']}"
+                        f"  - {detail['model']} {detail['reference']} ({detail['id']}): "
+                        f"status={detail['status']}, "
+                        f"reason={detail.get('reason') or '-'}, "
+                        f"created_by={detail['created_by_username'] or '-'}, "
+                        f"created_at={detail['created_at'] or '-'}"
                     )
 
 
@@ -154,9 +157,11 @@ def _inspect_record(record, *, model_name: str, show_details: bool) -> dict:
     base = {
         "id": str(record.pk),
         "model": model_name,
+        "reference": _record_reference(record, model_name=model_name),
         "status": None,
         "created_by_id": getattr(record, "created_by_id", None),
         "created_by_username": getattr(created_by, "username", None),
+        "created_at": _datetime_or_none(getattr(record, "created_at", None)),
     }
 
     if _record_has_scope(record):
@@ -167,7 +172,7 @@ def _inspect_record(record, *, model_name: str, show_details: bool) -> dict:
 
     if not created_by:
         base["status"] = STATUS_UNKNOWN
-        base["reason"] = "missing_created_by"
+        base["reason"] = "no_created_by"
         return base
 
     memberships = list(get_active_memberships(created_by))
@@ -199,8 +204,14 @@ def _inspect_record(record, *, model_name: str, show_details: bool) -> dict:
         return base
 
     base["status"] = STATUS_UNKNOWN
-    base["reason"] = "no_membership_or_legacy_scope"
+    base["reason"] = "no_membership"
     return base
+
+
+def _record_reference(record, *, model_name: str) -> str:
+    if model_name == "quote":
+        return getattr(record, "quote_number", None) or str(record)
+    return str(record)
 
 
 def _record_has_scope(record) -> bool:
@@ -273,3 +284,9 @@ def _string_or_none(value) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _datetime_or_none(value) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()

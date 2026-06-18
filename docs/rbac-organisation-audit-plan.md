@@ -611,6 +611,12 @@ creator user's explicit RBAC data:
 The command must not infer branch or department from route, origin,
 destination, station code, mode, customer, shipment lane, or pricing lane.
 
+With `--show-details`, unknown Quote and SPE rows include only safe inspection
+fields: model, id, reference, created_by id/username, created_at, and reason
+such as `no_created_by` or `no_membership`. Use this to decide whether unknown
+SPOT rows need a valid creator, manual scope, legacy exemption, or exclusion
+from hard-cutover requirements.
+
 This PR does not change access behavior, buy-cost visibility, margin visibility,
 frontend behavior, selectors, customer access, CRM, shipments, reports, pricing,
 or rates.
