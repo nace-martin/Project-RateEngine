@@ -686,6 +686,35 @@ Suggested next step after controlled backfill:
   skipped rows, run `--write` only after approval, then prepare a separate
   selector cutover plan.
 
+#### Transitional Quote and SPE scoped selector PR
+
+Update only `Quote` and `SpotPricingEnvelopeDB` selectors so manager visibility
+prefers durable scope fields where those fields exist:
+
+- Scoped records with `branch` or `department` use the record-owned scope fields,
+  not the creator user's current legacy department.
+- Branch/department-unscoped records keep the existing legacy fallback: own
+  records plus records created by users in the same legacy
+  `CustomUser.department`.
+- Admin, finance, and superuser broad visibility remains unchanged.
+- Sales visibility remains own-records-only.
+- Anonymous users remain denied by selectors/DRF authentication.
+
+This is a transitional selector mode, not the final RBAC hard cutover. It keeps
+old unscoped Quote and SPE rows visible through the documented compatibility
+fallback while allowing backfilled and newly created scoped rows to stop moving
+when a creator's legacy department changes.
+
+This PR must not change customer access, CRM, shipments, reports, pricing,
+rates, buy-cost visibility, margin visibility, ProductCode flows, frontend
+behavior, create-time assignment, or backfill commands.
+
+Suggested next step after transitional selectors:
+
+- Run visibility diagnostics again against development/staging data, clean or
+  manually scope any remaining unscoped rows, then prepare a later PR to remove
+  the legacy fallback only after data cleanup is complete.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:

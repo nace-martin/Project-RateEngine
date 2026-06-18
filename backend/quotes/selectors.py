@@ -1,6 +1,42 @@
 from django.core.exceptions import PermissionDenied
 from django.db.models import QuerySet, Q
+from accounts.scope import get_effective_user_scope
 from quotes.models import Quote, SpotPricingEnvelopeDB
+
+
+def _is_global_user(user) -> bool:
+    role = getattr(user, 'role', '')
+    return (
+        getattr(user, 'is_admin', False) or
+        getattr(user, 'is_finance', False) or
+        getattr(user, 'is_superuser', False) or
+        role in ('admin', 'finance')
+    )
+
+
+def _is_manager_user(user) -> bool:
+    return getattr(user, 'is_manager', False) or getattr(user, 'role', '') == 'manager'
+
+
+def _legacy_manager_filter(user) -> Q:
+    dept = getattr(user, 'department', None)
+    if dept:
+        return Q(created_by__department=dept) | Q(created_by=user)
+    return Q(created_by=user)
+
+
+def _manager_scoped_filter(user) -> Q:
+    scope = get_effective_user_scope(user)
+
+    scoped_filter = Q(created_by=user)
+    if scope.department_ids:
+        scoped_filter |= Q(department_id__in=scope.department_ids)
+    if scope.branch_ids:
+        scoped_filter |= Q(department_id__isnull=True, branch_id__in=scope.branch_ids)
+
+    unscoped_filter = Q(branch_id__isnull=True, department_id__isnull=True)
+    return scoped_filter | (unscoped_filter & _legacy_manager_filter(user))
+
 
 def get_spes_for_user(user, queryset: QuerySet | None = None) -> QuerySet:
     """
@@ -8,7 +44,8 @@ def get_spes_for_user(user, queryset: QuerySet | None = None) -> QuerySet:
 
     Rules:
     - Admin/Finance: Global access.
-    - Managers: Own department's SPEs + own SPEs.
+    - Managers: Scoped SPEs by durable branch/department when present.
+      Branch/department-unscoped SPEs keep the legacy creator department fallback.
     - Sales: Own SPEs only.
     """
     if queryset is None:
@@ -17,25 +54,11 @@ def get_spes_for_user(user, queryset: QuerySet | None = None) -> QuerySet:
     if not user or not user.is_authenticated:
         return queryset.none()
 
-    role = getattr(user, 'role', '')
-    is_global = (
-        getattr(user, 'is_admin', False) or
-        getattr(user, 'is_finance', False) or
-        role in ('admin', 'finance')
-    )
-
-    if is_global:
+    if _is_global_user(user):
         return queryset
 
-    # Manager View: Restricted by Department
-    if getattr(user, 'is_manager', False) or role == 'manager':
-        dept = getattr(user, 'department', None)
-        if dept:
-            return queryset.filter(
-                Q(created_by__department=dept) |
-                Q(created_by=user)
-            )
-        return queryset.filter(created_by=user)
+    if _is_manager_user(user):
+        return queryset.filter(_manager_scoped_filter(user))
 
     # Sales / Standard View: Own SPEs only
     return queryset.filter(created_by=user)
@@ -47,7 +70,8 @@ def get_quotes_for_user(user, queryset: QuerySet | None = None) -> QuerySet:
 
     Rules:
     - Admin/Finance: Global access.
-    - Managers: Own department's quotes + own quotes.
+    - Managers: Scoped quotes by durable branch/department when present.
+      Branch/department-unscoped quotes keep the legacy creator department fallback.
     - Sales: Own quotes only.
     """
     if queryset is None:
@@ -56,25 +80,11 @@ def get_quotes_for_user(user, queryset: QuerySet | None = None) -> QuerySet:
     if not user or not user.is_authenticated:
         return queryset.none()
 
-    role = getattr(user, 'role', '')
-    is_global = (
-        getattr(user, 'is_admin', False) or
-        getattr(user, 'is_finance', False) or
-        role in ('admin', 'finance')
-    )
-
-    if is_global:
+    if _is_global_user(user):
         return queryset
 
-    # Manager View: Restricted by Department
-    if getattr(user, 'is_manager', False) or role == 'manager':
-        dept = getattr(user, 'department', None)
-        if dept:
-            return queryset.filter(
-                Q(created_by__department=dept) |
-                Q(created_by=user)
-            )
-        return queryset.filter(created_by=user)
+    if _is_manager_user(user):
+        return queryset.filter(_manager_scoped_filter(user))
 
     # Sales / Standard View: Own quotes only
     return queryset.filter(created_by=user)

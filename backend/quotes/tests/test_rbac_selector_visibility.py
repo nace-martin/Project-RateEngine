@@ -64,7 +64,7 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
         return CustomUser.objects.create_user(username=username, **defaults)
 
     @classmethod
-    def _create_quote(cls, user, label, total_sell_pgk):
+    def _create_quote(cls, user, label, total_sell_pgk, **kwargs):
         quote = Quote.objects.create(
             quote_number=f"RBAC-{label}",
             customer=cls.customer,
@@ -72,6 +72,7 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
             shipment_type=Quote.ShipmentType.IMPORT,
             status=Quote.Status.FINALIZED,
             created_by=user,
+            **kwargs,
         )
         version = QuoteVersion.objects.create(
             quote=quote,
@@ -88,7 +89,7 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
         return quote
 
     @classmethod
-    def _create_spe(cls, user, reason_code):
+    def _create_spe(cls, user, reason_code, **kwargs):
         return SpotPricingEnvelopeDB.objects.create(
             status=SpotPricingEnvelopeDB.Status.DRAFT,
             shipment_context_json={
@@ -107,6 +108,7 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
             spot_trigger_reason_text=f"Test {reason_code}",
             created_by=user,
             expires_at=timezone.now() + timezone.timedelta(hours=24),
+            **kwargs,
         )
 
     def _quote_ids_for_user(self, user):
@@ -265,14 +267,14 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
             {3},
         )
 
-    def test_membership_helper_scope_can_differ_from_legacy_selector_until_cutover(self):
+    def _create_scope_fixture(self, slug):
         pgk, _ = Currency.objects.get_or_create(
             code="PGK",
             defaults={"name": "Papua New Guinean Kina"},
         )
         organization = Organization.objects.create(
-            name="RBAC Helper Compare Org",
-            slug="rbac-helper-compare",
+            name=f"RBAC {slug} Org",
+            slug=slug,
             default_currency=pgk,
         )
         branch = Branch.objects.create(
@@ -292,6 +294,9 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
             code="SEA",
             name="Sea Freight",
         )
+        return organization, branch, air_department, sea_department
+
+    def _manager_membership(self, user, organization, branch, department):
         manager_role, _ = Role.objects.get_or_create(
             code=CustomUser.ROLE_MANAGER,
             organization=None,
@@ -300,22 +305,119 @@ class QuoteAndSpotLegacyVisibilityTests(TestCase):
                 "is_system": True,
             },
         )
-        UserMembership.objects.create(
-            user=self.sea_manager,
+        return UserMembership.objects.create(
+            user=user,
             organization=organization,
             branch=branch,
-            department=air_department,
+            department=department,
             role=manager_role,
             is_active=True,
         )
 
-        # Current selectors still use CustomUser.department, not UserMembership.
+    def test_unscoped_records_keep_legacy_fallback_when_membership_differs(self):
+        organization, branch, air_department, sea_department = self._create_scope_fixture(
+            "rbac-helper-compare"
+        )
+        self._manager_membership(self.sea_manager, organization, branch, air_department)
+
+        # Branch/department-null records stay on the legacy fallback until hard cutover.
         self.assertSetEqual(
             self._quote_ids_for_user(self.sea_manager),
             {self.quote_by_sea_sales.id},
         )
         self.assertTrue(user_can_access_department(self.sea_manager, air_department))
         self.assertFalse(user_can_access_department(self.sea_manager, sea_department))
+
+    def test_quote_selector_manager_uses_scoped_department_fields(self):
+        organization, branch, air_department, sea_department = self._create_scope_fixture(
+            "rbac-quote-scoped-selector"
+        )
+        self._manager_membership(self.air_manager, organization, branch, air_department)
+
+        scoped_air_quote = self._create_quote(
+            self.sea_sales,
+            "SCOPED-AIR",
+            "5000.00",
+            organization=organization,
+            branch=branch,
+            department=air_department,
+        )
+        scoped_sea_quote = self._create_quote(
+            self.air_sales,
+            "SCOPED-SEA",
+            "6000.00",
+            organization=organization,
+            branch=branch,
+            department=sea_department,
+        )
+
+        visible_quote_ids = self._quote_ids_for_user(self.air_manager)
+
+        self.assertIn(scoped_air_quote.id, visible_quote_ids)
+        self.assertNotIn(scoped_sea_quote.id, visible_quote_ids)
+
+    def test_quote_scoped_visibility_does_not_follow_creator_legacy_department_changes(self):
+        organization, branch, air_department, _ = self._create_scope_fixture(
+            "rbac-quote-creator-move"
+        )
+        self._manager_membership(self.air_manager, organization, branch, air_department)
+
+        scoped_quote = self._create_quote(
+            self.air_sales,
+            "SCOPED-CREATOR-MOVE",
+            "7000.00",
+            organization=organization,
+            branch=branch,
+            department=air_department,
+        )
+        self.air_sales.department = "SEA"
+        self.air_sales.save(update_fields=["department"])
+
+        self.assertIn(scoped_quote.id, self._quote_ids_for_user(self.air_manager))
+
+    def test_spot_selector_manager_uses_scoped_department_fields(self):
+        organization, branch, air_department, sea_department = self._create_scope_fixture(
+            "rbac-spot-scoped-selector"
+        )
+        self._manager_membership(self.air_manager, organization, branch, air_department)
+
+        scoped_air_spe = self._create_spe(
+            self.sea_sales,
+            "SCOPED_AIR",
+            organization=organization,
+            branch=branch,
+            department=air_department,
+        )
+        scoped_sea_spe = self._create_spe(
+            self.air_sales,
+            "SCOPED_SEA",
+            organization=organization,
+            branch=branch,
+            department=sea_department,
+        )
+
+        visible_spe_ids = self._spe_ids_for_user(self.air_manager)
+
+        self.assertIn(scoped_air_spe.id, visible_spe_ids)
+        self.assertNotIn(scoped_sea_spe.id, visible_spe_ids)
+
+    def test_spot_scoped_visibility_does_not_follow_creator_legacy_department_changes(self):
+        organization, branch, air_department, _ = self._create_scope_fixture(
+            "rbac-spot-creator-move"
+        )
+        self._manager_membership(self.air_manager, organization, branch, air_department)
+
+        scoped_spe = self._create_spe(
+            self.air_sales,
+            "SCOPED_SPE_CREATOR_MOVE",
+            organization=organization,
+            branch=branch,
+            department=air_department,
+        )
+        self.air_sales.department = "SEA"
+        self.air_sales.save(update_fields=["department"])
+
+        self.assertIn(scoped_spe.id, self._spe_ids_for_user(self.air_manager))
 
 
 class QuoteAndSpotScopeComparisonTests(QuoteAndSpotLegacyVisibilityTests):
