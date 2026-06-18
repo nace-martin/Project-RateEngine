@@ -621,6 +621,32 @@ Suggested next step after nullable fields:
   unknown rows, then prepare a non-destructive data cleanup/backfill plan before
   enabling any scope-based selectors.
 
+#### Create-time Quote and SPE scope assignment PR
+
+Populate nullable RBAC scope fields on newly created `Quote` and
+`SpotPricingEnvelopeDB` records only. Existing rows are not changed and no data
+migration is added.
+
+Create-time rules:
+
+- Anonymous or inactive users do not assign scope.
+- Exactly one active `UserMembership` assigns organization, branch, department,
+  and owner from that membership.
+- Multiple active memberships assign only values all memberships agree on.
+  Ambiguous branch or department values remain null.
+- Users with no active memberships assign legacy `CustomUser.organization` and
+  owner only.
+- Legacy `CustomUser.department` text is not mapped to `parties.Department`.
+- Explicitly supplied scope values are never overwritten.
+
+The create-time assignment must not infer branch or department from route,
+origin, destination, station code, lane, mode, customer, shipment data, or
+pricing data.
+
+This PR does not change quote or SPE visibility, selectors, buy-cost visibility,
+margin visibility, customer access, CRM, shipments, reports, pricing, rates, or
+frontend behavior.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:

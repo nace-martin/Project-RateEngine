@@ -1,4 +1,5 @@
 import json
+import uuid
 from io import StringIO
 
 from django.core.management import call_command
@@ -35,6 +36,11 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
             code="POM",
             name="Port Moresby",
         )
+        cls.other_branch = Branch.objects.create(
+            organization=cls.organization,
+            code="LAE",
+            name="Lae",
+        )
         cls.air_department = Department.objects.create(
             organization=cls.organization,
             branch=cls.branch,
@@ -46,6 +52,28 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
             branch=cls.branch,
             code="SEA",
             name="Sea Freight",
+        )
+        cls.other_branch_department = Department.objects.create(
+            organization=cls.organization,
+            branch=cls.other_branch,
+            code="LAND",
+            name="Road Freight",
+        )
+        cls.explicit_organization = Organization.objects.create(
+            name="Explicit Scope Org",
+            slug="explicit-scope-org",
+            default_currency=cls.pgk,
+        )
+        cls.explicit_branch = Branch.objects.create(
+            organization=cls.explicit_organization,
+            code="MTK",
+            name="Mount Hagen",
+        )
+        cls.explicit_department = Department.objects.create(
+            organization=cls.explicit_organization,
+            branch=cls.explicit_branch,
+            code="FIN",
+            name="Finance",
         )
         cls.manager_role = Role.objects.create(
             code=CustomUser.ROLE_MANAGER,
@@ -99,11 +127,53 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         defaults.update(kwargs)
         return SpotPricingEnvelopeDB.objects.create(**defaults)
 
-    def _membership_for(self, user, department, *, is_primary=True):
+    def _create_legacy_unscoped_quote(self, user=None, **kwargs):
+        defaults = {
+            "id": uuid.uuid4(),
+            "quote_number": f"LEGACY-{uuid.uuid4().hex[:8].upper()}",
+            "customer": self.customer,
+            "mode": "AIR",
+            "shipment_type": Quote.ShipmentType.IMPORT,
+            "status": Quote.Status.DRAFT,
+            "created_by": user,
+        }
+        defaults.update(kwargs)
+        quote = Quote(**defaults)
+        Quote.objects.bulk_create([quote])
+        return quote
+
+    def _create_legacy_unscoped_spe(self, user=None, **kwargs):
+        defaults = {
+            "id": uuid.uuid4(),
+            "status": SpotPricingEnvelopeDB.Status.DRAFT,
+            "shipment_context_json": {
+                "origin_country": "PG",
+                "destination_country": "PG",
+                "origin_code": "POM",
+                "destination_code": "LAE",
+                "commodity": "GCR",
+                "total_weight_kg": 10,
+                "pieces": 1,
+                "service_scope": "p2p",
+                "payment_term": "collect",
+            },
+            "shipment_context_hash": f"legacy-{uuid.uuid4().hex}",
+            "conditions_json": {},
+            "spot_trigger_reason_code": "TEST",
+            "spot_trigger_reason_text": "Test SPE",
+            "created_by": user,
+            "expires_at": timezone.now() + timezone.timedelta(hours=24),
+        }
+        defaults.update(kwargs)
+        spe = SpotPricingEnvelopeDB(**defaults)
+        SpotPricingEnvelopeDB.objects.bulk_create([spe])
+        return spe
+
+    def _membership_for(self, user, department, *, branch=None, is_primary=True):
         return UserMembership.objects.create(
             user=user,
             organization=self.organization,
-            branch=self.branch,
+            branch=branch or self.branch,
             department=department,
             role=self.manager_role,
             is_primary=is_primary,
@@ -142,6 +212,100 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         self.assertIsNone(spe.department_id)
         self.assertIsNone(spe.owner_id)
 
+    def test_quote_single_membership_populates_scope(self):
+        user = self._create_user("quote-single-membership-user")
+        self._membership_for(user, self.air_department)
+
+        quote = self._create_quote(user)
+
+        self.assertEqual(quote.organization_id, self.organization.id)
+        self.assertEqual(quote.branch_id, self.branch.id)
+        self.assertEqual(quote.department_id, self.air_department.id)
+        self.assertEqual(quote.owner_id, user.id)
+
+    def test_quote_legacy_organization_only_populates_organization_and_owner(self):
+        user = self._create_user("quote-legacy-org-user", organization=self.organization)
+
+        quote = self._create_quote(user)
+
+        self.assertEqual(quote.organization_id, self.organization.id)
+        self.assertEqual(quote.owner_id, user.id)
+        self.assertIsNone(quote.branch_id)
+        self.assertIsNone(quote.department_id)
+
+    def test_quote_multiple_memberships_do_not_guess_branch_or_department(self):
+        user = self._create_user("quote-multi-membership-user")
+        self._membership_for(user, self.air_department)
+        self._membership_for(
+            user,
+            self.other_branch_department,
+            branch=self.other_branch,
+            is_primary=False,
+        )
+
+        quote = self._create_quote(user)
+
+        self.assertEqual(quote.organization_id, self.organization.id)
+        self.assertEqual(quote.owner_id, user.id)
+        self.assertIsNone(quote.branch_id)
+        self.assertIsNone(quote.department_id)
+
+    def test_explicit_quote_scope_values_are_not_overridden(self):
+        user = self._create_user("quote-explicit-scope-user")
+        explicit_owner = self._create_user("quote-explicit-owner")
+        self._membership_for(user, self.air_department)
+
+        quote = self._create_quote(
+            user,
+            organization=self.explicit_organization,
+            branch=self.explicit_branch,
+            department=self.explicit_department,
+            owner=explicit_owner,
+        )
+
+        self.assertEqual(quote.organization_id, self.explicit_organization.id)
+        self.assertEqual(quote.branch_id, self.explicit_branch.id)
+        self.assertEqual(quote.department_id, self.explicit_department.id)
+        self.assertEqual(quote.owner_id, explicit_owner.id)
+
+    def test_spot_single_membership_populates_scope(self):
+        user = self._create_user("spot-single-membership-user")
+        self._membership_for(user, self.air_department)
+
+        spe = self._create_spe(user)
+
+        self.assertEqual(spe.organization_id, self.organization.id)
+        self.assertEqual(spe.branch_id, self.branch.id)
+        self.assertEqual(spe.department_id, self.air_department.id)
+        self.assertEqual(spe.owner_id, user.id)
+
+    def test_spot_legacy_organization_only_populates_organization_and_owner(self):
+        user = self._create_user("spot-legacy-org-user", organization=self.organization)
+
+        spe = self._create_spe(user)
+
+        self.assertEqual(spe.organization_id, self.organization.id)
+        self.assertEqual(spe.owner_id, user.id)
+        self.assertIsNone(spe.branch_id)
+        self.assertIsNone(spe.department_id)
+
+    def test_spot_multiple_memberships_do_not_guess_branch_or_department(self):
+        user = self._create_user("spot-multi-membership-user")
+        self._membership_for(user, self.air_department)
+        self._membership_for(
+            user,
+            self.other_branch_department,
+            branch=self.other_branch,
+            is_primary=False,
+        )
+
+        spe = self._create_spe(user)
+
+        self.assertEqual(spe.organization_id, self.organization.id)
+        self.assertEqual(spe.owner_id, user.id)
+        self.assertIsNone(spe.branch_id)
+        self.assertIsNone(spe.department_id)
+
     def test_dry_run_report_command_runs_for_quotes(self):
         self._create_quote()
 
@@ -161,7 +325,7 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
     def test_single_membership_candidate_is_reported(self):
         user = self._create_user("single-membership-user")
         self._membership_for(user, self.air_department)
-        quote = self._create_quote(user)
+        quote = self._create_legacy_unscoped_quote(user)
 
         output = self._call_report("--format", "json", "--model", "quote", "--show-details")
         payload = json.loads(output)
@@ -185,7 +349,7 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         user = self._create_user("ambiguous-membership-user")
         self._membership_for(user, self.air_department)
         self._membership_for(user, self.sea_department, is_primary=False)
-        quote = self._create_quote(user)
+        quote = self._create_legacy_unscoped_quote(user)
 
         output = self._call_report("--format", "json", "--model", "quote", "--show-details")
         payload = json.loads(output)
@@ -208,8 +372,8 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
     def test_command_does_not_write_by_default(self):
         user = self._create_user("dry-run-user")
         self._membership_for(user, self.air_department)
-        quote = self._create_quote(user)
-        spe = self._create_spe(user)
+        quote = self._create_legacy_unscoped_quote(user)
+        spe = self._create_legacy_unscoped_spe(user)
 
         self._call_report("--format", "json", "--show-details")
 
