@@ -185,6 +185,11 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         call_command("rbac_scope_backfill_report", *args, stdout=stdout)
         return stdout.getvalue()
 
+    def _call_backfill(self, *args):
+        stdout = StringIO()
+        call_command("rbac_scope_backfill", *args, stdout=stdout)
+        return stdout.getvalue()
+
     def test_quote_scope_fields_exist_and_are_nullable(self):
         for field_name in ("branch", "department", "owner"):
             field = Quote._meta.get_field(field_name)
@@ -386,6 +391,127 @@ class RBACScopeFieldsAndBackfillReportTests(TestCase):
         self.assertIsNone(spe.branch_id)
         self.assertIsNone(spe.department_id)
         self.assertIsNone(spe.owner_id)
+
+    def test_backfill_dry_run_writes_nothing(self):
+        user = self._create_user("backfill-dry-run-user")
+        self._membership_for(user, self.air_department)
+        quote = self._create_legacy_unscoped_quote(user)
+
+        output = self._call_backfill("--model", "quote", "--format", "json", "--show-details")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(payload["summary"]["safe_candidates"], 1)
+        self.assertEqual(payload["summary"]["updated"], 0)
+        self.assertIsNone(quote.branch_id)
+        self.assertIsNone(quote.department_id)
+        self.assertIsNone(quote.owner_id)
+
+    def test_backfill_write_updates_safe_single_membership_quote(self):
+        user = self._create_user("backfill-quote-user")
+        self._membership_for(user, self.air_department)
+        quote = self._create_legacy_unscoped_quote(user)
+
+        output = self._call_backfill("--write", "--model", "quote", "--format", "json", "--show-details")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertTrue(payload["write_enabled"])
+        self.assertEqual(payload["summary"]["safe_candidates"], 1)
+        self.assertEqual(payload["summary"]["updated"], 1)
+        self.assertEqual(quote.organization_id, self.organization.id)
+        self.assertEqual(quote.branch_id, self.branch.id)
+        self.assertEqual(quote.department_id, self.air_department.id)
+        self.assertEqual(quote.owner_id, user.id)
+
+    def test_backfill_write_updates_safe_single_membership_spot(self):
+        user = self._create_user("backfill-spot-user")
+        self._membership_for(user, self.air_department)
+        spe = self._create_legacy_unscoped_spe(user)
+
+        output = self._call_backfill("--write", "--model", "spot", "--format", "json", "--show-details")
+
+        spe.refresh_from_db()
+        payload = json.loads(output)
+        self.assertEqual(payload["summary"]["safe_candidates"], 1)
+        self.assertEqual(payload["summary"]["updated"], 1)
+        self.assertEqual(spe.organization_id, self.organization.id)
+        self.assertEqual(spe.branch_id, self.branch.id)
+        self.assertEqual(spe.department_id, self.air_department.id)
+        self.assertEqual(spe.owner_id, user.id)
+
+    def test_backfill_skips_ambiguous_membership(self):
+        user = self._create_user("backfill-ambiguous-user")
+        self._membership_for(user, self.air_department)
+        self._membership_for(user, self.other_branch_department, branch=self.other_branch, is_primary=False)
+        quote = self._create_legacy_unscoped_quote(user)
+
+        output = self._call_backfill("--write", "--model", "quote", "--format", "json")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertEqual(payload["summary"]["skipped_ambiguous"], 1)
+        self.assertEqual(payload["summary"]["updated"], 0)
+        self.assertIsNone(quote.branch_id)
+
+    def test_backfill_skips_no_membership(self):
+        user = self._create_user("backfill-no-membership-user")
+        quote = self._create_legacy_unscoped_quote(user)
+
+        output = self._call_backfill("--write", "--model", "quote", "--format", "json")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertEqual(payload["summary"]["skipped_no_membership"], 1)
+        self.assertEqual(payload["summary"]["updated"], 0)
+        self.assertIsNone(quote.owner_id)
+
+    def test_backfill_skips_no_created_by(self):
+        quote = self._create_legacy_unscoped_quote()
+
+        output = self._call_backfill("--write", "--model", "quote", "--format", "json")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertEqual(payload["summary"]["skipped_no_created_by"], 1)
+        self.assertEqual(payload["summary"]["updated"], 0)
+        self.assertIsNone(quote.owner_id)
+
+    def test_backfill_skips_inactive_user(self):
+        user = self._create_user("backfill-inactive-user", is_active=False)
+        quote = self._create_legacy_unscoped_quote(user)
+
+        output = self._call_backfill("--write", "--model", "quote", "--format", "json")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertEqual(payload["summary"]["skipped_inactive_user"], 1)
+        self.assertEqual(payload["summary"]["updated"], 0)
+        self.assertIsNone(quote.owner_id)
+
+    def test_backfill_does_not_overwrite_existing_explicit_scope_values(self):
+        user = self._create_user("backfill-explicit-user")
+        self._membership_for(user, self.air_department)
+        explicit_owner = self._create_user("backfill-explicit-owner")
+        quote = self._create_legacy_unscoped_quote(
+            user,
+            organization=self.explicit_organization,
+            branch=self.explicit_branch,
+            department=self.explicit_department,
+            owner=explicit_owner,
+        )
+
+        output = self._call_backfill("--write", "--model", "quote", "--format", "json")
+
+        quote.refresh_from_db()
+        payload = json.loads(output)
+        self.assertEqual(payload["summary"]["already_scoped_noop"], 1)
+        self.assertEqual(payload["summary"]["updated"], 0)
+        self.assertEqual(quote.organization_id, self.explicit_organization.id)
+        self.assertEqual(quote.branch_id, self.explicit_branch.id)
+        self.assertEqual(quote.department_id, self.explicit_department.id)
+        self.assertEqual(quote.owner_id, explicit_owner.id)
 
     def _detail_for(self, payload, model_name, record_id):
         record_id = str(record_id)

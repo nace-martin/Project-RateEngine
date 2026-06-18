@@ -647,6 +647,45 @@ This PR does not change quote or SPE visibility, selectors, buy-cost visibility,
 margin visibility, customer access, CRM, shipments, reports, pricing, rates, or
 frontend behavior.
 
+#### Controlled Quote and SPE scope backfill command PR
+
+Add a write-capable command for old unscoped `Quote` and `SpotPricingEnvelopeDB`
+rows:
+
+```bash
+python backend/manage.py rbac_scope_backfill
+python backend/manage.py rbac_scope_backfill --write --model quote
+python backend/manage.py rbac_scope_backfill --format json --show-details
+```
+
+The default mode is dry-run/read-only. Database writes require explicit
+`--write`.
+
+Write rules:
+
+- Only records whose `created_by` has exactly one active `UserMembership` are
+  safe candidates.
+- Fill missing fields only.
+- `Quote`: fill missing organization, branch, department, and owner.
+- `SpotPricingEnvelopeDB`: fill missing organization, branch, department, and
+  owner.
+- Existing non-null scope values are never overwritten.
+- Ambiguous memberships, missing memberships, missing creators, inactive
+  creators, and unresolved scope remain for manual cleanup.
+
+The command must not infer branch or department from route, lane, origin,
+destination, station code, mode, customer, shipment data, or pricing data.
+
+This PR does not change selectors, access enforcement, buy-cost visibility,
+margin visibility, customer access, CRM, shipments, reports, pricing, rates, or
+frontend behavior.
+
+Suggested next step after controlled backfill:
+
+- Run diagnostics and dry-run backfill on development or staging data, review
+  skipped rows, run `--write` only after approval, then prepare a separate
+  selector cutover plan.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
