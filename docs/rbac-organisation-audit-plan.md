@@ -800,10 +800,10 @@ Observed visibility by domain:
 - Report outputs expose cost, gross profit, and margin metrics to permitted
   report roles. There is no separate financial-field masking in the reporting
   layer yet.
-- Legacy `dashboard` reporting mostly uses `get_quotes_for_user`, but its
-  `conversion` aggregate still calls `Quote.objects.exclude(is_archived=True)`
-  directly. That aggregate is a report leakage risk because it can count global
-  quote statuses outside the scoped quote queryset.
+- Legacy `dashboard` reporting now uses the scoped quote queryset for
+  `conversion` totals. This fixes the previously audited global
+  `Quote.objects.exclude(is_archived=True)` aggregate while preserving response
+  shape and field names.
 
 Global access risks:
 
@@ -813,8 +813,9 @@ Global access risks:
   another owner or company's CRM data.
 - Reporting financial outputs are role-gated but not permission-code gated, and
   do not mask financial fields independently of endpoint access.
-- Legacy dashboard conversion totals are computed from a global `Quote.objects`
-  aggregate instead of the scoped quote queryset.
+- Reports should continue to derive quote data through `get_quotes_for_user` or
+  an equivalent scoped selector. The legacy dashboard conversion aggregate has
+  been fixed to follow that rule.
 
 Missing scope fields:
 
@@ -861,26 +862,22 @@ Direct ID access risks:
 
 Safe next PR order:
 
-1. Reports-only fix: replace the legacy dashboard `conversion` aggregate with
-   the already scoped quote queryset and add the smallest regression test for a
-   manager seeing only scoped conversion counts. Do not change report permissions
-   or financial masking in that PR.
-2. Customer/Company/Contact read-only diagnostics: add an audit command or tests
+1. Customer/Company/Contact read-only diagnostics: add an audit command or tests
    that count customers, contacts, quotes, shipments, and CRM links by possible
    scope source. Do not add fields or filters yet.
-3. CRM read-only diagnostics: report opportunities, interactions, and tasks by
+2. CRM read-only diagnostics: report opportunities, interactions, and tasks by
    owner, author, linked company, linked quote-derived activity, and missing
    owner/author. Do not enforce owner scope yet.
-4. Shipment branch diagnostics: compare `Shipment.branch` text values to
+3. Shipment branch diagnostics: compare `Shipment.branch` text values to
    `parties.Branch.code` within the shipment organization and report unmapped or
    ambiguous rows. Do not treat text branch as RBAC enforcement yet.
-5. Add nullable customer/CRM/shipment scope fields only after diagnostics prove
+4. Add nullable customer/CRM/shipment scope fields only after diagnostics prove
    the backfill sources are safe. Keep selectors unchanged.
-6. Add create-time scope assignment for customer/CRM/shipment records. Keep old
+5. Add create-time scope assignment for customer/CRM/shipment records. Keep old
    rows on legacy behavior until backfill is approved.
-7. Cut over selectors domain by domain: reports first, then customer/contact,
+6. Cut over selectors domain by domain: reports first, then customer/contact,
    then CRM, then shipment branch filtering.
-8. Add permission-code-based financial report masking after selector boundaries
+7. Add permission-code-based financial report masking after selector boundaries
    are stable.
 
 ### Phase 5: Apply read filters by domain

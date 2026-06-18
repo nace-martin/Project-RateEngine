@@ -652,7 +652,7 @@ class ReportsViewSet(viewsets.ViewSet):
         )
 
         # 3. Conversion Rates
-        conversion = Quote.objects.exclude(is_archived=True).aggregate(
+        conversion = quotes_with_latest_total.exclude(is_archived=True).aggregate(
             total=Count('id'),
             drafts=Count('id', filter=Q(status='DRAFT')),
             finalized=Count('id', filter=Q(status__in=['FINALIZED', 'SENT', 'ACCEPTED'])),
