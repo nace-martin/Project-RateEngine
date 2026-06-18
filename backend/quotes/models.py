@@ -225,6 +225,20 @@ class Quote(models.Model):
         return self.quote_number or str(self.id)
 
     def save(self, *args, **kwargs):
+        is_create = self._state.adding
+        if is_create and self.created_by_id:
+            from accounts.scope import resolve_create_scope_for_user
+
+            create_scope = resolve_create_scope_for_user(self.created_by)
+            if self.owner_id is None:
+                self.owner = create_scope.owner
+            if self.organization_id is None:
+                self.organization = create_scope.organization
+            if self.branch_id is None:
+                self.branch = create_scope.branch
+            if self.department_id is None:
+                self.department = create_scope.department
+
         # Generate temporary quote_number for drafts if not set
         if not self.quote_number:
             # DRAFT quotes get a temporary identifier

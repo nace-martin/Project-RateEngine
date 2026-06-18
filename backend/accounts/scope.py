@@ -64,6 +64,16 @@ class EffectiveUserScope:
     has_null_department_scope: bool
 
 
+@dataclass(frozen=True)
+class CreateScope:
+    organization: Any = None
+    branch: Any = None
+    department: Any = None
+    owner: Any = None
+    source: str = "none"
+    reason: str = "No authenticated active user."
+
+
 def _is_authenticated_active(user) -> bool:
     return bool(
         user
@@ -88,6 +98,47 @@ def get_active_memberships(user):
         UserMembership.objects.filter(user=user, is_active=True)
         .select_related("organization", "branch", "department", "role")
         .prefetch_related("role__permissions")
+    )
+
+
+def _agreed_membership_value(memberships, field_name, id_field_name):
+    values = {getattr(membership, id_field_name, None) for membership in memberships}
+    if len(values) == 1 and next(iter(values)) is not None:
+        return getattr(memberships[0], field_name)
+    return None
+
+
+def resolve_create_scope_for_user(user) -> CreateScope:
+    if not _is_authenticated_active(user):
+        return CreateScope()
+
+    memberships = list(get_active_memberships(user))
+    if len(memberships) == 1:
+        membership = memberships[0]
+        return CreateScope(
+            organization=membership.organization,
+            branch=membership.branch,
+            department=membership.department,
+            owner=user,
+            source="user_membership",
+            reason="Exactly one active membership.",
+        )
+
+    if len(memberships) > 1:
+        return CreateScope(
+            organization=_agreed_membership_value(memberships, "organization", "organization_id"),
+            branch=_agreed_membership_value(memberships, "branch", "branch_id"),
+            department=_agreed_membership_value(memberships, "department", "department_id"),
+            owner=user,
+            source="user_memberships",
+            reason="Multiple active memberships; only agreed scope values resolved.",
+        )
+
+    return CreateScope(
+        organization=getattr(user, "organization", None),
+        owner=user,
+        source="legacy_user_fields",
+        reason="No active memberships; using legacy user organization only.",
     )
 
 
