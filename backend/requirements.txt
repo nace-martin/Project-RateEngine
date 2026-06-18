@@ -19,7 +19,7 @@ psycopg-binary==3.3.3
 pydotplus==2.0.2
 Pygments==2.19.2
 pyparsing==3.2.3
-pytest==8.4.2
+pytest==9.0.3
 pytest-django==4.11.1
 python-dotenv==1.1.1
 requests==2.32.5
