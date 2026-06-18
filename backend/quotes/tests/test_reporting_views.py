@@ -100,6 +100,79 @@ class TestReportsViewSet:
         assert data['conversion']['finalized'] == 1
         assert data['conversion']['lost'] == 1
 
+    def test_dashboard_conversion_uses_manager_scoped_quote_visibility(
+        self,
+        api_client,
+        manager_user,
+        quote_factory,
+    ):
+        manager_user.department = 'AIR'
+        manager_user.save(update_fields=['department'])
+        air_sales = get_user_model().objects.create_user(
+            username='air-sales-dashboard',
+            password='password',
+            role='sales',
+            department='AIR',
+        )
+        sea_sales = get_user_model().objects.create_user(
+            username='sea-sales-dashboard',
+            password='password',
+            role='sales',
+            department='SEA',
+        )
+
+        api_client.force_authenticate(user=manager_user)
+
+        quote_factory(manager_user, Quote.Status.DRAFT, 500)
+        quote_factory(air_sales, Quote.Status.FINALIZED, 1000)
+        quote_factory(sea_sales, Quote.Status.LOST, 2000)
+
+        response = api_client.get('/api/v3/reports/dashboard/')
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert set(data.keys()) == {'total_revenue', 'volume_by_mode', 'conversion'}
+        assert data['conversion'] == {
+            'total': 2,
+            'drafts': 1,
+            'finalized': 1,
+            'lost': 0,
+        }
+
+    def test_dashboard_conversion_admin_and_finance_keep_broad_visibility(
+        self,
+        api_client,
+        manager_user,
+        sales_user,
+        quote_factory,
+    ):
+        admin_user = get_user_model().objects.create_user(
+            username='admin-dashboard',
+            password='password',
+            role='admin',
+        )
+        finance_user = get_user_model().objects.create_user(
+            username='finance-dashboard',
+            password='password',
+            role='finance',
+        )
+
+        quote_factory(manager_user, Quote.Status.DRAFT, 500)
+        quote_factory(sales_user, Quote.Status.FINALIZED, 1000)
+        quote_factory(sales_user, Quote.Status.LOST, 2000)
+
+        for user in [admin_user, finance_user]:
+            api_client.force_authenticate(user=user)
+            response = api_client.get('/api/v3/reports/dashboard/')
+
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()['conversion'] == {
+                'total': 3,
+                'drafts': 1,
+                'finalized': 1,
+                'lost': 1,
+            }
+
     def test_dashboard_uses_latest_version_total(self, api_client, manager_user, quote_factory):
         api_client.force_authenticate(user=manager_user)
 
