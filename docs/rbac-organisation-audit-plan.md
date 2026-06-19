@@ -1238,6 +1238,45 @@ Next phase: add a dry-run customer/CRM backfill candidate report that explains
 candidate source, unresolved fields, and ambiguity reasons before any data
 backfill is proposed.
 
+#### Phase 8E - Customer/CRM Backfill Candidate Report
+
+Date: 2026-06-20
+
+Branch: `chore/rbac-customer-crm-backfill-report`
+
+Scope: read-only dry-run diagnostics only. No data backfill, migrations,
+selectors, access behavior, frontend behavior, Quote/SPOT selector changes, or
+RBAC enforcement changed.
+
+Command added:
+
+- `python backend/manage.py rbac_customer_crm_backfill_report`
+- Optional safe details: `--show-details`
+- Optional machine output: `--format json`
+
+The report inspects existing `Company`, `Contact`, `Opportunity`,
+`Interaction`, and `Task` rows and reports total records, already scoped
+records, missing scope fields, safe candidates, unsafe/ambiguous candidates,
+candidate source counts, unresolved fields, and ambiguity reasons.
+
+Candidate priority is intentionally conservative:
+
+1. Existing explicit durable scope on the record.
+2. Parent scope from `Company` or `Opportunity`.
+3. Linked quote durable scope where present.
+4. Owner/author/account-owner membership only for a single active membership.
+5. Multiple active memberships only where values are shared.
+6. Otherwise unresolved fields remain null in the report.
+
+The report does not infer scope from route, lane, origin/destination, customer
+name, department text, service type, quote lane, notes, descriptions, or other
+free text. Safe detail output omits interaction summaries/outcomes and task
+descriptions.
+
+Next phase: review report output, then propose a controlled backfill command
+only for accepted safe candidates. Do not enforce selectors until backfill
+results and comparison diagnostics are reviewed.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
