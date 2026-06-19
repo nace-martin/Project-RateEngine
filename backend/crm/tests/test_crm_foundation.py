@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from rest_framework.test import APIClient
 
+from accounts.models import Role, UserMembership
 from crm.models import Interaction, Opportunity, Task
 from crm.services import (
     resolve_quote_opportunity,
@@ -13,7 +14,7 @@ from crm.services import (
     mark_opportunity_quoted,
     mark_opportunity_won,
 )
-from parties.models import Company
+from parties.models import Branch, Company, Department, Organization
 from quotes.models import Quote
 from quotes.state_machine import QuoteStateMachine
 
@@ -58,6 +59,26 @@ def create_quote(company, opportunity, user, *, status=Quote.Status.DRAFT, shipm
     )
 
 
+def create_scope_fixture(*, suffix=""):
+    organization = Organization.objects.create(
+        name=f"CRM Scope Org {suffix}".strip(),
+        slug=f"crm-scope-org-{suffix or 'default'}",
+        is_active=True,
+    )
+    branch = Branch.objects.create(organization=organization, code=f"POM{suffix}"[:16], name="Port Moresby")
+    department = Department.objects.create(
+        organization=organization,
+        branch=branch,
+        code=f"AIR{suffix}"[:24],
+        name="Air Freight",
+    )
+    return organization, branch, department
+
+
+def create_role(code="sales"):
+    return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+
 @pytest.mark.django_db
 def test_crm_model_creation(company, user):
     opportunity = Opportunity.objects.create(
@@ -86,6 +107,166 @@ def test_crm_model_creation(company, user):
     assert opportunity.status == Opportunity.Status.NEW
     assert interaction.summary
     assert task.status == Task.Status.PENDING
+
+
+@pytest.mark.django_db
+def test_opportunity_api_create_populates_scope_from_single_active_membership(company, user):
+    organization, branch, department = create_scope_fixture(suffix="1")
+    UserMembership.objects.create(
+        user=user,
+        organization=organization,
+        branch=branch,
+        department=department,
+        role=create_role("sales-1"),
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/crm/opportunities/",
+        {
+            "company": str(company.id),
+            "title": "Scoped CRM opportunity",
+            "service_type": "AIR",
+            "priority": Opportunity.Priority.MEDIUM,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    opportunity = Opportunity.objects.get(title="Scoped CRM opportunity")
+    assert opportunity.organization == organization
+    assert opportunity.branch == branch
+    assert opportunity.department == department
+
+
+@pytest.mark.django_db
+def test_interaction_and_task_create_inherit_opportunity_scope(company, user):
+    organization, branch, department = create_scope_fixture(suffix="2")
+    opportunity = Opportunity.objects.create(
+        company=company,
+        title="Scoped parent opportunity",
+        service_type="AIR",
+        owner=user,
+        organization=organization,
+        branch=branch,
+        department=department,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    interaction_response = client.post(
+        "/api/v3/crm/interactions/",
+        {
+            "company": str(company.id),
+            "opportunity": str(opportunity.id),
+            "interaction_type": Interaction.InteractionType.CALL,
+            "summary": "Called customer.",
+        },
+        format="json",
+    )
+    task_response = client.post(
+        "/api/v3/crm/tasks/",
+        {
+            "opportunity": str(opportunity.id),
+            "description": "Follow up.",
+            "due_date": str(date.today() + timedelta(days=1)),
+        },
+        format="json",
+    )
+
+    assert interaction_response.status_code == 201
+    assert task_response.status_code == 201
+    interaction = Interaction.objects.get(summary="Called customer.")
+    task = Task.objects.get(description="Follow up.")
+    assert interaction.organization == organization
+    assert interaction.branch == branch
+    assert interaction.department == department
+    assert task.organization == organization
+    assert task.branch == branch
+    assert task.department == department
+
+
+@pytest.mark.django_db
+def test_opportunity_create_with_multiple_memberships_sets_only_shared_scope(company, user):
+    organization, branch, department = create_scope_fixture(suffix="3")
+    other_branch = Branch.objects.create(organization=organization, code="LAE", name="Lae")
+    other_department = Department.objects.create(
+        organization=organization,
+        branch=other_branch,
+        code="SEA",
+        name="Sea Freight",
+    )
+    role = create_role("sales-3")
+    UserMembership.objects.create(
+        user=user,
+        organization=organization,
+        branch=branch,
+        department=department,
+        role=role,
+        is_primary=True,
+    )
+    UserMembership.objects.create(
+        user=user,
+        organization=organization,
+        branch=other_branch,
+        department=other_department,
+        role=role,
+        is_primary=False,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/crm/opportunities/",
+        {
+            "company": str(company.id),
+            "title": "Ambiguous CRM opportunity",
+            "service_type": "AIR",
+            "priority": Opportunity.Priority.MEDIUM,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    opportunity = Opportunity.objects.get(title="Ambiguous CRM opportunity")
+    assert opportunity.organization == organization
+    assert opportunity.branch is None
+    assert opportunity.department is None
+
+
+@pytest.mark.django_db
+def test_membership_fallback_does_not_mix_scope_across_parent_organization(company, user):
+    parent_org = Organization.objects.create(name="Parent Org", slug="parent-org", is_active=True)
+    membership_org, membership_branch, membership_department = create_scope_fixture(suffix="4")
+    company.organization = parent_org
+    company.save(update_fields=["organization", "updated_at"])
+    UserMembership.objects.create(
+        user=user,
+        organization=membership_org,
+        branch=membership_branch,
+        department=membership_department,
+        role=create_role("sales-4"),
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/api/v3/crm/opportunities/",
+        {
+            "company": str(company.id),
+            "title": "Parent org only opportunity",
+            "service_type": "AIR",
+            "priority": Opportunity.Priority.MEDIUM,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    opportunity = Opportunity.objects.get(title="Parent org only opportunity")
+    assert opportunity.organization == parent_org
+    assert opportunity.branch is None
+    assert opportunity.department is None
 
 
 @pytest.mark.django_db

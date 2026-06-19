@@ -1207,6 +1207,37 @@ Next phase:
 4. Keep selectors and enforcement unchanged until comparison diagnostics are
    available.
 
+#### Phase 8D - Create-time Scope Population
+
+Date: 2026-06-20
+
+Branch: `feat/rbac-customer-crm-scope-population`
+
+Scope: additive create-time population for new customer/contact/CRM records
+only. No backfill, selectors, access behavior, frontend behavior, serializer
+field exposure, Quote/SPOT selector changes, or RBAC enforcement changed.
+
+Create-time population added:
+
+- Customer API creates populate missing `organization`, `branch`, and
+  `department` from the authenticated user's active memberships.
+- Contact CSV imports populate missing scope from the linked `Company`.
+- CRM opportunity API creates and quote-driven opportunity creates populate
+  missing scope from linked `Company`, then active user membership.
+- CRM interaction and task API/system creates populate missing scope from
+  linked `Opportunity` first, then linked `Company`, then active user
+  membership.
+
+Ambiguity handling remains conservative: explicit scope values are preserved,
+single active memberships populate all available fields, multiple active
+memberships populate only shared values, and unresolved fields remain null.
+No inference is made from route, lane, origin/destination, customer name,
+department text, quote lane, or free text.
+
+Next phase: add a dry-run customer/CRM backfill candidate report that explains
+candidate source, unresolved fields, and ambiguity reasons before any data
+backfill is proposed.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:

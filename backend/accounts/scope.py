@@ -74,6 +74,9 @@ class CreateScope:
     reason: str = "No authenticated active user."
 
 
+SCOPE_FIELD_NAMES = ("organization", "branch", "department")
+
+
 def _is_authenticated_active(user) -> bool:
     return bool(
         user
@@ -140,6 +143,65 @@ def resolve_create_scope_for_user(user) -> CreateScope:
         source="legacy_user_fields",
         reason="No active memberships; using legacy user organization only.",
     )
+
+
+def _membership_create_scope_for_user(user) -> CreateScope:
+    memberships = list(get_active_memberships(user))
+    if len(memberships) == 1:
+        membership = memberships[0]
+        return CreateScope(
+            organization=membership.organization,
+            branch=membership.branch,
+            department=membership.department,
+            owner=user,
+            source="user_membership",
+            reason="Exactly one active membership.",
+        )
+
+    if len(memberships) > 1:
+        return CreateScope(
+            organization=_agreed_membership_value(memberships, "organization", "organization_id"),
+            branch=_agreed_membership_value(memberships, "branch", "branch_id"),
+            department=_agreed_membership_value(memberships, "department", "department_id"),
+            owner=user,
+            source="user_memberships",
+            reason="Multiple active memberships; only agreed scope values resolved.",
+        )
+
+    return CreateScope(reason="No active memberships.")
+
+
+def _scope_value_matches(values: dict, field_name: str, value) -> bool:
+    organization = values.get("organization")
+    if field_name in {"branch", "department"} and organization is not None:
+        if getattr(value, "organization_id", None) != getattr(organization, "id", organization):
+            return False
+
+    branch = values.get("branch")
+    if field_name == "department" and branch is not None:
+        value_branch_id = getattr(value, "branch_id", None)
+        if value_branch_id is not None and value_branch_id != getattr(branch, "id", branch):
+            return False
+
+    return True
+
+
+def populate_missing_scope_values(values: dict, *, user=None, parents=()) -> dict:
+    for field_name in SCOPE_FIELD_NAMES:
+        if values.get(field_name) is not None:
+            continue
+        for parent in parents:
+            if parent is not None and getattr(parent, f"{field_name}_id", None):
+                values[field_name] = getattr(parent, field_name)
+                break
+
+    membership_scope = _membership_create_scope_for_user(user)
+    for field_name in SCOPE_FIELD_NAMES:
+        if values.get(field_name) is None:
+            value = getattr(membership_scope, field_name, None)
+            if value is not None and _scope_value_matches(values, field_name, value):
+                values[field_name] = value
+    return values
 
 
 def _membership_role_codes(membership) -> set[str]:

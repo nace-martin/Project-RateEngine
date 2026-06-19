@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
+from accounts.scope import populate_missing_scope_values
 from .models import Interaction, Opportunity, Task
 
 
@@ -54,6 +55,15 @@ class OpportunitySerializer(serializers.ModelSerializer):
             )
         return value
 
+    def create(self, validated_data):
+        request = self.context.get("request")
+        populate_missing_scope_values(
+            validated_data,
+            user=getattr(request, "user", None),
+            parents=(validated_data.get("company"),),
+        )
+        return super().create(validated_data)
+
 
 class InteractionSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
@@ -99,6 +109,15 @@ class InteractionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"opportunity": "Selected opportunity does not belong to the selected company."})
         return attrs
 
+    def create(self, validated_data):
+        request = self.context.get("request")
+        populate_missing_scope_values(
+            validated_data,
+            user=getattr(request, "user", None),
+            parents=(validated_data.get("opportunity"), validated_data.get("company")),
+        )
+        return super().create(validated_data)
+
 
 class TaskSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source="owner.username", read_only=True)
@@ -137,8 +156,13 @@ class TaskSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         if validated_data.get("opportunity") and not validated_data.get("company"):
             validated_data["company"] = validated_data["opportunity"].company
+        request = self.context.get("request")
+        populate_missing_scope_values(
+            validated_data,
+            user=getattr(request, "user", None),
+            parents=(validated_data.get("opportunity"), validated_data.get("company")),
+        )
         if validated_data.get("status") == Task.Status.COMPLETED:
-            request = self.context.get("request")
             validated_data["completed_at"] = timezone.now()
             validated_data["completed_by"] = getattr(request, "user", None)
         return super().create(validated_data)

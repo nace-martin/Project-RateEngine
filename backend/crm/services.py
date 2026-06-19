@@ -2,6 +2,7 @@ from django.db import transaction
 from django.http import Http404
 from django.utils import timezone
 
+from accounts.scope import populate_missing_scope_values
 from .models import Interaction, Opportunity
 
 
@@ -65,16 +66,21 @@ def _quote_opportunity_title(*, service_type: str, direction: str, origin: str, 
 
 
 def _system_interaction(opportunity, actor, event_type: str, summary: str, outcomes: str = "") -> Interaction:
-    return Interaction.objects.create(
-        company=opportunity.company,
-        opportunity=opportunity,
-        author=actor,
-        interaction_type=Interaction.InteractionType.SYSTEM,
-        summary=summary,
-        outcomes=outcomes,
-        is_system_generated=True,
-        system_event_type=event_type,
+    values = populate_missing_scope_values(
+        {
+            "company": opportunity.company,
+            "opportunity": opportunity,
+            "author": actor,
+            "interaction_type": Interaction.InteractionType.SYSTEM,
+            "summary": summary,
+            "outcomes": outcomes,
+            "is_system_generated": True,
+            "system_event_type": event_type,
+        },
+        user=actor,
+        parents=(opportunity, opportunity.company),
     )
+    return Interaction.objects.create(**values)
 
 
 def create_auto_quote_opportunity_interaction(opportunity, quote, actor=None):
@@ -147,23 +153,28 @@ def resolve_quote_opportunity(
     scope = str(service_scope or "").strip().upper()
     origin = _label_from_location(origin_location)
     destination = _label_from_location(destination_location)
-    opportunity = Opportunity.objects.create(
-        company=customer,
-        title=_quote_opportunity_title(
-            service_type=service_type,
-            direction=direction,
-            origin=origin,
-            destination=destination,
-            customer=customer,
-        ),
-        service_type=service_type,
-        direction=direction,
-        scope=scope,
-        origin=origin,
-        destination=destination,
-        status=_quote_opportunity_status(quote_status),
-        owner=actor if getattr(actor, "is_authenticated", False) else None,
+    values = populate_missing_scope_values(
+        {
+            "company": customer,
+            "title": _quote_opportunity_title(
+                service_type=service_type,
+                direction=direction,
+                origin=origin,
+                destination=destination,
+                customer=customer,
+            ),
+            "service_type": service_type,
+            "direction": direction,
+            "scope": scope,
+            "origin": origin,
+            "destination": destination,
+            "status": _quote_opportunity_status(quote_status),
+            "owner": actor if getattr(actor, "is_authenticated", False) else None,
+        },
+        user=actor,
+        parents=(customer,),
     )
+    opportunity = Opportunity.objects.create(**values)
     return opportunity, True
 
 
