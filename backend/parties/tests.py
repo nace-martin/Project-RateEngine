@@ -14,10 +14,10 @@ from rest_framework.test import APIClient, APITestCase
 from rest_framework import status
 from PIL import Image
 
-from accounts.models import CustomUser
+from accounts.models import CustomUser, Role, UserMembership
 from core.models import Country, City
 from core.models import Currency
-from parties.models import Company, Contact, Address, Organization, OrganizationBranding
+from parties.models import Branch, Company, Contact, Address, Department, Organization, OrganizationBranding
 from quotes.models import Quote
 from quotes.spot_models import SpotPricingEnvelopeDB
 
@@ -130,6 +130,36 @@ class CustomerSeedCommandTests(TestCase):
         self.assertTrue(new_contact.is_primary)
         self.assertFalse(old_contact.is_primary)
         self.assertTrue(new_contact.is_active)
+
+    def test_import_contacts_inherits_company_scope_for_new_contacts(self):
+        organization = Organization.objects.create(name="Scoped Org", slug="scoped-org", is_active=True)
+        branch = Branch.objects.create(organization=organization, code="POM", name="Port Moresby")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code="AIR",
+            name="Air Freight",
+        )
+        company = Company.objects.create(
+            name="Scoped Customer",
+            is_customer=True,
+            company_type="CUSTOMER",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+        contacts = self._write_csv(
+            "company_uuid,company_name,email,first_name,last_name,is_primary\n"
+            f"{company.id},Scoped Customer,scoped.contact@example.com,Scoped,Contact,true\n"
+        )
+
+        call_command("import_contacts", file=contacts, stdout=StringIO())
+
+        contact = Contact.objects.get(email="scoped.contact@example.com")
+        self.assertEqual(contact.organization, organization)
+        self.assertEqual(contact.branch, branch)
+        self.assertEqual(contact.department, department)
 
     def test_import_contacts_matches_existing_email_case_insensitively(self):
         company = Company.objects.create(name="Case Customer", is_customer=True, company_type="CUSTOMER")
@@ -433,6 +463,36 @@ class CustomerListAPITests(APITestCase):
         returned_ids = {row["id"] for row in response.data}
         self.assertIn(str(active.id), returned_ids)
         self.assertNotIn(str(archived.id), returned_ids)
+
+    def test_admin_create_populates_scope_from_single_active_membership(self):
+        organization = Organization.objects.create(name="Create Org", slug="create-org", is_active=True)
+        branch = Branch.objects.create(organization=organization, code="POM", name="Port Moresby")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code="AIR",
+            name="Air Freight",
+        )
+        role = Role.objects.create(code="admin", name="Admin", is_system=True)
+        UserMembership.objects.create(
+            user=self.admin,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=role,
+        )
+
+        response = self.client.post(
+            "/api/v3/customers/",
+            {"name": "Scoped API Customer"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        company = Company.objects.get(name="Scoped API Customer")
+        self.assertEqual(company.organization, organization)
+        self.assertEqual(company.branch, branch)
+        self.assertEqual(company.department, department)
 
 
 class OrganizationBrandingSettingsAPITests(APITestCase):

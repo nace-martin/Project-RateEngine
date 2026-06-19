@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.db.models.functions import Lower
 
+from accounts.scope import populate_missing_scope_values
 from parties.models import Company, Contact
 
 from ._seed_utils import (
@@ -164,15 +165,19 @@ class Command(BaseCommand):
             )
 
         if not contact:
-            contact = Contact(
-                company=company,
-                email=email,
-                first_name=first_name,
-                last_name=last_name,
-                phone=phone,
-                is_primary=is_primary,
-                is_active=True,
+            contact_values = populate_missing_scope_values(
+                {
+                    "company": company,
+                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "phone": phone,
+                    "is_primary": is_primary,
+                    "is_active": True,
+                },
+                parents=(company,),
             )
+            contact = Contact(**contact_values)
             contacts_by_email[email] = contact
             if not dry_run:
                 create_contacts.append(contact)

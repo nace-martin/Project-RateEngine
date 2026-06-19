@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
+from accounts.scope import populate_missing_scope_values
 from .models import Address, Company, Contact, Organization, OrganizationBranding
 from .serializers import (
     CompanySearchV3Serializer,
@@ -103,7 +104,8 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        serializer.save(is_customer=True)
+        scope_values = populate_missing_scope_values({}, user=self.request.user)
+        serializer.save(is_customer=True, **scope_values)
 
     def perform_update(self, serializer):
         serializer.save(is_customer=True)
