@@ -2,12 +2,14 @@ import os
 import tempfile
 from io import StringIO
 import csv
+import json
 from io import BytesIO
 
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 from rest_framework import status
 from PIL import Image
@@ -16,6 +18,8 @@ from accounts.models import CustomUser
 from core.models import Country, City
 from core.models import Currency
 from parties.models import Company, Contact, Address, Organization, OrganizationBranding
+from quotes.models import Quote
+from quotes.spot_models import SpotPricingEnvelopeDB
 
 
 class CustomerSeedCommandTests(TestCase):
@@ -293,6 +297,63 @@ class CustomerSeedCommandTests(TestCase):
         self.assertEqual(len(issues), 2)
         self.assertIn("duplicate_email_in_input", reasons)
         self.assertIn("missing_organization_or_email", reasons)
+
+
+class CustomerContactRBACReportTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_customer_contact_report", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def test_report_counts_safe_customer_contact_scope_signals(self):
+        customer = Company.objects.create(name="Report Customer", is_customer=True, company_type="CUSTOMER")
+        Company.objects.create(name="Report Supplier", company_type="SUPPLIER")
+        contact = Contact.objects.create(
+            company=customer,
+            first_name="Safe",
+            last_name="Contact",
+            email="safe.contact@example.com",
+            phone="+675000",
+        )
+        quote = Quote.objects.create(customer=customer, contact=contact, mode="AIR")
+        SpotPricingEnvelopeDB.objects.create(
+            quote=quote,
+            status=SpotPricingEnvelopeDB.Status.DRAFT,
+            shipment_context_json={"origin_country": "PG", "destination_country": "PG"},
+            conditions_json={},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test SPE",
+            expires_at=timezone.now() + timezone.timedelta(hours=1),
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        summary = payload["summary"]
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(summary["total_companies"], 2)
+        self.assertEqual(summary["customer_companies"], 1)
+        self.assertEqual(summary["total_contacts"], 1)
+        self.assertEqual(summary["companies_with_quotes"], 1)
+        self.assertEqual(summary["companies_with_spot"], 1)
+        self.assertEqual(summary["contacts_with_quotes"], 1)
+
+    def test_show_details_omits_contact_email_phone_and_commercial_fields(self):
+        customer = Company.objects.create(name="Detail Customer", is_customer=True, company_type="CUSTOMER")
+        Contact.objects.create(
+            company=customer,
+            first_name="Hidden",
+            last_name="Email",
+            email="hidden.email@example.com",
+            phone="+675111",
+        )
+
+        output = self._call_report("--show-details")
+
+        self.assertIn("Detail Customer", output)
+        self.assertIn("Hidden Email", output)
+        self.assertNotIn("hidden.email@example.com", output)
+        self.assertNotIn("+675111", output)
+        self.assertNotIn("margin", output.lower())
 
 
 class CustomerListAPITests(APITestCase):

@@ -862,9 +862,9 @@ Direct ID access risks:
 
 Safe next PR order:
 
-1. Customer/Company/Contact read-only diagnostics: add an audit command or tests
-   that count customers, contacts, quotes, shipments, and CRM links by possible
-   scope source. Do not add fields or filters yet.
+1. Customer/Company/Contact read-only diagnostics: added
+   `python backend\manage.py rbac_customer_contact_report`. Do not add fields or
+   filters yet.
 2. CRM read-only diagnostics: report opportunities, interactions, and tasks by
    owner, author, linked company, linked quote-derived activity, and missing
    owner/author. Do not enforce owner scope yet.
@@ -879,6 +879,7 @@ Safe next PR order:
    then CRM, then shipment branch filtering.
 7. Add permission-code-based financial report masking after selector boundaries
    are stable.
+
 
 #### Phase 8A: CRM Discovery and Design
 
@@ -983,6 +984,35 @@ Recommended next phase:
    approval and should fill missing fields only.
 5. Cut over CRM selectors in a later PR after diagnostics and backfill prove the
    fallback behavior is safe.
+
+Customer/contact diagnostics added on 2026-06-19:
+
+```text
+Customer/contact RBAC diagnostic report
+
+Mode: read-only
+Companies: total=236, customers=227, contacts=298, no_account_owner=235, no_detected_link=214
+Links: companies_with_quotes=20, companies_with_spot=11, contacts_with_company=298, contacts_with_customer_company=297, contacts_with_quotes=21
+Company types: internal=6, vendor=7, customer=227, carrier=1, agent=10
+
+Available future scoping fields:
+  Company: account_owner, is_customer, is_agent, is_carrier, audience_type, company_type, is_active, created_at, updated_at
+  Contact: company, is_primary, is_active
+```
+
+Recommended next steps:
+
+- Do not enforce customer/contact RBAC from the current data alone. `Company`
+  and `Contact` still lack durable organization, branch, and department scope.
+- Treat `Company.account_owner` as a weak candidate only; it is missing on most
+  current rows and does not model shared customer visibility.
+- Use quote, SPOT-through-quote, CRM, and shipment address-book links as
+  backfill evidence, not as runtime selectors, until a separate schema/backfill
+  PR defines ownership rules.
+- Run CRM diagnostics next before choosing whether customer scope follows
+  account owner, quote ownership, CRM owner, organization, branch, department,
+  or an explicit access table.
+
 
 ### Phase 5: Apply read filters by domain
 
