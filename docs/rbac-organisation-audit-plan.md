@@ -880,6 +880,110 @@ Safe next PR order:
 7. Add permission-code-based financial report masking after selector boundaries
    are stable.
 
+#### Phase 8A: CRM Discovery and Design
+
+Date: 2026-06-20
+
+Branch: `chore/rbac-crm-discovery-design`
+
+Scope: read-only CRM RBAC diagnostics and design only. No schema, migrations,
+selector/access behavior, frontend behavior, Quote/SPOT selectors, CRM
+enforcement, pricing, ProductCode, or financial visibility was changed.
+
+Diagnostic command added:
+
+```bash
+python backend/manage.py rbac_crm_report
+python backend/manage.py rbac_crm_report --format json --show-details
+```
+
+The command is read-only and reports only safe identifiers in detail mode: CRM
+record id, model/type/status, owner or author username, company id/name, linked
+quote id/reference where available, and created timestamp. It does not print
+notes, summaries, outcomes, task descriptions, email bodies, phone numbers,
+addresses, commercial values, pricing, margins, buy cost, uploaded files, or
+full payloads.
+
+Local diagnostic output on the current SQLite snapshot:
+
+- Combined CRM records: 267.
+- Opportunities: 69 total, 69 with owner, 0 missing owner, 69 linked to company,
+  69 linked to customer company, 47 linked to quotes, 0 with durable
+  organization/branch/department scope fields, 69 likely globally accessible.
+- Interactions: 198 total, 198 with author, 0 missing author, 198 linked to
+  company, 198 linked to customer company, 154 linked to quotes, 0 with durable
+  organization/branch/department scope fields, 198 likely globally accessible.
+- Tasks: 0 total in this snapshot.
+- Combined linked-to-quote count: 201.
+- Combined records with durable organization, branch, or department scope: 0.
+- Combined records likely globally accessible today: 267.
+
+Current CRM access risks:
+
+- CRM viewsets use `permissions.IsAuthenticated` for reads and
+  `CrmWritePermission` for writes. Safe methods are allowed for every
+  authenticated user.
+- `OpportunityViewSet.get_queryset()` starts from all active opportunities and
+  only narrows when the client supplies `company`, `status`, `owner`,
+  `service_type`, or `priority`.
+- `InteractionViewSet.get_queryset()` starts from all interactions and only
+  narrows when the client supplies `company` or `opportunity`.
+- `TaskViewSet.get_queryset()` starts from all tasks and only narrows when the
+  client supplies `owner`, `status`, `due_date`, `company`, or `opportunity`.
+- Detail endpoints inherit those global base querysets, so direct ID access is
+  authenticated-global today.
+- Client-supplied `owner`, `company`, and `opportunity` filters are not
+  constrained to the requester's organization, branch, department, membership,
+  or own records.
+
+Current ownership fields are useful but not sufficient:
+
+- `Opportunity.owner` exists and is fully populated in the current snapshot.
+- `Interaction.author` exists and is fully populated in the current snapshot.
+- `Task.owner` exists, but there are no task rows in the current snapshot.
+- `Opportunity.won_by` and `Task.completed_by` are event/audit fields, not
+  durable access scope.
+- Owner/author can support an initial own-record fallback, but cannot express
+  branch, department, organization, shared-customer, delegated, or team access.
+
+Durable scope fields are likely needed before CRM enforcement:
+
+- `Opportunity`, `Interaction`, and `Task` are missing organization, branch,
+  and department fields.
+- `Company` remains the natural customer anchor, but current customer records
+  still lack durable organization/branch/department scope. CRM scope cannot be
+  made reliable until customer scope is decided.
+- Quote-derived CRM data can sometimes infer a linked quote through
+  `Opportunity.quotes`, but quote linkage is incomplete and must not be the only
+  CRM scope source.
+
+Recommended CRM scope model:
+
+- Add nullable `organization`, `branch`, `department`, and owner-style scope to
+  CRM records in a later schema PR, after customer scope is decided.
+- Use `Opportunity` as the primary CRM scope root. Interactions and tasks should
+  inherit or validate against their linked opportunity when present, and fall
+  back to company plus owner/author only when no opportunity exists.
+- Keep quote-derived CRM logging intact: quote and SPOT create-quote flows
+  should populate CRM scope from the quote's durable scope when an opportunity
+  is created or linked.
+- Keep old unscoped rows readable through legacy behavior until a backfill and
+  explicit selector cutover are approved.
+
+Recommended next phase:
+
+1. Run customer/company/contact scope diagnostics first and decide whether
+   customers are organization-local, branch-local, shared across branches, or
+   globally shared.
+2. Add nullable customer and CRM scope fields in separate schema-only PRs.
+3. Add create-time scope assignment for CRM records from quote scope,
+   opportunity scope, or the actor's single active membership. Do not infer
+   branch from route, station code, mode, or free-text CRM fields.
+4. Add a CRM scope backfill dry-run command. Write mode should require explicit
+   approval and should fill missing fields only.
+5. Cut over CRM selectors in a later PR after diagnostics and backfill prove the
+   fallback behavior is safe.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
