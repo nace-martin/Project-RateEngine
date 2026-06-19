@@ -1014,6 +1014,161 @@ Recommended next steps:
   or an explicit access table.
 
 
+#### Phase 8B — Customer/CRM Scope Foundation Plan
+
+Date: 2026-06-20
+
+Branch: `docs/rbac-customer-crm-scope-foundation-plan`
+
+Scope: design only. No schema, migrations, selectors, access behavior,
+frontend behavior, Quote/SPOT selectors, CRM enforcement, pricing, ProductCode,
+or financial visibility should change in this phase.
+
+Inputs used:
+
+- `rbac_customer_contact_report`: 236 companies, 227 customers, 298 contacts,
+  235 companies without `account_owner`, 214 companies with no detected quote,
+  SPOT-through-quote, CRM, or shipment link, 20 companies linked to quotes, 11
+  linked to SPOT-through-quote, and 21 contacts linked to quotes.
+- `rbac_crm_report`: 267 CRM records, all with owner or author, 267 linked to
+  company, 201 linked to quote-derived opportunities, 0 durable organization,
+  branch, or department scope fields, and all likely globally accessible today.
+
+Recommended fields by model:
+
+- `Company`: add nullable `organization`, `branch`, `department`, and keep
+  `account_owner` as an owner-like field. Add `created_by` only if product wants
+  audit ownership for newly created companies; do not rely on it for legacy
+  backfill unless historical data exists.
+- `Contact`: add nullable `organization`, `branch`, `department`, and optional
+  `owner` or `created_by` only if contacts can be individually owned apart from
+  their company. Default contact scope should mirror `Contact.company`.
+- `Opportunity`: add nullable `organization`, `branch`, `department`, and keep
+  existing `owner` as the owner field.
+- `Interaction`: add nullable `organization`, `branch`, `department`, and keep
+  existing `author` as the creator/owner-like field. When linked to an
+  opportunity, its durable scope should match the opportunity.
+- `Task`: add nullable `organization`, `branch`, `department`, and keep existing
+  `owner`; `completed_by` remains audit metadata, not access scope.
+
+Backfill source priority:
+
+1. Existing durable scope on the linked parent record, once fields exist:
+   contact from company, interaction/task from opportunity, CRM records from
+   linked company where company scope is already resolved.
+2. Linked quote scope through `Quote.customer` or `Opportunity.quotes`, but only
+   when all linked quotes agree on organization, branch, and department. If
+   linked quotes disagree, report ambiguity and leave the field null.
+3. Linked CRM opportunity scope for interactions and tasks. This is safe only
+   after opportunity scope has already been assigned or backfilled.
+4. Linked company/customer scope for opportunities, interactions, and tasks.
+   This is safe only after company scope has already been assigned or
+   backfilled.
+5. Creator, owner, author, or account-owner membership, but only when that user
+   has exactly one active membership and no stronger linked-record scope exists.
+6. Legacy `CustomUser.organization` may fill organization only as a fallback
+   candidate. Legacy `CustomUser.department` text should be reported but not
+   mapped to `parties.Department` without an explicit mapping decision.
+
+Unsafe inference rules:
+
+- Do not infer branch or department from route, origin, destination, station
+  code, shipment mode, service type, lane text, customer name, email domain,
+  address, phone number, free-text notes, CRM summaries, task descriptions, or
+  interaction outcomes.
+- Do not use sparse `Company.account_owner` as the sole enforcement basis. It
+  is missing on 235 of 236 companies in the current diagnostic snapshot and
+  does not represent shared customer visibility.
+- Do not copy scope from a quote set, CRM set, or shipment set when linked rows
+  point to multiple organizations, branches, or departments.
+- Do not make fields non-null, hide records, or deny direct IDs in the same PR
+  that introduces scope fields.
+- Do not treat global customer uniqueness as proof that customers are globally
+  shared. That is a product decision, not a backfill rule.
+
+Customer and CRM relationship:
+
+- Company should be the customer scope root. Contact scope follows company
+  scope by default.
+- Opportunity should be the CRM scope root. Its preferred scope source is the
+  company/customer scope, overridden only by unanimous linked quote scope when
+  the business confirms quote-derived opportunities should follow quote scope.
+- Interaction and Task should inherit from Opportunity when present; otherwise
+  they inherit from Company. Owner/author membership is a fallback only.
+- Quote-derived CRM logging must populate CRM scope from the quote's durable
+  scope when creating or linking an opportunity. This keeps quote-first logging
+  stable without changing Quote/SPOT selectors.
+
+Ambiguous or missing scope handling:
+
+- Leave ambiguous fields null and report the reason: `no_link`,
+  `no_membership`, `multiple_memberships`, `conflicting_quote_scope`,
+  `conflicting_crm_scope`, or `conflicting_company_scope`.
+- Keep unscoped legacy rows on current authenticated-global behavior until
+  controlled backfill and transitional selector diagnostics prove the fallback
+  is safe.
+- Require explicit manual decisions for high-value customers, shared customers,
+  customers with conflicting quote scopes, and records with no detected links.
+
+Proposed implementation sequence:
+
+1. Schema-only PR: add nullable fields to Company, Contact, Opportunity,
+   Interaction, and Task. No selectors, no migrations that write data, and no
+   frontend changes beyond generated migration files.
+2. Create-time population PR: populate new records from explicit parent scope,
+   quote scope, or single active membership. Preserve existing API response
+   shapes and write behavior.
+3. Dry-run backfill report PR: add `rbac_customer_crm_scope_report` or extend
+   existing diagnostics to show candidate scope, ambiguity reason, and safe
+   identifiers only.
+4. Controlled backfill PR: dry-run by default, `--write` required, fill missing
+   fields only, never overwrite non-null scope, and leave ambiguous rows null.
+5. Transitional selectors PR: prefer durable scope fields where present and keep
+   legacy authenticated-global fallback for unscoped rows.
+6. Comparison diagnostics PR: compare legacy visibility with scoped visibility
+   by role, organization, branch, department, owner, and direct ID cases.
+7. Hard cutover PR: remove legacy fallback only after null/ambiguous counts are
+   accepted and direct-ID denial tests pass.
+
+Tests required later:
+
+- Migration tests prove nullable fields add without data writes or non-null
+  constraints.
+- Create-time tests for company, contact, opportunity, interaction, and task
+  scope assignment.
+- Backfill dry-run tests for unanimous quote scope, conflicting quote scope,
+  company inheritance, opportunity inheritance, single membership fallback,
+  multiple memberships, and no-link rows.
+- Selector tests for list filtering, direct ID denial, query-param containment,
+  owner-only access, branch/department access, organization-wide access, and
+  legacy fallback behavior before hard cutover.
+- Quote and SPOT workflow regression tests proving quote-derived CRM logging
+  still occurs and Quote/SPOT selectors are unchanged.
+
+Risks:
+
+- Customer scope is a business decision. Customers may be organization-local,
+  branch-local, shared across branches, or globally shared.
+- Contact email uniqueness may conflict with branch-local customer/contact
+  modeling.
+- Company/account ownership is too sparse for enforcement and may represent
+  account-management responsibility rather than access scope.
+- Existing CRM owner/author coverage is strong, but owner/author does not model
+  team, branch, department, organization, delegated, or shared-customer access.
+- 214 companies currently have no detected link source, so any automated
+  customer backfill will leave a material manual-decision set.
+
+Go/no-go criteria before enforcement:
+
+- Go only when nullable fields exist, create-time population is live, dry-run
+  reports show acceptable null and ambiguity counts, controlled backfill has
+  been reviewed, and comparison diagnostics show expected visibility.
+- Go only when customer sharing semantics are explicitly decided.
+- Go only when direct ID tests and query-param containment tests are ready.
+- No-go if customer scope is still undecided, account owner is still the only
+  candidate source, linked records conflict, or Quote/SPOT CRM logging has not
+  been regression-tested.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:
