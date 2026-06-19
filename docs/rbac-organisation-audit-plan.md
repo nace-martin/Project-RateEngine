@@ -1169,6 +1169,44 @@ Go/no-go criteria before enforcement:
   candidate source, linked records conflict, or Quote/SPOT CRM logging has not
   been regression-tested.
 
+#### Phase 8C - Schema-only Nullable Scope Fields
+
+Date: 2026-06-20
+
+Branch: `feat/rbac-customer-crm-scope-fields`
+
+Scope: schema-only nullable scope fields. No selectors, access behavior,
+frontend behavior, data backfill, create-time population, Quote/SPOT selector
+changes, CRM enforcement, pricing, ProductCode, or financial visibility changed.
+
+Nullable scope fields added:
+
+- `Company.organization`, `Company.branch`, `Company.department`.
+- `Contact.organization`, `Contact.branch`, `Contact.department`.
+- `Opportunity.organization`, `Opportunity.branch`, `Opportunity.department`.
+- `Interaction.organization`, `Interaction.branch`, `Interaction.department`.
+- `Task.organization`, `Task.branch`, `Task.department`.
+
+All fields are nullable, blankable foreign keys with `on_delete=SET_NULL` and
+future-RBAC help text. Existing owner-style fields remain unchanged:
+`Company.account_owner`, `Opportunity.owner`, `Interaction.author`,
+`Task.owner`, `Opportunity.won_by`, and `Task.completed_by`.
+
+No data was populated in this phase. Existing rows remain unscoped until a later
+dry-run and controlled backfill phase. Existing serializers use explicit field
+lists, so these new scope fields are not exposed through current APIs in this
+phase.
+
+Next phase:
+
+1. Add create-time population for new Customer/Company/Contact and CRM records
+   from explicit parent scope, quote scope, or single active membership.
+2. Add or extend dry-run diagnostics to report candidate scope and ambiguity
+   reasons for old rows.
+3. Run a controlled backfill only after the dry-run report is accepted.
+4. Keep selectors and enforcement unchanged until comparison diagnostics are
+   available.
+
 ### Phase 5: Apply read filters by domain
 
 Apply selectors domain by domain:

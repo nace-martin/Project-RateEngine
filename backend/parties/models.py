@@ -43,6 +43,30 @@ class Company(models.Model):
         blank=True,
         related_name='owned_companies',
     )
+    organization = models.ForeignKey(
+        "Organization",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="companies",
+        help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
+    )
+    branch = models.ForeignKey(
+        "Branch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="companies",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        "Department",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="companies",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
+    )
     last_interaction_at = models.DateTimeField(null=True, blank=True, db_index=True)
     industry = models.CharField(max_length=120, blank=True, default='')
     tags = models.JSONField(default=list, blank=True)
@@ -225,6 +249,30 @@ class Address(models.Model):
 class Contact(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, related_name='contacts', on_delete=models.CASCADE)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contacts",
+        help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contacts",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contacts",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
+    )
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
