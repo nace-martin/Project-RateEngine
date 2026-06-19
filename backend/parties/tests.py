@@ -15,6 +15,7 @@ from rest_framework import status
 from PIL import Image
 
 from accounts.models import CustomUser, Role, UserMembership
+from crm.models import Interaction, Opportunity, Task
 from core.models import Country, City
 from core.models import Currency
 from parties.models import Branch, Company, Contact, Address, Department, Organization, OrganizationBranding
@@ -384,6 +385,150 @@ class CustomerContactRBACReportTests(TestCase):
         self.assertNotIn("hidden.email@example.com", output)
         self.assertNotIn("+675111", output)
         self.assertNotIn("margin", output.lower())
+
+
+class CustomerCrmBackfillReportTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_customer_crm_backfill_report", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self, suffix=""):
+        organization = Organization.objects.create(
+            name=f"Backfill Org {suffix}".strip(),
+            slug=f"backfill-org-{suffix or 'default'}",
+            is_active=True,
+        )
+        branch = Branch.objects.create(organization=organization, code=f"POM{suffix}"[:16], name="Port Moresby")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code=f"AIR{suffix}"[:24],
+            name="Air Freight",
+        )
+        return organization, branch, department
+
+    def _role(self, code="sales"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def test_parent_scope_candidates_are_detected(self):
+        organization, branch, department = self._scope("parent")
+        company = Company.objects.create(
+            name="Parent Scoped Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        Contact.objects.create(
+            company=company,
+            first_name="Parent",
+            last_name="Contact",
+            email="parent.scope@example.com",
+        )
+
+        payload = json.loads(self._call_report("--format", "json", "--show-details"))
+
+        contact = next(row for row in payload["models"]["contact"]["details"] if row["label"] == "Parent Contact")
+        self.assertEqual(contact["candidate_source"], "parent_scope")
+        self.assertEqual(contact["unresolved_fields"], [])
+
+    def test_single_membership_fallback_is_detected(self):
+        organization, branch, department = self._scope("single")
+        user = CustomUser.objects.create_user(username="single-owner", password="x")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=self._role("single-role"),
+        )
+        Company.objects.create(name="Owned Customer", account_owner=user)
+
+        payload = json.loads(self._call_report("--format", "json", "--show-details"))
+
+        company = next(row for row in payload["models"]["company"]["details"] if row["label"] == "Owned Customer")
+        self.assertEqual(company["candidate_source"], "single_membership")
+        self.assertEqual(company["unresolved_fields"], [])
+
+    def test_multiple_membership_ambiguity_is_reported_safely(self):
+        organization, branch, department = self._scope("multi")
+        other_branch = Branch.objects.create(organization=organization, code="LAE", name="Lae")
+        other_department = Department.objects.create(
+            organization=organization,
+            branch=other_branch,
+            code="SEA",
+            name="Sea Freight",
+        )
+        user = CustomUser.objects.create_user(username="multi-owner", password="x")
+        role = self._role("multi-role")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=role,
+            is_primary=True,
+        )
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=other_branch,
+            department=other_department,
+            role=role,
+            is_primary=False,
+        )
+        Company.objects.create(name="Ambiguous Customer", account_owner=user)
+
+        payload = json.loads(self._call_report("--format", "json", "--show-details"))
+
+        company = next(row for row in payload["models"]["company"]["details"] if row["label"] == "Ambiguous Customer")
+        self.assertEqual(company["candidate_source"], "shared_memberships")
+        self.assertEqual(company["unresolved_fields"], ["branch", "department"])
+        self.assertEqual(company["ambiguity_reason"], "multiple_memberships_shared_values_only")
+
+    def test_unsafe_text_fields_are_not_used_for_inference(self):
+        company = Company.objects.create(name="AIR POM Customer")
+        Opportunity.objects.create(
+            company=company,
+            title="AIR POM department lane",
+            service_type="AIR",
+            origin="POM",
+            destination="LAE",
+        )
+
+        payload = json.loads(self._call_report("--format", "json", "--show-details"))
+
+        opportunity = next(row for row in payload["models"]["opportunity"]["details"] if row["label"] == "AIR POM department lane")
+        self.assertEqual(opportunity["candidate_source"], "unresolved")
+        self.assertEqual(opportunity["unresolved_fields"], ["organization", "branch", "department"])
+
+    def test_show_details_omits_sensitive_crm_content(self):
+        company = Company.objects.create(name="Sensitive Customer")
+        opportunity = Opportunity.objects.create(
+            company=company,
+            title="Sensitive opportunity title",
+            service_type="AIR",
+        )
+        Interaction.objects.create(
+            company=company,
+            opportunity=opportunity,
+            interaction_type=Interaction.InteractionType.CALL,
+            summary="Do not leak this interaction summary",
+            outcomes="Do not leak this outcome",
+        )
+        Task.objects.create(
+            company=company,
+            owner=CustomUser.objects.create_user(username="task-owner", password="x"),
+            description="Do not leak this task description",
+            due_date=timezone.now().date(),
+        )
+
+        output = self._call_report("--show-details")
+
+        self.assertIn("Sensitive opportunity title", output)
+        self.assertNotIn("Do not leak this interaction summary", output)
+        self.assertNotIn("Do not leak this outcome", output)
+        self.assertNotIn("Do not leak this task description", output)
 
 
 class CustomerListAPITests(APITestCase):
