@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
+from parties.models import Branch, Department, Organization
 from services.models import SERVICE_SCOPE_CHOICES, SHIPMENT_DIRECTION_CHOICES
 
 
@@ -53,6 +54,30 @@ class Opportunity(models.Model):
         null=True,
         blank=True,
         related_name="owned_opportunities",
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_opportunities",
+        help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_opportunities",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_opportunities",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
     )
     next_action = models.CharField(max_length=255, blank=True, default="")
     next_action_date = models.DateField(null=True, blank=True)
@@ -108,6 +133,30 @@ class Interaction(models.Model):
         related_name="interactions",
     )
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="crm_interactions")
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_interactions",
+        help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_interactions",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_interactions",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
+    )
     interaction_type = models.CharField(max_length=20, choices=InteractionType.choices)
     summary = models.TextField()
     outcomes = models.TextField(blank=True, default="")
@@ -173,6 +222,30 @@ class Task(models.Model):
     )
     description = models.TextField()
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="crm_tasks")
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_tasks",
+        help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
+    )
+    branch = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_tasks",
+        help_text="Future RBAC branch scope. Nullable until backfilled and enforced.",
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crm_tasks",
+        help_text="Future RBAC department scope. Nullable until backfilled and enforced.",
+    )
     due_date = models.DateField(db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
     completed_at = models.DateTimeField(null=True, blank=True)
