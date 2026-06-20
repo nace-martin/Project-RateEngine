@@ -531,6 +531,148 @@ class CustomerCrmBackfillReportTests(TestCase):
         self.assertNotIn("Do not leak this task description", output)
 
 
+class ScopeCompletenessReportTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_scope_completeness_report", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self, suffix=""):
+        organization = Organization.objects.create(
+            name=f"Completeness Org {suffix}".strip(),
+            slug=f"completeness-org-{suffix or 'default'}",
+            is_active=True,
+        )
+        branch = Branch.objects.create(organization=organization, code=f"C{suffix}"[:16], name="Completeness Branch")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code=f"D{suffix}"[:24],
+            name="Completeness Department",
+        )
+        return organization, branch, department
+
+    def _role(self, code="scope-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def test_readiness_calculation_reports_missing_branch_not_ready(self):
+        organization, _, department = self._scope("ready")
+        Company.objects.create(
+            name="Org Department Only Customer",
+            organization=organization,
+            department=department,
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        readiness = payload["readiness"]
+        self.assertEqual(readiness["organization_readiness_percent"], 100.0)
+        self.assertEqual(readiness["department_readiness_percent"], 100.0)
+        self.assertEqual(readiness["branch_readiness_percent"], 0.0)
+        self.assertEqual(readiness["overall"], "NOT READY FOR BACKFILL")
+
+    def test_branch_coverage_calculates_scope_shapes(self):
+        organization, branch, department = self._scope("coverage")
+        Company.objects.create(name="Org Only Customer", organization=organization)
+        Company.objects.create(name="Org Department Customer", organization=organization, department=department)
+        Company.objects.create(name="Org Branch Customer", organization=organization, branch=branch)
+        Company.objects.create(
+            name="Complete Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        Company.objects.create(name="No Scope Customer")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        company = payload["branch_coverage"]["company"]
+        self.assertEqual(company["organization_only"], 1)
+        self.assertEqual(company["organization_department"], 1)
+        self.assertEqual(company["organization_branch"], 1)
+        self.assertEqual(company["organization_branch_department"], 1)
+        self.assertEqual(company["no_scope"], 1)
+
+    def test_membership_analysis_counts_referenced_users(self):
+        organization, branch, department = self._scope("member")
+        role = self._role("member-role")
+        single = CustomUser.objects.create_user(username="single-member", password="x")
+        none = CustomUser.objects.create_user(username="no-member", password="x")
+        UserMembership.objects.create(
+            user=single,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=role,
+        )
+        Company.objects.create(name="Single Member Customer", account_owner=single)
+        Task.objects.create(
+            company=Company.objects.create(name="No Member Customer"),
+            owner=none,
+            due_date=timezone.now().date(),
+            description="Hidden task body",
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        membership = payload["membership_coverage"]
+        self.assertEqual(membership["referenced_users"], 2)
+        self.assertEqual(membership["users_with_one_active_membership"], 1)
+        self.assertEqual(membership["users_with_multiple_memberships"], 0)
+        self.assertEqual(membership["users_with_no_memberships"], 1)
+        self.assertEqual(membership["branch_populated"], 1)
+
+    def test_quote_coverage_counts_linked_quote_scope(self):
+        organization, branch, department = self._scope("quote")
+        company = Company.objects.create(name="Quoted Customer")
+        opportunity = Opportunity.objects.create(company=company, title="Quoted", service_type="AIR")
+        Quote.objects.create(customer=company, opportunity=opportunity, mode="AIR", organization=organization)
+        Quote.objects.create(
+            customer=company,
+            opportunity=opportunity,
+            mode="SEA",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        quote = payload["quote_coverage"]
+        self.assertEqual(quote["linked_quotes"], 2)
+        self.assertEqual(quote["organization_only"], 1)
+        self.assertEqual(quote["organization_branch_department"], 1)
+        self.assertGreaterEqual(payload["branch_discovery"]["quote_scope"]["complete_count"], 1)
+
+    def test_show_details_omits_sensitive_crm_content(self):
+        company = Company.objects.create(name="Completeness Sensitive Customer")
+        opportunity = Opportunity.objects.create(
+            company=company,
+            title="Completeness safe title",
+            service_type="AIR",
+        )
+        Interaction.objects.create(
+            company=company,
+            opportunity=opportunity,
+            interaction_type=Interaction.InteractionType.EMAIL,
+            summary="Sensitive completeness interaction summary",
+            outcomes="Sensitive completeness outcome",
+        )
+        Task.objects.create(
+            company=company,
+            owner=CustomUser.objects.create_user(username="completeness-task-owner", password="x"),
+            description="Sensitive completeness task description",
+            due_date=timezone.now().date(),
+        )
+
+        output = self._call_report("--show-details")
+
+        self.assertIn("Completeness safe title", output)
+        self.assertNotIn("Sensitive completeness interaction summary", output)
+        self.assertNotIn("Sensitive completeness outcome", output)
+        self.assertNotIn("Sensitive completeness task description", output)
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

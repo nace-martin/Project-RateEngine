@@ -1427,6 +1427,45 @@ Commands and results:
 
 Fallow findings should not be cleaned up opportunistically in RBAC PRs. Use them as risk evidence and split any cleanup into separate PRs.
 
+#### Phase 8F - RBAC Scope Completeness Diagnostics
+
+- Added a read-only scope completeness diagnostic phase to determine whether
+  `organization`, `branch`, and `department` can be safely derived for existing
+  Company, Contact, Opportunity, Interaction, and Task records.
+- Command:
+
+```bash
+python backend/manage.py rbac_scope_completeness_report
+python backend/manage.py rbac_scope_completeness_report --show-details
+python backend/manage.py rbac_scope_completeness_report --format json
+```
+
+- This phase is diagnostics only:
+  - no data writes
+  - no migrations
+  - no backfill
+  - no selectors
+  - no enforcement
+  - no frontend changes
+  - no Quote/SPOT behavior changes
+- The report measures:
+  - total and active organizations
+  - branch and department counts per organization
+  - current scope shape by customer/CRM model
+  - membership coverage for referenced users
+  - linked quote scope coverage for CRM records
+  - branch discovery completeness from quote scope, memberships, company scope,
+    and customer scope
+  - organization, branch, and department readiness percentages
+- Detail output intentionally avoids notes, interaction summaries, outcomes,
+  task descriptions, email bodies, phone numbers, addresses, pricing, margins,
+  uploaded file content, and full CRM payloads.
+- Go/no-go rule:
+  - `READY FOR BACKFILL` requires every customer/CRM record to have safely
+    derivable organization, branch, and department scope.
+  - `NOT READY FOR BACKFILL` means the next PR should improve source data or
+    define an explicitly reviewed partial-backfill policy before any writes.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
