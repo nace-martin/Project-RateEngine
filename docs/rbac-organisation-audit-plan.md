@@ -1894,6 +1894,115 @@ backfill and enforcement until `rbac_hierarchy_report` and
 `rbac_scope_completeness_report` show that branch and membership readiness are
 acceptable.
 
+#### Phase 8J - Additive Master-Data Seed Alignment and Membership Population Planning
+
+Date: 2026-06-21
+
+Branch: `docs/rbac-master-data-seed-membership-plan`
+
+Scope: documentation and planning only. No code, migrations, data writes,
+customer/CRM historical backfill, selector enforcement, frontend changes, or
+Quote/SPOT behavior changes.
+
+Current decisions carried forward:
+
+- `EFM Group` remains a business tenant concept only.
+- `Organization` currently represents operating entity/workspace.
+- `Branch` represents an office/location under one `Organization`.
+- `Department` represents a functional team under an `Organization` and
+  optionally a `Branch`.
+- Historical customer/CRM data remains out of scope until master data and
+  memberships are aligned and diagnostics show readiness.
+
+Target seed records:
+
+| Type | Target records | Status |
+| --- | --- | --- |
+| Organizations | `EFM PNG`, `EFM Australia`, `EFM Fiji`, `EFM Solomon Islands` | Required. |
+| Organization | `EFM Express Air Cargo` / `EAC` | Pending decision: separate operating entity or department/function. |
+| Branches - EFM PNG | `Port Moresby`, `Lae` | Required. |
+| Branches - EFM Australia | `Brisbane`, second AU office | `Brisbane` required; second office name pending. |
+| Branches - EFM Fiji | `Suva`, second Fiji office | `Suva` required; second office name pending. |
+| Branches - EFM Solomon Islands | `Honiara` | Required. |
+| Branches - EAC | To be confirmed | Depends on EAC placement decision. |
+| Departments | `Air Freight`, `Sea Freight`, `Customs`, `Transport`, `Warehousing`, `EAC` if applicable | Organization-level by default; branch-specific only when operationally real. |
+
+Additive seed strategy:
+
+- Do not delete existing organizations, branches, or departments.
+- Create missing target records.
+- Rename records only after business confirmation and dependency review.
+- Deactivate legacy or test records only after diagnostics prove no production
+  dependency.
+- Preserve IDs for existing production-linked records.
+- Make all future seed changes idempotent so repeated runs are no-ops.
+
+Existing organization handling:
+
+| Current organization | Proposed handling | Blocker |
+| --- | --- | --- |
+| `Express Freight Management` | Treat as transition/default workspace for now. Candidate rename or migration to `EFM PNG` only after confirming record and membership dependencies. | Confirm whether it represents PNG operations, group/default workspace, or mixed legacy data. |
+| `EFM Express Air Cargo` | Retain pending EAC decision. | Confirm whether EAC is a separate organization or department/function. |
+| `Test Org` | Exclude from production scope. Deactivate later only if diagnostics show no real users or production records depend on it. | Confirm no real dependencies. |
+
+Membership population plan:
+
+- Every active operational user should have `Organization`, `Branch`, and
+  `Department` populated.
+- Cross-branch users get multiple memberships.
+- Cross-department users get multiple memberships.
+- Cross-organization users get separate memberships per operating entity.
+- Organization-wide admin or null-branch memberships require an explicit
+  approved policy marker.
+- Null branch must never be used as a fallback for operational records.
+
+Required membership review fields:
+
+| Field | Purpose |
+| --- | --- |
+| `username` / `email` | Identify the active user safely for review. |
+| Current organization | Show existing membership state. |
+| Intended organization | Confirm target operating entity. |
+| Intended branch | Confirm operational office/location. |
+| Intended department | Confirm functional team. |
+| Role | Confirm permissions context. |
+| Primary membership | Identify default operational membership where needed. |
+| Operational vs organization-wide admin | Decide whether branch is required or intentionally null. |
+| Multiple memberships needed | Capture cross-branch, cross-department, or cross-organization users. |
+
+Safety gates before any write-capable seed or membership PR:
+
+1. Run `rbac_hierarchy_report`.
+2. Produce a target-vs-current master-data diff.
+3. Produce a proposed changes table.
+4. Confirm EAC placement.
+5. Confirm AU and Fiji second office names, or explicitly defer them.
+6. Confirm `Express Freight Management` handling.
+7. Confirm `Test Org` handling.
+
+Recommended implementation sequence for the next technical PR:
+
+1. Add a read-only command: `python backend/manage.py rbac_master_data_alignment_plan`.
+2. Report missing organizations.
+3. Report extra or legacy organizations.
+4. Report missing branches and branch/organization mismatches.
+5. Report missing departments.
+6. Report active memberships missing branch or department.
+7. Report proposed non-destructive actions.
+8. Report blockers and open questions.
+
+Phase 8K should still be read-only. It should produce the master-data and
+membership diff needed for approval before any seed or membership writes.
+
+Explicit non-goals:
+
+- No historical customer/CRM backfill.
+- No RBAC enforcement.
+- No selector changes.
+- No destructive cleanup.
+- No automatic branch inference from text, lane, route, customer name, service
+  type, notes, task descriptions, or other free text.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
