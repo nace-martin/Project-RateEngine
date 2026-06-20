@@ -1466,6 +1466,210 @@ python backend/manage.py rbac_scope_completeness_report --format json
   - `NOT READY FOR BACKFILL` means the next PR should improve source data or
     define an explicitly reviewed partial-backfill policy before any writes.
 
+#### Phase 8G - Branch Master Data and Assignment Policy
+
+Date: 2026-06-20
+
+Branch: `docs/rbac-branch-master-data-policy`
+
+Scope: documentation and design only. No code, migrations, selectors,
+enforcement, backfill, frontend behavior, or Quote/SPOT behavior changed.
+
+Current status: `NOT READY FOR BACKFILL`. Phase 8F measured branch readiness at
+`0.0%`, so historical customer/CRM records must not be backfilled until branch
+ownership is governed and branch evidence exists.
+
+##### Organization Structure
+
+`Organization` is the legal/workspace ownership root for RBAC, branding,
+reporting, audit, and future ERP integration. It is not the same as a customer
+`Company`.
+
+Recommended organization master data:
+
+| Organization | Intended role | Notes |
+| --- | --- | --- |
+| EFM PNG | Papua New Guinea operating company/workspace | Primary PNG tenant for POM/Lae operations. |
+| EFM Lae | Branch/operating unit under EFM PNG, not a separate tenant unless legally required | Prefer modeling as a Branch, not a separate Organization, unless ownership/reporting requires legal separation. |
+| EFM Brisbane | Australia operating company/workspace | Separate Organization if it owns users, billing, and reporting independently. |
+| EFM Solomon Islands | Solomon Islands operating company/workspace | Separate Organization if it owns local operations and audit trails. |
+| EFM Fiji | Fiji operating company/workspace | Separate Organization if it owns local operations and audit trails. |
+| EAC | Express Air Cargo operating company/workspace | Separate Organization for EAC-specific users, customers, quotes, jobs, billing, and reports. |
+
+Relationship rule: an Organization owns Branches, Departments, Memberships,
+customers, CRM records, quotes, Spot envelopes, shipments, jobs, billing records,
+and audit events. Cross-organization records require explicit shared-workflow
+design later; do not infer cross-organization access from names or routes.
+
+##### Branch Structure
+
+A `Branch` is an operational office/location inside exactly one Organization. It
+is the durable ownership level for local sales, operations, customer ownership,
+CRM activity, jobs, shipments, billing queues, and branch reporting.
+
+Recommended branch master data:
+
+| Branch | Parent organization | Notes |
+| --- | --- | --- |
+| Port Moresby | EFM PNG | PNG head office / POM operation. |
+| Lae | EFM PNG | PNG Lae operation. |
+| Brisbane | EFM Brisbane | Australia operation. |
+| Honiara | EFM Solomon Islands | Solomon Islands operation. |
+| Suva | EFM Fiji | Fiji operation. |
+| EAC Branch | EAC | Use a named EAC branch if EAC has only one branch initially. |
+
+Branch rules:
+
+| Question | Policy |
+| --- | --- |
+| What is a branch? | A location/operating unit under one Organization. |
+| Can a branch belong to multiple organizations? | No. Create one Branch per Organization. Shared locations must be represented explicitly per Organization. |
+| Can a user belong to multiple branches? | Yes, through multiple active memberships. Single-membership users remain the simplest default. |
+| Can a record have no branch? | Temporarily yes while scope is incomplete; enforcement must treat null branch as unresolved, not global. |
+
+##### Department Structure
+
+A `Department` is a functional operating team within an Organization and
+optionally tied to a Branch when the team is branch-specific.
+
+Recommended departments:
+
+| Department | Ownership rule |
+| --- | --- |
+| Air Freight | Organization-owned; branch-specific where local teams differ. |
+| Sea Freight | Organization-owned; branch-specific where local teams differ. |
+| Customs | Organization-owned; branch-specific where local clearance teams differ. |
+| Transport | Organization-owned; branch-specific where local transport teams differ. |
+| Warehousing | Organization-owned; branch-specific where warehouse operations differ. |
+| EAC | EAC-owned department only; do not reuse for EFM unless explicitly shared. |
+
+Department ownership rules:
+
+- A Department belongs to one Organization.
+- A Department may belong to one Branch when work ownership is branch-specific.
+- Department code/name alone must never imply Branch for historical records.
+- If a Department has no Branch, it is organization-level department evidence
+  only and cannot resolve branch scope by itself.
+
+##### Membership Rules
+
+Preferred future model: users receive one active `UserMembership` per real
+operating assignment. The common case is one Organization, one Branch, and one
+Department. Users who work across branches or departments receive multiple
+memberships instead of widened null scope.
+
+| Membership shape | Policy |
+| --- | --- |
+| One organization, one branch, one department | Default for most users and safest source for new record scope. |
+| One organization, one branch, multiple departments | Use multiple memberships, one per department. |
+| One organization, multiple branches | Use multiple memberships, one per branch/department combination. |
+| Multiple organizations | Use multiple memberships; access and assignment must remain explicit per Organization. |
+| Null branch membership | Reserved for explicit organization-wide roles only; not a historical branch backfill source. |
+| Null department membership | Reserved for explicit department-wide or organization-wide roles only; not a department backfill source unless approved. |
+
+##### New Record Assignment Rules
+
+New customer/CRM records should obtain scope in this order:
+
+1. Explicit assignment supplied by an approved backend path.
+2. Parent object scope, such as Contact from Company, Interaction/Task from
+   Opportunity, then Company.
+3. Actor membership only when scope is unambiguous. A single active membership
+   may assign Organization, Branch, and Department. Multiple memberships may
+   assign only fields that are shared by all relevant memberships.
+4. Leave unresolved fields null.
+
+Never infer scope from route, lane, origin, destination, customer name,
+department text, service type, quote lane, free text, notes, descriptions, or
+uploaded content.
+
+##### Historical Record Policy
+
+Historical branch assignment must be conservative because Phase 8F showed that
+branch is absent from quotes, customers, CRM records, and referenced
+memberships.
+
+Automatic branch assignment is allowed only when all required fields are already
+durable and non-conflicting:
+
+- Existing explicit branch on the record.
+- Parent Company/Opportunity branch where the parent is already explicitly
+  scoped and the child relationship is valid.
+- Linked Quote branch where every linked quote with branch evidence agrees.
+- Single active membership with Organization, Branch, and Department populated,
+  provided the membership was active and applicable at the relevant record time
+  or has been explicitly approved as current-owner evidence.
+
+Human review is required when:
+
+- Organization and Department are known but Branch is missing.
+- Multiple memberships exist and Branch differs or is not populated.
+- Quote scope has Organization/Department but no Branch.
+- Company/customer scope is missing or partial.
+- The record has conflicting parent, quote, and membership evidence.
+- The only clue is historical owner/account owner without dated membership
+  evidence.
+
+Branch must remain null when:
+
+- The only evidence is route, lane, origin/destination, customer name,
+  department text, service type, quote lane, notes, descriptions, email bodies,
+  phone numbers, addresses, pricing, margins, uploaded files, or other free text.
+- Multiple plausible branches exist and no approved source wins.
+- The source Organization differs from the target record Organization.
+- The source is a Department without a branch.
+
+##### ERP Future Compatibility
+
+The policy supports future ERP alignment by keeping durable scope on operational
+records rather than deriving access from mutable users or text:
+
+| Domain | Scope use |
+| --- | --- |
+| CRM | Own opportunities, interactions, tasks, and account activity by Organization/Branch/Department. |
+| Customers | Make Company the customer scope root and Contact inherit from Company. |
+| Quotes | Keep Quote scope as durable commercial ownership evidence. |
+| Spot Pricing | Keep Spot envelope scope aligned to Quote/SPE ownership without reviving legacy SPOT CRUD. |
+| Jobs | Assign job execution to the responsible Organization/Branch/Department. |
+| Shipments | Scope shipment operations and milestone visibility by owning branch/team. |
+| Billing | Route invoicing, revenue, margin, and credit control by scoped ownership. |
+| Reporting | Aggregate by Organization, Branch, and Department without relying on user current state. |
+| Audit trails | Preserve who assigned or changed scope, when, and from what evidence. |
+
+##### Decision Matrix
+
+| Evidence Source | Safe | Requires Review | Never Use |
+| --- | --- | --- | --- |
+| Existing explicit record scope | Yes, when internally consistent | If partial or conflicting | No |
+| Parent Company/Opportunity scope | Yes, when complete and relationship is valid | If partial or parent is unresolved | No |
+| Linked Quote scope | Yes, when every linked scoped quote agrees | If quote has org/dept but no branch, or linked quotes conflict | No |
+| Single active membership | Yes, when org/branch/department are populated and applicable | If membership date/applicability is uncertain for historical records | No |
+| Multiple memberships | Only fields shared across all relevant memberships | Branch/department differences | No |
+| Department without branch | No | Yes, as department evidence only | For branch assignment |
+| Free text, notes, summaries, descriptions | No | No | Yes |
+| Route, lane, origin/destination, quote lane | No | No | Yes |
+| Customer/company name | No | No | Yes |
+| Service type/mode | No | No | Yes |
+
+##### Recommended Path
+
+Current status: `NOT READY FOR BACKFILL`.
+
+Next technical phase: Branch source discovery and branch governance
+implementation.
+
+Recommended sequence:
+
+1. Confirm final Organization and Branch master data with business owners.
+2. Decide whether EFM Lae is a Branch under EFM PNG or a separate Organization.
+3. Create branch governance rules for who may assign/change branch scope.
+4. Populate complete memberships for active users with Organization, Branch, and
+   Department.
+5. Add diagnostics that compare quote/customer/CRM branch source candidates
+   after membership and branch master data are complete.
+6. Only then design a controlled historical backfill with review queues for
+   ambiguous records.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
