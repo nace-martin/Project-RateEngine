@@ -673,6 +673,84 @@ class ScopeCompletenessReportTests(TestCase):
         self.assertNotIn("Sensitive completeness task description", output)
 
 
+class RBACHierarchyReportTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_hierarchy_report", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="hierarchy-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def test_report_identifies_missing_tenant_model_and_organization_role(self):
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertFalse(payload["write_enabled"])
+        self.assertFalse(payload["model_assessment"]["tenant_model_exists"])
+        self.assertIn("operating entity", payload["model_assessment"]["organization_role"])
+        self.assertFalse(payload["model_assessment"]["can_represent_intended_hierarchy"])
+
+    def test_report_detects_intended_hierarchy_mismatches(self):
+        efm_png = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        Branch.objects.create(organization=efm_png, code="POM", name="Port Moresby")
+        Organization.objects.create(name="Legacy Workspace", slug="legacy-workspace")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        mismatches = payload["mismatches"]
+        self.assertNotIn("EFM PNG", mismatches["missing_operating_entities"])
+        self.assertIn("EFM Australia", mismatches["missing_operating_entities"])
+        self.assertIn("Legacy Workspace", mismatches["extra_organizations"])
+        self.assertIn("Lae", mismatches["missing_branches_by_entity"]["EFM PNG"])
+
+    def test_report_counts_active_memberships_missing_branch(self):
+        organization = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        department = Department.objects.create(organization=organization, code="AIR", name="Air Freight")
+        user = CustomUser.objects.create_user(username="branchless-user", email="branchless@example.com", password="x")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            department=department,
+            role=self._role("branchless-role"),
+        )
+
+        payload = json.loads(self._call_report("--format", "json", "--show-details"))
+
+        self.assertEqual(payload["summary"]["active_memberships_missing_branch"], 1)
+        self.assertEqual(payload["membership_summary"]["active_missing_branch"], 1)
+        self.assertEqual(payload["answers"]["are_active_memberships_missing_branch"], "yes")
+        membership = payload["details"]["memberships"][0]
+        self.assertEqual(membership["username"], "branchless-user")
+        self.assertIsNone(membership["branch"])
+
+    def test_show_details_uses_safe_hierarchy_fields_only(self):
+        organization = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        branch = Branch.objects.create(organization=organization, code="POM", name="Port Moresby")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code="AIR",
+            name="Air Freight",
+        )
+        user = CustomUser.objects.create_user(username="safe-user", email="safe@example.com", password="x")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=self._role("safe-role"),
+        )
+
+        output = self._call_report("--show-details")
+
+        self.assertIn("safe-user", output)
+        self.assertIn("safe@example.com", output)
+        self.assertIn("Port Moresby", output)
+        self.assertNotIn("password", output.lower())
+        self.assertNotIn("quote payload", output.lower())
+        self.assertNotIn("pricing", output.lower())
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

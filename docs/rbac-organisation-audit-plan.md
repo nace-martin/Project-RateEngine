@@ -1670,6 +1670,88 @@ Recommended sequence:
 6. Only then design a controlled historical backfill with review queues for
    ambiguous records.
 
+#### Phase 8H - RBAC Hierarchy Validation
+
+Date: 2026-06-20
+
+Branch: `chore/rbac-hierarchy-validation`
+
+Scope: read-only diagnostics and documentation only. No data writes, migrations,
+selectors, enforcement, backfill, frontend changes, or Quote/SPOT behavior
+changed.
+
+Business clarification: the intended hierarchy is a single business tenant,
+`EFM Group`, with operating entities and branches underneath:
+
+```text
+EFM Group
+├── EFM PNG
+│   ├── Port Moresby
+│   └── Lae
+├── EFM Australia
+│   ├── Brisbane
+│   └── other AU offices
+├── EFM Fiji
+│   ├── Suva
+│   └── other FJ offices
+└── EFM Solomon Islands
+    └── Honiara
+```
+
+Diagnostic command:
+
+```bash
+python backend/manage.py rbac_hierarchy_report
+python backend/manage.py rbac_hierarchy_report --show-details
+python backend/manage.py rbac_hierarchy_report --format json
+```
+
+Model finding:
+
+- There is no separate `Tenant` model in the current Django model graph.
+- `parties.Organization` currently acts as the top workspace/entity model. In
+  earlier wording it was treated as tenant/account/workspace; under the clarified
+  business hierarchy it maps more closely to operating entity unless a future
+  `Tenant`/group layer is introduced.
+- `parties.Branch` is an office/location under exactly one `Organization`.
+- `parties.Department` belongs to one `Organization` and can optionally belong
+  to one `Branch`.
+- `accounts.UserMembership` ties a user to `Organization`, optional `Branch`,
+  optional `Department`, and a role.
+
+Intended terminology for the current implementation:
+
+| Business term | Current model | Status |
+| --- | --- | --- |
+| EFM Group tenant | No model | External/business concept for now. |
+| EFM PNG/Australia/Fiji/Solomon Islands | `Organization` | Treat as operating entities/workspaces. |
+| Port Moresby/Lae/Brisbane/Suva/Honiara | `Branch` | Office/location under one operating entity. |
+| Air/Sea/Customs/Transport/Warehousing/EAC | `Department` | Functional team under operating entity, optionally branch-specific. |
+| User assignment | `UserMembership` | Should carry operating entity, branch, and department. |
+
+Expected diagnostic answers:
+
+- `Tenant` model: no.
+- `Organization` currently means workspace/operating entity, not the clarified
+  single EFM Group tenant.
+- Branches are tied to exactly one `Organization` by required FK.
+- Departments are tied to `Organization` and optionally `Branch`.
+- Branch readiness is low because branch fields are not populated on records and
+  many active memberships/quotes do not carry branch evidence; this is not just
+  a missing model problem.
+
+Recommendation:
+
+- Do not redesign immediately.
+- Document terminology clearly and treat `Organization` as operating entity for
+  now.
+- Introduce a `Tenant`/group model later only if multi-group SaaS, group-level
+  billing, or explicit EFM Group ownership becomes necessary.
+- Fix branch master data and user memberships before any historical
+  customer/CRM backfill.
+- Next technical phase should be branch source discovery and branch governance
+  implementation against the clarified hierarchy.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
