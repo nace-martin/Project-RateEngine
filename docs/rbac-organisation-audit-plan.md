@@ -1752,6 +1752,148 @@ Recommendation:
 - Next technical phase should be branch source discovery and branch governance
   implementation against the clarified hierarchy.
 
+#### Phase 8I - Branch Master Data Alignment Plan
+
+Date: 2026-06-21
+
+Branch: `docs/rbac-master-data-alignment-plan`
+
+Scope: documentation and design only. No code, migrations, data writes,
+selectors, enforcement, backfill, frontend changes, or Quote/SPOT behavior
+changes.
+
+Business-confirmed hierarchy:
+
+- `EFM Group` is the business tenant concept only for now. There is no current
+  `Tenant` model, and this phase does not propose adding one.
+- `Organization` should be treated as the operating entity/workspace in the
+  current model.
+- `Branch` should represent an office/location under exactly one
+  `Organization`.
+- `Department` should represent a functional team under an `Organization`, with
+  optional branch attachment when the function is operationally branch-specific.
+- `UserMembership` should carry the user's operating entity, branch, and
+  department when the user performs operational work.
+
+Target organization records:
+
+| Organization | Target status | Notes |
+| --- | --- | --- |
+| `EFM PNG` | Required | Operating entity for Port Moresby and Lae operations. |
+| `EFM Australia` | Required | Operating entity for Brisbane and any confirmed AU offices. |
+| `EFM Fiji` | Required | Operating entity for Suva and any confirmed FJ offices. |
+| `EFM Solomon Islands` | Required | Operating entity for Honiara operations. |
+| `EFM Express Air Cargo` / `EAC` | Confirm | Keep as separate operating entity only if EAC has distinct ownership, users, reporting, or audit requirements. Otherwise model EAC as a department/function under the relevant operating entity. |
+
+Target branch records:
+
+| Organization | Branches | Status |
+| --- | --- | --- |
+| `EFM PNG` | `Port Moresby`, `Lae` | Required. |
+| `EFM Australia` | `Brisbane`, other AU offices | `Brisbane` required; other AU office names require confirmation. |
+| `EFM Fiji` | `Suva`, other FJ offices | `Suva` required; other FJ office names require confirmation. |
+| `EFM Solomon Islands` | `Honiara` | Required. |
+| `EFM Express Air Cargo` / `EAC` | To be confirmed | If EAC is a separate organization, confirm whether it needs a branch such as `Port Moresby`, an EAC-specific branch, or an intentionally branch-null admin-only model. |
+
+Target department records:
+
+- Create departments at the organization level by default.
+- Attach departments to a branch only when the department has branch-specific
+  management, queues, targets, reporting, or operational ownership.
+- Candidate departments remain `Air Freight`, `Sea Freight`, `Customs`,
+  `Transport`, `Warehousing`, and `EAC` where appropriate.
+- Do not create branch-specific department duplicates just to fill scope fields.
+  Branch-specific departments should reflect real operational ownership.
+- If EAC is confirmed as a separate organization, avoid also using `EAC` as a
+  department for the same workstream unless the distinction is explicitly
+  documented.
+
+Current organization alignment:
+
+| Current organization | Recommended handling | Reason |
+| --- | --- | --- |
+| `Express Freight Management` | Confirm before rename or migration. Candidate outcomes are rename/migrate to `EFM PNG` if it currently represents PNG operations, or retain temporarily as a legacy/default workspace until records and memberships are moved. | It does not match the confirmed operating-entity naming and may currently hold mixed historical records. |
+| `EFM Express Air Cargo` | Retain until EAC placement is confirmed. If EAC is separate, align name and branches. If EAC is a department/function, migrate memberships and future records carefully before deactivation. | EAC may be either a distinct operating entity or a functional department. That decision changes master data and membership assignments. |
+| `Test Org` | Do not use for production operations. Deactivate or exclude from production scope after confirming no real records or active users depend on it. | Test data must not become a backfill source for production CRM/customer scope. |
+
+No existing organization should be destructively deleted as part of alignment.
+Prefer additive creation, explicit migration, and later deactivation after
+diagnostics prove no production records or active memberships still depend on the
+legacy record.
+
+Membership alignment rules:
+
+- Every active operational user should have at least one active membership with
+  `Organization`, `Branch`, and `Department` populated.
+- Cross-branch users should have multiple memberships, one per real operating
+  branch/team assignment.
+- Cross-organization users should have separate memberships per operating
+  entity.
+- Organization-wide admin roles may intentionally have a null branch only when
+  the role is policy-approved, explicitly marked, and excluded from automatic
+  branch inference.
+- Null branch must not be treated as a default branch, head-office branch, or
+  safe fallback for operational records.
+- Historical assignment must not infer branch from user membership when the user
+  has multiple active memberships without a shared branch.
+
+New-record assignment policy after master data alignment remains:
+
+1. Preserve explicit scope assignment.
+2. Inherit from the parent object when the parent has complete durable scope.
+3. Use user membership only when the membership evidence is unambiguous.
+4. Leave unresolved scope fields null when evidence conflicts or is incomplete.
+
+Historical data safety rules:
+
+- Do not perform destructive deletes.
+- Prefer additive creation and deactivation over deletion.
+- Do not backfill historical customer or CRM branch scope until organization,
+  branch, department, and active membership records match the confirmed target
+  hierarchy.
+- Accept quote scope, company scope, customer scope, and single complete active
+  membership as candidate evidence only after the master data alignment is
+  complete.
+- Require human review where evidence is partial, conflicting, legacy-only, or
+  derived from a user with multiple active memberships.
+- Never assign branch from route, lane, origin/destination text, service type,
+  department text, customer name, CRM notes, task descriptions, or free text.
+
+Recommended implementation sequence:
+
+1. Confirm final organization, branch, and department names with the business
+   owner.
+2. Decide whether EAC is a separate `Organization` or a department/function
+   under another operating entity.
+3. Decide whether `Express Freight Management` becomes `EFM PNG` or remains a
+   temporary legacy/default workspace.
+4. Add or adjust organization, branch, and department seed/master data
+   additively.
+5. Populate active operational user memberships with organization, branch, and
+   department.
+6. Explicitly mark or document approved organization-wide admin memberships that
+   intentionally have null branch.
+7. Rerun `rbac_hierarchy_report`.
+8. Rerun `rbac_scope_completeness_report`.
+9. Review diagnostics before designing any controlled historical backfill.
+
+Open questions:
+
+- What is the exact name of the second AU office?
+- What is the exact name of the second Fiji office?
+- Is EAC a separate `Organization`, or should it be a department/function under
+  `EFM PNG` or another operating entity?
+- Should `Express Freight Management` become `EFM PNG`, or remain a
+  group/default legacy workspace during transition?
+
+Current status: not ready for historical customer/CRM backfill.
+
+Recommended next technical phase: additive branch master-data seed alignment and
+membership population planning. That phase should still avoid customer/CRM
+backfill and enforcement until `rbac_hierarchy_report` and
+`rbac_scope_completeness_report` show that branch and membership readiness are
+acceptable.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
