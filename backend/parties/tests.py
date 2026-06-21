@@ -1014,6 +1014,179 @@ class MembershipReassignmentPlanTests(TestCase):
         self.assertIsNone(membership.branch)
 
 
+class MembershipReassignmentTableValidateTests(TestCase):
+    def _call_validate(self, rows, *args):
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "username",
+                    "target_organization",
+                    "target_branch",
+                    "target_department",
+                    "target_role",
+                    "approved",
+                    "notes",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        stdout = StringIO()
+        call_command("rbac_membership_reassignment_table_validate", "--input", path, *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self):
+        organization = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        Branch.objects.create(organization=organization, code="BNE", name="Brisbane")
+        Department.objects.create(organization=organization, code="AIR", name="Air Freight")
+        return organization
+
+    def _role(self):
+        role, _created = Role.objects.get_or_create(code="sales", defaults={"name": "Sales", "is_system": True})
+        return role
+
+    def _row(self, username="approved-user", **overrides):
+        row = {
+            "username": username,
+            "target_organization": "EFM Australia",
+            "target_branch": "Brisbane",
+            "target_department": "Air Freight",
+            "target_role": "sales",
+            "approved": "yes",
+            "notes": "approved",
+        }
+        row.update(overrides)
+        return row
+
+    def test_valid_approved_row_is_ready(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="approved-user")
+
+        payload = json.loads(self._call_validate([self._row()], "--format", "json"))
+
+        self.assertEqual(payload["summary"], {"blocked": 0, "ready": 1, "total": 1})
+        self.assertEqual(payload["rows"][0]["status"], "READY")
+
+    def test_missing_user_is_blocked(self):
+        self._scope()
+        self._role()
+
+        payload = json.loads(self._call_validate([self._row(username="missing-user")], "--format", "json"))
+
+        self.assertIn("user not found", payload["rows"][0]["errors"])
+
+    def test_inactive_user_is_blocked(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="inactive-user", is_active=False)
+
+        payload = json.loads(self._call_validate([self._row(username="inactive-user")], "--format", "json"))
+
+        self.assertIn("user inactive", payload["rows"][0]["errors"])
+
+    def test_non_canonical_organization_is_blocked(self):
+        Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        self._role()
+        CustomUser.objects.create_user(username="legacy-org-user")
+
+        payload = json.loads(
+            self._call_validate(
+                [self._row(username="legacy-org-user", target_organization="Express Freight Management")],
+                "--format",
+                "json",
+            )
+        )
+
+        self.assertIn("target organization is not canonical", payload["rows"][0]["errors"])
+
+    def test_branch_must_belong_to_target_organization(self):
+        self._scope()
+        png = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        Branch.objects.create(organization=png, code="POM", name="Port Moresby")
+        self._role()
+        CustomUser.objects.create_user(username="wrong-branch-user")
+
+        payload = json.loads(
+            self._call_validate(
+                [self._row(username="wrong-branch-user", target_branch="Port Moresby")],
+                "--format",
+                "json",
+            )
+        )
+
+        self.assertIn("target branch not found under target organization", payload["rows"][0]["errors"])
+
+    def test_non_canonical_department_is_blocked(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="warehouse-user")
+
+        payload = json.loads(
+            self._call_validate(
+                [self._row(username="warehouse-user", target_department="Warehousing")],
+                "--format",
+                "json",
+            )
+        )
+
+        self.assertIn("target department is not canonical", payload["rows"][0]["errors"])
+
+    def test_eac_target_is_rejected(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="eac-target-user")
+
+        payload = json.loads(
+            self._call_validate(
+                [self._row(username="eac-target-user", target_department="EAC")],
+                "--format",
+                "json",
+            )
+        )
+
+        self.assertIn("EAC target value is not allowed", payload["rows"][0]["errors"])
+
+    def test_duplicate_username_is_blocked(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="duplicate-user")
+
+        payload = json.loads(
+            self._call_validate(
+                [self._row(username="duplicate-user"), self._row(username="duplicate-user")],
+                "--format",
+                "json",
+            )
+        )
+
+        self.assertEqual(payload["summary"]["blocked"], 2)
+        self.assertIn("duplicate username", payload["rows"][0]["errors"])
+        self.assertIn("duplicate username", payload["rows"][1]["errors"])
+
+    def test_unapproved_row_is_blocked(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="unapproved-user")
+
+        payload = json.loads(
+            self._call_validate([self._row(username="unapproved-user", approved="no")], "--format", "json")
+        )
+
+        self.assertIn("approved must be true or yes", payload["rows"][0]["errors"])
+
+    def test_validation_does_not_write_memberships(self):
+        self._scope()
+        self._role()
+        user = CustomUser.objects.create_user(username="no-write-user")
+
+        self._call_validate([self._row(username="no-write-user")])
+
+        self.assertFalse(UserMembership.objects.filter(user=user).exists())
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()
