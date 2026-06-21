@@ -2272,6 +2272,53 @@ How this feeds the next phase:
 - Historical customer/CRM backfill and enforcement remain blocked until
   canonical memberships are complete and validated.
 
+#### Phase 8P - Post-Apply RBAC Readiness Diagnostics
+
+Date: 2026-06-22
+
+Branch: `chore/rbac-post-membership-apply-readiness`
+
+Scope: read-only readiness diagnostics only. No membership writes, reassignment
+apply, CRM/customer historical backfill, RBAC enforcement, query filtering
+changes, or selector changes.
+
+Command: `python backend/manage.py rbac_post_membership_apply_readiness`
+
+Purpose:
+
+- Verify canonical organizations, branches, and departments are present.
+- Verify active memberships are complete and canonical.
+- Gate whether the project is ready for controlled CRM/customer historical
+  backfill planning.
+
+Readiness statuses:
+
+- `READY_FOR_BACKFILL_PLANNING`
+- `NOT_READY_FOR_BACKFILL_PLANNING`
+
+Readiness blockers:
+
+- Missing canonical organization, branch, or department.
+- Active membership tied to a legacy or non-canonical organization.
+- Active membership missing organization, branch, department, or role.
+- Active user with no active membership.
+- User with multiple active memberships unless a later policy explicitly
+  documents and permits that case.
+
+Output:
+
+- Text summary by default.
+- `--format json` for machine-readable review.
+- Counts for active users, active memberships, complete canonical memberships,
+  missing fields, legacy memberships, users without memberships, users with
+  multiple memberships, and blocker reasons.
+
+How this feeds the next phase:
+
+- If ready, the next phase can design controlled CRM/customer historical
+  backfill planning.
+- If not ready, resolve canonical master-data or membership blockers first.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
