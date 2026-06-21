@@ -2068,6 +2068,58 @@ How this feeds Phase 8L:
   master data and memberships are aligned, then verified again with
   `rbac_hierarchy_report` and `rbac_scope_completeness_report`.
 
+#### Phase 8L - Additive Master Data Seed and Membership Alignment
+
+Date: 2026-06-22
+
+Branch: `chore/rbac-master-data-seed-membership-alignment`
+
+Scope: additive master-data and deterministic membership writes only. No CRM or
+customer historical backfill, RBAC enforcement, query filtering changes,
+frontend changes, destructive updates, legacy organization deletion, or free-text
+inference.
+
+Command: `python backend/manage.py rbac_master_data_seed_alignment`
+
+Behavior:
+
+- Defaults to dry-run and rolls back all planned changes.
+- Requires `--apply` for writes.
+- Creates missing canonical organizations only: `EFM PNG`, `EFM Australia`,
+  `EFM Fiji`, and `EFM Solomon Islands`.
+- Creates missing canonical branches only: `Port Moresby` and `Lae` under
+  `EFM PNG`, `Brisbane` under `EFM Australia`, `Suva` under `EFM Fiji`, and
+  `Honiara` under `EFM Solomon Islands`.
+- Creates canonical organization-level departments only: `Air Freight`,
+  `Sea Freight`, `Customs`, and `Transport`.
+- Does not create, rename, delete, deactivate, or prefer `EFM Express Air Cargo`,
+  `EAC`, `Warehousing`, or `Test Org`.
+- Treats EAC only as legacy wording if encountered.
+- Populates active membership branch only when the membership already belongs to
+  a canonical organization with exactly one canonical branch. Multi-branch
+  organizations such as `EFM PNG` remain blocked for human review.
+
+Output:
+
+- Summary counts for created, existing, updated, skipped, and blocked records.
+- Per-section rows for organizations, branches, departments, and memberships.
+- Blocked memberships remain visible without changing access behavior.
+
+Safety:
+
+- No `delete()`, bulk `update()`, destructive rename, or CRM/customer record
+  updates.
+- No branch inference from customer names, routes, lanes, quote text, notes,
+  task descriptions, or other free text.
+- Re-running `--apply` is idempotent for canonical master data.
+
+How this feeds the next phase:
+
+- Rerun `rbac_master_data_alignment_plan`, `rbac_hierarchy_report`, and
+  `rbac_scope_completeness_report` after applying master data.
+- Review remaining blocked memberships, especially multi-branch users and legacy
+  organizations, before any historical customer/CRM backfill or enforcement.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

@@ -833,6 +833,73 @@ class MasterDataAlignmentPlanTests(TestCase):
         self.assertNotIn("pricing", output.lower())
 
 
+class MasterDataSeedAlignmentTests(TestCase):
+    def _call_command(self, *args):
+        stdout = StringIO()
+        call_command("rbac_master_data_seed_alignment", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="seed-alignment-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def test_dry_run_does_not_create_master_data(self):
+        output = self._call_command()
+
+        self.assertIn("Mode: dry-run", output)
+        self.assertFalse(Organization.objects.filter(name="EFM PNG").exists())
+        self.assertFalse(Branch.objects.filter(name="Port Moresby").exists())
+        self.assertFalse(Department.objects.filter(name="Air Freight").exists())
+
+    def test_apply_creates_only_canonical_master_data(self):
+        legacy_eac_count = Organization.objects.filter(name="EFM Express Air Cargo").count()
+        output = self._call_command("--apply")
+
+        self.assertIn("Mode: apply", output)
+        self.assertTrue(Organization.objects.filter(name="EFM PNG").exists())
+        self.assertTrue(Branch.objects.filter(organization__name="EFM PNG", name="Port Moresby").exists())
+        self.assertTrue(Branch.objects.filter(organization__name="EFM Solomon Islands", name="Honiara").exists())
+        self.assertTrue(Department.objects.filter(organization__name="EFM Fiji", name="Customs").exists())
+        self.assertEqual(Organization.objects.filter(name="EFM Express Air Cargo").count(), legacy_eac_count)
+        self.assertFalse(Department.objects.filter(name="EAC").exists())
+        self.assertFalse(Department.objects.filter(name="Warehousing").exists())
+
+    def test_apply_is_idempotent(self):
+        self._call_command("--apply")
+        counts = (Organization.objects.count(), Branch.objects.count(), Department.objects.count())
+        output = self._call_command("--apply")
+
+        self.assertEqual(counts, (Organization.objects.count(), Branch.objects.count(), Department.objects.count()))
+        self.assertIn("created=0", output)
+        self.assertIn("EXISTING", output)
+
+    def test_membership_branch_population_only_when_single_branch_is_deterministic(self):
+        au = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        png = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        role = self._role()
+        au_user = CustomUser.objects.create_user(username="au-user")
+        png_user = CustomUser.objects.create_user(username="png-user")
+        au_membership = UserMembership.objects.create(user=au_user, organization=au, role=role)
+        png_membership = UserMembership.objects.create(user=png_user, organization=png, role=role)
+
+        output = self._call_command("--apply")
+        au_membership.refresh_from_db()
+        png_membership.refresh_from_db()
+
+        self.assertEqual(au_membership.branch.name, "Brisbane")
+        self.assertIsNone(png_membership.branch)
+        self.assertIn("UPDATED: user_id=", output)
+        self.assertIn("BLOCKED: user_id=", output)
+
+    def test_legacy_test_org_is_not_deleted_or_modified(self):
+        test_org = Organization.objects.create(name="Test Org", slug="test-org")
+
+        self._call_command("--apply")
+        test_org.refresh_from_db()
+
+        self.assertEqual(test_org.name, "Test Org")
+        self.assertTrue(Organization.objects.filter(pk=test_org.pk).exists())
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

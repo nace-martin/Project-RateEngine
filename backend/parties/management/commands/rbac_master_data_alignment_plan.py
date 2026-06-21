@@ -8,26 +8,26 @@ from parties.models import Branch, Department, Organization
 
 
 TARGET_ORGANIZATIONS = ("EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands")
-PENDING_ORGANIZATIONS = ("EFM Express Air Cargo",)
+PENDING_ORGANIZATIONS = ()
 TARGET_BRANCHES = {
     "EFM PNG": ("Port Moresby", "Lae"),
     "EFM Australia": ("Brisbane",),
     "EFM Fiji": ("Suva",),
     "EFM Solomon Islands": ("Honiara",),
 }
-TARGET_DEPARTMENTS = ("Air Freight", "Sea Freight", "Customs", "Transport", "Warehousing")
-PENDING_DEPARTMENTS = ("EAC",)
+TARGET_DEPARTMENTS = ("Air Freight", "Sea Freight", "Customs", "Transport")
+PENDING_DEPARTMENTS = ()
 LEGACY_ORG_ACTIONS = {
     "Express Freight Management": "RENAME_CANDIDATE",
-    "EFM Express Air Cargo": "RETAIN_PENDING_DECISION",
+    "EFM Express Air Cargo": "DEFER",
     "Test Org": "EXCLUDE_TEST",
 }
 BLOCKERS = (
-    "EAC placement unresolved",
     "AU second office unresolved",
     "Fiji second office unresolved",
     "Express Freight Management handling unresolved",
     "Test Org dependency check unresolved",
+    "EFM Express Air Cargo legacy wording review unresolved",
 )
 
 
@@ -206,8 +206,6 @@ def branch_report_for(branches):
             else:
                 actions.append(branch_action(org_name, branch_name, "CREATE"))
                 missing.setdefault(org_name, []).append(branch_name)
-    actions.append(branch_action("EFM Express Air Cargo", "EAC branch pending", "DEFER"))
-
     expected_branch_names = {name for names in TARGET_BRANCHES.values() for name in names}
     unexpected = [
         branch_row(branch, "MOVE_CANDIDATE")
@@ -247,7 +245,6 @@ def department_report_for(departments):
                     "action": "KEEP" if department_name in org_department_names else "CREATE",
                 }
             )
-    actions.append({"type": "department", "organization": "EAC pending", "name": "EAC", "action": "DEFER"})
     unexpected = sorted(all_current_names - set(TARGET_DEPARTMENTS) - set(PENDING_DEPARTMENTS))
     return {
         "current_by_organization": dict(sorted(current_by_org.items())),
