@@ -900,6 +900,120 @@ class MasterDataSeedAlignmentTests(TestCase):
         self.assertTrue(Organization.objects.filter(pk=test_org.pk).exists())
 
 
+class MembershipReassignmentPlanTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_membership_reassignment_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="membership-plan-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def test_already_canonical_membership(self):
+        org = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        branch = Branch.objects.create(organization=org, code="BNE", name="Brisbane")
+        department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
+        user = CustomUser.objects.create_user(username="canonical-user")
+        UserMembership.objects.create(user=user, organization=org, branch=branch, department=department, role=self._role())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        row = payload["memberships"][0]
+        self.assertEqual(row["status"], "ALREADY_CANONICAL")
+        self.assertEqual(row["suggested_organization"], "EFM Australia")
+        self.assertEqual(row["suggested_branch"], "Brisbane")
+        self.assertEqual(row["suggested_department"], "Air Freight")
+
+    def test_legacy_organization_needs_manual_decision(self):
+        legacy, _created = Organization.objects.get_or_create(
+            name="EFM Express Air Cargo",
+            defaults={"slug": "efm-express-air-cargo"},
+        )
+        department, _created = Department.objects.get_or_create(
+            organization=legacy,
+            code="AIR",
+            defaults={"name": "Air Freight"},
+        )
+        user = CustomUser.objects.create_user(username="legacy-user")
+        UserMembership.objects.create(user=user, organization=legacy, department=department, role=self._role())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        row = payload["memberships"][0]
+        self.assertEqual(row["status"], "NEEDS_MANUAL_DECISION")
+        self.assertIsNone(row["suggested_organization"])
+        self.assertIsNone(row["suggested_branch"])
+        self.assertEqual(row["suggested_department"], "Air Freight")
+
+    def test_missing_branch_on_single_branch_org_is_ready(self):
+        org = Organization.objects.create(name="EFM Fiji", slug="efm-fiji")
+        Branch.objects.create(organization=org, code="SUV", name="Suva")
+        department = Department.objects.create(organization=org, code="CUS", name="Customs")
+        user = CustomUser.objects.create_user(username="missing-branch-user")
+        UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        row = payload["memberships"][0]
+        self.assertEqual(row["status"], "READY")
+        self.assertEqual(row["suggested_branch"], "Suva")
+
+    def test_missing_department_needs_manual_decision(self):
+        org = Organization.objects.create(name="EFM Fiji", slug="efm-fiji")
+        branch = Branch.objects.create(organization=org, code="SUV", name="Suva")
+        user = CustomUser.objects.create_user(username="missing-department-user")
+        UserMembership.objects.create(user=user, organization=org, branch=branch, role=self._role())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        row = payload["memberships"][0]
+        self.assertEqual(row["status"], "NEEDS_MANUAL_DECISION")
+        self.assertIsNone(row["suggested_department"])
+
+    def test_multi_branch_organization_blocks_missing_branch(self):
+        org = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        Department.objects.create(organization=org, code="SEA", name="Sea Freight")
+        user = CustomUser.objects.create_user(username="png-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            department=Department.objects.get(organization=org, code="SEA"),
+            role=self._role(),
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        row = payload["memberships"][0]
+        self.assertEqual(row["status"], "BLOCKED")
+        self.assertIsNone(row["suggested_branch"])
+
+    def test_eac_department_maps_to_air_freight_only(self):
+        org = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        Branch.objects.create(organization=org, code="BNE", name="Brisbane")
+        eac_department = Department.objects.create(organization=org, code="EAC", name="EAC")
+        user = CustomUser.objects.create_user(username="eac-dept-user")
+        UserMembership.objects.create(user=user, organization=org, department=eac_department, role=self._role())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        row = payload["memberships"][0]
+        self.assertEqual(row["status"], "READY")
+        self.assertEqual(row["suggested_department"], "Air Freight")
+        self.assertNotEqual(row["suggested_department"], "EAC")
+
+    def test_report_does_not_write(self):
+        org = Organization.objects.create(name="EFM Fiji", slug="efm-fiji")
+        Branch.objects.create(organization=org, code="SUV", name="Suva")
+        department = Department.objects.create(organization=org, code="TRN", name="Transport")
+        user = CustomUser.objects.create_user(username="readonly-user")
+        membership = UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
+
+        self._call_report()
+        membership.refresh_from_db()
+
+        self.assertIsNone(membership.branch)
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()
