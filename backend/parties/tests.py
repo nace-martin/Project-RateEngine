@@ -751,6 +751,88 @@ class RBACHierarchyReportTests(TestCase):
         self.assertNotIn("pricing", output.lower())
 
 
+class MasterDataAlignmentPlanTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_master_data_alignment_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="alignment-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def test_detects_missing_target_organizations_and_legacy_orgs(self):
+        Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        Organization.objects.create(name="Test Org", slug="test-org")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertIn("EFM PNG", payload["organizations"]["missing"])
+        actions = {row["name"]: row["action"] for row in payload["organizations"]["actions"]}
+        self.assertEqual(actions["Express Freight Management"], "RENAME_CANDIDATE")
+        self.assertEqual(actions["Test Org"], "EXCLUDE_TEST")
+
+    def test_detects_missing_branch_and_readiness(self):
+        Organization.objects.create(name="EFM PNG", slug="efm-png")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertIn("Port Moresby", payload["branches"]["missing"]["EFM PNG"])
+        self.assertIn("Lae", payload["branches"]["missing"]["EFM PNG"])
+        self.assertEqual(payload["readiness"]["seed_planning"], "READY_FOR_ADDITIVE_SEED_PLANNING")
+        self.assertEqual(payload["readiness"]["historical_backfill"], "NOT_READY_FOR_HISTORICAL_BACKFILL")
+
+    def test_counts_membership_gaps_and_multiple_memberships(self):
+        organization = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        branch = Branch.objects.create(organization=organization, code="POM", name="Port Moresby")
+        department = Department.objects.create(organization=organization, code="AIR", name="Air Freight")
+        role = self._role()
+        complete_user = CustomUser.objects.create_user(username="complete-user", email="complete@example.com")
+        multi_user = CustomUser.objects.create_user(username="multi-user", email="multi@example.com")
+        UserMembership.objects.create(
+            user=complete_user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=role,
+        )
+        UserMembership.objects.create(user=multi_user, organization=organization, role=role)
+        UserMembership.objects.create(
+            user=multi_user,
+            organization=organization,
+            branch=branch,
+            role=role,
+            is_primary=False,
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["active_memberships"], 3)
+        self.assertEqual(payload["memberships"]["missing_branch"], 1)
+        self.assertEqual(payload["memberships"]["missing_department"], 2)
+        self.assertEqual(payload["memberships"]["complete_membership"], 1)
+        self.assertEqual(payload["memberships"]["users_with_multiple_active_memberships"], 1)
+        self.assertIn("active memberships missing branch: 1", payload["blockers"])
+
+    def test_show_details_uses_safe_identity_fields_only(self):
+        organization = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        role = self._role("safe-alignment-role")
+        user = CustomUser.objects.create_user(
+            username="safe-alignment-user",
+            email="safe-alignment@example.com",
+            password="do-not-leak",
+        )
+        UserMembership.objects.create(user=user, organization=organization, role=role)
+
+        output = self._call_report("--show-details")
+
+        self.assertIn("safe-alignment-user", output)
+        self.assertIn("safe-alignment@example.com", output)
+        self.assertNotIn("do-not-leak", output)
+        self.assertNotIn("customer name", output.lower())
+        self.assertNotIn("route", output.lower())
+        self.assertNotIn("pricing", output.lower())
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

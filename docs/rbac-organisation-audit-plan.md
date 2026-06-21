@@ -2003,6 +2003,71 @@ Explicit non-goals:
 - No automatic branch inference from text, lane, route, customer name, service
   type, notes, task descriptions, or other free text.
 
+#### Phase 8K - Master Data Alignment Diff Report
+
+Date: 2026-06-21
+
+Branch: `chore/rbac-master-data-alignment-plan`
+
+Scope: read-only diagnostics only. No data writes, migrations, seed changes,
+selectors, RBAC enforcement, customer/CRM historical backfill, frontend changes,
+or Quote/SPOT behavior changes.
+
+Command: `python backend/manage.py rbac_master_data_alignment_plan`
+
+Purpose:
+
+- Compare current organizations, branches, departments, and active memberships
+  against the target RBAC master-data structure.
+- Classify proposed non-destructive actions as `CREATE`, `KEEP`,
+  `RENAME_CANDIDATE`, `RETAIN_PENDING_DECISION`, `EXCLUDE_TEST`,
+  `MOVE_CANDIDATE`, or `DEFER`.
+- Report blockers without guessing unresolved business decisions.
+- Keep EFM Group as a business tenant concept only; no `Tenant` model is added
+  or proposed by the command.
+
+Expected output:
+
+- Organization diff: current records, target records, missing target
+  organizations, legacy/extra organizations, and proposed action per
+  organization.
+- Branch diff: current branches grouped by organization, target branches,
+  missing branches, branch/organization mismatches, and proposed action per
+  branch.
+- Department diff: current departments grouped by organization and branch,
+  target departments, missing departments, unexpected departments, and proposed
+  action.
+- Membership summary: active memberships missing organization, branch, or
+  department; complete memberships; null-branch memberships requiring policy
+  approval; and users with multiple active memberships.
+- Blockers: unresolved EAC placement, AU/Fiji second office names,
+  `Express Freight Management` handling, `Test Org` dependency review, and
+  active membership gaps.
+- Readiness: `READY_FOR_ADDITIVE_SEED_PLANNING` and
+  `NOT_READY_FOR_HISTORICAL_BACKFILL` when required changes are additive and
+  unresolved decisions are explicitly deferred.
+
+Supported formats:
+
+- Text summary by default.
+- `--format json` for machine-readable review.
+- `--show-details --limit N` for safe row-level identifiers only.
+
+Safety:
+
+- The command does not call `save()`, `update()`, `delete()`, or create objects.
+- Detail output is limited to safe identity/master-data fields.
+- Branch is never inferred from customer name, route, lane, quote text, notes,
+  task descriptions, or free text.
+
+How this feeds Phase 8L:
+
+- Phase 8L should use this report output to confirm the exact additive seed and
+  membership changes before any write-capable PR.
+- Historical customer/CRM backfill and selector enforcement remain blocked until
+  master data and memberships are aligned, then verified again with
+  `rbac_hierarchy_report` and `rbac_scope_completeness_report`.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
