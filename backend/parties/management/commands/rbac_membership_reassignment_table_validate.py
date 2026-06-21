@@ -100,6 +100,8 @@ def validate_row(row_number, row):
         errors.append("target organization not found")
 
     branch = None
+    department = None
+    role = None
     if contains_eac(values["target_branch"]):
         errors.append("EAC target value is not allowed")
     elif organization and values["target_branch"]:
@@ -112,15 +114,17 @@ def validate_row(row_number, row):
     elif values["target_department"] and values["target_department"] not in CANONICAL_DEPARTMENTS:
         errors.append("target department is not canonical")
     elif organization and values["target_department"]:
-        department_exists = Department.objects.filter(
+        department = Department.objects.filter(
             organization=organization,
             name=values["target_department"],
-        ).exists()
-        if not department_exists:
+        ).first()
+        if department is None:
             errors.append("target department not found under target organization")
 
-    if values["target_role"] and not Role.objects.filter(code=values["target_role"], is_active=True).exists():
-        errors.append("target role not found")
+    if values["target_role"]:
+        role = Role.objects.filter(code=values["target_role"], is_active=True).first()
+        if role is None:
+            errors.append("target role not found")
 
     if values["approved"].lower() not in TRUE_VALUES:
         errors.append("approved must be true or yes")
@@ -128,7 +132,10 @@ def validate_row(row_number, row):
     return {
         "row_number": row_number,
         **values,
+        "target_organization_id": str(organization.pk) if organization else None,
         "target_branch_id": str(branch.pk) if branch else None,
+        "target_department_id": str(department.pk) if department else None,
+        "target_role_id": str(role.pk) if role else None,
         "status": "BLOCKED",
         "errors": errors,
     }

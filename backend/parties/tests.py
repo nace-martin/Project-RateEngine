@@ -1187,6 +1187,158 @@ class MembershipReassignmentTableValidateTests(TestCase):
         self.assertFalse(UserMembership.objects.filter(user=user).exists())
 
 
+class MembershipReassignmentApplyTests(TestCase):
+    def _write_csv(self, rows):
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "username",
+                    "target_organization",
+                    "target_branch",
+                    "target_department",
+                    "target_role",
+                    "approved",
+                    "notes",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+        return path
+
+    def _call_apply(self, rows, *args):
+        stdout = StringIO()
+        call_command("rbac_membership_reassignment_apply", "--input", self._write_csv(rows), *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self):
+        organization = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        branch = Branch.objects.create(organization=organization, code="BNE", name="Brisbane")
+        department = Department.objects.create(organization=organization, code="AIR", name="Air Freight")
+        legacy_org = Organization.objects.create(name="Legacy Org", slug="legacy-org")
+        legacy_department = Department.objects.create(organization=legacy_org, code="SEA", name="Sea Freight")
+        role, _created = Role.objects.get_or_create(code="sales", defaults={"name": "Sales", "is_system": True})
+        return organization, branch, department, legacy_org, legacy_department, role
+
+    def _row(self, username="apply-user", **overrides):
+        row = {
+            "username": username,
+            "target_organization": "EFM Australia",
+            "target_branch": "Brisbane",
+            "target_department": "Air Freight",
+            "target_role": "sales",
+            "approved": "yes",
+            "notes": "approved",
+        }
+        row.update(overrides)
+        return row
+
+    def _membership(self, username="apply-user"):
+        _org, _branch, _dept, legacy_org, legacy_department, role = self._scope()
+        user = CustomUser.objects.create_user(username=username)
+        return UserMembership.objects.create(
+            user=user,
+            organization=legacy_org,
+            department=legacy_department,
+            role=role,
+        )
+
+    def test_dry_run_does_not_write(self):
+        membership = self._membership()
+
+        output = self._call_apply([self._row()])
+        membership.refresh_from_db()
+
+        self.assertIn("Mode: dry-run", output)
+        self.assertIn("status=PLANNED", output)
+        self.assertEqual(membership.organization.name, "Legacy Org")
+        self.assertIsNone(membership.branch)
+
+    def test_apply_updates_ready_membership(self):
+        membership = self._membership()
+
+        output = self._call_apply([self._row()], "--apply")
+        membership.refresh_from_db()
+
+        self.assertIn("status=APPLIED", output)
+        self.assertEqual(membership.organization.name, "EFM Australia")
+        self.assertEqual(membership.branch.name, "Brisbane")
+        self.assertEqual(membership.department.name, "Air Freight")
+        self.assertEqual(membership.role.code, "sales")
+
+    def test_blocked_row_not_applied(self):
+        membership = self._membership(username="blocked-user")
+
+        output = self._call_apply([self._row(username="blocked-user", target_organization="EAC")], "--apply")
+        membership.refresh_from_db()
+
+        self.assertIn("status=BLOCKED", output)
+        self.assertEqual(membership.organization.name, "Legacy Org")
+
+    def test_duplicate_username_blocked(self):
+        membership = self._membership(username="dupe-apply-user")
+
+        output = self._call_apply(
+            [self._row(username="dupe-apply-user"), self._row(username="dupe-apply-user")],
+            "--apply",
+        )
+        membership.refresh_from_db()
+
+        self.assertIn("blocked=2", output)
+        self.assertEqual(membership.organization.name, "Legacy Org")
+
+    def test_unapproved_row_blocked(self):
+        membership = self._membership(username="unapproved-apply-user")
+
+        output = self._call_apply([self._row(username="unapproved-apply-user", approved="no")], "--apply")
+        membership.refresh_from_db()
+
+        self.assertIn("approved must be true or yes", output)
+        self.assertEqual(membership.organization.name, "Legacy Org")
+
+    def test_missing_role_blocked(self):
+        membership = self._membership(username="missing-role-apply-user")
+
+        output = self._call_apply(
+            [self._row(username="missing-role-apply-user", target_role="missing-role")],
+            "--apply",
+        )
+        membership.refresh_from_db()
+
+        self.assertIn("target role not found", output)
+        self.assertEqual(membership.organization.name, "Legacy Org")
+
+    def test_idempotent_second_apply(self):
+        membership = self._membership(username="idempotent-user")
+
+        self._call_apply([self._row(username="idempotent-user")], "--apply")
+        output = self._call_apply([self._row(username="idempotent-user")], "--apply")
+        membership.refresh_from_db()
+
+        self.assertIn("unchanged=1", output)
+        self.assertEqual(membership.organization.name, "EFM Australia")
+
+    def test_previous_state_reported(self):
+        self._membership(username="previous-state-user")
+
+        payload = json.loads(self._call_apply([self._row(username="previous-state-user")], "--format", "json"))
+
+        row = payload["rows"][0]
+        self.assertEqual(row["previous"]["organization"], "Legacy Org")
+        self.assertEqual(row["target"]["organization"], "EFM Australia")
+
+    def test_no_customer_or_crm_writes_occur(self):
+        membership = self._membership(username="no-customer-write-user")
+        company = Company.objects.create(name="No Write Customer", organization=membership.organization)
+
+        self._call_apply([self._row(username="no-customer-write-user")], "--apply")
+        company.refresh_from_db()
+
+        self.assertEqual(company.organization.name, "Legacy Org")
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

@@ -2232,6 +2232,46 @@ How this feeds the next phase:
 - CRM/customer backfill and RBAC enforcement remain blocked until reassignment
   is applied and diagnostics are rerun.
 
+#### Phase 8O - Apply Approved Membership Reassignment Table
+
+Date: 2026-06-22
+
+Branch: `chore/rbac-membership-reassignment-apply`
+
+Scope: controlled membership writes only from a validated CSV table. No
+organization, branch, department, user, or role creation. No CRM/customer
+historical backfill, RBAC enforcement, query filtering changes, destructive
+cleanup, or free-text inference.
+
+Command:
+`python backend/manage.py rbac_membership_reassignment_apply --input <csv>`
+
+Behavior:
+
+- Defaults to dry-run.
+- Requires `--apply` for writes.
+- Reuses `rbac_membership_reassignment_table_validate` validation logic.
+- Applies only rows whose validation status is `READY`.
+- Leaves `BLOCKED` rows untouched and reports their validation errors.
+- Updates the active user's membership to the validated target organization,
+  branch, department, and role.
+- Reports previous membership state and target state for every ready row.
+- Is idempotent: a second apply reports already matching rows as `UNCHANGED`.
+
+Safety:
+
+- Does not create master data, users, or roles.
+- Rejects EAC target values through the shared validator.
+- Does not infer from customer names, CRM records, quote routes, lanes, notes,
+  task text, or other free text.
+- Does not update customer/CRM records or selectors.
+
+How this feeds the next phase:
+
+- After applying an approved table, rerun membership and scope diagnostics.
+- Historical customer/CRM backfill and enforcement remain blocked until
+  canonical memberships are complete and validated.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
