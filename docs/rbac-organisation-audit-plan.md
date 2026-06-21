@@ -2120,6 +2120,61 @@ How this feeds the next phase:
 - Review remaining blocked memberships, especially multi-branch users and legacy
   organizations, before any historical customer/CRM backfill or enforcement.
 
+#### Phase 8M - Legacy Membership Reassignment Plan
+
+Date: 2026-06-22
+
+Branch: `chore/rbac-membership-reassignment-plan`
+
+Scope: read-only diagnostics only. No membership writes, CRM/customer
+historical backfill, RBAC enforcement, query filtering changes, destructive
+updates, or free-text inference.
+
+Command: `python backend/manage.py rbac_membership_reassignment_plan`
+
+Purpose:
+
+- Inspect active `UserMembership` records.
+- Report current organization, branch, department, and role using safe identity
+  fields only.
+- Suggest canonical organization, branch, and department only when current
+  membership fields make the answer deterministic.
+- Classify each row as `ALREADY_CANONICAL`, `READY`,
+  `NEEDS_MANUAL_DECISION`, or `BLOCKED`.
+
+Explicit safe rules:
+
+- Canonical organizations are `EFM PNG`, `EFM Australia`, `EFM Fiji`, and
+  `EFM Solomon Islands`.
+- Canonical departments are `Air Freight`, `Sea Freight`, `Customs`, and
+  `Transport`.
+- `EAC` and `EFM Express Air Cargo` are legacy wording only and are never target
+  organization or department names.
+- A current department explicitly named or coded `EAC` may only suggest the
+  canonical department `Air Freight`; it does not determine organization or
+  branch.
+- Missing branch is deterministic only for canonical organizations with one
+  canonical branch, such as `EFM Australia`, `EFM Fiji`, or
+  `EFM Solomon Islands`.
+- Missing branch under multi-branch organizations such as `EFM PNG` is blocked
+  for human review.
+
+Non-goals:
+
+- No writes to `UserMembership`.
+- No historical customer/CRM backfill.
+- No selector or enforcement changes.
+- No branch or department inference from customer names, CRM records, quote
+  routes, lanes, notes, task text, or other free text.
+
+How this feeds the next phase:
+
+- Use this report to build an approved, explicit membership reassignment table.
+- Only after human approval should a later phase add a write-capable membership
+  reassignment command.
+- Customer/CRM backfill and RBAC enforcement remain blocked until canonical
+  memberships are populated and diagnostics are rerun.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
