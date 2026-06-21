@@ -2175,6 +2175,63 @@ How this feeds the next phase:
 - Customer/CRM backfill and RBAC enforcement remain blocked until canonical
   memberships are populated and diagnostics are rerun.
 
+#### Phase 8N - Explicit Membership Reassignment Table Validation
+
+Date: 2026-06-22
+
+Branch: `chore/rbac-membership-reassignment-table-validation`
+
+Scope: read-only validation only. No membership writes, CRM/customer historical
+backfill, RBAC enforcement, query filtering changes, destructive updates, or
+free-text inference.
+
+Command:
+`python backend/manage.py rbac_membership_reassignment_table_validate --input <csv>`
+
+CSV columns:
+
+- `username`
+- `target_organization`
+- `target_branch`
+- `target_department`
+- `target_role`
+- `approved`
+- `notes`
+
+Validation rules:
+
+- User must exist and be active.
+- Target organization must exist and be one of `EFM PNG`, `EFM Australia`,
+  `EFM Fiji`, or `EFM Solomon Islands`.
+- Target branch must exist under the target organization.
+- Target department must exist under the target organization and be canonical:
+  `Air Freight`, `Sea Freight`, `Customs`, or `Transport`.
+- Target role must exist and be active.
+- `approved` must be explicitly `true` or `yes`.
+- Duplicate usernames are blocked.
+- Required fields must be present and populated.
+- `EAC`, `EFM Express Air Cargo`, and `Express Air Cargo` are rejected as target
+  values.
+
+Output:
+
+- Text summary by default.
+- `--format json` for machine-readable review.
+- Rows are classified as `READY` or `BLOCKED` with errors.
+- `write_enabled=false` in JSON output.
+
+Template:
+
+- `docs/rbac-membership-reassignment-template.csv`
+
+How this feeds the next phase:
+
+- Business owners should fill the CSV with explicit approved target values.
+- Only `READY` rows should be eligible for a later write-capable reassignment
+  command.
+- CRM/customer backfill and RBAC enforcement remain blocked until reassignment
+  is applied and diagnostics are rerun.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
