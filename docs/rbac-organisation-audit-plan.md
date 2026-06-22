@@ -2416,6 +2416,30 @@ How this feeds the next phase:
 - CRM/customer backfill and RBAC enforcement remain blocked until obsolete-user
   cleanup decisions are complete and readiness diagnostics pass.
 
+#### Phase 8T - Obsolete User Cleanup Apply
+
+Date: 2026-06-22
+
+Branch: `codex/phase-8t-obsolete-user-cleanup-apply`
+
+Scope: controlled dry-run-first cleanup for approved obsolete users only:
+`finance`, `nas`, `system_user`, and `unassigned_user`.
+
+Command: `python backend/manage.py rbac_obsolete_user_cleanup_apply`
+
+Safety:
+
+- Dry-run is the default. Writes require `--apply`.
+- The command deactivates active memberships before deactivating users.
+- The command never deletes users or memberships.
+- `testuser` is explicitly excluded and reported as
+  `SKIPPED_DEPENDENCY_REVIEW_REQUIRED`.
+- Users with customer, CRM, quote, or SPOT dependency counts greater than zero
+  are blocked and left unchanged.
+- The command does not modify CRM, customer, quote, or SPOT records; does not
+  backfill records; does not enforce RBAC; and does not change selectors.
+- JSON evidence is available with `--format json`.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

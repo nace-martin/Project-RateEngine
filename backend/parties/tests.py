@@ -1204,6 +1204,164 @@ class ObsoleteUserCleanupPlanTests(TestCase):
         self.assertIn("action=DEACTIVATE_USER", output)
 
 
+class ObsoleteUserCleanupApplyTests(TestCase):
+    def _call_apply(self, *args):
+        stdout = StringIO()
+        call_command("rbac_obsolete_user_cleanup_apply", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="sales"):
+        role, _created = Role.objects.get_or_create(
+            code=code,
+            organization=None,
+            defaults={"name": code.title(), "is_system": True},
+        )
+        return role
+
+    def _scope(self):
+        org = Organization.objects.create(name="EFM PNG", slug="efm-png-apply")
+        branch = Branch.objects.create(organization=org, code="POM", name="Port Moresby")
+        department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
+        return org, branch, department
+
+    def _membership(self, username="finance"):
+        org, branch, department = self._scope()
+        user = CustomUser.objects.create_user(username=username)
+        membership = UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
+        return user, membership
+
+    def test_dry_run_no_writes(self):
+        user, membership = self._membership("finance")
+
+        payload = json.loads(self._call_apply("--format", "json"))
+
+        user.refresh_from_db()
+        membership.refresh_from_db()
+        row = next(row for row in payload["users"] if row["username"] == "finance")
+        self.assertEqual(payload["mode"], "dry-run")
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(row["status"], "PLANNED")
+        self.assertTrue(user.is_active)
+        self.assertTrue(membership.is_active)
+
+    def test_active_membership_deactivation(self):
+        user, membership = self._membership("nas")
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        user.refresh_from_db()
+        membership.refresh_from_db()
+        row = next(row for row in payload["users"] if row["username"] == "nas")
+        self.assertEqual(row["status"], "APPLIED")
+        self.assertEqual(row["action"], "DEACTIVATE_MEMBERSHIP")
+        self.assertTrue(user.is_active)
+        self.assertFalse(membership.is_active)
+
+    def test_user_deactivation_when_no_active_membership(self):
+        user = CustomUser.objects.create_user(username="system_user")
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        user.refresh_from_db()
+        row = next(row for row in payload["users"] if row["username"] == "system_user")
+        self.assertEqual(row["status"], "APPLIED")
+        self.assertEqual(row["action"], "DEACTIVATE_USER")
+        self.assertFalse(user.is_active)
+
+    def test_dependency_blocker_skipped(self):
+        user = CustomUser.objects.create_user(username="finance")
+        Company.objects.create(name="Blocked Cleanup Customer", account_owner=user)
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        user.refresh_from_db()
+        row = next(row for row in payload["users"] if row["username"] == "finance")
+        self.assertEqual(row["status"], "BLOCKED_DEPENDENCIES")
+        self.assertEqual(row["dependency_counts"]["customer_account_owner"], 1)
+        self.assertTrue(user.is_active)
+
+    def test_testuser_excluded(self):
+        testuser = CustomUser.objects.create_user(username="testuser")
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        testuser.refresh_from_db()
+        row = next(row for row in payload["users"] if row["username"] == "testuser")
+        self.assertEqual(row["status"], "SKIPPED_DEPENDENCY_REVIEW_REQUIRED")
+        self.assertTrue(testuser.is_active)
+
+    def test_idempotent_second_apply_for_inactive_user(self):
+        user = CustomUser.objects.create_user(username="unassigned_user")
+
+        self._call_apply("--apply")
+        self._call_apply("--apply")
+
+        user.refresh_from_db()
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+        row = next(row for row in payload["users"] if row["username"] == "unassigned_user")
+        self.assertFalse(user.is_active)
+        self.assertEqual(row["status"], "UNCHANGED")
+
+    def test_json_output(self):
+        payload = json.loads(self._call_apply("--format", "json"))
+
+        self.assertEqual(payload["approved_targets"], ["finance", "nas", "system_user", "unassigned_user"])
+        self.assertEqual(payload["excluded_targets"], ["testuser"])
+        self.assertIn("planned_actions", payload)
+        self.assertIn("applied_actions", payload)
+        self.assertIn("skipped_users", payload)
+        self.assertIn("dependency_blockers", payload)
+
+    def test_no_crm_customer_quote_or_spot_writes(self):
+        user = CustomUser.objects.create_user(username="finance")
+        company = Company.objects.create(name="Untouched Cleanup Customer")
+        opportunity = Opportunity.objects.create(
+            company=company,
+            title="Untouched Opportunity",
+            service_type="AIR",
+            owner=user,
+        )
+        task = Task.objects.create(
+            company=company,
+            description="Untouched task",
+            owner=user,
+            due_date=timezone.now().date(),
+        )
+        before = {
+            "companies": Company.objects.count(),
+            "opportunities": Opportunity.objects.count(),
+            "tasks": Task.objects.count(),
+            "quotes": Quote.objects.count(),
+            "spot": SpotPricingEnvelopeDB.objects.count(),
+            "company_owner": company.account_owner_id,
+            "opportunity_owner": opportunity.owner_id,
+            "task_owner": task.owner_id,
+        }
+
+        self._call_apply("--apply")
+
+        company.refresh_from_db()
+        opportunity.refresh_from_db()
+        task.refresh_from_db()
+        after = {
+            "companies": Company.objects.count(),
+            "opportunities": Opportunity.objects.count(),
+            "tasks": Task.objects.count(),
+            "quotes": Quote.objects.count(),
+            "spot": SpotPricingEnvelopeDB.objects.count(),
+            "company_owner": company.account_owner_id,
+            "opportunity_owner": opportunity.owner_id,
+            "task_owner": task.owner_id,
+        }
+        self.assertEqual(after, before)
+
+
 class MembershipReassignmentTableValidateTests(TestCase):
     def _call_validate(self, rows, *args):
         fd, path = tempfile.mkstemp(suffix=".csv")
