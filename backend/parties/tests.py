@@ -1859,6 +1859,129 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertEqual(membership.organization.name, "EFM Australia")
 
 
+class FinalUserBlockerResolutionPlanTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_plan(self, *args):
+        stdout = StringIO()
+        call_command("rbac_final_user_blocker_resolution_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="admin"):
+        role, _created = Role.objects.get_or_create(
+            code=code,
+            organization=None,
+            defaults={"name": code.title(), "is_system": True},
+        )
+        return role
+
+    def _canonical_scope(self):
+        org = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        branch = Branch.objects.create(organization=org, code="POM", name="Port Moresby")
+        department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
+        return org, branch, department
+
+    def _spot_envelope(self, user, *, owner=None):
+        return SpotPricingEnvelopeDB.objects.create(
+            created_by=user,
+            owner=owner,
+            shipment_context_json={"origin": "POM", "destination": "LAE"},
+            conditions_json={},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test trigger",
+            expires_at=timezone.now(),
+        )
+
+    def test_reports_testuser_spot_created_by_dependencies(self):
+        org, branch, department = self._canonical_scope()
+        testuser = CustomUser.objects.create_user(username="testuser", email="test@example.com")
+        owner = CustomUser.objects.create_user(username="admin", role=CustomUser.ROLE_ADMIN)
+        UserMembership.objects.create(user=owner, organization=org, branch=branch, department=department, role=self._role())
+        self._spot_envelope(testuser, owner=owner)
+        self._spot_envelope(testuser)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = payload["active_users_with_no_membership"][0]
+        self.assertEqual(row["username"], "testuser")
+        self.assertEqual(row["dependency_counts"]["spot_envelope_created_by"], 2)
+        self.assertEqual(row["spot_envelope_created_by_count"], 2)
+        self.assertEqual(row["spot_envelope_owner_count"], 2)
+        self.assertEqual(row["spot_envelope_missing_owner_count"], 0)
+        self.assertEqual(row["recommended_action"], "REVIEW_SPOT_CREATED_BY_REASSIGNMENT")
+
+    def test_reports_sysadmin_candidate_membership(self):
+        legacy = Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+        sysadmin = CustomUser.objects.create_user(username="sysadmin", role=CustomUser.ROLE_ADMIN)
+        UserMembership.objects.create(user=sysadmin, organization=legacy, role=self._role())
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = payload["legacy_non_canonical_active_memberships"][0]
+        self.assertEqual(row["username"], "sysadmin")
+        self.assertEqual(row["current_membership"]["organization"], "EFM Express Air Cargo")
+        self.assertEqual(row["current_membership"]["branch"], "")
+        self.assertEqual(row["current_membership"]["department"], "")
+        self.assertEqual(
+            row["candidate_canonical_membership"],
+            {
+                "organization": "EFM PNG",
+                "branch": "Port Moresby",
+                "department": "Air Freight",
+                "role": "admin",
+            },
+        )
+        self.assertEqual(row["recommended_action"], "READY_FOR_MEMBERSHIP_REASSIGNMENT")
+
+    def test_candidate_reassignment_users_are_complete_canonical_admins(self):
+        org, branch, department = self._canonical_scope()
+        admin = CustomUser.objects.create_user(username="approved-admin", role=CustomUser.ROLE_ADMIN)
+        sales = CustomUser.objects.create_user(username="sales-user", role=CustomUser.ROLE_SALES)
+        testuser = CustomUser.objects.create_user(username="testuser")
+        UserMembership.objects.create(user=admin, organization=org, branch=branch, department=department, role=self._role())
+        UserMembership.objects.create(
+            user=sales,
+            organization=org,
+            branch=branch,
+            department=department,
+            role=self._role(CustomUser.ROLE_SALES),
+        )
+        self._spot_envelope(testuser)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = payload["active_users_with_no_membership"][0]
+        self.assertEqual([candidate["username"] for candidate in row["candidate_reassignment_users"]], ["approved-admin"])
+
+    def test_json_output_and_text_output(self):
+        CustomUser.objects.create_user(username="testuser")
+
+        payload = json.loads(self._call_plan("--format", "json"))
+        output = self._call_plan()
+
+        self.assertFalse(payload["write_enabled"])
+        self.assertIn("RBAC final user blocker resolution plan", output)
+        self.assertIn("username=testuser", output)
+
+    def test_report_does_not_write(self):
+        legacy = Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+        sysadmin = CustomUser.objects.create_user(username="sysadmin", role=CustomUser.ROLE_ADMIN)
+        membership = UserMembership.objects.create(user=sysadmin, organization=legacy, role=self._role())
+
+        self._call_plan()
+
+        membership.refresh_from_db()
+        sysadmin.refresh_from_db()
+        self.assertTrue(sysadmin.is_active)
+        self.assertEqual(membership.organization.name, "EFM Express Air Cargo")
+        self.assertTrue(membership.is_active)
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

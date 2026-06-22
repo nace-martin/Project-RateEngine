@@ -2440,6 +2440,35 @@ Safety:
   backfill records; does not enforce RBAC; and does not change selectors.
 - JSON evidence is available with `--format json`.
 
+#### Phase 8V - Final RBAC User Blocker Resolution Plan
+
+Date: 2026-06-22
+
+Branch: `codex/phase-8v-final-rbac-user-blocker-plan`
+
+Scope: read-only final blocker planning before backfill planning.
+
+Command: `python backend/manage.py rbac_final_user_blocker_resolution_plan`
+
+Purpose:
+
+- Report active users with no active membership.
+- Report legacy/non-canonical active memberships and memberships missing branch
+  or department.
+- Report counted dependencies for affected users only.
+- For `testuser`, report SPOT envelope `created_by` count, owner coverage, and
+  deterministic candidate reassignment users limited to active canonical admin
+  memberships.
+- For `sysadmin`, report the current legacy membership and the candidate
+  canonical membership `EFM PNG / Port Moresby / Air Freight / admin`.
+
+Safety:
+
+- The command is read-only.
+- The command does not deactivate users, modify memberships, reassign SPOT
+  records, backfill CRM/customer records, enforce RBAC, or change selectors.
+- JSON evidence is available with `--format json`.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
