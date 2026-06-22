@@ -1339,6 +1339,178 @@ class MembershipReassignmentApplyTests(TestCase):
         self.assertEqual(company.organization.name, "Legacy Org")
 
 
+class PostMembershipApplyReadinessTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_post_membership_apply_readiness", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self):
+        role, _created = Role.objects.get_or_create(
+            code="sales",
+            organization=None,
+            defaults={"name": "Sales", "is_system": True},
+        )
+        return role
+
+    def _canonical_master_data(self, *, skip_org=None, skip_branch=None, skip_department=None):
+        branches = {
+            "EFM PNG": ("Port Moresby", "Lae"),
+            "EFM Australia": ("Brisbane",),
+            "EFM Fiji": ("Suva",),
+            "EFM Solomon Islands": ("Honiara",),
+        }
+        departments = ("Air Freight", "Sea Freight", "Customs", "Transport")
+        organizations = {}
+        for org_name, branch_names in branches.items():
+            if org_name == skip_org:
+                continue
+            org = Organization.objects.create(name=org_name, slug=org_name.lower().replace(" ", "-"))
+            organizations[org_name] = org
+            for branch_name in branch_names:
+                if (org_name, branch_name) != skip_branch:
+                    Branch.objects.create(organization=org, code=branch_name[:3].upper(), name=branch_name)
+            for department_name in departments:
+                if (org_name, department_name) != skip_department:
+                    Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
+        return organizations
+
+    def _complete_membership(self, username="ready-user", org_name="EFM Australia"):
+        org = Organization.objects.get(name=org_name)
+        branch = Branch.objects.filter(organization=org).first()
+        department = Department.objects.filter(organization=org, name="Air Freight").first()
+        user = CustomUser.objects.create_user(username=username)
+        return UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
+
+    def test_ready_state(self):
+        self._canonical_master_data()
+        self._complete_membership()
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["readiness"]["status"], "READY_FOR_BACKFILL_PLANNING")
+        self.assertEqual(payload["memberships"]["complete_canonical_memberships"], 1)
+
+    def test_missing_canonical_org_blocks(self):
+        self._canonical_master_data(skip_org="EFM Fiji")
+        self._complete_membership()
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["readiness"]["status"], "NOT_READY_FOR_BACKFILL_PLANNING")
+        self.assertIn("EFM Fiji", payload["canonical"]["organizations_missing"])
+
+    def test_missing_branch_blocks(self):
+        self._canonical_master_data(skip_branch=("EFM Australia", "Brisbane"))
+        self._complete_membership()
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertIn("EFM Australia", payload["canonical"]["branches_missing"])
+
+    def test_missing_department_blocks(self):
+        self._canonical_master_data(skip_department=("EFM Australia", "Air Freight"))
+        self._complete_membership()
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertIn("EFM Australia", payload["canonical"]["departments_missing"])
+
+    def test_legacy_membership_blocks(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="Legacy Org", slug="legacy-org")
+        user = CustomUser.objects.create_user(username="legacy-user")
+        UserMembership.objects.create(user=user, organization=legacy, role=self._role())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["legacy_non_canonical_organization_memberships"], 1)
+
+    def test_missing_branch_membership_blocks(self):
+        self._canonical_master_data()
+        org = Organization.objects.get(name="EFM Australia")
+        user = CustomUser.objects.create_user(username="missing-branch-ready-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            department=Department.objects.get(organization=org, name="Air Freight"),
+            role=self._role(),
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["missing_branch"], 1)
+
+    def test_missing_department_membership_blocks(self):
+        self._canonical_master_data()
+        org = Organization.objects.get(name="EFM Australia")
+        user = CustomUser.objects.create_user(username="missing-dept-ready-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=Branch.objects.get(organization=org, name="Brisbane"),
+            role=self._role(),
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["missing_department"], 1)
+
+    def test_active_user_with_no_membership_blocks(self):
+        self._canonical_master_data()
+        CustomUser.objects.create_user(username="no-membership-user")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["users_with_no_active_membership"], 1)
+
+    def test_multiple_active_memberships_block(self):
+        self._canonical_master_data()
+        membership = self._complete_membership()
+        UserMembership.objects.create(
+            user=membership.user,
+            organization=membership.organization,
+            branch=membership.branch,
+            department=membership.department,
+            role=membership.role,
+            is_primary=False,
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["users_with_multiple_active_memberships"], 1)
+
+    def test_json_output_contains_write_disabled(self):
+        self._canonical_master_data()
+        self._complete_membership()
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertFalse(payload["write_enabled"])
+
+    def test_report_does_not_write(self):
+        self._canonical_master_data()
+        membership = self._complete_membership()
+
+        self._call_report()
+        membership.refresh_from_db()
+
+        self.assertEqual(membership.organization.name, "EFM Australia")
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()
