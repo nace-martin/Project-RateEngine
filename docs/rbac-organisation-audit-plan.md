@@ -2374,6 +2374,48 @@ How this feeds the next phase:
 - CRM/customer backfill and RBAC enforcement remain blocked until readiness
   diagnostics pass after approved membership reassignment.
 
+#### Phase 8S - Obsolete User Cleanup Plan
+
+Date: 2026-06-22
+
+Branch: `codex/phase-8s-obsolete-user-cleanup-plan`
+
+Scope: read-only obsolete/test/duplicate user cleanup planning only. No user
+deletion, user deactivation, membership deactivation, membership updates,
+CRM/customer historical backfill, RBAC enforcement, query filtering changes, or
+selector changes.
+
+Command: `python backend/manage.py rbac_obsolete_user_cleanup_plan`
+
+Purpose:
+
+- Inspect the business-approved obsolete users: `finance`, `nas`,
+  `system_user`, `testuser`, and `unassigned_user`.
+- Report current active state, organization, branch, department, role, and
+  whether an active membership exists.
+- Report direct ownership/dependency counts for customer, CRM, quote, and SPOT
+  records when available.
+- Recommend only a cleanup planning action: `DEACTIVATE_USER`,
+  `DEACTIVATE_MEMBERSHIP`, `REVIEW_DEPENDENCIES`, or `NOT_FOUND`.
+
+Safety:
+
+- The command does not call `save()`, `update()`, `delete()`, or apply
+  membership changes.
+- The command does not backfill CRM/customer records.
+- The command does not infer from CRM text, customers, quotes, routes, lanes,
+  notes, task text, or free text.
+- The command supports `--format json` for review evidence.
+
+How this feeds the next phase:
+
+- Rows with dependencies require manual review before any deactivation command
+  exists.
+- Rows without dependencies can feed a later explicit, write-capable
+  deactivation phase only after approval.
+- CRM/customer backfill and RBAC enforcement remain blocked until obsolete-user
+  cleanup decisions are complete and readiness diagnostics pass.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

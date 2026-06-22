@@ -1126,6 +1126,84 @@ class MembershipReassignmentCsvDraftTests(TestCase):
         self.assertEqual(membership.department, department)
 
 
+class ObsoleteUserCleanupPlanTests(TestCase):
+    def _call_plan(self, *args):
+        stdout = StringIO()
+        call_command("rbac_obsolete_user_cleanup_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="sales"):
+        role, _created = Role.objects.get_or_create(
+            code=code,
+            organization=None,
+            defaults={"name": code.title(), "is_system": True},
+        )
+        return role
+
+    def _scope(self):
+        org = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        branch = Branch.objects.create(organization=org, code="POM", name="Port Moresby")
+        department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
+        return org, branch, department
+
+    def test_missing_users_are_reported_not_found(self):
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        finance = next(row for row in payload["users"] if row["username"] == "finance")
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(finance["recommended_action"], "NOT_FOUND")
+        self.assertEqual(finance["blocker_reason"], "user not found")
+
+    def test_user_without_membership_or_dependencies_can_be_deactivated(self):
+        CustomUser.objects.create_user(username="testuser")
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(row for row in payload["users"] if row["username"] == "testuser")
+        self.assertEqual(row["recommended_action"], "DEACTIVATE_USER")
+        self.assertFalse(row["has_active_membership"])
+
+    def test_active_membership_is_planned_before_user_deactivation(self):
+        org, branch, department = self._scope()
+        user = CustomUser.objects.create_user(username="unassigned_user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(row for row in payload["users"] if row["username"] == "unassigned_user")
+        self.assertEqual(row["recommended_action"], "DEACTIVATE_MEMBERSHIP")
+        self.assertTrue(row["has_active_membership"])
+        self.assertEqual(row["current_organization"], "EFM PNG")
+        self.assertEqual(row["branch"], "Port Moresby")
+        self.assertEqual(row["department"], "Air Freight")
+
+    def test_related_customer_dependency_blocks_cleanup(self):
+        user = CustomUser.objects.create_user(username="finance")
+        Company.objects.create(name="Owned Cleanup Customer", account_owner=user)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(row for row in payload["users"] if row["username"] == "finance")
+        self.assertEqual(row["recommended_action"], "REVIEW_DEPENDENCIES")
+        self.assertEqual(row["dependency_counts"]["customer_account_owner"], 1)
+
+    def test_text_output_summarizes_actions(self):
+        CustomUser.objects.create_user(username="nas")
+
+        output = self._call_plan()
+
+        self.assertIn("RBAC obsolete user cleanup plan", output)
+        self.assertIn("Mode: read-only diagnostics", output)
+        self.assertIn("username=nas", output)
+        self.assertIn("action=DEACTIVATE_USER", output)
+
+
 class MembershipReassignmentTableValidateTests(TestCase):
     def _call_validate(self, rows, *args):
         fd, path = tempfile.mkstemp(suffix=".csv")
