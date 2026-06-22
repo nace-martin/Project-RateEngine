@@ -2319,6 +2319,61 @@ How this feeds the next phase:
   backfill planning.
 - If not ready, resolve canonical master-data or membership blockers first.
 
+#### Phase 8Q - Approved Membership Reassignment Data Preparation
+
+Date: 2026-06-22
+
+Branch: `codex/phase-8q-membership-reassignment-draft`
+
+Scope: read-only CSV draft generation only. No membership writes, reassignment
+apply, CRM/customer historical backfill, RBAC enforcement, query filtering
+changes, selector changes, or free-text inference.
+
+Command: `python backend/manage.py rbac_membership_reassignment_csv_draft`
+
+Purpose:
+
+- Produce the CSV draft needed for human-approved membership reassignment.
+- Include active users with legacy/non-canonical active memberships.
+- Include active users with active memberships missing branch or department.
+- Include active users with no active membership.
+- Output the same approval columns expected by
+  `rbac_membership_reassignment_table_validate` and
+  `rbac_membership_reassignment_apply`, plus current-state columns for review.
+
+CSV columns:
+
+- `username`
+- `current_organization`
+- `current_branch`
+- `current_department`
+- `current_role`
+- `target_organization`
+- `target_branch`
+- `target_department`
+- `target_role`
+- `approved`
+- `notes`
+
+Safety:
+
+- Target fields remain blank unless the current membership is already complete,
+  canonical, and deterministic.
+- The command does not infer from CRM, customers, quotes, routes, lanes, notes,
+  task text, or other free text.
+- The command does not call `save()`, `update()`, `delete()`, or apply
+  reassignment.
+- Optional output is supported with
+  `--output docs/rbac-membership-reassignment-approved.csv`.
+
+How this feeds the next phase:
+
+- Business owners fill target fields, set `approved`, and add notes.
+- The completed CSV must be validated with
+  `rbac_membership_reassignment_table_validate` before any apply run.
+- CRM/customer backfill and RBAC enforcement remain blocked until readiness
+  diagnostics pass after approved membership reassignment.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
