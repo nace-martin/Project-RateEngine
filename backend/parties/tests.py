@@ -531,6 +531,184 @@ class CustomerCrmBackfillReportTests(TestCase):
         self.assertNotIn("Do not leak this task description", output)
 
 
+class HistoricalScopeBackfillPlanTests(TestCase):
+    def _call_plan(self, *args):
+        stdout = StringIO()
+        call_command("rbac_historical_scope_backfill_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self, suffix=""):
+        organization = Organization.objects.create(
+            name=f"Historical Org {suffix}".strip(),
+            slug=f"historical-org-{suffix or 'default'}",
+            is_active=True,
+        )
+        branch = Branch.objects.create(organization=organization, code=f"H{suffix}"[:16], name="Historical Branch")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code=f"HD{suffix}"[:24],
+            name="Historical Department",
+        )
+        return organization, branch, department
+
+    def _role(self, code="historical-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def _member(self, username, suffix=""):
+        organization, branch, department = self._scope(suffix or username)
+        user = CustomUser.objects.create_user(username=username, password="x")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=self._role(f"{username}-role"[:32]),
+        )
+        return user
+
+    def test_read_only_command_does_not_write(self):
+        user = self._member("readonly-owner")
+        company = Company.objects.create(name="Read Only Customer", account_owner=user)
+
+        before = (company.organization_id, company.branch_id, company.department_id)
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        company.refresh_from_db()
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual((company.organization_id, company.branch_id, company.department_id), before)
+
+    def test_complete_records_are_counted(self):
+        organization, branch, department = self._scope("complete")
+        Company.objects.create(
+            name="Complete Historical Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        self.assertEqual(payload["models"]["Company"]["summary"]["records_complete"], 1)
+        self.assertEqual(payload["models"]["Company"]["summary"]["records_missing_organization"], 0)
+
+    def test_missing_scope_with_complete_owner_membership_is_backfillable(self):
+        user = self._member("owner-backfill")
+        Company.objects.create(name="Owner Backfill Customer", account_owner=user)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        summary = payload["models"]["Company"]["summary"]
+        self.assertEqual(summary["records_backfillable_from_owner_membership"], 1)
+        self.assertEqual(summary["records_blocked_no_safe_evidence"], 0)
+
+    def test_missing_scope_with_complete_parent_scope_is_backfillable(self):
+        organization, branch, department = self._scope("parent")
+        company = Company.objects.create(
+            name="Parent Scope Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        Contact.objects.create(company=company, first_name="Parent", last_name="Contact", email="phase9a-parent@example.com")
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        summary = payload["models"]["Contact"]["summary"]
+        self.assertEqual(summary["records_backfillable_from_parent_scope"], 1)
+
+    def test_multiple_owner_memberships_are_blocked(self):
+        organization, branch, department = self._scope("multi")
+        other_branch = Branch.objects.create(organization=organization, code="H2", name="Second Branch")
+        other_department = Department.objects.create(
+            organization=organization,
+            branch=other_branch,
+            code="HD2",
+            name="Second Department",
+        )
+        user = CustomUser.objects.create_user(username="multi-historical", password="x")
+        role = self._role("multi-historical-role")
+        UserMembership.objects.create(user=user, organization=organization, branch=branch, department=department, role=role)
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=other_branch,
+            department=other_department,
+            role=role,
+            is_primary=False,
+        )
+        Company.objects.create(name="Multi Owner Customer", account_owner=user)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        company = payload["models"]["Company"]
+        self.assertEqual(company["summary"]["records_blocked_owner_multiple_active_memberships"], 1)
+        self.assertEqual(company["sample_blocked_records"][0]["blocker_reason"], "multiple_owner_memberships")
+
+    def test_no_owner_membership_is_blocked(self):
+        user = CustomUser.objects.create_user(username="no-membership-historical", password="x")
+        Company.objects.create(name="No Membership Customer", account_owner=user)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        summary = payload["models"]["Company"]["summary"]
+        self.assertEqual(summary["records_blocked_owner_no_active_membership"], 1)
+
+    def test_incomplete_parent_scope_is_blocked(self):
+        organization, _branch, _department = self._scope("partial-parent")
+        company = Company.objects.create(name="Partial Parent Customer", organization=organization)
+        Contact.objects.create(company=company, first_name="Partial", last_name="Parent", email="phase9a-partial@example.com")
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        contact = payload["models"]["Contact"]
+        self.assertEqual(contact["summary"]["records_blocked_parent_scope_incomplete"], 1)
+        self.assertEqual(contact["sample_blocked_records"][0]["parent_evidence"]["missing_scope"], ["branch", "department"])
+
+    def test_json_output_and_readiness_classify_manual_review(self):
+        Company.objects.create(name="Manual Review Customer")
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        self.assertIn("Company", payload["models"])
+        self.assertEqual(payload["models"]["Company"]["sample_blocked_records"][0]["blocker_reason"], "no_safe_evidence")
+        self.assertEqual(payload["readiness_status"], "READY_WITH_MANUAL_REVIEW_EXCLUSIONS")
+        self.assertEqual(payload["summary"]["manual_review_required"], 1)
+        self.assertEqual(payload["proposed_apply_strategy"]["apply_eligible_records"], 0)
+        self.assertEqual(payload["proposed_apply_strategy"]["manual_review_excluded_records"], 1)
+        self.assertIn("no_safe_evidence", payload["proposed_apply_strategy"]["excluded_blocker_reasons"])
+
+    def test_fully_backfillable_data_is_ready_for_apply(self):
+        user = self._member("fully-ready-owner")
+        Company.objects.create(name="Fully Ready Customer", account_owner=user)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        self.assertEqual(payload["readiness_status"], "READY_FOR_BACKFILL_APPLY")
+        self.assertEqual(payload["proposed_apply_strategy"]["apply_eligible_records"], 1)
+        self.assertEqual(payload["proposed_apply_strategy"]["manual_review_excluded_records"], 0)
+
+    def test_unclassified_summary_is_not_ready_for_apply(self):
+        from parties.management.commands.rbac_historical_scope_backfill_plan import empty_summary, readiness_status
+
+        summary = empty_summary()
+        summary["manual_review_required"] = 0
+        summary["unclassified_records"] = 1
+
+        self.assertEqual(readiness_status(summary), "NOT_READY_FOR_BACKFILL_APPLY")
+
+    def test_text_output_reports_apply_strategy(self):
+        user = self._member("text-ready-owner")
+        Company.objects.create(name="Text Ready Customer", account_owner=user)
+        Company.objects.create(name="Text Manual Review Customer")
+
+        output = self._call_plan()
+
+        self.assertIn("safe apply candidates=1", output)
+        self.assertIn("manual-review exclusions=1", output)
+        self.assertIn("Next apply command must exclude manual-review records", output)
+
+
 class ScopeCompletenessReportTests(TestCase):
     def _call_report(self, *args):
         stdout = StringIO()
