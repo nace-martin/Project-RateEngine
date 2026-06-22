@@ -2515,6 +2515,60 @@ python backend/manage.py rbac_post_membership_apply_readiness --format json
 
 Target readiness: `READY_FOR_BACKFILL_PLANNING`.
 
+#### Phase 9A - Historical Scope Backfill Planning Diagnostics
+
+Date: 2026-06-23
+
+Branch: `codex/phase-9a-historical-scope-backfill-plan`
+
+Scope: read-only diagnostics for historical customer and CRM scope backfill
+planning after membership readiness reached `READY_FOR_BACKFILL_PLANNING`.
+
+Command:
+
+```bash
+python backend/manage.py rbac_historical_scope_backfill_plan
+python backend/manage.py rbac_historical_scope_backfill_plan --format json
+```
+
+Purpose:
+
+- Inspect `Company`, `Contact`, `Opportunity`, `Interaction`, and `Task`
+  records that expose organization, branch, and department scope fields.
+- Report total, missing organization, missing branch, missing department, and
+  complete record counts per model.
+- Classify missing-scope records as backfillable only from safe evidence:
+  complete parent scope, complete owner/account-owner active membership, or
+  complete related company/customer scope.
+- Report manual-review blockers for multiple owner memberships, no owner
+  membership, incomplete parent scope, and no safe evidence.
+- Include safe sample blocker rows with id, name/title where available,
+  owner evidence, parent evidence, and blocker reason.
+
+Unsafe inference rules:
+
+- Do not infer branch, department, or organization from customer name, route,
+  lane, notes, free text, quote description, email text, geography, or wording.
+- Ambiguous evidence is reported for manual review instead of guessed.
+
+Output statuses:
+
+- `READY_FOR_BACKFILL_APPLY_DESIGN`: every record is either complete,
+  backfillable from safe evidence, or explicitly classified for manual review.
+- `NOT_READY_FOR_BACKFILL_APPLY_DESIGN`: reserved for unclassified records or
+  diagnostic gaps that prevent apply-design planning.
+
+Safety:
+
+- The command is read-only and reports `write_enabled=false`.
+- It does not backfill records, enforce RBAC, change selectors, change APIs,
+  change UI permissions, or write customer/CRM data.
+
+Next phase:
+
+- Use Phase 9A output to design a dry-run-first historical scope backfill apply
+  command, with manual-review rows excluded unless separately approved.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
