@@ -1982,6 +1982,182 @@ class FinalUserBlockerResolutionPlanTests(TestCase):
         self.assertTrue(membership.is_active)
 
 
+class FinalUserBlockerResolutionApplyTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_apply(self, *args):
+        stdout = StringIO()
+        call_command("rbac_final_user_blocker_resolution_apply", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self, code="admin"):
+        role, _created = Role.objects.get_or_create(
+            code=code,
+            organization=None,
+            defaults={"name": code.title(), "is_system": True},
+        )
+        return role
+
+    def _canonical_master_data(self):
+        specs = {
+            "EFM PNG": ("Port Moresby", "Lae"),
+            "EFM Australia": ("Brisbane",),
+            "EFM Fiji": ("Suva",),
+            "EFM Solomon Islands": ("Honiara",),
+        }
+        for org_name, branches in specs.items():
+            org = Organization.objects.create(name=org_name, slug=org_name.lower().replace(" ", "-"))
+            for branch_name in branches:
+                Branch.objects.create(organization=org, code=branch_name[:3].upper(), name=branch_name)
+            for department_name in ("Air Freight", "Sea Freight", "Customs", "Transport"):
+                Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
+
+    def _canonical_scope(self):
+        org = Organization.objects.get(name="EFM PNG")
+        return (
+            org,
+            Branch.objects.get(organization=org, name="Port Moresby"),
+            Department.objects.get(organization=org, name="Air Freight"),
+        )
+
+    def _fixtures(self, *, with_customer_dependency=False):
+        self._canonical_master_data()
+        org, branch, department = self._canonical_scope()
+        admin = CustomUser.objects.create_user(
+            username="nason.martin",
+            email="nason.martin@efmpng.com",
+            role=CustomUser.ROLE_ADMIN,
+        )
+        UserMembership.objects.create(user=admin, organization=org, branch=branch, department=department, role=self._role())
+        testuser = CustomUser.objects.create_user(username="testuser", email="test@example.com")
+        for _index in range(2):
+            envelope = SpotPricingEnvelopeDB.objects.create(
+                created_by=testuser,
+                owner=admin,
+                shipment_context_json={"origin": "POM", "destination": "LAE"},
+                conditions_json={},
+                spot_trigger_reason_code="TEST",
+                spot_trigger_reason_text="Test trigger",
+                expires_at=timezone.now(),
+            )
+            envelope.owner = admin
+            envelope.save(update_fields=["owner"])
+        if with_customer_dependency:
+            Company.objects.create(name="Testuser Customer", account_owner=testuser)
+        legacy = Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+        sysadmin = CustomUser.objects.create_user(username="sysadmin", role=CustomUser.ROLE_ADMIN)
+        legacy_membership = UserMembership.objects.create(user=sysadmin, organization=legacy, role=self._role())
+        return admin, testuser, sysadmin, legacy_membership
+
+    def test_dry_run_does_not_write(self):
+        _admin, testuser, _sysadmin, legacy_membership = self._fixtures()
+
+        payload = json.loads(self._call_apply("--format", "json"))
+
+        testuser.refresh_from_db()
+        legacy_membership.refresh_from_db()
+        self.assertEqual(payload["mode"], "dry-run")
+        self.assertEqual(payload["summary"]["planned"], 2)
+        self.assertTrue(testuser.is_active)
+        self.assertTrue(SpotPricingEnvelopeDB.objects.filter(created_by=testuser).exists())
+        self.assertTrue(legacy_membership.is_active)
+
+    def test_apply_reassigns_spot_created_by_and_deactivates_testuser(self):
+        admin, testuser, _sysadmin, _legacy_membership = self._fixtures()
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        testuser.refresh_from_db()
+        self.assertEqual(payload["summary"]["applied"], 2)
+        self.assertFalse(SpotPricingEnvelopeDB.objects.filter(created_by=testuser).exists())
+        self.assertEqual(SpotPricingEnvelopeDB.objects.filter(created_by=admin).count(), 2)
+        self.assertFalse(testuser.is_active)
+
+    def test_apply_refuses_testuser_deactivation_if_dependencies_remain(self):
+        _admin, testuser, sysadmin, legacy_membership = self._fixtures(with_customer_dependency=True)
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        testuser.refresh_from_db()
+        legacy_membership.refresh_from_db()
+        self.assertEqual(payload["summary"]["blocked"], 1)
+        self.assertEqual(payload["summary"]["applied"], 0)
+        self.assertNotIn("APPLIED", {row["status"] for row in payload["actions"]})
+        self.assertTrue(testuser.is_active)
+        self.assertEqual(SpotPricingEnvelopeDB.objects.filter(created_by=testuser).count(), 2)
+        self.assertTrue(legacy_membership.is_active)
+        self.assertEqual(
+            list(UserMembership.objects.filter(user=sysadmin, is_active=True).values_list("organization__name", flat=True)),
+            ["EFM Express Air Cargo"],
+        )
+
+    def test_apply_moves_sysadmin_to_canonical_membership(self):
+        _admin, _testuser, sysadmin, legacy_membership = self._fixtures()
+
+        self._call_apply("--apply")
+
+        legacy_membership.refresh_from_db()
+        active = UserMembership.objects.select_related("organization", "branch", "department", "role").get(
+            user=sysadmin,
+            is_active=True,
+        )
+        self.assertFalse(legacy_membership.is_active)
+        self.assertEqual(active.organization.name, "EFM PNG")
+        self.assertEqual(active.branch.name, "Port Moresby")
+        self.assertEqual(active.department.name, "Air Freight")
+        self.assertEqual(active.role.code, "admin")
+
+    def test_apply_is_idempotent(self):
+        self._fixtures()
+
+        self._call_apply("--apply")
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        self.assertEqual(payload["summary"]["unchanged"], 2)
+
+    def test_json_output_includes_before_after_counts(self):
+        self._fixtures()
+
+        payload = json.loads(self._call_apply("--format", "json"))
+        row = next(action for action in payload["actions"] if action["username"] == "testuser")
+
+        self.assertEqual(row["before_dependency_counts"]["spot_envelope_created_by"], 2)
+        self.assertEqual(row["after_dependency_counts"]["spot_envelope_created_by"], 0)
+
+    def test_missing_targets_fail_safely(self):
+        testuser = CustomUser.objects.create_user(username="testuser")
+        SpotPricingEnvelopeDB.objects.create(
+            created_by=testuser,
+            shipment_context_json={"origin": "POM", "destination": "LAE"},
+            conditions_json={},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test trigger",
+            expires_at=timezone.now(),
+        )
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        testuser.refresh_from_db()
+        self.assertGreater(payload["summary"]["blocked"], 0)
+        self.assertTrue(testuser.is_active)
+        self.assertTrue(SpotPricingEnvelopeDB.objects.filter(created_by=testuser).exists())
+
+    def test_readiness_improves_after_apply(self):
+        self._fixtures()
+
+        self._call_apply("--apply")
+        stdout = StringIO()
+        call_command("rbac_post_membership_apply_readiness", "--format", "json", stdout=stdout)
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(payload["readiness"]["status"], "READY_FOR_BACKFILL_PLANNING")
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()

@@ -2469,6 +2469,52 @@ Safety:
   records, backfill CRM/customer records, enforce RBAC, or change selectors.
 - JSON evidence is available with `--format json`.
 
+#### Phase 8W - Final RBAC User Blocker Resolution Apply
+
+Date: 2026-06-23
+
+Branch: `codex/phase-8w-final-blocker-resolution-apply`
+
+Scope: controlled dry-run-first apply for the final RBAC readiness blockers
+reported by `rbac_final_user_blocker_resolution_plan`.
+
+Command:
+
+```bash
+python backend/manage.py rbac_final_user_blocker_resolution_apply
+python backend/manage.py rbac_final_user_blocker_resolution_apply --format json
+python backend/manage.py rbac_final_user_blocker_resolution_apply --apply
+```
+
+Apply behavior:
+
+- Reassign `testuser` SPOT envelope `created_by` records to a deterministic
+  active canonical admin user, preferring `nason.martin` when present and valid.
+- Deactivate `testuser` only after counted dependency blockers are cleared and
+  no active membership exists.
+- Replace the active `sysadmin` legacy membership by deactivating it and
+  creating exactly one active canonical membership:
+  `EFM PNG / Port Moresby / Air Freight / admin`.
+
+Safety:
+
+- Dry-run is the default. Writes require `--apply`.
+- Apply runs in a transaction and rolls back if a blocker is reported.
+- The command fails safely if target users, organization, branch, department,
+  or role cannot be uniquely resolved.
+- The command does not delete users or memberships, reassign CRM/customer
+  records, backfill records, enable selector/API RBAC, change UI permissions,
+  or touch unrelated users.
+
+Post-apply validation:
+
+```bash
+python backend/manage.py rbac_final_user_blocker_resolution_plan --format json
+python backend/manage.py rbac_post_membership_apply_readiness --format json
+```
+
+Target readiness: `READY_FOR_BACKFILL_PLANNING`.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
