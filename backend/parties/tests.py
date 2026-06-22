@@ -672,8 +672,41 @@ class HistoricalScopeBackfillPlanTests(TestCase):
 
         self.assertIn("Company", payload["models"])
         self.assertEqual(payload["models"]["Company"]["sample_blocked_records"][0]["blocker_reason"], "no_safe_evidence")
-        self.assertEqual(payload["readiness_status"], "READY_FOR_BACKFILL_APPLY_DESIGN")
+        self.assertEqual(payload["readiness_status"], "READY_WITH_MANUAL_REVIEW_EXCLUSIONS")
         self.assertEqual(payload["summary"]["manual_review_required"], 1)
+        self.assertEqual(payload["proposed_apply_strategy"]["apply_eligible_records"], 0)
+        self.assertEqual(payload["proposed_apply_strategy"]["manual_review_excluded_records"], 1)
+        self.assertIn("no_safe_evidence", payload["proposed_apply_strategy"]["excluded_blocker_reasons"])
+
+    def test_fully_backfillable_data_is_ready_for_apply(self):
+        user = self._member("fully-ready-owner")
+        Company.objects.create(name="Fully Ready Customer", account_owner=user)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        self.assertEqual(payload["readiness_status"], "READY_FOR_BACKFILL_APPLY")
+        self.assertEqual(payload["proposed_apply_strategy"]["apply_eligible_records"], 1)
+        self.assertEqual(payload["proposed_apply_strategy"]["manual_review_excluded_records"], 0)
+
+    def test_unclassified_summary_is_not_ready_for_apply(self):
+        from parties.management.commands.rbac_historical_scope_backfill_plan import empty_summary, readiness_status
+
+        summary = empty_summary()
+        summary["manual_review_required"] = 0
+        summary["unclassified_records"] = 1
+
+        self.assertEqual(readiness_status(summary), "NOT_READY_FOR_BACKFILL_APPLY")
+
+    def test_text_output_reports_apply_strategy(self):
+        user = self._member("text-ready-owner")
+        Company.objects.create(name="Text Ready Customer", account_owner=user)
+        Company.objects.create(name="Text Manual Review Customer")
+
+        output = self._call_plan()
+
+        self.assertIn("safe apply candidates=1", output)
+        self.assertIn("manual-review exclusions=1", output)
+        self.assertIn("Next apply command must exclude manual-review records", output)
 
 
 class ScopeCompletenessReportTests(TestCase):

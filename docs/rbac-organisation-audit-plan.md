@@ -2553,10 +2553,18 @@ Unsafe inference rules:
 
 Output statuses:
 
-- `READY_FOR_BACKFILL_APPLY_DESIGN`: every record is either complete,
-  backfillable from safe evidence, or explicitly classified for manual review.
-- `NOT_READY_FOR_BACKFILL_APPLY_DESIGN`: reserved for unclassified records or
-  diagnostic gaps that prevent apply-design planning.
+- `READY_FOR_BACKFILL_APPLY`: all missing-scope records are safe apply
+  candidates from approved evidence.
+- `READY_WITH_MANUAL_REVIEW_EXCLUSIONS`: safe apply candidates exist, and all
+  remaining unresolved records are explicitly classified for manual review.
+  Manual-review records do not block apply design, but they must be excluded
+  from apply unless separately approved.
+- `NOT_READY_FOR_BACKFILL_APPLY`: at least one record is unclassified or the
+  diagnostic cannot explain how it should be handled.
+
+The JSON output includes `proposed_apply_strategy` with safe apply candidate
+counts, manual-review exclusion counts, allowed evidence sources, excluded
+blocker reasons, and the next-phase recommendation.
 
 Safety:
 
@@ -2567,7 +2575,9 @@ Safety:
 Next phase:
 
 - Use Phase 9A output to design a dry-run-first historical scope backfill apply
-  command, with manual-review rows excluded unless separately approved.
+  command for safe eligible records only.
+- Exclude all manual-review rows from the apply command unless they are
+  separately reviewed and approved.
 
 ## 12. What Not To Touch Yet
 

@@ -9,8 +9,9 @@ from parties.models import Company, Contact
 
 
 SCOPE_FIELDS = ("organization", "branch", "department")
-READY = "READY_FOR_BACKFILL_APPLY_DESIGN"
-NOT_READY = "NOT_READY_FOR_BACKFILL_APPLY_DESIGN"
+READY = "READY_FOR_BACKFILL_APPLY"
+READY_WITH_EXCLUSIONS = "READY_WITH_MANUAL_REVIEW_EXCLUSIONS"
+NOT_READY = "NOT_READY_FOR_BACKFILL_APPLY"
 BLOCKER_REASONS = {
     "multiple_owner_memberships",
     "owner_no_active_membership",
@@ -91,7 +92,8 @@ def build_report():
     summary = combined_summary(models)
     return {
         "write_enabled": False,
-        "readiness_status": READY if summary["unclassified_records"] == 0 else NOT_READY,
+        "readiness_status": readiness_status(summary),
+        "proposed_apply_strategy": proposed_apply_strategy(summary),
         "summary": summary,
         "models": models,
         "safe_evidence_sources": [
@@ -100,6 +102,32 @@ def build_report():
             "existing complete related customer/company scope",
         ],
         "unsafe_inference_rules": UNSAFE_INFERENCE_RULES,
+    }
+
+
+def readiness_status(summary):
+    if summary["unclassified_records"]:
+        return NOT_READY
+    if summary["manual_review_required"]:
+        return READY_WITH_EXCLUSIONS
+    return READY
+
+
+def proposed_apply_strategy(summary):
+    apply_eligible = (
+        summary["records_backfillable_from_owner_membership"]
+        + summary["records_backfillable_from_parent_scope"]
+    )
+    return {
+        "apply_eligible_records": apply_eligible,
+        "manual_review_excluded_records": summary["manual_review_required"],
+        "allowed_evidence_sources": [
+            "owner_membership",
+            "parent_scope",
+            "related_company_scope",
+        ],
+        "excluded_blocker_reasons": sorted(BLOCKER_REASONS),
+        "next_phase": "controlled dry-run-first backfill apply for apply-eligible records only",
     }
 
 
@@ -267,6 +295,13 @@ def write_text(stdout, report):
         f"parent_backfillable={summary['records_backfillable_from_parent_scope']}, "
         f"manual_review={summary['manual_review_required']}"
     )
+    strategy = report["proposed_apply_strategy"]
+    stdout.write(
+        "Apply strategy: "
+        f"safe apply candidates={strategy['apply_eligible_records']}, "
+        f"manual-review exclusions={strategy['manual_review_excluded_records']}"
+    )
+    stdout.write("Next apply command must exclude manual-review records unless separately approved.")
     for model_name, payload in report["models"].items():
         summary = payload["summary"]
         stdout.write("")
