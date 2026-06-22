@@ -37,10 +37,13 @@ class Command(BaseCommand):
 
 def build_apply_report(*, apply):
     context = resolve_context()
-    actions = [testuser_action(context, apply=apply), sysadmin_action(context, apply=apply)]
+    actions = [testuser_action(context, apply=False), sysadmin_action(context, apply=False)]
+    blocked_count = sum(1 for row in actions if row["status"] == "BLOCKED")
+    if apply and blocked_count == 0:
+        actions = [testuser_action(context, apply=True), sysadmin_action(context, apply=True)]
     return {
         "mode": "apply" if apply else "dry-run",
-        "write_enabled": bool(apply) and not context["errors"],
+        "write_enabled": bool(apply) and blocked_count == 0,
         "resolver_errors": context["errors"],
         "summary": {
             "total": len(actions),
@@ -126,7 +129,7 @@ def testuser_action(context, *, apply):
         status = "APPLIED" if apply and (spot_count or was_active) else ("PLANNED" if not apply else "UNCHANGED")
     else:
         details.append("testuser_deactivated=False")
-        status = "BLOCKED" if apply else "PLANNED"
+        status = "BLOCKED"
     row.update({"status": status, "after_dependency_counts": after, "details": details})
     return row
 

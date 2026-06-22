@@ -2079,14 +2079,22 @@ class FinalUserBlockerResolutionApplyTests(TestCase):
         self.assertFalse(testuser.is_active)
 
     def test_apply_refuses_testuser_deactivation_if_dependencies_remain(self):
-        _admin, testuser, _sysadmin, _legacy_membership = self._fixtures(with_customer_dependency=True)
+        _admin, testuser, sysadmin, legacy_membership = self._fixtures(with_customer_dependency=True)
 
         payload = json.loads(self._call_apply("--apply", "--format", "json"))
 
         testuser.refresh_from_db()
+        legacy_membership.refresh_from_db()
         self.assertEqual(payload["summary"]["blocked"], 1)
+        self.assertEqual(payload["summary"]["applied"], 0)
+        self.assertNotIn("APPLIED", {row["status"] for row in payload["actions"]})
         self.assertTrue(testuser.is_active)
         self.assertEqual(SpotPricingEnvelopeDB.objects.filter(created_by=testuser).count(), 2)
+        self.assertTrue(legacy_membership.is_active)
+        self.assertEqual(
+            list(UserMembership.objects.filter(user=sysadmin, is_active=True).values_list("organization__name", flat=True)),
+            ["EFM Express Air Cargo"],
+        )
 
     def test_apply_moves_sysadmin_to_canonical_membership(self):
         _admin, _testuser, sysadmin, legacy_membership = self._fixtures()
