@@ -1014,6 +1014,118 @@ class MembershipReassignmentPlanTests(TestCase):
         self.assertIsNone(membership.branch)
 
 
+class MembershipReassignmentCsvDraftTests(TestCase):
+    def _call_draft(self, *args):
+        stdout = StringIO()
+        call_command("rbac_membership_reassignment_csv_draft", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _rows(self, *args):
+        return list(csv.DictReader(StringIO(self._call_draft(*args))))
+
+    def _role(self, code="sales"):
+        role, _created = Role.objects.get_or_create(
+            code=code,
+            organization=None,
+            defaults={"name": code.title(), "is_system": True},
+        )
+        return role
+
+    def _canonical_scope(self):
+        org = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        branch = Branch.objects.create(organization=org, code="BNE", name="Brisbane")
+        department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
+        return org, branch, department
+
+    def test_includes_legacy_memberships(self):
+        legacy = Organization.objects.create(name="Legacy Org", slug="legacy-org")
+        user = CustomUser.objects.create_user(username="legacy-draft-user")
+        UserMembership.objects.create(user=user, organization=legacy, role=self._role())
+
+        rows = self._rows()
+
+        self.assertEqual(rows[0]["username"], "legacy-draft-user")
+        self.assertEqual(rows[0]["current_organization"], "Legacy Org")
+        self.assertIn("legacy/non-canonical membership", rows[0]["notes"])
+
+    def test_includes_missing_branch_users(self):
+        org, _branch, department = self._canonical_scope()
+        user = CustomUser.objects.create_user(username="missing-branch-draft-user")
+        UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
+
+        rows = self._rows()
+
+        self.assertEqual(rows[0]["username"], "missing-branch-draft-user")
+        self.assertIn("missing branch", rows[0]["notes"])
+
+    def test_includes_missing_department_users(self):
+        org, branch, _department = self._canonical_scope()
+        user = CustomUser.objects.create_user(username="missing-department-draft-user")
+        UserMembership.objects.create(user=user, organization=org, branch=branch, role=self._role())
+
+        rows = self._rows()
+
+        self.assertEqual(rows[0]["username"], "missing-department-draft-user")
+        self.assertIn("missing department", rows[0]["notes"])
+
+    def test_includes_users_with_no_membership(self):
+        CustomUser.objects.create_user(username="no-membership-draft-user")
+
+        rows = self._rows()
+
+        self.assertEqual(rows[0]["username"], "no-membership-draft-user")
+        self.assertEqual(rows[0]["notes"], "no active membership")
+
+    def test_target_fields_remain_blank_when_not_deterministic(self):
+        org, _branch, department = self._canonical_scope()
+        user = CustomUser.objects.create_user(username="blank-target-draft-user")
+        UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
+
+        rows = self._rows()
+
+        for field in ("target_organization", "target_branch", "target_department", "target_role"):
+            self.assertEqual(rows[0][field], "")
+
+    def test_complete_canonical_membership_is_not_included(self):
+        org, branch, department = self._canonical_scope()
+        user = CustomUser.objects.create_user(username="complete-draft-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
+
+        rows = self._rows()
+
+        self.assertEqual(rows, [])
+
+    def test_output_option_writes_csv_file(self):
+        CustomUser.objects.create_user(username="file-output-draft-user")
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+
+        output = self._call_draft("--output", path)
+
+        self.assertIn("Wrote 1 draft rows", output)
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["username"], "file-output-draft-user")
+
+    def test_no_writes_occur(self):
+        org, _branch, department = self._canonical_scope()
+        user = CustomUser.objects.create_user(username="no-write-draft-user")
+        membership = UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
+
+        self._call_draft()
+        membership.refresh_from_db()
+
+        self.assertIsNone(membership.branch)
+        self.assertEqual(membership.department, department)
+
+
 class MembershipReassignmentTableValidateTests(TestCase):
     def _call_validate(self, rows, *args):
         fd, path = tempfile.mkstemp(suffix=".csv")
