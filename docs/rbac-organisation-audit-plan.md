@@ -2637,6 +2637,48 @@ Expected result after a successful apply:
 - `manual_review_excluded_records` remain excluded and require separate review
   before any later apply phase touches them.
 
+#### Phase 9C - Post-Backfill Validation and Enforcement Readiness
+
+Date: 2026-06-23
+
+Branch: `codex/phase-9c-enforcement-readiness`
+
+Scope: read-only diagnostics after historical scope backfill apply, before any
+selector, API, queryset, serializer, or UI permission enforcement work.
+
+Command:
+
+```bash
+python backend/manage.py rbac_enforcement_readiness_report
+python backend/manage.py rbac_enforcement_readiness_report --format json
+```
+
+Purpose:
+
+- Reuse the historical scope backfill planner to confirm complete records,
+  remaining missing scope, manual-review exclusions by reason, and
+  `apply_eligible_records`.
+- Report readiness as `READY_FOR_ENFORCEMENT_DESIGN` only when no safe apply
+  candidates or unclassified records remain.
+- Audit the current CRM, customer/company/contact selector, opportunity,
+  interaction/task, and quote/customer lookup surfaces.
+- Identify surfaces that are still global, unfiltered, partially filtered, or
+  direct-id lookups.
+- Propose the minimum enforcement rules needed for role/scope design, including
+  admin and cross-scope override considerations.
+
+Safety:
+
+- The command is read-only and reports `write_enabled=false`.
+- It does not enforce RBAC, change selectors, APIs, querysets, serializers, or
+  UI permissions.
+- It does not backfill or modify customer, CRM, quote, or SPOT records.
+
+Next phase:
+
+- Design enforcement rules and tests from this report before changing any
+  selector, API, queryset, serializer, or UI permission behavior.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
