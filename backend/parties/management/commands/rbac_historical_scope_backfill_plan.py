@@ -158,7 +158,7 @@ def classify_record(record, *, owner_field, parent_fields):
         return {"status": "complete", "source": None, "blocker_reason": None, "parent": None, "owner": None}
 
     parent = first_parent(record, parent_fields)
-    if parent and complete_scope(parent):
+    if parent and safe_parent_scope(parent):
         return {"status": "backfillable", "source": "parent_scope", "blocker_reason": None, "parent": parent, "owner": None}
 
     owner = getattr(record, owner_field, None) if owner_field else None
@@ -188,6 +188,14 @@ def first_parent(record, parent_fields):
         if parent is not None:
             return parent
     return None
+
+
+def safe_parent_scope(parent):
+    if not complete_scope(parent):
+        return False
+    parent_owner = getattr(parent, "account_owner", None) or getattr(parent, "owner", None)
+    parent_memberships = list(get_active_memberships(parent_owner)) if parent_owner else []
+    return not (len(parent_memberships) == 1 and complete_scope(parent_memberships[0]))
 
 
 def complete_scope(record):

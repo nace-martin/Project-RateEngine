@@ -617,6 +617,29 @@ class HistoricalScopeBackfillPlanTests(TestCase):
         summary = payload["models"]["Contact"]["summary"]
         self.assertEqual(summary["records_backfillable_from_parent_scope"], 1)
 
+    def test_owner_derived_parent_scope_does_not_create_new_apply_candidate(self):
+        owner = self._member("owner-derived-parent")
+        organization, branch, department = self._scope("owner-derived-parent-scope")
+        company = Company.objects.create(
+            name="Owner Derived Parent Scope Customer",
+            account_owner=owner,
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        Contact.objects.create(
+            company=company,
+            first_name="Owner",
+            last_name="Derived",
+            email="phase9a-owner-derived@example.com",
+        )
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        contact = payload["models"]["Contact"]
+        self.assertEqual(contact["summary"]["records_backfillable_from_parent_scope"], 0)
+        self.assertEqual(contact["summary"]["records_blocked_no_safe_evidence"], 1)
+
     def test_multiple_owner_memberships_are_blocked(self):
         organization, branch, department = self._scope("multi")
         other_branch = Branch.objects.create(organization=organization, code="H2", name="Second Branch")
@@ -707,6 +730,242 @@ class HistoricalScopeBackfillPlanTests(TestCase):
         self.assertIn("safe apply candidates=1", output)
         self.assertIn("manual-review exclusions=1", output)
         self.assertIn("Next apply command must exclude manual-review records", output)
+
+
+class HistoricalScopeBackfillApplyTests(TestCase):
+    def _call_apply(self, *args):
+        stdout = StringIO()
+        call_command("rbac_historical_scope_backfill_apply", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _call_plan(self, *args):
+        stdout = StringIO()
+        call_command("rbac_historical_scope_backfill_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self, suffix=""):
+        organization = Organization.objects.create(
+            name=f"Apply Org {suffix}".strip(),
+            slug=f"apply-org-{suffix or 'default'}",
+            is_active=True,
+        )
+        branch = Branch.objects.create(organization=organization, code=f"A{suffix}"[:16], name="Apply Branch")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code=f"AD{suffix}"[:24],
+            name="Apply Department",
+        )
+        return organization, branch, department
+
+    def _role(self, code="apply-role"):
+        return Role.objects.create(code=code, name=code.title(), is_system=True)
+
+    def _member(self, username, suffix=""):
+        organization, branch, department = self._scope(suffix or username)
+        user = CustomUser.objects.create_user(username=username, password="x")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=self._role(f"{username}-role"[:32]),
+        )
+        return user, organization, branch, department
+
+    def test_dry_run_does_not_write(self):
+        user, _organization, _branch, _department = self._member("dry-run-owner")
+        company = Company.objects.create(name="Dry Run Apply Customer", account_owner=user)
+
+        payload = json.loads(self._call_apply("--format", "json"))
+
+        company.refresh_from_db()
+        self.assertEqual(payload["models"]["Company"]["summary"]["planned"], 1)
+        self.assertIsNone(company.organization_id)
+        self.assertIsNone(company.branch_id)
+        self.assertIsNone(company.department_id)
+
+    def test_apply_backfills_company_from_account_owner_membership(self):
+        user, organization, branch, department = self._member("company-owner")
+        company = Company.objects.create(name="Company Owner Apply Customer", account_owner=user)
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        company.refresh_from_db()
+        self.assertEqual(payload["models"]["Company"]["summary"]["applied"], 1)
+        self.assertEqual(company.organization, organization)
+        self.assertEqual(company.branch, branch)
+        self.assertEqual(company.department, department)
+
+    def test_apply_backfills_contact_from_parent_company_scope(self):
+        organization, branch, department = self._scope("contact-parent")
+        company = Company.objects.create(
+            name="Contact Parent Apply Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        contact = Contact.objects.create(
+            company=company,
+            first_name="Apply",
+            last_name="Contact",
+            email="phase9b-contact@example.com",
+        )
+
+        self._call_apply("--apply")
+
+        contact.refresh_from_db()
+        self.assertEqual(contact.organization, organization)
+        self.assertEqual(contact.branch, branch)
+        self.assertEqual(contact.department, department)
+
+    def test_apply_uses_preflight_plan_and_does_not_cascade_parent_backfill(self):
+        user, organization, branch, department = self._member("preflight-owner")
+        company = Company.objects.create(name="Preflight Parent Apply Customer", account_owner=user)
+        contact = Contact.objects.create(
+            company=company,
+            first_name="Preflight",
+            last_name="Contact",
+            email="phase9b-preflight@example.com",
+        )
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        company.refresh_from_db()
+        contact.refresh_from_db()
+        self.assertEqual(payload["models"]["Company"]["summary"]["applied"], 1)
+        self.assertEqual(payload["models"]["Contact"]["summary"]["applied"], 0)
+        self.assertEqual(company.organization, organization)
+        self.assertEqual(company.branch, branch)
+        self.assertEqual(company.department, department)
+        self.assertIsNone(contact.organization_id)
+        self.assertIsNone(contact.branch_id)
+        self.assertIsNone(contact.department_id)
+
+    def test_apply_backfills_crm_models_from_safe_owner_or_parent_evidence(self):
+        owner, organization, branch, department = self._member("crm-owner")
+        company = Company.objects.create(
+            name="CRM Parent Apply Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        opportunity = Opportunity.objects.create(
+            company=company,
+            title="Owner scoped opportunity",
+            service_type="AIR",
+            owner=owner,
+        )
+        interaction = Interaction.objects.create(
+            company=company,
+            opportunity=opportunity,
+            author=owner,
+            interaction_type=Interaction.InteractionType.CALL,
+            summary="Hidden body",
+        )
+        task = Task.objects.create(
+            company=company,
+            opportunity=opportunity,
+            owner=owner,
+            due_date=timezone.now().date(),
+            description="Hidden task body",
+        )
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        for record in (opportunity, interaction, task):
+            record.refresh_from_db()
+            self.assertEqual(record.organization, organization)
+            self.assertEqual(record.branch, branch)
+            self.assertEqual(record.department, department)
+        self.assertEqual(payload["models"]["Opportunity"]["summary"]["applied"], 1)
+        self.assertEqual(payload["models"]["Interaction"]["summary"]["applied"], 1)
+        self.assertEqual(payload["models"]["Task"]["summary"]["applied"], 1)
+
+    def test_apply_excludes_manual_review_records(self):
+        organization, _branch, _department = self._scope("manual")
+        no_member = CustomUser.objects.create_user(username="apply-no-member", password="x")
+        multi_user = CustomUser.objects.create_user(username="apply-multi", password="x")
+        role = self._role("apply-multi-role")
+        branch_one = Branch.objects.create(organization=organization, code="M1", name="Manual One")
+        branch_two = Branch.objects.create(organization=organization, code="M2", name="Manual Two")
+        department_one = Department.objects.create(organization=organization, branch=branch_one, code="MD1", name="Manual One")
+        department_two = Department.objects.create(organization=organization, branch=branch_two, code="MD2", name="Manual Two")
+        UserMembership.objects.create(user=multi_user, organization=organization, branch=branch_one, department=department_one, role=role)
+        UserMembership.objects.create(
+            user=multi_user,
+            organization=organization,
+            branch=branch_two,
+            department=department_two,
+            role=role,
+            is_primary=False,
+        )
+        no_safe = Company.objects.create(name="No Evidence Apply Customer")
+        owner_none = Company.objects.create(name="No Membership Apply Customer", account_owner=no_member)
+        owner_multi = Company.objects.create(name="Multi Membership Apply Customer", account_owner=multi_user)
+        partial_parent = Company.objects.create(name="Partial Parent Apply Customer", organization=organization)
+        contact = Contact.objects.create(
+            company=partial_parent,
+            first_name="Partial",
+            last_name="Apply",
+            email="phase9b-partial@example.com",
+        )
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        for record in (no_safe, owner_none, owner_multi, partial_parent, contact):
+            record.refresh_from_db()
+            self.assertIsNone(record.branch_id)
+            self.assertIsNone(record.department_id)
+        self.assertEqual(payload["summary"]["skipped"], 5)
+        self.assertEqual(payload["summary"]["applied"], 0)
+
+    def test_apply_is_idempotent_and_does_not_overwrite_complete_scope(self):
+        user, owner_org, owner_branch, owner_department = self._member("idempotent-owner")
+        existing_org, existing_branch, existing_department = self._scope("existing")
+        company = Company.objects.create(name="Idempotent Apply Customer", account_owner=user)
+        contact = Contact.objects.create(
+            company=company,
+            first_name="Idempotent",
+            last_name="Contact",
+            email="phase9b-idempotent@example.com",
+        )
+        complete = Company.objects.create(
+            name="Already Complete Apply Customer",
+            account_owner=user,
+            organization=existing_org,
+            branch=existing_branch,
+            department=existing_department,
+        )
+
+        first = json.loads(self._call_apply("--apply", "--format", "json"))
+        second = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        complete.refresh_from_db()
+        contact.refresh_from_db()
+        self.assertEqual(first["models"]["Company"]["summary"]["applied"], 1)
+        self.assertEqual(second["models"]["Company"]["summary"]["applied"], 0)
+        self.assertEqual(second["models"]["Contact"]["summary"]["applied"], 0)
+        self.assertIsNone(contact.organization_id)
+        self.assertIsNone(contact.branch_id)
+        self.assertIsNone(contact.department_id)
+        self.assertEqual(complete.organization, existing_org)
+        self.assertNotEqual(complete.organization, owner_org)
+        self.assertNotEqual(complete.branch, owner_branch)
+        self.assertNotEqual(complete.department, owner_department)
+
+    def test_json_output_includes_counts_and_post_apply_plan_improves(self):
+        user, _organization, _branch, _department = self._member("plan-improves-owner")
+        Company.objects.create(name="Plan Improves Apply Customer", account_owner=user)
+
+        before = json.loads(self._call_plan("--format", "json"))
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+        after = json.loads(self._call_plan("--format", "json"))
+
+        self.assertIn("applied", payload["models"]["Company"]["summary"])
+        self.assertEqual(before["proposed_apply_strategy"]["apply_eligible_records"], 1)
+        self.assertEqual(after["summary"]["records_complete"], 1)
+        self.assertEqual(after["proposed_apply_strategy"]["apply_eligible_records"], 0)
 
 
 class ScopeCompletenessReportTests(TestCase):

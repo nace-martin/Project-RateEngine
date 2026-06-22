@@ -2579,6 +2579,64 @@ Next phase:
 - Exclude all manual-review rows from the apply command unless they are
   separately reviewed and approved.
 
+#### Phase 9B - Controlled Historical Scope Backfill Apply
+
+Date: 2026-06-23
+
+Branch: `codex/phase-9b-historical-scope-backfill-apply`
+
+Scope: dry-run-first historical organization, branch, and department backfill
+for records classified by Phase 9A as safe apply candidates.
+
+Command:
+
+```bash
+python backend/manage.py rbac_historical_scope_backfill_apply
+python backend/manage.py rbac_historical_scope_backfill_apply --format json
+python backend/manage.py rbac_historical_scope_backfill_apply --apply
+```
+
+Apply rules:
+
+- Dry-run is the default. Writes require `--apply`.
+- Apply mode runs in a database transaction.
+- The command fills missing scope fields only; it does not overwrite complete
+  existing scope.
+- Safe evidence sources are complete owner/account-owner active membership and
+  complete parent object scope. Related company/customer scope is represented
+  through parent company scope for contacts and CRM objects.
+- The command is idempotent: records completed by one apply run become
+  unchanged on later runs.
+
+Exclusion rules:
+
+- Manual-review records are skipped, not modified.
+- Excluded blocker reasons include multiple owner memberships, owner with no
+  active membership, incomplete parent scope, no safe evidence, and any
+  ambiguous or changed evidence that is no longer safe at apply time.
+- The command does not infer scope from customer names, routes, lanes, notes,
+  email text, geography, wording, quote descriptions, or free text.
+
+Safety:
+
+- The command does not enforce RBAC, change selectors, change APIs, change UI
+  permissions, or modify manual-review records.
+- It does not change customer/CRM business content beyond the three nullable
+  scope fields on safe eligible records.
+
+Post-apply validation:
+
+```bash
+python backend/manage.py rbac_historical_scope_backfill_plan --format json
+```
+
+Expected result after a successful apply:
+
+- `records_complete` increases by the number of safely applied records.
+- `proposed_apply_strategy.apply_eligible_records` reduces.
+- `manual_review_excluded_records` remain excluded and require separate review
+  before any later apply phase touches them.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
