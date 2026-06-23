@@ -2744,6 +2744,63 @@ Safety:
   permissions, or change ProductCode/SPOT validation rules beyond customer and
   contact access checks.
 
+#### Phase 9E - Frontend/UI RBAC Visibility and Final Sign-Off
+
+Date: 2026-06-23
+
+Branch: `codex/phase-9e-ui-rbac-signoff`
+
+Scope: align frontend visibility and user-facing error handling with the
+backend scoped-access rules completed in Phase 9D. Security remains enforced
+server-side; frontend changes only prevent misleading controls and surface
+clear scoped-access messages.
+
+UI surfaces checked:
+
+- Customer list and direct customer creation route.
+- Customer detail/edit route, including CRM activity, tasks, pricing overrides,
+  archive/delete, and save controls.
+- Company/customer selectors used by quotes and CRM flows.
+- Company contact selector used by quote and SPOT flows.
+- Quote customer/contact direct-ID validation error display.
+- SPOT create-quote customer/contact direct-ID validation error display.
+
+Frontend behavior:
+
+- Non-admin users do not see direct customer creation controls and direct
+  navigation to the new-customer route shows a restricted-access message.
+- Customer profile and commercial-term editing controls are admin-only.
+- Scoped non-admin users can still view in-scope customer summary, CRM activity,
+  tasks, and read-only pricing override information.
+- Selector empty states continue to render as empty scoped results instead of
+  exposing hidden records.
+- Backend `detail`, `error`, and `message` payloads are preserved for 403/404
+  and validation failures so quote/SPOT/customer screens show readable access
+  messages.
+
+Final permission matrix:
+
+| Role / user state | Customer/company/contact access | CRM opportunity/interaction/task access | Quote/SPOT customer/contact direct IDs | Admin customer master-data UI | Manual-review unscoped records |
+| --- | --- | --- | --- | --- | --- |
+| Admin / superuser | Cross-scope access allowed by explicit backend override | Cross-scope access allowed by explicit backend override | Accepted when the referenced records exist and are valid | Visible and enabled | Visible for review |
+| Manager | In-scope organization/branch/department only | In-scope organization/branch/department only | Out-of-scope or invalid IDs rejected by backend | Hidden/disabled | Hidden |
+| Sales | In-scope organization/branch/department only | In-scope organization/branch/department only | Out-of-scope or invalid IDs rejected by backend | Hidden/disabled | Hidden |
+| Finance/system | No CRM/customer access unless an explicit complete membership and backend permission allow it | No CRM write/admin behavior added in this phase | Out-of-scope or invalid IDs rejected by backend | Hidden/disabled | Hidden |
+| Incomplete-membership user | No scoped customer/CRM records | No scoped customer/CRM records | Rejected by backend scoped-access checks | Hidden/disabled | Hidden |
+
+Final enforcement sign-off:
+
+- Company, contact, opportunity, interaction, and task list/detail APIs remain
+  protected by backend scoped querysets.
+- Quote calculation and SPOT create-quote continue to reject unavailable
+  customer/contact IDs before pricing or quote creation.
+- Manual-review unscoped records remain excluded from normal scoped users.
+- No selector, API, queryset, pricing, ProductCode, SPOT validation, or
+  historical backfill behavior is changed by Phase 9E.
+- No known backend enforcement surfaces identified by
+  `rbac_enforcement_readiness_report` remain intentionally unprotected after
+  Phase 9D and this UI sign-off.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
