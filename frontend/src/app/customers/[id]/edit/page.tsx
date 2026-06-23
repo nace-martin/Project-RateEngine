@@ -174,7 +174,7 @@ export default function EditCustomerPage() {
           });
         } catch (fetchError) {
           console.error(fetchError);
-          setError("Failed to fetch customer data.");
+          setError(fetchError instanceof Error ? fetchError.message : "Failed to fetch customer data.");
         }
       };
       fetchCustomer();
@@ -564,7 +564,19 @@ export default function EditCustomerPage() {
     });
   };
 
-  if (!customer) return <div>Loading...</div>;
+  if (!customer) {
+    return (
+      <StandardPageContainer>
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : (
+          <div>Loading...</div>
+        )}
+      </StandardPageContainer>
+    );
+  }
 
   const isOverseas = customer.audience_type !== 'LOCAL_PNG_CUSTOMER';
   const cityOptions = cities.map((city) => ({
@@ -702,6 +714,7 @@ export default function EditCustomerPage() {
         </CardContent>
       </Card>
 
+      {canEditCustomerMaster ? (
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className={isSaving || isDeleting || isArchiving ? "space-y-6 pointer-events-none opacity-70" : "space-y-6"}>
         <Card className="border-slate-200 shadow-sm">
@@ -986,6 +999,13 @@ export default function EditCustomerPage() {
           </Button>
         </PageActionBar>
       </form>
+      ) : (
+        <Alert>
+          <AlertDescription>
+            Customer profile and commercial terms are admin-only. You can still view in-scope customer details, CRM activity, tasks, and pricing overrides.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card className="border-slate-200 bg-slate-50/60 shadow-sm">
         <CardHeader className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50/80 md:flex-row md:items-start md:justify-between">

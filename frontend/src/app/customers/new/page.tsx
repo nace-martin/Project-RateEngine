@@ -112,6 +112,7 @@ export default function NewCustomerPage() {
   useUnsavedChangesGuard(isDirty);
   const returnTo = useReturnTo();
   const pageCopy = getNewCustomerCopy(user?.role as "admin" | "manager" | "sales" | "finance" | undefined);
+  const canCreateCustomer = user?.role === "admin";
   const confirmLeave = async () => {
     if (!isDirty) {
       return true;
@@ -274,6 +275,24 @@ export default function NewCustomerPage() {
     && formData.contact_person_email.trim()
     && formData.contact_person_phone.trim(),
   );
+
+  if (user && !canCreateCustomer) {
+    return (
+      <div className="space-y-6">
+        <PageBackButton fallbackHref="/customers" returnTo={returnTo} />
+        <Alert>
+          <AlertDescription>
+            Customer creation is restricted to administrators. Use in-scope customer search and CRM activity instead.
+          </AlertDescription>
+        </Alert>
+        <PageActionBar>
+          <Button type="button" variant="outline" onClick={() => router.push(returnTo || "/customers")}>
+            Back to Customers
+          </Button>
+        </PageActionBar>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

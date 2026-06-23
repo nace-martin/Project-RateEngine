@@ -25,13 +25,25 @@ export const parseErrorResponse = async (response: Response): Promise<string> =>
       return data;
     }
     if (data && typeof data === "object") {
-      if ("detail" in data && typeof data.detail === "string") {
-        return data.detail;
+      for (const key of ["detail", "error", "message"] as const) {
+        const value = (data as Record<string, unknown>)[key];
+        if (typeof value === "string") {
+          return value;
+        }
+        if (Array.isArray(value) && typeof value[0] === "string") {
+          return value[0];
+        }
       }
       return JSON.stringify(data);
     }
   } catch {
     // ignore parse errors
+  }
+  if (response.status === 403) {
+    return "You do not have permission to access this record.";
+  }
+  if (response.status === 404) {
+    return "This record is not available to your current scope.";
   }
   return response.statusText || "Unknown error";
 };

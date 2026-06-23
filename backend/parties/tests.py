@@ -1049,7 +1049,7 @@ class EnforcementReadinessReportTests(TestCase):
 
         self.assertEqual(payload["readiness_status"], "READY_FOR_ENFORCEMENT_DESIGN")
         self.assertTrue(payload["enforcement_surfaces"])
-        self.assertTrue(payload["global_or_unfiltered_surfaces"])
+        self.assertEqual(payload["global_or_unfiltered_surfaces"], [])
         self.assertIn("proposed_enforcement_rules", payload)
         self.assertIn("admin_override_considerations", payload)
 

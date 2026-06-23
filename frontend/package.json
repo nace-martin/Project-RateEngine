@@ -14,6 +14,7 @@
     "test:quote-edit-hydration": "node scripts/quote-edit-hydration.test.mjs",
     "test:quote-detail-helpers": "node scripts/quote-detail-helpers.test.mjs",
     "test:crm-quote-prefill": "node scripts/crm-quote-prefill.test.mjs",
+    "test:rbac-error-response": "node scripts/rbac-error-response.test.mjs",
     "test:domestic-service-scope": "node scripts/domestic-service-scope.test.mjs",
     "test:spot-finalization": "node scripts/spot-finalization.test.mjs",
     "test:spot-workspace-helpers": "node scripts/spot-workspace-helpers.test.mjs",

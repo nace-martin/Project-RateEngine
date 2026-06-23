@@ -13,67 +13,67 @@ SURFACES = [
     {
         "name": "CRM opportunity list/detail",
         "code_path": "backend/crm/views.py:OpportunityViewSet.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter Opportunity by organization, branch, and department for scoped roles",
     },
     {
         "name": "CRM interaction list/detail",
         "code_path": "backend/crm/views.py:InteractionViewSet.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter Interaction by direct scope or scoped company/opportunity parent",
     },
     {
         "name": "CRM task list/detail",
         "code_path": "backend/crm/views.py:TaskViewSet.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter Task by direct scope or scoped company/opportunity parent",
     },
     {
         "name": "Company/customer list",
         "code_path": "backend/parties/views.py:CustomerV3ViewSet.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter Company by organization, branch, and department for scoped roles",
     },
     {
         "name": "Company selector search",
         "code_path": "backend/parties/views.py:CompanyV3SearchView.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter selector results to scoped Company records",
     },
     {
         "name": "Contact selector by company",
         "code_path": "backend/parties/views.py:CompanyContactListV3View.get_queryset",
-        "current_state": "parent_direct_lookup_unfiltered",
+        "current_state": "parent_scope_authorized",
         "required_rule": "authorize parent Company scope before returning Contact rows",
     },
     {
         "name": "Opportunity selectors",
         "code_path": "backend/crm/views.py:OpportunityViewSet.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter opportunity selector options to scoped Opportunity records",
     },
     {
         "name": "Interaction/Task selectors",
         "code_path": "backend/crm/views.py:InteractionViewSet.get_queryset; backend/crm/views.py:TaskViewSet.get_queryset",
-        "current_state": "global_unfiltered",
+        "current_state": "scoped_queryset_enforced",
         "required_rule": "filter interaction and task selector options by scoped parent records",
     },
     {
         "name": "Quote customer detail lookup",
         "code_path": "backend/quotes/views/services.py:CustomerDetailAPIView._get_company",
-        "current_state": "partially_scope_filtered",
+        "current_state": "scoped_lookup_enforced",
         "required_rule": "replace legacy owner/quote organization filter with canonical scope checks",
     },
     {
         "name": "Quote compute customer/contact lookup",
         "code_path": "backend/quotes/views/calculation.py:QuoteCalculationAPIView",
-        "current_state": "direct_id_lookup_unfiltered",
+        "current_state": "direct_id_scope_enforced",
         "required_rule": "validate customer and contact scope before quote calculation",
     },
     {
         "name": "SPOT customer lookup",
         "code_path": "backend/quotes/spot_views.py",
-        "current_state": "direct_id_lookup_unfiltered",
+        "current_state": "direct_id_scope_enforced",
         "required_rule": "validate customer/contact scope before SPE quote creation",
     },
 ]
@@ -170,8 +170,11 @@ def write_text(stdout, report):
     )
     stdout.write("")
     stdout.write("Surfaces currently global/unfiltered:")
-    for surface in report["global_or_unfiltered_surfaces"]:
-        stdout.write(f"- {surface['name']}: {surface['current_state']} ({surface['code_path']})")
+    if report["global_or_unfiltered_surfaces"]:
+        for surface in report["global_or_unfiltered_surfaces"]:
+            stdout.write(f"- {surface['name']}: {surface['current_state']} ({surface['code_path']})")
+    else:
+        stdout.write("- none")
     stdout.write("")
     stdout.write("Required enforcement rules:")
     for rule in report["proposed_enforcement_rules"]:
