@@ -1284,6 +1284,7 @@ export default function SpotRateEntryPage() {
                                             onSaveDraft={handleSaveDraft}
                                             onManualResolveChargeLine={actions.manuallyResolveChargeLine}
                                             productCodeDomain={resolvedShipmentType}
+                                            envelopeId={state.spe?.id}
                                             reviewRequest={activeReviewRequest}
                                         />
 

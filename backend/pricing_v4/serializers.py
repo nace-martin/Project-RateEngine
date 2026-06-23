@@ -599,6 +599,18 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     approved_by_username = serializers.CharField(source='approved_by.username', read_only=True, allow_null=True)
 
+    def validate(self, attrs):
+        source_envelope = attrs.get('source_envelope')
+        source_charge_line = attrs.get('source_charge_line')
+        if source_charge_line is not None:
+            if source_envelope is None:
+                attrs['source_envelope'] = source_charge_line.envelope
+            elif source_charge_line.envelope_id != source_envelope.id:
+                raise serializers.ValidationError(
+                    {'source_charge_line': 'source_charge_line must belong to source_envelope.'}
+                )
+        return attrs
+
     class Meta:
         model = ProductCodeCreationRequest
         fields = [
@@ -610,6 +622,10 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
             'suggested_bucket',
             'suggested_basis',
             'suggested_reason',
+            'source_envelope',
+            'source_charge_line',
+            'source_quote',
+            'source_context_json',
             'status',
             'created_by',
             'created_by_username',
@@ -628,6 +644,7 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
             'normalized_source_label',
             'normalized_suggested_name',
             'created_by',
+            'source_quote',
             'approved_by',
             'approved_product_code',
             'approved_at',

@@ -1,10 +1,13 @@
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
 from unittest.mock import patch
 from django.utils import timezone
 from datetime import date, timedelta
 from decimal import Decimal
+from io import StringIO
+import json
 
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -18,9 +21,12 @@ from pricing_v4.models import (
     DomesticCOGS,
     DomesticSellRate,
     ProductCode,
+    ProductCodeCreationRequest,
     Surcharge,
 )
+from parties.models import Company, Contact
 from services.models import ServiceComponent
+from quotes.models import Quote
 from quotes.completeness import (
     COMPONENT_FREIGHT,
     COMPONENT_ORIGIN_LOCAL,
@@ -47,6 +53,7 @@ class SpotEnvelopeFlowAPITest(APITestCase):
             username="spotflow",
             password="pass123",
             email="spotflow@example.com",
+            role="sales",
         )
         self.client.force_authenticate(user=self.user)
 
@@ -598,6 +605,266 @@ class SpotEnvelopeFlowAPITest(APITestCase):
         self.assertEqual(detail_line["manual_resolution_status"], "RESOLVED")
         self.assertEqual(detail_line["manual_resolved_product_code"]["code"], manual_product_code.code)
         self.assertEqual(detail_line["effective_resolved_product_code"]["code"], manual_product_code.code)
+
+    def test_product_code_request_approval_requires_explicit_spot_charge_resolution(self):
+        self._create_exact_alias(
+            alias_text="Airfreight",
+            mode_scope=ProductCode.DOMAIN_EXPORT,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            code="EXP-FRT-CLOSE-LOOP",
+        )
+        approved_product_code = ProductCode.objects.create(
+            id=7095,
+            code="EXP-APPROVED-HANDLING",
+            description="Export Approved Handling",
+            domain=ProductCode.DOMAIN_EXPORT,
+            category=ProductCode.CATEGORY_HANDLING,
+            is_gst_applicable=False,
+            gst_rate="0.00",
+            gst_treatment=ProductCode.GST_TREATMENT_ZERO_RATED,
+            gl_revenue_code="4100",
+            gl_cost_code="5100",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+
+        create_response = self.client.post(
+            self.create_url,
+            {
+                "shipment_context": {
+                    "origin_country": "PG",
+                    "destination_country": "AU",
+                    "origin_code": self.origin.code,
+                    "destination_code": self.destination.code,
+                    "commodity": "GCR",
+                    "total_weight_kg": 100,
+                    "pieces": 1,
+                },
+                "charges": [
+                    {
+                        "code": "FRT_SPOT",
+                        "description": "Airfreight",
+                        "amount": 5,
+                        "currency": "USD",
+                        "unit": "per_kg",
+                        "bucket": "airfreight",
+                        "is_primary_cost": True,
+                        "conditional": False,
+                        "source_reference": "Agent email",
+                    },
+                    {
+                        "code": "LOCAL_UNKNOWN",
+                        "description": "Unknown local handling",
+                        "amount": 25,
+                        "currency": "USD",
+                        "unit": "per_shipment",
+                        "bucket": "origin_charges",
+                        "is_primary_cost": False,
+                        "conditional": False,
+                        "source_reference": "Agent email",
+                        "source_label": "Unknown local handling",
+                    }
+                ],
+                "trigger_code": "MISSING_SCOPE_RATES",
+                "trigger_text": "Missing required rate components",
+                "conditions": {"rate_validity_hours": 72},
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][1]["id"]
+
+        request_payload = {
+            "source_label": "Unknown local handling",
+            "suggested_name": "Approved Handling",
+            "suggested_bucket": "HANDLING",
+            "suggested_basis": "SHIPMENT",
+            "suggested_reason": "Requested from SPOT review UI",
+            "source_envelope": spe_id,
+            "source_charge_line": charge_line_id,
+            "source_context_json": {"source_reference": "Agent email"},
+        }
+        first_request = self.client.post("/api/v4/product-code-requests/", request_payload, format="json")
+        self.assertEqual(first_request.status_code, status.HTTP_201_CREATED)
+        request_id = first_request.data["id"]
+        self.assertEqual(str(first_request.data["source_envelope"]), spe_id)
+        self.assertEqual(str(first_request.data["source_charge_line"]), charge_line_id)
+
+        duplicate_request = self.client.post("/api/v4/product-code-requests/", request_payload, format="json")
+        self.assertEqual(duplicate_request.status_code, status.HTTP_200_OK)
+        self.assertEqual(duplicate_request.data["id"], request_id)
+        self.assertTrue(duplicate_request.data["duplicate_reused"])
+
+        User = get_user_model()
+        admin = User.objects.create_user(username="pc-admin", password="pass123", role="admin")
+        self.client.force_authenticate(user=admin)
+        approve_response = self.client.post(
+            f"/api/v4/product-code-requests/{request_id}/approve/",
+            {"product_code_id": approved_product_code.id},
+            format="json",
+        )
+        self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
+
+        line = SPEChargeLineDB.objects.get(id=charge_line_id)
+        self.assertIsNone(line.manual_resolution_status)
+        self.assertIsNone(line.manual_resolved_product_code_id)
+
+        detail_response = self.client.get(
+            reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": spe_id}),
+            format="json",
+        )
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        detail_line = next(
+            line for line in detail_response.json()["charges"] if line["id"] == charge_line_id
+        )
+        self.assertEqual(
+            detail_line["suggested_approved_product_code"]["id"],
+            approved_product_code.id,
+        )
+        self.assertTrue(detail_line["requires_review"])
+
+        customer = Company.objects.create(name="SPOT ProductCode Customer")
+        contact = Contact.objects.create(
+            company=customer,
+            first_name="Spot",
+            last_name="Contact",
+            email="spot-contact@example.com",
+        )
+        quote = Quote.objects.create(
+            customer=customer,
+            contact=contact,
+            mode="AIR",
+            shipment_type="EXPORT",
+            incoterm="DAP",
+            payment_term="PREPAID",
+            service_scope="D2D",
+            output_currency="PGK",
+            origin_location=self.origin,
+            destination_location=self.destination,
+            status=Quote.Status.DRAFT,
+            created_by=self.user,
+        )
+        SpotPricingEnvelopeDB.objects.filter(id=spe_id).update(quote=quote)
+
+        self.client.force_authenticate(user=self.user)
+        finalize_response = self.client.post(
+            f"/api/v3/quotes/{quote.id}/transition/",
+            {"action": "finalize"},
+            format="json",
+        )
+        self.assertEqual(finalize_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            finalize_response.json()["detail"],
+            "Cannot finalize quote with unresolved SPOT charge review lines.",
+        )
+
+        manual_review_url = reverse(
+            "quotes:spot-charge-line-manual-resolution",
+            kwargs={"envelope_id": spe_id, "charge_line_id": charge_line_id},
+        )
+        review_response = self.client.patch(
+            manual_review_url,
+            {"manual_resolved_product_code_id": approved_product_code.id},
+            format="json",
+        )
+        self.assertEqual(review_response.status_code, status.HTTP_200_OK)
+        self.assertFalse(review_response.json()["requires_review"])
+
+        finalize_response = self.client.post(
+            f"/api/v3/quotes/{quote.id}/transition/",
+            {"action": "finalize"},
+            format="json",
+        )
+        self.assertEqual(finalize_response.status_code, status.HTTP_200_OK)
+
+    def test_rejected_product_code_request_does_not_resolve_matching_spot_charge(self):
+        self._create_exact_alias(
+            alias_text="Airfreight",
+            mode_scope=ProductCode.DOMAIN_EXPORT,
+            direction_scope=ChargeAlias.DirectionScope.MAIN,
+            code="EXP-FRT-REJECT-LOOP",
+        )
+        create_response = self.client.post(
+            self.create_url,
+            {
+                "shipment_context": {
+                    "origin_country": "PG",
+                    "destination_country": "AU",
+                    "origin_code": self.origin.code,
+                    "destination_code": self.destination.code,
+                    "commodity": "GCR",
+                    "total_weight_kg": 100,
+                    "pieces": 1,
+                },
+                "charges": [
+                    {
+                        "code": "FRT_SPOT",
+                        "description": "Airfreight",
+                        "amount": 5,
+                        "currency": "USD",
+                        "unit": "per_kg",
+                        "bucket": "airfreight",
+                        "is_primary_cost": True,
+                        "conditional": False,
+                        "source_reference": "Agent email",
+                    },
+                    {
+                        "code": "REJECT_UNKNOWN",
+                        "description": "Rejected local handling",
+                        "amount": 25,
+                        "currency": "USD",
+                        "unit": "per_shipment",
+                        "bucket": "origin_charges",
+                        "is_primary_cost": False,
+                        "conditional": False,
+                        "source_reference": "Agent email",
+                    }
+                ],
+                "trigger_code": "MISSING_SCOPE_RATES",
+                "trigger_text": "Missing required rate components",
+                "conditions": {"rate_validity_hours": 72},
+            },
+            format="json",
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        spe_id = create_response.json()["id"]
+        charge_line_id = create_response.json()["charges"][1]["id"]
+
+        request_response = self.client.post(
+            "/api/v4/product-code-requests/",
+            {
+                "source_label": "Rejected local handling",
+                "suggested_name": "Rejected Handling",
+                "suggested_bucket": "HANDLING",
+                "suggested_basis": "SHIPMENT",
+                "source_envelope": spe_id,
+                "source_charge_line": charge_line_id,
+            },
+            format="json",
+        )
+        self.assertEqual(request_response.status_code, status.HTTP_201_CREATED)
+
+        User = get_user_model()
+        admin = User.objects.create_user(username="reject-admin", password="pass123", role="admin")
+        self.client.force_authenticate(user=admin)
+        reject_response = self.client.post(
+            f"/api/v4/product-code-requests/{request_response.data['id']}/reject/",
+            {"rejection_reason": "Use an existing mapped charge instead."},
+            format="json",
+        )
+        self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+
+        line = SPEChargeLineDB.objects.get(id=charge_line_id)
+        self.assertTrue(line.requires_review)
+        self.assertIsNone(line.manual_resolution_status)
+        self.assertIsNone(line.manual_resolved_product_code_id)
+
+        stdout = StringIO()
+        call_command("spot_productcode_close_loop_report", "--format", "json", stdout=stdout)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["readiness_status"], "NOT_READY_FOR_LAUNCH")
+        self.assertEqual(report["blocking_counts"]["rejected_requests_matching_unresolved_lines"], 1)
+        self.assertEqual(report["blocking_counts"]["unresolved_product_code_review_lines"], 1)
 
     def test_manual_resolution_endpoint_requires_manual_resolved_product_code_id(self):
         create_payload = {

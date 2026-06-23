@@ -534,6 +534,20 @@ class QuoteTransitionAPIView(APIView):
         action = request.data.get('action', '').lower()
         
         if action == 'finalize':
+            from quotes.spot_views import _spot_exception_blockers
+
+            spot_blockers = []
+            for spe in quote.spot_envelopes.prefetch_related("charge_lines").all():
+                spot_blockers.extend(_spot_exception_blockers(spe))
+            if spot_blockers:
+                return Response(
+                    {
+                        'detail': 'Cannot finalize quote with unresolved SPOT charge review lines.',
+                        'blocking_issues': spot_blockers,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             # Check for missing rates before finalizing
             latest_version = quote.versions.order_by('-version_number').first()
             if latest_version:

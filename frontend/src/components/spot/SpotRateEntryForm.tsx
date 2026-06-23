@@ -45,6 +45,7 @@ interface SpotRateEntryFormProps {
         request: { manual_resolved_product_code_id: number | string }
     ) => Promise<SPEChargeLine | null>;
     productCodeDomain?: string;
+    envelopeId?: string;
     reviewRequest?: ReviewRequest | null;
 }
 
@@ -126,6 +127,7 @@ export function SpotRateEntryForm({
     onSaveDraft,
     onManualResolveChargeLine,
     productCodeDomain,
+    envelopeId,
     reviewRequest,
 }: SpotRateEntryFormProps) {
     const submitLockRef = useRef(false);
@@ -693,6 +695,7 @@ export function SpotRateEntryForm({
                     }
                 }}
                 chargeLine={manualReviewCharge}
+                envelopeId={envelopeId}
                 productDomain={productCodeDomain}
                 isSaving={isSavingManualReview}
                 saveError={manualReviewError}
