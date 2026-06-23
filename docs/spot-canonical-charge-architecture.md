@@ -229,6 +229,151 @@ To keep the groundwork slice safe, the following features are **explicitly defer
 
 ---
 
+## ProductCode Request Close-Loop Launch Workflow
+
+SPOT manual review can request a new or linked `ProductCode` when an unmapped or ambiguous charge line cannot be resolved from the existing catalogue. The request stores normalized labels for duplicate detection and, when created from the SPOT review UI, durable nullable source context:
+
+- `source_envelope`
+- `source_charge_line`
+- `source_quote`
+- `source_context_json`
+
+Admin approval links the request to an existing or newly created `ProductCode`, but approval is not a charge-line mutation. The approved ProductCode becomes a serializer suggestion on matching unresolved SPOT charge lines through `suggested_approved_product_code`. The operator must explicitly apply that suggestion through the manual-resolution endpoint before quote creation or finalization can proceed.
+
+Automatic behavior:
+
+- duplicate pending ProductCode requests are reused by normalized source label and suggested name;
+- approved requests become visible as suggestions for unresolved matching charge lines;
+- diagnostics report pending, rejected, unapplied, and unresolved close-loop states.
+
+Manual confirmation required:
+
+- admin approval or rejection of ProductCode requests;
+- applying an approved ProductCode suggestion to a SPOT charge line;
+- resolving rejected or still-unmapped lines through a different manual ProductCode.
+
+Launch readiness criteria:
+
+- no pending ProductCode creation requests;
+- no approved requests still unapplied to matching unresolved SPOT charge lines;
+- no rejected requests matching unresolved SPOT charge lines;
+- no unresolved SPOT charge lines requiring ProductCode review;
+- no unresolved charge lines with an approved suggestion available.
+
+Run the read-only diagnostic before launch:
+
+```bash
+python backend/manage.py spot_productcode_close_loop_report
+python backend/manage.py spot_productcode_close_loop_report --format json
+```
+
+The command returns `READY_FOR_LAUNCH` only when all close-loop blocker counts are zero. It performs no writes and does not modify pricing, ProductCode mappings, SPOT envelopes, or quote totals.
+
+---
+
+## ProductCode Master Data Remediation Workflow
+
+Phase 7C uses a second read-only diagnostic to turn unresolved SPOT charge labels into an explicit master-data worklist:
+
+```bash
+python backend/manage.py spot_productcode_masterdata_audit
+python backend/manage.py spot_productcode_masterdata_audit --format json
+```
+
+The command groups unresolved `UNMAPPED` and `AMBIGUOUS` SPE charge lines by normalized label, excluding lines already manually resolved. It reports:
+
+- unique normalized labels and occurrence counts;
+- existing `ProductCode` matches;
+- existing approved ProductCode request matches;
+- pending ProductCode request matches;
+- active alias matches;
+- suggested canonical charge type;
+- remediation category and recommended action.
+
+Remediation categories:
+
+- `EXISTING_PRODUCTCODE_AVAILABLE`: an approved ProductCode request or active alias already points to a ProductCode; the remaining work is to apply or operationalize that mapping.
+- `ALIAS_MAPPING_REQUIRED`: a ProductCode or canonical charge type appears to exist, but the raw SPOT label still needs an explicit alias/mapping decision.
+- `NEW_PRODUCTCODE_REQUIRED`: the label has a pending ProductCode request or repeats without a reliable existing catalogue match.
+- `AMBIGUOUS_MANUAL_REVIEW_REQUIRED`: the label has route, scope, or wording ambiguity that should not be bulk-mapped without human review.
+
+The diagnostic is deliberately non-mutating. It does not create `ProductCode` rows, create aliases, apply manual resolutions, update SPOT charge lines, or alter quote pricing. Operators should use it as the worklist for explicit admin remediation, then rerun both diagnostics:
+
+```bash
+python backend/manage.py spot_productcode_masterdata_audit --format json
+python backend/manage.py spot_productcode_close_loop_report --format json
+```
+
+Launch readiness process:
+
+1. Use `spot_productcode_masterdata_audit` to reduce unresolved labels through explicit ProductCode, alias, or manual-review decisions.
+2. Use `spot_productcode_close_loop_report` to confirm pending, approved-unapplied, rejected-matching, unresolved-review, and suggested-unapplied blocker counts are zero.
+3. Treat `READY_FOR_LAUNCH` as valid only when no unresolved SPOT ProductCode review lines remain and no approved ProductCode suggestion is waiting for explicit user application.
+
+---
+
+## Remediation Apply Planning
+
+Before any data update, generate a read-only apply plan:
+
+```bash
+python backend/manage.py spot_productcode_remediation_plan --format json
+python backend/manage.py spot_productcode_remediation_plan --format csv --output tmp/spot_productcode_remediation_plan.csv
+```
+
+The plan groups unresolved labels into:
+
+- `APPLY_EXISTING_PRODUCT_CODE`
+- `CREATE_ALIAS_MAPPING`
+- `CREATE_NEW_PRODUCT_CODE`
+- `MANUAL_REVIEW`
+- `APPLY_APPROVED_REQUEST`
+
+Each row includes the normalized label, source labels seen, occurrence count, affected charge-line IDs, affected envelope IDs, any ProductCode/request match, recommended ProductCode fields, confidence, reason, and action required.
+
+Review process:
+
+1. Export JSON for machine review and CSV for human sign-off.
+2. Confirm every `HIGH` and `MEDIUM` recommendation against ProductCode domain, GST treatment, charge bucket, and route context.
+3. Leave `LOW` confidence rows in manual review unless a human explicitly approves a mapping.
+4. Do not run any apply command until the reviewed plan has an owner-approved decision for each row.
+
+The planning command is non-mutating. It does not create ProductCodes, create aliases, apply approved requests, update charge lines, change quote totals, or change pricing behavior.
+
+---
+
+## Remediation Apply Execution (Phase 7E)
+
+Once the remediation plan is exported and verified, authorized administrators can execute approved remediation actions using the apply command:
+
+```bash
+python backend/manage.py spot_productcode_remediation_apply --plan tmp/spot_productcode_remediation_plan.json --action-group APPLY_APPROVED_REQUEST --action-group APPLY_EXISTING_PRODUCT_CODE
+```
+
+Safety rules enforced by the apply command:
+1. **Dry-Run Default**: The command runs in dry-run mode by default, simulating all writes and rolling back database modifications at the end of the transaction.
+2. **Apply Flag**: Passing `--apply` commits the changes to the database.
+3. **Validation Gates**: Every affected charge line is checked to ensure it exists, is still unresolved, and matches the plan's normalized label case-insensitively.
+4. **Writes Isolation**: All writes are executed inside a database transaction (`transaction.atomic()`).
+
+---
+
+## Remediation Decision Table Review (Phase 7F)
+
+For remaining unresolved labels with `LOW` or `MEDIUM` confidence recommendations, admins can generate a flat, unique-normalized-label-based decision table to review matches:
+
+```bash
+python backend/manage.py spot_productcode_decision_table --format csv --output tmp/spot_productcode_decision_table.csv
+```
+
+This table is read-only, non-mutating, and consolidates all unresolved raw labels to unique rows. It contains:
+- `display_labels_seen` and `occurrence_count` for each normalized label.
+- `existing_matches` and `fuzzy_matches` from the ProductCode catalogue.
+- `requires_human_approval` (marked `"true"` for any recommendations requiring explicit human sign-off).
+- `decision_notes` describing the recommendation.
+
+---
+
 ## Recommended Implementation Roadmap
 
 1. **Phase 10.3d (Current)**: Architecture Design Proposal & Review.

@@ -28,6 +28,7 @@ interface SpotChargeLineManualReviewSheetProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     chargeLine: SPEChargeLine | null;
+    envelopeId?: string;
     productDomain?: string;
     isSaving?: boolean;
     saveError?: string | null;
@@ -47,6 +48,7 @@ export function SpotChargeLineManualReviewSheet({
     open,
     onOpenChange,
     chargeLine,
+    envelopeId,
     productDomain,
     isSaving = false,
     saveError = null,
@@ -162,6 +164,17 @@ export function SpotChargeLineManualReviewSheet({
                 suggested_bucket: requestSuggestedBucket,
                 suggested_basis: requestSuggestedBasis,
                 suggested_reason: requestSuggestedReason,
+                source_envelope: envelopeId,
+                source_charge_line: chargeLine?.id,
+                source_context_json: {
+                    source_reference: chargeLine?.source_reference,
+                    source_label: chargeLine?.source_label,
+                    normalized_label: chargeLine?.normalized_label,
+                    description: chargeLine?.description,
+                    bucket: chargeLine?.bucket,
+                    unit: chargeLine?.unit,
+                    normalization_status: chargeLine?.normalization_status,
+                },
             });
 
             if (res.duplicate_reused) {
@@ -277,7 +290,7 @@ export function SpotChargeLineManualReviewSheet({
                                             Approved ProductCode suggestion available
                                         </h4>
                                         <p className="text-xs text-emerald-800 leading-normal">
-                                            An approved ProductCode request matches this charge label. Review and apply if correct.
+                                            An approved ProductCode request matches this charge label. Approval alone does not resolve the charge; apply it here if correct.
                                         </p>
                                     </div>
                                 </div>

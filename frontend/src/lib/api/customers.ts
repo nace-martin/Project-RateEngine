@@ -209,6 +209,9 @@ export interface ProductCodeRequestPayload {
   suggested_bucket: string;
   suggested_basis: string;
   suggested_reason: string;
+  source_envelope?: string;
+  source_charge_line?: string;
+  source_context_json?: Record<string, unknown>;
 }
 
 export interface ProductCodeRequestResponse {
@@ -224,6 +227,10 @@ export interface ProductCodeRequestResponse {
   approved_by: number | null;
   approved_by_username: string | null;
   approved_product_code: number | null;
+  source_envelope: string | null;
+  source_charge_line: string | null;
+  source_quote: string | null;
+  source_context_json: Record<string, unknown> | null;
   approved_at: string | null;
   rejected_at: string | null;
   rejection_reason: string | null;

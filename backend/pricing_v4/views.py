@@ -1188,7 +1188,9 @@ class ProductCodeCreationRequestViewSet(
         return [permissions.IsAuthenticated(), IsAdmin()]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        source_envelope = serializer.validated_data.get('source_envelope')
+        source_quote = source_envelope.quote if source_envelope and source_envelope.quote_id else None
+        serializer.save(created_by=self.request.user, source_quote=source_quote)
 
     def create(self, request, *args, **kwargs):
         source_label = request.data.get('source_label', '')
@@ -1204,6 +1206,48 @@ class ProductCodeCreationRequestViewSet(
         ).first()
         
         if matched:
+            from quotes.spot_models import SPEChargeLineDB, SpotPricingEnvelopeDB
+
+            update_fields = []
+            source_envelope_id = request.data.get('source_envelope')
+            source_charge_line_id = request.data.get('source_charge_line')
+            if source_charge_line_id:
+                source_line = SPEChargeLineDB.objects.filter(id=source_charge_line_id).select_related('envelope').first()
+                if not source_line:
+                    return Response(
+                        {"source_charge_line": ["Invalid pk."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if source_envelope_id and str(source_line.envelope_id) != str(source_envelope_id):
+                    return Response(
+                        {"source_charge_line": ["source_charge_line must belong to source_envelope."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                source_envelope_id = str(source_line.envelope_id)
+            elif source_envelope_id:
+                if not SpotPricingEnvelopeDB.objects.filter(id=source_envelope_id).exists():
+                    return Response(
+                        {"source_envelope": ["Invalid pk."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            if source_envelope_id and not matched.source_envelope_id:
+                matched.source_envelope_id = source_envelope_id
+                update_fields.append('source_envelope')
+            if source_charge_line_id and not matched.source_charge_line_id:
+                matched.source_charge_line_id = source_charge_line_id
+                update_fields.append('source_charge_line')
+            if matched.source_envelope_id and not matched.source_quote_id:
+                source_quote_id = (
+                    SpotPricingEnvelopeDB.objects
+                    .filter(id=matched.source_envelope_id)
+                    .values_list('quote_id', flat=True)
+                    .first()
+                )
+                if source_quote_id:
+                    matched.source_quote_id = source_quote_id
+                    update_fields.append('source_quote')
+            if update_fields:
+                matched.save(update_fields=[*update_fields, 'updated_at'])
             serializer = self.get_serializer(matched)
             data = dict(serializer.data)
             data['duplicate_reused'] = True

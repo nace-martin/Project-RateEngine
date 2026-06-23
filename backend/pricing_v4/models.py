@@ -1709,6 +1709,35 @@ class ProductCodeCreationRequest(models.Model):
     suggested_bucket = models.CharField(max_length=50, help_text="Suggested category bucket (e.g. FREIGHT, Terminal, Customs)")
     suggested_basis = models.CharField(max_length=50, help_text="Suggested charge basis (e.g. per Shipment, per KG)")
     suggested_reason = models.TextField(blank=True, help_text="Reason/context for suggesting this product code")
+    source_envelope = models.ForeignKey(
+        'quotes.SpotPricingEnvelopeDB',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='product_code_creation_requests',
+        help_text="SPOT envelope that originated this request, when available.",
+    )
+    source_charge_line = models.ForeignKey(
+        'quotes.SPEChargeLineDB',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='product_code_creation_requests',
+        help_text="SPOT charge line that originated this request, when available.",
+    )
+    source_quote = models.ForeignKey(
+        'quotes.Quote',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='product_code_creation_requests',
+        help_text="Quote linked to the originating SPOT envelope, when available.",
+    )
+    source_context_json = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Snapshot of source context for audit and fallback matching.",
+    )
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
     
     created_by = models.ForeignKey(
@@ -1748,6 +1777,7 @@ class ProductCodeCreationRequest(models.Model):
         indexes = [
             models.Index(fields=['created_at'], name='pc_req_created_at_idx'),
             models.Index(fields=['status', 'normalized_source_label', 'normalized_suggested_name'], name='pc_req_dedupe_idx'),
+            models.Index(fields=['status', 'source_envelope', 'source_charge_line'], name='pc_req_source_idx'),
         ]
 
     @staticmethod
