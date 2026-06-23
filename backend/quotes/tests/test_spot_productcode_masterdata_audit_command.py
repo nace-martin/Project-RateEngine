@@ -122,7 +122,8 @@ class SpotProductCodeMasterDataAuditTests(TestCase):
         self.assertEqual(report["readiness_summary"]["category_counts"][CATEGORY_NEW_PRODUCT_CODE], 1)
 
     def test_command_json_output_includes_readiness_summary(self):
-        self._line(label="Unknown Local Fee")
+        self._line(label="AWB Fee")
+
 
         stdout = StringIO()
         call_command("spot_productcode_masterdata_audit", "--format", "json", stdout=stdout)

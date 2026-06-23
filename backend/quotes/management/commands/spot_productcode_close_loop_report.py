@@ -5,9 +5,11 @@ from django.core.management.base import BaseCommand
 from pricing_v4.models import ProductCodeCreationRequest
 from quotes.serializers import SPEChargeLineSerializer
 from quotes.spot_models import SPEChargeLineDB
+from quotes.management.commands.spot_productcode_masterdata_audit import build_masterdata_audit, CATEGORY_MANUAL_REVIEW
 
 
 READY = "READY_FOR_LAUNCH"
+READY_EXCEPTIONS = "READY_FOR_LAUNCH_WITH_MANUAL_REVIEW_EXCEPTIONS"
 NOT_READY = "NOT_READY_FOR_LAUNCH"
 
 
@@ -130,6 +132,61 @@ def build_report() -> dict:
                 }
             )
 
+    # Classify unresolved lines into manual exceptions vs hard blockers
+    try:
+        audit_data = build_masterdata_audit()
+        label_to_category = {
+            item["normalized_label"]: item["remediation_category"]
+            for item in audit_data.get("labels", [])
+        }
+    except Exception:
+        label_to_category = {}
+
+    manual_review_exception_lines = []
+    hard_blocker_lines = []
+    for line in unresolved_lines:
+        norm = ProductCodeCreationRequest.normalize_label(line.normalized_label or line.description or "")
+        category = label_to_category.get(norm)
+        if category == CATEGORY_MANUAL_REVIEW:
+            manual_review_exception_lines.append(line)
+        else:
+            hard_blocker_lines.append(line)
+
+    # Distinguish active vs stale pending requests
+    active_pending_requests = []
+    stale_pending_requests = []
+    for req in pending_requests:
+        has_match = False
+        if req.source_charge_line_id and req.source_charge_line_id in unresolved_by_id:
+            has_match = True
+        elif req.normalized_source_label in unresolved_by_norm:
+            has_match = True
+
+        if has_match:
+            active_pending_requests.append(req)
+        else:
+            stale_pending_requests.append(req)
+
+    # Calculate blocker count
+    hard_blocker_count = (
+        len(active_pending_requests) +
+        len(approved_not_applied) +
+        len(rejected_matching_unresolved) +
+        len(suggested_not_resolved) +
+        len(hard_blocker_lines)
+    )
+    manual_review_exception_count = len(manual_review_exception_lines)
+
+    if hard_blocker_count > 0:
+        launch_readiness_status = NOT_READY
+        launch_readiness_reason = f"NOT READY: {hard_blocker_count} hard blockers remain."
+    elif manual_review_exception_count > 0:
+        launch_readiness_status = READY_EXCEPTIONS
+        launch_readiness_reason = f"READY WITH EXCEPTIONS: {manual_review_exception_count} manual review exceptions remain."
+    else:
+        launch_readiness_status = READY
+        launch_readiness_reason = "READY: All checkpoints passed."
+
     blocking_counts = {
         "pending_product_code_requests": len(pending_requests),
         "approved_requests_not_applied": len(approved_not_applied),
@@ -137,15 +194,22 @@ def build_report() -> dict:
         "unresolved_product_code_review_lines": len(unresolved_lines),
         "suggested_approved_product_code_not_resolved": len(suggested_not_resolved),
     }
-    readiness_status = READY if all(count == 0 for count in blocking_counts.values()) else NOT_READY
 
     return {
-        "readiness_status": readiness_status,
+        "readiness_status": launch_readiness_status,
+        "launch_readiness_status": launch_readiness_status,
+        "launch_readiness_reason": launch_readiness_reason,
+        "hard_blocker_count": hard_blocker_count,
+        "manual_review_exception_count": manual_review_exception_count,
+        "active_pending_product_code_request_count": len(active_pending_requests),
+        "stale_pending_product_code_request_count": len(stale_pending_requests),
         "blocking_counts": blocking_counts,
-        "pending_product_code_requests": [_request_payload(req) for req in pending_requests],
+        "pending_product_code_requests": [_request_payload(req) for req in active_pending_requests],
+        "stale_pending_product_code_requests": [_request_payload(req) for req in stale_pending_requests],
         "approved_requests_not_applied": approved_not_applied,
         "rejected_requests_matching_unresolved_lines": rejected_matching_unresolved,
         "unresolved_product_code_review_lines": [_line_payload(line) for line in unresolved_lines],
+        "manual_review_exceptions": [_line_payload(line) for line in manual_review_exception_lines],
         "suggested_approved_product_code_not_resolved": suggested_not_resolved,
     }
 
@@ -168,6 +232,11 @@ class Command(BaseCommand):
             return
 
         self.stdout.write(f"readiness_status: {report['readiness_status']}")
+        self.stdout.write(f"launch_readiness_reason: {report['launch_readiness_reason']}")
+        self.stdout.write(f"hard_blocker_count: {report['hard_blocker_count']}")
+        self.stdout.write(f"manual_review_exception_count: {report['manual_review_exception_count']}")
+        self.stdout.write(f"active_pending_requests: {report['active_pending_product_code_request_count']}")
+        self.stdout.write(f"stale_pending_requests: {report['stale_pending_product_code_request_count']}")
         self.stdout.write("blocking_counts:")
         for key, count in report["blocking_counts"].items():
             self.stdout.write(f"- {key}: {count}")
