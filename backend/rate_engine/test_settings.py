@@ -1,3 +1,4 @@
 from .settings import *
 
 SECURE_SSL_REDIRECT = False
+RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS = True

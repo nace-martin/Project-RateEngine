@@ -69,6 +69,7 @@ from quotes.intake_safety import (
     sync_source_analysis_summary_counts,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer, SpotTemplateValidationReviewSerializer
+from accounts.scope import scoped_queryset_for_user
 from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
@@ -2600,6 +2601,45 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             envelope_id,
             _spe_queryset(),
         )
+        quote_data = request.data.get('quote_request', {})
+        req_cust = (
+            request.data.get('customer_id')
+            or quote_data.get('customer_id')
+        )
+        if req_cust:
+            try:
+                requested_customer_id = UUID(str(req_cust))
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': f'Invalid customer_id: {req_cust}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not scoped_queryset_for_user(Company.objects.all(), request.user).filter(id=requested_customer_id).exists():
+                return Response(
+                    {'error': 'Selected customer is not available for this user.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            req_contact = (
+                request.data.get('contact_id')
+                or quote_data.get('contact_id')
+            )
+            if req_contact:
+                try:
+                    requested_contact_id = UUID(str(req_contact))
+                except (TypeError, ValueError):
+                    return Response(
+                        {'error': f'Invalid contact_id: {req_contact}'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if not Contact.objects.filter(
+                    id=requested_contact_id,
+                    company_id=requested_customer_id,
+                    is_active=True,
+                ).exists():
+                    return Response(
+                        {'error': 'Selected contact is not available for this customer/user.'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
         
         # --- 1. Re-run Computation (Same as ComputeView) ---
         # Note: Ideally this setup logic should be shared, but duplicating for safety now.
@@ -2621,7 +2661,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if not is_valid:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
             
-        quote_data = request.data.get('quote_request', {})
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
         
         try:
@@ -2704,9 +2743,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if not cust_id:
             customer_name = str(ctx.get('customer_name') or '').strip()
             if customer_name:
-                cust = Company.objects.filter(name__iexact=customer_name).first()
+                scoped_companies = scoped_queryset_for_user(Company.objects.all(), request.user)
+                cust = scoped_companies.filter(name__iexact=customer_name).first()
                 if not cust:
-                    cust = Company.objects.filter(name__icontains=customer_name).first()
+                    cust = scoped_companies.filter(name__icontains=customer_name).first()
                 if cust:
                     cust_id = cust.id
         
@@ -2716,7 +2756,14 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if cont_id and not Contact.objects.filter(id=cont_id, company_id=cust_id).exists():
+        scoped_customers = scoped_queryset_for_user(Company.objects.all(), request.user)
+        if not scoped_customers.filter(id=cust_id).exists():
+            return Response(
+                {'error': 'Selected customer is not available for this user.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if cont_id and not Contact.objects.filter(id=cont_id, company_id=cust_id, is_active=True).exists():
             cont_id = None
 
         if requested_contact_id:
@@ -2728,10 +2775,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not Contact.objects.filter(id=candidate_contact_id, company_id=cust_id).exists():
+            if not Contact.objects.filter(id=candidate_contact_id, company_id=cust_id, is_active=True).exists():
                 return Response(
-                    {'error': 'Selected contact does not belong to the selected customer.'},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {'error': 'Selected contact is not available for this customer/user.'},
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
             cont_id = candidate_contact_id
@@ -2781,7 +2828,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        customer = get_object_or_404(Company, id=cust_id)
+        customer = get_object_or_404(scoped_customers, id=cust_id)
         raw_opportunity_id = (
             request.data.get('opportunity_id')
             or quote_data.get('opportunity_id')

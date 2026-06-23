@@ -2679,6 +2679,71 @@ Next phase:
 - Design enforcement rules and tests from this report before changing any
   selector, API, queryset, serializer, or UI permission behavior.
 
+#### Phase 9D - Backend/API/Selector RBAC Enforcement
+
+Date: 2026-06-23
+
+Branch: `codex/phase-9d-backend-rbac-enforcement`
+
+Scope: enforce backend scoped access for CRM/customer-related APIs and
+selectors using canonical active `UserMembership` organization, branch, and
+department scope.
+
+Enforced surfaces:
+
+- `CustomerV3ViewSet` list/detail APIs under `/api/v3/customers/`.
+- Company selector/search APIs under `/api/v3/parties/search/` and the
+  companies alias.
+- Company contact selector API under
+  `/api/v3/parties/companies/<company_id>/contacts/`.
+- CRM opportunity, interaction, and task list/detail APIs under
+  `/api/v3/crm/`.
+- Quote customer detail lookup under `/api/v3/customer-details/<customer_id>/`.
+- Quote compute direct customer/contact IDs under `/api/v3/quotes/compute/`.
+- SPOT envelope create-quote direct customer/contact IDs under
+  `/api/v3/spot/envelopes/<envelope_id>/create-quote/`.
+
+Rules:
+
+- Admin role users and superusers have explicit cross-scope access.
+- Non-admin users require exactly one active complete canonical membership.
+- Scoped non-admin access requires matching organization, branch, and
+  department.
+- Users without a complete canonical membership receive no scoped customer/CRM
+  records.
+- Manual-review unscoped records are not exposed to normal scoped users.
+- Detail APIs use the same scoped querysets as list APIs, preventing direct-ID
+  access to out-of-scope records.
+- Quote and SPOT direct customer/contact IDs are rejected when the company is
+  outside the authenticated user's scope.
+
+Admin override behavior:
+
+- Admin and superuser override is centralized in the accounts scope helper and
+  covered by tests.
+- The override is backend-only in this phase; no selector/UI permission changes
+  are made outside backend queryset and direct-ID validation.
+
+Test matrix:
+
+- Admin can list cross-scope and unscoped customer records.
+- Scoped manager/sales users can retrieve in-scope customers.
+- Scoped users cannot list or retrieve out-of-scope or manual-review unscoped
+  customers.
+- Company selector results exclude out-of-scope companies.
+- Contact-by-company rejects out-of-scope parent companies.
+- Opportunity, interaction, and task APIs filter lists and deny direct-ID detail
+  access for out-of-scope rows.
+- Quote compute rejects out-of-scope customer/contact IDs before pricing.
+- SPOT create-quote rejects out-of-scope customer IDs before pricing.
+
+Safety:
+
+- This phase does not backfill records, change historical scope data, touch
+  manual-review records, alter pricing behavior, enforce frontend/UI
+  permissions, or change ProductCode/SPOT validation rules beyond customer and
+  contact access checks.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

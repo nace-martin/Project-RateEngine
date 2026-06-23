@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from accounts.scope import populate_missing_scope_values
+from accounts.scope import populate_missing_scope_values, scoped_queryset_for_user
 from .models import Address, Company, Contact, Organization, OrganizationBranding
 from .serializers import (
     CompanySearchV3Serializer,
@@ -84,8 +84,10 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         customer_filter = Q(is_customer=True) | Q(company_type="CUSTOMER")
+        queryset = Company.objects.filter(customer_filter, is_active=True)
+        queryset = scoped_queryset_for_user(queryset, self.request.user)
         return (
-            Company.objects.filter(customer_filter, is_active=True)
+            queryset
             .order_by("name")
             .prefetch_related(
                 Prefetch(
@@ -123,11 +125,10 @@ class CompanyV3SearchView(generics.ListAPIView):
         query = self.request.query_params.get("q", "").strip()
         if len(query) < 2:
             return Company.objects.none()
-        return (
-            Company.objects.filter(name__icontains=query, is_active=True)
-            .filter(Q(is_customer=True) | Q(company_type="CUSTOMER"))
-            .order_by("name")[:20]
-        )
+        queryset = Company.objects.filter(name__icontains=query, is_active=True)
+        queryset = queryset.filter(Q(is_customer=True) | Q(company_type="CUSTOMER"))
+        queryset = scoped_queryset_for_user(queryset, self.request.user)
+        return queryset.order_by("name")[:20]
 
 
 class CompanyContactListV3View(generics.ListAPIView):
@@ -140,7 +141,8 @@ class CompanyContactListV3View(generics.ListAPIView):
 
     def get_queryset(self):
         company_id = self.kwargs.get("company_id")
-        company = get_object_or_404(Company, pk=company_id)
+        company_queryset = scoped_queryset_for_user(Company.objects.all(), self.request.user)
+        company = get_object_or_404(company_queryset, pk=company_id)
         return company.contacts.filter(is_active=True).order_by("last_name", "first_name")
 
 

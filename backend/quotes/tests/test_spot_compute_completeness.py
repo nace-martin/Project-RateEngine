@@ -392,8 +392,8 @@ def test_spot_create_quote_rejects_contact_from_another_customer(monkeypatch):
         format="json",
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"] == "Selected contact does not belong to the selected customer."
+    assert response.status_code == 404
+    assert response.json()["error"] == "Selected contact is not available for this customer/user."
 
 
 def test_spot_create_quote_auto_creates_and_links_opportunity(monkeypatch):

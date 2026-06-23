@@ -15,6 +15,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 
 from parties.models import Address, Company, Contact, CustomerCommercialProfile
+from accounts.scope import scoped_queryset_for_user
 from core.models import Airport, City, Country, Currency
 from core.security import validate_csv_upload
 from ratecards.models import PartnerRateCard
@@ -134,20 +135,9 @@ class CustomerDetailAPIView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def _get_company(self, company_id):
-        user = self.request.user
         base_filter = Q(is_customer=True) | Q(company_type='CUSTOMER')
-
-        if user.is_superuser or user.role == 'admin':
-            queryset = Company.objects.filter(base_filter)
-        else:
-            user_org = getattr(user, 'organization', None)
-            if not user_org:
-                from django.http import Http404
-                raise Http404("No Customer matches the given query.")
-
-            tenant_filter = Q(account_owner__organization=user_org) | Q(quotes_as_customer__organization=user_org)
-            queryset = Company.objects.filter(base_filter).filter(tenant_filter).distinct()
-
+        queryset = Company.objects.filter(base_filter)
+        queryset = scoped_queryset_for_user(queryset, self.request.user)
         queryset = queryset.select_related(
             'commercial_profile__preferred_quote_currency'
         ).prefetch_related('contacts', 'addresses__city__country')
