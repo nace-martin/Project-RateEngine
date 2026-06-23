@@ -13,6 +13,7 @@ from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
 from quotes.schemas import QuoteComputeRequest
 from accounts.permissions import QuoteAccessPermission
+from accounts.scope import scoped_queryset_for_user
 from quotes.selectors import get_quote_for_user
 from quotes.state_machine import (
     QuoteImmutableError,
@@ -148,6 +149,10 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        customer_queryset = scoped_queryset_for_user(Company.objects.all(), request.user)
+        customer = get_object_or_404(customer_queryset, id=payload.customer_id)
+        get_object_or_404(Contact.objects.filter(company=customer), id=payload.contact_id)
 
         derived_output_currency = self._derive_output_currency(
             shipment_type,
@@ -477,8 +482,11 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         Helper to save the quote, version, lines, and totals to the database.
         When an existing quote is provided, we append a new version instead of creating a duplicate quote.
         """
-        customer = get_object_or_404(Company, id=validated_data.customer_id)
-        contact = get_object_or_404(Contact, id=validated_data.contact_id)
+        customer = get_object_or_404(
+            scoped_queryset_for_user(Company.objects.all(), request.user),
+            id=validated_data.customer_id,
+        )
+        contact = get_object_or_404(Contact.objects.filter(company=customer), id=validated_data.contact_id)
 
         request_payload = validated_data.model_dump(mode='json')
         if resolved_dimensions is not None:

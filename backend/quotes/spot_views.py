@@ -69,6 +69,7 @@ from quotes.intake_safety import (
     sync_source_analysis_summary_counts,
 )
 from quotes.serializers import SpotPricingEnvelopeSerializer, SPEChargeLineSerializer, SpotTemplateValidationReviewSerializer
+from accounts.scope import scoped_queryset_for_user
 from quotes.quote_result_contract import (
     build_persisted_line_item_metadata,
     build_persisted_quote_total_metadata,
@@ -2600,6 +2601,24 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             envelope_id,
             _spe_queryset(),
         )
+        quote_data = request.data.get('quote_request', {})
+        req_cust = (
+            request.data.get('customer_id')
+            or quote_data.get('customer_id')
+        )
+        if req_cust:
+            try:
+                requested_customer_id = UUID(str(req_cust))
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': f'Invalid customer_id: {req_cust}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not scoped_queryset_for_user(Company.objects.all(), request.user).filter(id=requested_customer_id).exists():
+                return Response(
+                    {'error': 'Selected customer is not available for this user.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
         
         # --- 1. Re-run Computation (Same as ComputeView) ---
         # Note: Ideally this setup logic should be shared, but duplicating for safety now.
@@ -2621,7 +2640,6 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if not is_valid:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
             
-        quote_data = request.data.get('quote_request', {})
         ctx = _normalize_shipment_context(spe_db.shipment_context_json)
         
         try:
@@ -2704,9 +2722,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
         if not cust_id:
             customer_name = str(ctx.get('customer_name') or '').strip()
             if customer_name:
-                cust = Company.objects.filter(name__iexact=customer_name).first()
+                scoped_companies = scoped_queryset_for_user(Company.objects.all(), request.user)
+                cust = scoped_companies.filter(name__iexact=customer_name).first()
                 if not cust:
-                    cust = Company.objects.filter(name__icontains=customer_name).first()
+                    cust = scoped_companies.filter(name__icontains=customer_name).first()
                 if cust:
                     cust_id = cust.id
         
@@ -2714,6 +2733,13 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
             return Response(
                 {'error': 'Customer is required to create quote. Provide customer_id or link SPE to an existing quote.'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        scoped_customers = scoped_queryset_for_user(Company.objects.all(), request.user)
+        if not scoped_customers.filter(id=cust_id).exists():
+            return Response(
+                {'error': 'Selected customer is not available for this user.'},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         if cont_id and not Contact.objects.filter(id=cont_id, company_id=cust_id).exists():
@@ -2781,7 +2807,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        customer = get_object_or_404(Company, id=cust_id)
+        customer = get_object_or_404(scoped_customers, id=cust_id)
         raw_opportunity_id = (
             request.data.get('opportunity_id')
             or quote_data.get('opportunity_id')

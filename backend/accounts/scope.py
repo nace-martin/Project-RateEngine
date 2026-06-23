@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from django.db.models import Q
+
 from .models import CustomUser, UserMembership
 
 
@@ -101,6 +103,66 @@ def get_active_memberships(user):
         UserMembership.objects.filter(user=user, is_active=True)
         .select_related("organization", "branch", "department", "role")
         .prefetch_related("role__permissions")
+    )
+
+
+def user_has_cross_scope_access(user) -> bool:
+    return bool(
+        _is_authenticated_active(user)
+        and (
+            getattr(user, "is_superuser", False)
+            or getattr(user, "role", None) == CustomUser.ROLE_ADMIN
+        )
+    )
+
+
+def get_single_complete_membership(user):
+    memberships = list(get_active_memberships(user))
+    if len(memberships) != 1:
+        return None
+    membership = memberships[0]
+    if (
+        not membership.organization_id
+        or not membership.branch_id
+        or not membership.department_id
+    ):
+        return None
+    return membership
+
+
+def scoped_queryset_for_user(queryset, user, *, prefix: str = ""):
+    if user_has_cross_scope_access(user):
+        return queryset
+
+    membership = get_single_complete_membership(user)
+    if membership is None:
+        return queryset.none()
+
+    field_prefix = f"{prefix}__" if prefix else ""
+    return queryset.filter(
+        **{
+            f"{field_prefix}organization_id": membership.organization_id,
+            f"{field_prefix}branch_id": membership.branch_id,
+            f"{field_prefix}department_id": membership.department_id,
+        }
+    )
+
+
+def scoped_q_for_user(user, *, prefix: str = "") -> Q:
+    if user_has_cross_scope_access(user):
+        return Q()
+
+    membership = get_single_complete_membership(user)
+    if membership is None:
+        return Q(pk__in=[])
+
+    field_prefix = f"{prefix}__" if prefix else ""
+    return Q(
+        **{
+            f"{field_prefix}organization_id": membership.organization_id,
+            f"{field_prefix}branch_id": membership.branch_id,
+            f"{field_prefix}department_id": membership.department_id,
+        }
     )
 
 

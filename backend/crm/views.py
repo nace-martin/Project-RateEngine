@@ -3,6 +3,7 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from accounts.scope import scoped_queryset_for_user
 from .models import Interaction, Opportunity, Task
 from .serializers import InteractionSerializer, OpportunitySerializer, TaskSerializer
 from .services import mark_opportunity_lost, mark_opportunity_won
@@ -25,6 +26,7 @@ class OpportunityViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Opportunity.objects.select_related("company", "owner", "won_by").filter(is_active=True)
+        queryset = scoped_queryset_for_user(queryset, self.request.user)
         company = self.request.query_params.get("company")
         status = self.request.query_params.get("status")
         owner = self.request.query_params.get("owner")
@@ -87,6 +89,7 @@ class InteractionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Interaction.objects.select_related("company", "contact", "opportunity", "author")
+        queryset = scoped_queryset_for_user(queryset, self.request.user)
         company = self.request.query_params.get("company")
         opportunity = self.request.query_params.get("opportunity")
         if company:
@@ -105,6 +108,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Task.objects.select_related("company", "opportunity", "owner", "completed_by")
+        queryset = scoped_queryset_for_user(queryset, self.request.user)
         owner = self.request.query_params.get("owner")
         status = self.request.query_params.get("status")
         due_date = self.request.query_params.get("due_date")

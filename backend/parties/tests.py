@@ -16,7 +16,7 @@ from PIL import Image
 
 from accounts.models import CustomUser, Role, UserMembership
 from crm.models import Interaction, Opportunity, Task
-from core.models import Country, City
+from core.models import Country, City, Location
 from core.models import Currency
 from parties.models import Branch, Company, Contact, Address, Department, Organization, OrganizationBranding
 from quotes.models import Quote
@@ -2790,6 +2790,263 @@ class CustomerListAPITests(APITestCase):
         self.assertEqual(company.department, department)
 
 
+class BackendScopedAccessAPITests(APITestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.role_admin = Role.objects.create(code="phase9d-admin", name="Admin", is_system=True)
+        self.role_manager = Role.objects.create(code="phase9d-manager", name="Manager", is_system=True)
+        self.role_sales = Role.objects.create(code="phase9d-sales", name="Sales", is_system=True)
+
+        self.org_a = Organization.objects.create(name="Phase 9D Org A", slug="phase-9d-org-a")
+        self.branch_a = Branch.objects.create(organization=self.org_a, code="P9A", name="Phase 9D A")
+        self.department_a = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a,
+            code="AIR",
+            name="Air Freight",
+        )
+        self.org_b = Organization.objects.create(name="Phase 9D Org B", slug="phase-9d-org-b")
+        self.branch_b = Branch.objects.create(organization=self.org_b, code="P9B", name="Phase 9D B")
+        self.department_b = Department.objects.create(
+            organization=self.org_b,
+            branch=self.branch_b,
+            code="AIR",
+            name="Air Freight",
+        )
+
+        self.admin = self._user("phase9d-admin-user", CustomUser.ROLE_ADMIN, self.org_a, self.branch_a, self.department_a, self.role_admin)
+        self.manager = self._user("phase9d-manager-user", CustomUser.ROLE_MANAGER, self.org_a, self.branch_a, self.department_a, self.role_manager)
+        self.sales = self._user("phase9d-sales-user", CustomUser.ROLE_SALES, self.org_a, self.branch_a, self.department_a, self.role_sales)
+
+        self.company_a = self._company("Phase 9D Customer A", self.org_a, self.branch_a, self.department_a)
+        self.company_b = self._company("Phase 9D Customer B", self.org_b, self.branch_b, self.department_b)
+        self.company_unscoped = Company.objects.create(
+            name="Phase 9D Manual Review Customer",
+            is_customer=True,
+            company_type="CUSTOMER",
+        )
+        self.contact_a = self._contact(self.company_a, "a")
+        self.contact_b = self._contact(self.company_b, "b")
+
+        self.opportunity_a = self._opportunity("Phase 9D Opportunity A", self.company_a, self.org_a, self.branch_a, self.department_a)
+        self.opportunity_b = self._opportunity("Phase 9D Opportunity B", self.company_b, self.org_b, self.branch_b, self.department_b)
+        self.interaction_a = self._interaction(self.company_a, self.org_a, self.branch_a, self.department_a)
+        self.interaction_b = self._interaction(self.company_b, self.org_b, self.branch_b, self.department_b)
+        self.task_a = self._task("Phase 9D Task A", self.company_a, self.org_a, self.branch_a, self.department_a)
+        self.task_b = self._task("Phase 9D Task B", self.company_b, self.org_b, self.branch_b, self.department_b)
+
+    def _user(self, username, role, organization, branch, department, membership_role):
+        user = CustomUser.objects.create_user(username=username, password="testpass123", role=role)
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=membership_role,
+        )
+        return user
+
+    def _company(self, name, organization, branch, department):
+        return Company.objects.create(
+            name=name,
+            is_customer=True,
+            company_type="CUSTOMER",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+    def _contact(self, company, suffix):
+        return Contact.objects.create(
+            company=company,
+            organization=company.organization,
+            branch=company.branch,
+            department=company.department,
+            first_name="Phase",
+            last_name=f"Contact {suffix}",
+            email=f"phase9d-{suffix}@example.com",
+            is_active=True,
+        )
+
+    def _opportunity(self, title, company, organization, branch, department):
+        return Opportunity.objects.create(
+            company=company,
+            title=title,
+            service_type="AIR",
+            owner=self.sales,
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+    def _interaction(self, company, organization, branch, department):
+        return Interaction.objects.create(
+            company=company,
+            interaction_type=Interaction.InteractionType.CALL,
+            summary=f"Call with {company.name}",
+            author=self.sales,
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+    def _task(self, description, company, organization, branch, department):
+        return Task.objects.create(
+            company=company,
+            description=description,
+            owner=self.sales,
+            due_date=timezone.now().date(),
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+
+    def _ids(self, response):
+        return {str(row["id"]) for row in response.data}
+
+    def test_admin_can_access_cross_scope_customers(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get("/api/v3/customers/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned_ids = self._ids(response)
+        self.assertIn(str(self.company_a.id), returned_ids)
+        self.assertIn(str(self.company_b.id), returned_ids)
+        self.assertIn(str(self.company_unscoped.id), returned_ids)
+
+    def test_scoped_manager_can_access_in_scope_customer(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.get(f"/api/v3/customers/{self.company_a.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], str(self.company_a.id))
+
+    def test_scoped_user_list_excludes_out_of_scope_and_unscoped_customers(self):
+        self.client.force_authenticate(user=self.sales)
+
+        response = self.client.get("/api/v3/customers/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned_ids = self._ids(response)
+        self.assertIn(str(self.company_a.id), returned_ids)
+        self.assertNotIn(str(self.company_b.id), returned_ids)
+        self.assertNotIn(str(self.company_unscoped.id), returned_ids)
+
+    def test_scoped_user_cannot_retrieve_out_of_scope_customer_by_id(self):
+        self.client.force_authenticate(user=self.sales)
+
+        response = self.client.get(f"/api/v3/customers/{self.company_b.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_company_selector_filters_out_of_scope_companies(self):
+        self.client.force_authenticate(user=self.sales)
+
+        response = self.client.get("/api/v3/parties/search/", {"q": "Phase 9D Customer"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned_ids = self._ids(response)
+        self.assertIn(str(self.company_a.id), returned_ids)
+        self.assertNotIn(str(self.company_b.id), returned_ids)
+
+    def test_contact_by_company_endpoint_checks_parent_company_scope(self):
+        self.client.force_authenticate(user=self.sales)
+
+        in_scope = self.client.get(f"/api/v3/parties/companies/{self.company_a.id}/contacts/")
+        out_of_scope = self.client.get(f"/api/v3/parties/companies/{self.company_b.id}/contacts/")
+
+        self.assertEqual(in_scope.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._ids(in_scope), {str(self.contact_a.id)})
+        self.assertEqual(out_of_scope.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_crm_viewsets_filter_and_deny_direct_out_of_scope_ids(self):
+        self.client.force_authenticate(user=self.sales)
+
+        opportunity_list = self.client.get("/api/v3/crm/opportunities/")
+        interaction_list = self.client.get("/api/v3/crm/interactions/")
+        task_list = self.client.get("/api/v3/crm/tasks/")
+
+        self.assertEqual(opportunity_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(interaction_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(task_list.status_code, status.HTTP_200_OK)
+        self.assertIn(str(self.opportunity_a.id), self._ids(opportunity_list))
+        self.assertNotIn(str(self.opportunity_b.id), self._ids(opportunity_list))
+        self.assertIn(str(self.interaction_a.id), self._ids(interaction_list))
+        self.assertNotIn(str(self.interaction_b.id), self._ids(interaction_list))
+        self.assertIn(str(self.task_a.id), self._ids(task_list))
+        self.assertNotIn(str(self.task_b.id), self._ids(task_list))
+
+        self.assertEqual(
+            self.client.get(f"/api/v3/crm/opportunities/{self.opportunity_b.id}/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/v3/crm/interactions/{self.interaction_b.id}/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/v3/crm/tasks/{self.task_b.id}/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_quote_calculation_rejects_out_of_scope_customer_id_before_pricing(self):
+        self.client.force_authenticate(user=self.sales)
+        pgk = Currency.objects.create(code="PGK", name="Papua New Guinean Kina")
+        png = Country.objects.create(code="PG", name="Papua New Guinea", currency=pgk)
+        pom = Location.objects.create(code="POM", name="Port Moresby", country=png)
+        lae = Location.objects.create(code="LAE", name="Lae", country=png)
+
+        response = self.client.post(
+            "/api/v3/quotes/compute/",
+            {
+                "customer_id": str(self.company_b.id),
+                "contact_id": str(self.contact_b.id),
+                "mode": "AIR",
+                "service_scope": "D2D",
+                "origin_location_id": str(pom.id),
+                "destination_location_id": str(lae.id),
+                "incoterm": "DAP",
+                "payment_term": "PREPAID",
+                "dimensions": [
+                    {
+                        "pieces": 1,
+                        "length_cm": "10",
+                        "width_cm": "10",
+                        "height_cm": "10",
+                        "gross_weight_kg": "1",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_spot_quote_creation_rejects_out_of_scope_customer_id(self):
+        self.client.force_authenticate(user=self.sales)
+        envelope = SpotPricingEnvelopeDB.objects.create(
+            created_by=self.sales,
+            owner=self.sales,
+            shipment_context_json={"origin": "POM", "destination": "LAE"},
+            conditions_json={},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test trigger",
+            expires_at=timezone.now(),
+        )
+
+        response = self.client.post(
+            f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
+            {"customer_id": str(self.company_b.id)},
+            format="json",
+        )
+
+        self.assertIn(response.status_code, {status.HTTP_400_BAD_REQUEST, status.HTTP_404_NOT_FOUND})
+        if response.status_code == status.HTTP_404_NOT_FOUND:
+            self.assertEqual(response.data["error"], "Selected customer is not available for this user.")
+
+
 class OrganizationBrandingSettingsAPITests(APITestCase):
     def setUp(self):
         self.admin = CustomUser.objects.create_user(
@@ -2942,6 +3199,21 @@ class CustomerDetailAPITests(APITestCase):
         # Create organizations
         self.org_a = Organization.objects.create(name="Org A", slug="org-a", is_active=True)
         self.org_b = Organization.objects.create(name="Org B", slug="org-b", is_active=True)
+        self.branch_a = Branch.objects.create(organization=self.org_a, code="OA", name="Org A Branch")
+        self.branch_b = Branch.objects.create(organization=self.org_b, code="OB", name="Org B Branch")
+        self.department_a = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a,
+            code="AIR",
+            name="Air Freight",
+        )
+        self.department_b = Department.objects.create(
+            organization=self.org_b,
+            branch=self.branch_b,
+            code="AIR",
+            name="Air Freight",
+        )
+        self.sales_role = Role.objects.create(code="customer-detail-sales", name="Sales", is_system=True)
 
         # Create users
         self.admin = CustomUser.objects.create_user(
@@ -2953,10 +3225,30 @@ class CustomerDetailAPITests(APITestCase):
         self.user_org_b = CustomUser.objects.create_user(
             username="user-org-b", password="password123", role=CustomUser.ROLE_SALES, organization=self.org_b
         )
+        UserMembership.objects.create(
+            user=self.user_org_a,
+            organization=self.org_a,
+            branch=self.branch_a,
+            department=self.department_a,
+            role=self.sales_role,
+        )
+        UserMembership.objects.create(
+            user=self.user_org_b,
+            organization=self.org_b,
+            branch=self.branch_b,
+            department=self.department_b,
+            role=self.sales_role,
+        )
 
         # Create customers
         self.customer_org_a = Company.objects.create(
-            name="Customer Org A", is_customer=True, company_type="CUSTOMER", account_owner=self.user_org_a
+            name="Customer Org A",
+            is_customer=True,
+            company_type="CUSTOMER",
+            account_owner=self.user_org_a,
+            organization=self.org_a,
+            branch=self.branch_a,
+            department=self.department_a,
         )
         self.customer_unowned = Company.objects.create(
             name="Customer Unowned", is_customer=True, company_type="CUSTOMER", account_owner=None
@@ -2987,14 +3279,12 @@ class CustomerDetailAPITests(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_unowned_customer_is_blocked_for_non_admin_unless_linked(self):
-        # 1. Unowned customer is blocked when not linked to any quotes in the organization
+    def test_unscoped_customer_is_blocked_for_non_admin_even_when_linked(self):
         self.client.force_authenticate(user=self.user_org_a)
         url = reverse("quotes:customer-detail", kwargs={"customer_id": self.customer_unowned.id})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-        # 2. Link unowned customer to a quote in Org A
         from quotes.models import Quote
         Quote.objects.create(
             customer=self.customer_unowned,
@@ -3004,12 +3294,9 @@ class CustomerDetailAPITests(APITestCase):
             created_by=self.user_org_a
         )
 
-        # 3. Should now be retrievable for user in Org A
         response_after_linked = self.client.get(url)
-        self.assertEqual(response_after_linked.status_code, status.HTTP_200_OK)
-        self.assertEqual(response_after_linked.data["company_name"], "Customer Unowned")
+        self.assertEqual(response_after_linked.status_code, status.HTTP_404_NOT_FOUND)
 
-        # 4. But still blocked for user in Org B
         self.client.force_authenticate(user=self.user_org_b)
         response_org_b = self.client.get(url)
         self.assertEqual(response_org_b.status_code, status.HTTP_404_NOT_FOUND)
