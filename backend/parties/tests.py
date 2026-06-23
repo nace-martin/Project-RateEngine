@@ -968,6 +968,92 @@ class HistoricalScopeBackfillApplyTests(TestCase):
         self.assertEqual(after["proposed_apply_strategy"]["apply_eligible_records"], 0)
 
 
+class EnforcementReadinessReportTests(TestCase):
+    def _call_report(self, *args):
+        stdout = StringIO()
+        call_command("rbac_enforcement_readiness_report", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _scope(self, suffix=""):
+        organization = Organization.objects.create(
+            name=f"Enforcement Org {suffix}".strip(),
+            slug=f"enforcement-org-{suffix or 'default'}",
+            is_active=True,
+        )
+        branch = Branch.objects.create(organization=organization, code=f"E{suffix}"[:16], name="Enforcement Branch")
+        department = Department.objects.create(
+            organization=organization,
+            branch=branch,
+            code=f"ED{suffix}"[:24],
+            name="Enforcement Department",
+        )
+        return organization, branch, department
+
+    def _member(self, username):
+        organization, branch, department = self._scope(username)
+        role = Role.objects.create(code=f"{username}-role"[:32], name=username, is_system=True)
+        user = CustomUser.objects.create_user(username=username, password="x")
+        UserMembership.objects.create(
+            user=user,
+            organization=organization,
+            branch=branch,
+            department=department,
+            role=role,
+        )
+        return user, organization, branch, department
+
+    def test_command_is_read_only(self):
+        user, _organization, _branch, _department = self._member("enforcement-readonly")
+        company = Company.objects.create(name="Enforcement Readonly Customer", account_owner=user)
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        company.refresh_from_db()
+        self.assertFalse(payload["write_enabled"])
+        self.assertIsNone(company.organization_id)
+        self.assertIsNone(company.branch_id)
+        self.assertIsNone(company.department_id)
+
+    def test_reports_complete_missing_and_manual_review_counts(self):
+        organization, branch, department = self._scope("complete")
+        Company.objects.create(
+            name="Complete Enforcement Customer",
+            organization=organization,
+            branch=branch,
+            department=department,
+        )
+        Company.objects.create(name="Manual Enforcement Customer")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        post = payload["post_backfill"]
+        self.assertEqual(post["summary"]["records_complete"], 1)
+        self.assertEqual(post["summary"]["records_missing_organization"], 1)
+        self.assertEqual(post["manual_review_excluded_records"], 1)
+        self.assertEqual(post["models"]["Company"]["manual_review_exclusions"]["no_safe_evidence"], 1)
+
+    def test_apply_candidates_make_report_not_ready(self):
+        user, _organization, _branch, _department = self._member("enforcement-candidate")
+        Company.objects.create(name="Candidate Enforcement Customer", account_owner=user)
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["post_backfill"]["apply_eligible_records"], 1)
+        self.assertEqual(payload["readiness_status"], "NOT_READY_FOR_ENFORCEMENT_DESIGN")
+        self.assertIn("apply_eligible_records_remaining", payload["readiness_blockers"])
+
+    def test_json_reports_surfaces_and_ready_status(self):
+        Company.objects.create(name="Manual Only Enforcement Customer")
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["readiness_status"], "READY_FOR_ENFORCEMENT_DESIGN")
+        self.assertTrue(payload["enforcement_surfaces"])
+        self.assertTrue(payload["global_or_unfiltered_surfaces"])
+        self.assertIn("proposed_enforcement_rules", payload)
+        self.assertIn("admin_override_considerations", payload)
+
+
 class ScopeCompletenessReportTests(TestCase):
     def _call_report(self, *args):
         stdout = StringIO()
