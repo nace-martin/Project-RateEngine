@@ -2827,6 +2827,8 @@ class BackendScopedAccessAPITests(APITestCase):
         )
         self.contact_a = self._contact(self.company_a, "a")
         self.contact_b = self._contact(self.company_b, "b")
+        self.company_a_other = self._company("Phase 9D Customer A Other", self.org_a, self.branch_a, self.department_a)
+        self.contact_a_other = self._contact(self.company_a_other, "a-other")
 
         self.opportunity_a = self._opportunity("Phase 9D Opportunity A", self.company_a, self.org_a, self.branch_a, self.department_a)
         self.opportunity_b = self._opportunity("Phase 9D Opportunity B", self.company_b, self.org_b, self.branch_b, self.department_b)
@@ -2899,6 +2901,17 @@ class BackendScopedAccessAPITests(APITestCase):
             organization=organization,
             branch=branch,
             department=department,
+        )
+
+    def _spot_envelope(self):
+        return SpotPricingEnvelopeDB.objects.create(
+            created_by=self.sales,
+            owner=self.sales,
+            shipment_context_json={"origin": "POM", "destination": "LAE"},
+            conditions_json={},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test trigger",
+            expires_at=timezone.now(),
         )
 
     def _ids(self, response):
@@ -3026,15 +3039,7 @@ class BackendScopedAccessAPITests(APITestCase):
 
     def test_spot_quote_creation_rejects_out_of_scope_customer_id(self):
         self.client.force_authenticate(user=self.sales)
-        envelope = SpotPricingEnvelopeDB.objects.create(
-            created_by=self.sales,
-            owner=self.sales,
-            shipment_context_json={"origin": "POM", "destination": "LAE"},
-            conditions_json={},
-            spot_trigger_reason_code="TEST",
-            spot_trigger_reason_text="Test trigger",
-            expires_at=timezone.now(),
-        )
+        envelope = self._spot_envelope()
 
         response = self.client.post(
             f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
@@ -3045,6 +3050,53 @@ class BackendScopedAccessAPITests(APITestCase):
         self.assertIn(response.status_code, {status.HTTP_400_BAD_REQUEST, status.HTTP_404_NOT_FOUND})
         if response.status_code == status.HTTP_404_NOT_FOUND:
             self.assertEqual(response.data["error"], "Selected customer is not available for this user.")
+
+    def test_spot_quote_creation_rejects_out_of_scope_contact_id(self):
+        self.client.force_authenticate(user=self.sales)
+        envelope = self._spot_envelope()
+
+        response = self.client.post(
+            f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
+            {
+                "customer_id": str(self.company_a.id),
+                "contact_id": str(self.contact_b.id),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["error"], "Selected contact is not available for this customer/user.")
+
+    def test_spot_quote_creation_rejects_contact_id_for_different_scoped_customer(self):
+        self.client.force_authenticate(user=self.sales)
+        envelope = self._spot_envelope()
+
+        response = self.client.post(
+            f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
+            {
+                "customer_id": str(self.company_a.id),
+                "contact_id": str(self.contact_a_other.id),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["error"], "Selected contact is not available for this customer/user.")
+
+    def test_spot_quote_creation_allows_customer_only_request_to_reach_existing_validation(self):
+        self.client.force_authenticate(user=self.sales)
+        envelope = self._spot_envelope()
+
+        response = self.client.post(
+            f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
+            {"customer_id": str(self.company_a.id)},
+            format="json",
+        )
+
+        self.assertNotEqual(
+            response.data.get("error"),
+            "Selected contact is not available for this customer/user.",
+        )
 
 
 class OrganizationBrandingSettingsAPITests(APITestCase):

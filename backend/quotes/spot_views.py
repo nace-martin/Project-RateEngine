@@ -2619,6 +2619,27 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                     {'error': 'Selected customer is not available for this user.'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            req_contact = (
+                request.data.get('contact_id')
+                or quote_data.get('contact_id')
+            )
+            if req_contact:
+                try:
+                    requested_contact_id = UUID(str(req_contact))
+                except (TypeError, ValueError):
+                    return Response(
+                        {'error': f'Invalid contact_id: {req_contact}'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if not Contact.objects.filter(
+                    id=requested_contact_id,
+                    company_id=requested_customer_id,
+                    is_active=True,
+                ).exists():
+                    return Response(
+                        {'error': 'Selected contact is not available for this customer/user.'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
         
         # --- 1. Re-run Computation (Same as ComputeView) ---
         # Note: Ideally this setup logic should be shared, but duplicating for safety now.
@@ -2742,7 +2763,7 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if cont_id and not Contact.objects.filter(id=cont_id, company_id=cust_id).exists():
+        if cont_id and not Contact.objects.filter(id=cont_id, company_id=cust_id, is_active=True).exists():
             cont_id = None
 
         if requested_contact_id:
@@ -2754,10 +2775,10 @@ class SpotEnvelopeCreateQuoteAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not Contact.objects.filter(id=candidate_contact_id, company_id=cust_id).exists():
+            if not Contact.objects.filter(id=candidate_contact_id, company_id=cust_id, is_active=True).exists():
                 return Response(
-                    {'error': 'Selected contact does not belong to the selected customer.'},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {'error': 'Selected contact is not available for this customer/user.'},
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
             cont_id = candidate_contact_id
