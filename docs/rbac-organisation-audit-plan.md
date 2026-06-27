@@ -2801,6 +2801,127 @@ Final enforcement sign-off:
   `rbac_enforcement_readiness_report` remain intentionally unprotected after
   Phase 9D and this UI sign-off.
 
+#### Phase 10A - Corrected Organization Hierarchy Redesign Audit
+
+Date: 2026-06-28
+
+Branch: `codex/phase-10a-org-hierarchy-audit`
+
+Scope: read-only audit and redesign plan for correcting the business hierarchy
+before any migration, enforcement, selector, API, or data cleanup work.
+
+Corrected business rule:
+
+> Express Freight Management is the only organization. EFM PNG, EFM Australia,
+> EFM Fiji, and EFM Solomon Islands are not organizations.
+
+Target hierarchy:
+
+```text
+Organization: Express Freight Management
+  -> Operating Entity / Country Division: EFM PNG, EFM Australia, EFM Fiji, EFM Solomon Islands
+      -> Branch: Port Moresby, Lae, Brisbane, Suva, Honiara
+          -> Department: Air Freight, Sea Freight, Customs, Transport, etc.
+```
+
+Legacy wording:
+
+- `EFM Express Air Cargo` / `EAC` is not an organization.
+- EAC should be treated as Air Freight department wording only.
+- `Test Org` is not a production organization and should be archived or
+  deleted only after dependency counts prove it is unused.
+
+Command:
+
+```bash
+python backend/manage.py rbac_organization_model_redesign_audit
+python backend/manage.py rbac_organization_model_redesign_audit --format json
+```
+
+Purpose:
+
+- Audit current `Organization`, `Branch`, `Department`, and `UserMembership`
+  records.
+- Audit CRM/customer, quote, SPOT, shipment, role, branding, and any other FK
+  dependencies on `Organization`, `Branch`, or `Department`.
+- Classify rows as `canonical keep`, `migrate/reparent`,
+  `archive/deactivate`, or `delete only if safely unused`.
+- Report duplicate branch and department names that are currently hidden by
+  per-organization uniqueness.
+- Compare target schema options and recommend the clean model.
+
+Recommended target model:
+
+- Option B: add an `OperatingEntity` model between `Organization` and `Branch`.
+- Reason: country division is a real business level and should not be overloaded
+  into either tenant/company identity or physical branch identity.
+
+Options considered:
+
+- Option A: keep current tables and repurpose `Branch` as an operating
+  entity/branch hybrid. This is fast but ambiguous.
+- Option B: add `OperatingEntity` between `Organization` and `Branch`. This is
+  the cleanest match to the corrected hierarchy.
+- Option C: launch patch with one `Organization`, current `Branch` /
+  `Department` rows reparented, and full operating-entity model later. This is
+  the smallest short-term migration but leaves naming debt.
+
+Risks and blockers:
+
+- Existing readiness tooling still treats EFM PNG, EFM Australia, EFM Fiji, and
+  EFM Solomon Islands as canonical organizations. That assumption must be
+  changed in a later PR before any apply/backfill/enforcement work.
+- `Branch` and `Department` uniqueness is currently scoped by organization, so
+  collapsing organizations can expose duplicate codes or names.
+- `OrganizationBranding` is one-to-one with `Organization`; country or division
+  branding needs a separate design before organization collapse.
+- CRM/customer, quote, SPOT, shipment, role, membership, and branding FKs must
+  be reparented from legacy organizations before old rows can be archived.
+- Do not delete or deactivate legacy organizations until dependency counts are
+  zero and rollback mappings exist.
+
+Migration outline:
+
+1. Freeze organization/branch/department master-data writes during the migration
+   window.
+2. Create or confirm `Express Freight Management` as the single organization.
+3. Add `OperatingEntity` or approve an explicit launch shim.
+4. Map EFM PNG, EFM Australia, EFM Fiji, and EFM Solomon Islands to operating
+   entities.
+5. Reparent branches, departments, memberships, CRM/customer, quote, SPOT,
+   shipment, role, and branding dependencies.
+6. Archive/deactivate old organization rows only after dependency counts reach
+   zero.
+7. Run selectors, quote, SPOT, CRM, and RBAC regression checks before any
+   enforcement changes.
+
+Rollback plan:
+
+- Preserve old organization, branch, department, and scoped-record IDs in a
+  mapping artifact.
+- Use a transaction where practical; otherwise checkpoint by dependency group.
+- Restore FK values from the mapping if validation fails before cutover.
+- Keep legacy rows until a separate zero-dependency audit proves they are safe
+  to remove.
+
+Safety:
+
+- The command is read-only and reports `write_enabled=false`.
+- It does not write, migrate, enforce RBAC, delete, deactivate, or reparent
+  records.
+- It does not change quote, SPOT, ProductCode, CRM, customer, shipment, or
+  selector behavior.
+
+Test coverage:
+
+- Command is read-only.
+- Multiple organization records are detected.
+- Legacy `EFM Express Air Cargo` is detected and classified away from
+  organization status.
+- Duplicated branches and departments under legacy organizations are reported.
+- Memberships and scoped CRM/customer/quote/SPOT records are counted.
+- JSON includes migration classification and the recommended target model.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
