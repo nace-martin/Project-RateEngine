@@ -2382,6 +2382,142 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertEqual(membership.organization.name, "EFM Australia")
 
 
+class OrganizationModelRedesignAuditTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_audit(self, *args):
+        stdout = StringIO()
+        call_command("rbac_organization_model_redesign_audit", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self):
+        return Role.objects.create(code="admin", name="Admin", is_system=True)
+
+    def _fixtures(self):
+        parent = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        png = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        au = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        eac = Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+        test_org = Organization.objects.create(name="Test Org", slug="test-org")
+
+        png_pom = Branch.objects.create(organization=png, code="POM", name="Port Moresby")
+        au_pom = Branch.objects.create(organization=au, code="POM", name="Port Moresby")
+        png_air = Department.objects.create(organization=png, branch=png_pom, code="AIR", name="Air Freight")
+        au_air = Department.objects.create(organization=au, branch=au_pom, code="AIR", name="Air Freight")
+
+        user = CustomUser.objects.create_user(username="phase10a-user")
+        membership = UserMembership.objects.create(
+            user=user,
+            organization=eac,
+            branch=png_pom,
+            department=png_air,
+            role=self._role(),
+        )
+        company = Company.objects.create(name="Phase 10A Customer", organization=png, branch=png_pom, department=png_air)
+        Contact.objects.create(
+            company=company,
+            first_name="Phase",
+            last_name="Contact",
+            email="phase10a@example.com",
+            organization=png,
+            branch=png_pom,
+            department=png_air,
+        )
+        Opportunity.objects.create(
+            company=company,
+            title="Phase 10A Opportunity",
+            service_type="AIR",
+            organization=png,
+            branch=png_pom,
+            department=png_air,
+        )
+        Quote.objects.create(customer=company, organization=png, branch=png_pom, department=png_air)
+        SpotPricingEnvelopeDB.objects.create(
+            organization=png,
+            branch=png_pom,
+            department=png_air,
+            shipment_context_json={"origin": "POM", "destination": "BNE"},
+            conditions_json={},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test trigger",
+            expires_at=timezone.now(),
+        )
+        return {
+            "parent": parent,
+            "png": png,
+            "au": au,
+            "eac": eac,
+            "test_org": test_org,
+            "membership": membership,
+            "company": company,
+            "png_air": png_air,
+            "au_air": au_air,
+        }
+
+    def test_json_reports_corrected_business_rule_and_target_model(self):
+        self._fixtures()
+
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        self.assertFalse(payload["write_enabled"])
+        self.assertIn("Express Freight Management is the only organization", payload["business_rule"])
+        self.assertEqual(
+            payload["recommended_target_model"]["selected"],
+            "Option B: add OperatingEntity between Organization and Branch",
+        )
+        self.assertEqual(payload["current_counts"]["organizations"], 5)
+
+    def test_detects_multiple_organizations_and_legacy_eac(self):
+        self._fixtures()
+
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        classifications = {row["name"]: row["classification"] for row in payload["organizations"]}
+        self.assertEqual(classifications["Express Freight Management"], "canonical keep")
+        self.assertEqual(classifications["EFM PNG"], "migrate/reparent")
+        self.assertEqual(classifications["EFM Australia"], "migrate/reparent")
+        self.assertEqual(classifications["EFM Express Air Cargo"], "archive/deactivate")
+        self.assertEqual(classifications["Test Org"], "archive/deactivate")
+
+    def test_detects_duplicated_branches_and_departments_under_legacy_orgs(self):
+        self._fixtures()
+
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        branch_names = {row["name"] for row in payload["duplicate_risks"]["duplicated_branches_under_legacy_organizations"]}
+        department_names = {row["name"] for row in payload["duplicate_risks"]["duplicated_departments_under_legacy_organizations"]}
+        self.assertIn("port moresby", branch_names)
+        self.assertIn("air freight", department_names)
+
+    def test_reports_memberships_and_scoped_record_dependencies(self):
+        self._fixtures()
+
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["count"], 1)
+        self.assertGreater(payload["scoped_records"]["parties.Company"]["with_organization"], 0)
+        self.assertGreater(payload["scoped_records"]["crm.Opportunity"]["with_organization"], 0)
+        self.assertGreater(payload["quote_spot_productcode"]["quotes"]["with_organization"], 0)
+        self.assertGreater(payload["quote_spot_productcode"]["spot_envelopes"]["with_organization"], 0)
+        self.assertTrue(
+            any(row["model"] == "accounts.UserMembership" and row["field"] == "organization" for row in payload["fk_dependencies"])
+        )
+
+    def test_command_is_read_only(self):
+        fixtures = self._fixtures()
+        before = fixtures["membership"].organization_id
+
+        self._call_audit()
+
+        fixtures["membership"].refresh_from_db()
+        self.assertEqual(fixtures["membership"].organization_id, before)
+
+
 class FinalUserBlockerResolutionPlanTests(TestCase):
     def setUp(self):
         UserMembership.objects.all().delete()
