@@ -3117,6 +3117,55 @@ Deferred work:
 5. Only then consider enforcement, selector, API, queryset, quote, SPOT, or UI
    behavior changes.
 
+#### Phase 10E - OperatingEntity Master Data and Branch Linkage
+
+Date: 2026-06-29
+
+Branch: `codex/phase-10d-operating-entity-schema`
+
+Scope: seed canonical `OperatingEntity` records under `Express Freight
+Management`, add nullable `Branch.operating_entity`, link canonical branches,
+and update read-only hierarchy/readiness diagnostics, admin, and tests.
+
+Canonical hierarchy:
+
+- Organization: `Express Freight Management`.
+- Operating entities: `EFM PNG`, `EFM Australia`, `EFM Fiji`,
+  `EFM Solomon Islands`.
+- Branch links:
+  - `EFM PNG`: `Port Moresby`, `Lae`.
+  - `EFM Australia`: `Brisbane`.
+  - `EFM Fiji`: `Suva`.
+  - `EFM Solomon Islands`: `Honiara`.
+
+Commands:
+
+- `python backend/manage.py seed_operating_entities`
+- `python backend/manage.py link_branch_operating_entities`
+
+Diagnostics now include:
+
+- Organization, OperatingEntity, Branch, and Department hierarchy validation.
+- `branches_missing_operating_entity`
+- `operating_entities_without_branches`
+- `duplicate_codes`
+- `orphaned_branches`
+
+Out of scope:
+
+- No `UserMembership` schema or data changes.
+- No RBAC enforcement, selector, serializer, API, quote, SPOT, ProductCode,
+  pricing, or permission changes.
+
+Verification:
+
+```bash
+python backend/manage.py test parties.tests
+python backend/manage.py makemigrations --check --dry-run
+npx fallow --format json
+graphify update .
+```
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

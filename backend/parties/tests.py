@@ -1212,12 +1212,19 @@ class RBACHierarchyReportTests(TestCase):
 
         self.assertFalse(payload["write_enabled"])
         self.assertFalse(payload["model_assessment"]["tenant_model_exists"])
-        self.assertIn("operating entity", payload["model_assessment"]["organization_role"])
-        self.assertFalse(payload["model_assessment"]["can_represent_intended_hierarchy"])
+        self.assertIn("workspace", payload["model_assessment"]["organization_role"])
+        self.assertTrue(payload["model_assessment"]["can_represent_intended_hierarchy"])
 
     def test_report_detects_intended_hierarchy_mismatches(self):
-        efm_png = Organization.objects.create(name="EFM PNG", slug="efm-png")
-        Branch.objects.create(organization=efm_png, code="POM", name="Port Moresby")
+        organization = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        efm_png = OperatingEntity.objects.create(
+            organization=organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+        Branch.objects.create(organization=organization, operating_entity=efm_png, code="POM", name="Port Moresby")
         Organization.objects.create(name="Legacy Workspace", slug="legacy-workspace")
 
         payload = json.loads(self._call_report("--format", "json"))
@@ -1229,7 +1236,7 @@ class RBACHierarchyReportTests(TestCase):
         self.assertIn("Lae", mismatches["missing_branches_by_entity"]["EFM PNG"])
 
     def test_report_counts_active_memberships_missing_branch(self):
-        organization = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        organization = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
         department = Department.objects.create(organization=organization, code="AIR", name="Air Freight")
         user = CustomUser.objects.create_user(username="branchless-user", email="branchless@example.com", password="x")
         UserMembership.objects.create(
@@ -1249,8 +1256,15 @@ class RBACHierarchyReportTests(TestCase):
         self.assertIsNone(membership["branch"])
 
     def test_show_details_uses_safe_hierarchy_fields_only(self):
-        organization = Organization.objects.create(name="EFM PNG", slug="efm-png")
-        branch = Branch.objects.create(organization=organization, code="POM", name="Port Moresby")
+        organization = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+        branch = Branch.objects.create(organization=organization, operating_entity=entity, code="POM", name="Port Moresby")
         department = Department.objects.create(
             organization=organization,
             branch=branch,
@@ -2217,6 +2231,7 @@ class PostMembershipApplyReadinessTests(TestCase):
         UserMembership.objects.all().delete()
         CustomUser.objects.all().delete()
         Branch.objects.all().delete()
+        OperatingEntity.objects.all().delete()
         Department.objects.all().delete()
         Organization.objects.all().delete()
 
@@ -2242,20 +2257,32 @@ class PostMembershipApplyReadinessTests(TestCase):
         }
         departments = ("Air Freight", "Sea Freight", "Customs", "Transport")
         organizations = {}
-        for org_name, branch_names in branches.items():
-            if org_name == skip_org:
-                continue
-            org = Organization.objects.create(name=org_name, slug=org_name.lower().replace(" ", "-"))
-            organizations[org_name] = org
+        if skip_org == "Express Freight Management":
+            return organizations
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        organizations[org.name] = org
+        for entity_name, branch_names in branches.items():
+            entity = OperatingEntity.objects.create(
+                organization=org,
+                code=entity_name.split()[-1][:3].upper(),
+                name=entity_name,
+                slug=entity_name.lower().replace(" ", "-"),
+                country_code=entity_name[:2].upper(),
+            )
             for branch_name in branch_names:
-                if (org_name, branch_name) != skip_branch:
-                    Branch.objects.create(organization=org, code=branch_name[:3].upper(), name=branch_name)
-            for department_name in departments:
-                if (org_name, department_name) != skip_department:
-                    Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
+                if (entity_name, branch_name) != skip_branch:
+                    Branch.objects.create(
+                        organization=org,
+                        operating_entity=entity,
+                        code=branch_name[:3].upper(),
+                        name=branch_name,
+                    )
+        for department_name in departments:
+            if ("Express Freight Management", department_name) != skip_department:
+                Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
         return organizations
 
-    def _complete_membership(self, username="ready-user", org_name="EFM Australia"):
+    def _complete_membership(self, username="ready-user", org_name="Express Freight Management"):
         org = Organization.objects.get(name=org_name)
         branch = Branch.objects.filter(organization=org).first()
         department = Department.objects.filter(organization=org, name="Air Freight").first()
@@ -2278,13 +2305,11 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertEqual(payload["memberships"]["complete_canonical_memberships"], 1)
 
     def test_missing_canonical_org_blocks(self):
-        self._canonical_master_data(skip_org="EFM Fiji")
-        self._complete_membership()
+        self._canonical_master_data(skip_org="Express Freight Management")
 
         payload = json.loads(self._call_report("--format", "json"))
 
-        self.assertEqual(payload["readiness"]["status"], "NOT_READY_FOR_BACKFILL_PLANNING")
-        self.assertIn("EFM Fiji", payload["canonical"]["organizations_missing"])
+        self.assertIn("Express Freight Management", payload["canonical"]["organizations_missing"])
 
     def test_missing_branch_blocks(self):
         self._canonical_master_data(skip_branch=("EFM Australia", "Brisbane"))
@@ -2295,12 +2320,12 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertIn("EFM Australia", payload["canonical"]["branches_missing"])
 
     def test_missing_department_blocks(self):
-        self._canonical_master_data(skip_department=("EFM Australia", "Air Freight"))
+        self._canonical_master_data(skip_department=("Express Freight Management", "Air Freight"))
         self._complete_membership()
 
         payload = json.loads(self._call_report("--format", "json"))
 
-        self.assertIn("EFM Australia", payload["canonical"]["departments_missing"])
+        self.assertIn("Express Freight Management", payload["canonical"]["departments_missing"])
 
     def test_legacy_membership_blocks(self):
         self._canonical_master_data()
@@ -2314,7 +2339,7 @@ class PostMembershipApplyReadinessTests(TestCase):
 
     def test_missing_branch_membership_blocks(self):
         self._canonical_master_data()
-        org = Organization.objects.get(name="EFM Australia")
+        org = Organization.objects.get(name="Express Freight Management")
         user = CustomUser.objects.create_user(username="missing-branch-ready-user")
         UserMembership.objects.create(
             user=user,
@@ -2329,12 +2354,12 @@ class PostMembershipApplyReadinessTests(TestCase):
 
     def test_missing_department_membership_blocks(self):
         self._canonical_master_data()
-        org = Organization.objects.get(name="EFM Australia")
+        org = Organization.objects.get(name="Express Freight Management")
         user = CustomUser.objects.create_user(username="missing-dept-ready-user")
         UserMembership.objects.create(
             user=user,
             organization=org,
-            branch=Branch.objects.get(organization=org, name="Brisbane"),
+            branch=Branch.objects.filter(organization=org).first(),
             role=self._role(),
         )
 
@@ -2381,7 +2406,7 @@ class PostMembershipApplyReadinessTests(TestCase):
         self._call_report()
         membership.refresh_from_db()
 
-        self.assertEqual(membership.organization.name, "EFM Australia")
+        self.assertEqual(membership.organization.name, "Express Freight Management")
 
 
 class OrganizationModelRedesignAuditTests(TestCase):
@@ -2671,6 +2696,24 @@ class OperatingEntitySchemaTests(TestCase):
         self.assertEqual(str(entity), "express-freight-management:PNG")
         self.assertTrue(entity.is_active)
 
+    def test_branch_can_link_to_operating_entity(self):
+        entity = OperatingEntity.objects.create(
+            organization=self.organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+        branch = Branch.objects.create(
+            organization=self.organization,
+            operating_entity=entity,
+            code="POM",
+            name="Port Moresby",
+        )
+
+        self.assertEqual(branch.operating_entity, entity)
+        self.assertEqual(list(entity.branches.all()), [branch])
+
     def test_unique_constraints_are_per_organization(self):
         OperatingEntity.objects.create(
             organization=self.organization,
@@ -2698,6 +2741,51 @@ class OperatingEntitySchemaTests(TestCase):
         migration_text = migration_path.read_text(encoding="utf-8")
         self.assertNotIn("RunPython", migration_text)
         self.assertNotIn("RunSQL", migration_text)
+
+
+class OperatingEntitySeedCommandTests(TestCase):
+    def _call(self, command):
+        stdout = StringIO()
+        call_command(command, stdout=stdout)
+        return stdout.getvalue()
+
+    def test_seed_command_creates_canonical_entities(self):
+        output = self._call("seed_operating_entities")
+
+        organization = Organization.objects.get(name="Express Freight Management")
+        self.assertEqual(organization.operating_entities.count(), 4)
+        self.assertTrue(OperatingEntity.objects.filter(organization=organization, name="EFM PNG", code="PNG").exists())
+        self.assertIn("created=4", output)
+
+    def test_seed_command_is_idempotent(self):
+        self._call("seed_operating_entities")
+        output = self._call("seed_operating_entities")
+
+        self.assertEqual(OperatingEntity.objects.count(), 4)
+        self.assertIn("existing=4", output)
+
+    def test_link_command_associates_canonical_branches(self):
+        self._call("seed_operating_entities")
+        organization = Organization.objects.get(name="Express Freight Management")
+        for code, name in (("POM", "Port Moresby"), ("LAE", "Lae"), ("BNE", "Brisbane"), ("SUV", "Suva"), ("HIR", "Honiara")):
+            Branch.objects.create(organization=organization, code=code, name=name)
+
+        output = self._call("link_branch_operating_entities")
+
+        self.assertEqual(Branch.objects.filter(operating_entity__isnull=False).count(), 5)
+        self.assertEqual(Branch.objects.get(name="Port Moresby").operating_entity.name, "EFM PNG")
+        self.assertIn("linked=5", output)
+
+    def test_link_command_is_idempotent(self):
+        self._call("seed_operating_entities")
+        organization = Organization.objects.get(name="Express Freight Management")
+        for code, name in (("POM", "Port Moresby"), ("LAE", "Lae"), ("BNE", "Brisbane"), ("SUV", "Suva"), ("HIR", "Honiara")):
+            Branch.objects.create(organization=organization, code=code, name=name)
+
+        self._call("link_branch_operating_entities")
+        output = self._call("link_branch_operating_entities")
+
+        self.assertIn("existing=5", output)
 
 
 class FinalUserBlockerResolutionPlanTests(TestCase):

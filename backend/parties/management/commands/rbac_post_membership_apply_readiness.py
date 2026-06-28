@@ -4,10 +4,12 @@ from collections import Counter
 from django.core.management.base import BaseCommand
 
 from accounts.models import CustomUser, UserMembership
-from parties.models import Branch, Department, Organization
+from parties.models import Branch, Department, OperatingEntity, Organization
 
 
 CANONICAL_ORGANIZATIONS = ("EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands")
+CANONICAL_TOP_ORGANIZATIONS = ("Express Freight Management",)
+CANONICAL_OPERATING_ENTITIES = ("EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands")
 CANONICAL_BRANCHES = {
     "EFM PNG": ("Port Moresby", "Lae"),
     "EFM Australia": ("Brisbane",),
@@ -37,10 +39,25 @@ class Command(BaseCommand):
 
 
 def build_report():
-    organizations = {org.name: org for org in Organization.objects.filter(name__in=CANONICAL_ORGANIZATIONS)}
-    branches = list(Branch.objects.select_related("organization").filter(organization__name__in=CANONICAL_ORGANIZATIONS))
+    organizations = {
+        org.name: org
+        for org in Organization.objects.filter(name__in=CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS)
+    }
+    operating_entities = list(
+        OperatingEntity.objects.select_related("organization").filter(
+            organization__name__in=CANONICAL_TOP_ORGANIZATIONS,
+            name__in=CANONICAL_OPERATING_ENTITIES,
+        )
+    )
+    branches = list(
+        Branch.objects.select_related("organization", "operating_entity").filter(
+            organization__name__in=CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS
+        )
+    )
     departments = list(
-        Department.objects.select_related("organization").filter(organization__name__in=CANONICAL_ORGANIZATIONS)
+        Department.objects.select_related("organization").filter(
+            organization__name__in=CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS
+        )
     )
     memberships = list(
         UserMembership.objects.select_related("user", "organization", "branch", "department", "role")
@@ -49,7 +66,7 @@ def build_report():
     )
     active_users = list(CustomUser.objects.filter(is_active=True).order_by("username", "id"))
 
-    canonical = canonical_report(organizations, branches, departments)
+    canonical = canonical_report(organizations, operating_entities, branches, departments)
     membership = membership_report(memberships, active_users)
     blockers = blockers_for(canonical, membership)
     return {
@@ -63,31 +80,56 @@ def build_report():
     }
 
 
-def canonical_report(organizations, branches, departments):
-    branch_names_by_org = {}
+def canonical_report(organizations, operating_entities, branches, departments):
+    branch_names_by_entity = {}
     for branch in branches:
-        branch_names_by_org.setdefault(branch.organization.name, set()).add(branch.name)
+        key = branch.operating_entity.name if branch.operating_entity else branch.organization.name
+        branch_names_by_entity.setdefault(key, set()).add(branch.name)
     department_names_by_org = {}
     for department in departments:
         department_names_by_org.setdefault(department.organization.name, set()).add(department.name)
     missing_branches = {
-        org_name: [name for name in branch_names if name not in branch_names_by_org.get(org_name, set())]
-        for org_name, branch_names in CANONICAL_BRANCHES.items()
+        entity_name: [name for name in branch_names if name not in branch_names_by_entity.get(entity_name, set())]
+        for entity_name, branch_names in CANONICAL_BRANCHES.items()
     }
     missing_departments = {
         org_name: [name for name in CANONICAL_DEPARTMENTS if name not in department_names_by_org.get(org_name, set())]
-        for org_name in CANONICAL_ORGANIZATIONS
+        for org_name in (CANONICAL_TOP_ORGANIZATIONS if any(name in organizations for name in CANONICAL_TOP_ORGANIZATIONS) else CANONICAL_ORGANIZATIONS)
     }
+    entity_names = {entity.name for entity in operating_entities}
+    duplicate_codes = duplicate_codes_for(organizations.values(), operating_entities, branches, departments)
     return {
         "organizations_present": sorted(organizations),
-        "organizations_missing": [name for name in CANONICAL_ORGANIZATIONS if name not in organizations],
+        "organizations_missing": [name for name in CANONICAL_TOP_ORGANIZATIONS if name not in organizations],
+        "operating_entities_present": sorted(entity_names),
+        "operating_entities_missing": [name for name in CANONICAL_OPERATING_ENTITIES if name not in entity_names],
         "branches_missing": {org: names for org, names in missing_branches.items() if names},
+        "branches_missing_operating_entity": [branch_row(branch) for branch in branches if branch.operating_entity_id is None],
+        "operating_entities_without_branches": sorted(
+            entity.name for entity in operating_entities if entity.name not in branch_names_by_entity
+        ),
+        "duplicate_codes": duplicate_codes,
+        "orphaned_branches": [branch_row(branch) for branch in branches if branch.organization.name not in CANONICAL_TOP_ORGANIZATIONS],
         "departments_missing": {org: names for org, names in missing_departments.items() if names},
     }
 
 
+def duplicate_codes_for(organizations, operating_entities, branches, departments):
+    return {
+        "organizations": duplicates(org.slug for org in organizations),
+        "operating_entities": duplicates(f"{entity.organization_id}:{entity.code}" for entity in operating_entities),
+        "branches": duplicates(f"{branch.organization_id}:{branch.code}" for branch in branches),
+        "departments": duplicates(f"{department.organization_id}:{department.code}" for department in departments),
+    }
+
+
+def duplicates(values):
+    counts = Counter(values)
+    return sorted(value for value, count in counts.items() if count > 1)
+
+
 def membership_report(memberships, active_users):
-    canonical_orgs = set(CANONICAL_ORGANIZATIONS)
+    canonical_orgs = set(CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS)
     memberships_by_user = {}
     for membership in memberships:
         memberships_by_user.setdefault(membership.user_id, []).append(membership)
@@ -120,7 +162,7 @@ def membership_report(memberships, active_users):
 def membership_is_complete_canonical(membership):
     return (
         membership.organization
-        and membership.organization.name in CANONICAL_ORGANIZATIONS
+        and membership.organization.name in CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS
         and membership.branch_id
         and membership.department_id
         and membership.role_id
@@ -130,7 +172,7 @@ def membership_is_complete_canonical(membership):
 def membership_status(membership):
     if not membership.organization_id:
         return "missing_organization"
-    if membership.organization.name not in CANONICAL_ORGANIZATIONS:
+    if membership.organization.name not in CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS:
         return "legacy_organization"
     if not membership.branch_id:
         return "missing_branch"
@@ -143,10 +185,10 @@ def membership_status(membership):
 
 def blockers_for(canonical, membership):
     blockers = []
-    if canonical["organizations_missing"]:
-        blockers.append(f"missing canonical organizations: {canonical['organizations_missing']}")
     if canonical["branches_missing"]:
         blockers.append(f"missing canonical branches: {canonical['branches_missing']}")
+    if any(canonical["duplicate_codes"].values()):
+        blockers.append(f"duplicate_codes: {canonical['duplicate_codes']}")
     if canonical["departments_missing"]:
         blockers.append(f"missing canonical departments: {canonical['departments_missing']}")
     for key in ("legacy_non_canonical_organization_memberships", "missing_organization", "missing_branch", "missing_department", "missing_role", "users_with_no_active_membership", "users_with_multiple_active_memberships"):
@@ -163,6 +205,16 @@ def user_row(user):
     }
 
 
+def branch_row(branch):
+    return {
+        "id": str(branch.id),
+        "name": safe(branch.name),
+        "code": safe(branch.code),
+        "organization": safe(branch.organization.name),
+        "operating_entity": safe(branch.operating_entity.name) if branch.operating_entity else None,
+    }
+
+
 def write_text(stdout, report):
     readiness = report["readiness"]
     canonical = report["canonical"]
@@ -174,7 +226,12 @@ def write_text(stdout, report):
     stdout.write("")
     stdout.write("Canonical master data:")
     stdout.write(f"  organizations_missing={canonical['organizations_missing']}")
+    stdout.write(f"  operating_entities_missing={canonical['operating_entities_missing']}")
     stdout.write(f"  branches_missing={canonical['branches_missing']}")
+    stdout.write(f"  branches_missing_operating_entity={len(canonical['branches_missing_operating_entity'])}")
+    stdout.write(f"  operating_entities_without_branches={canonical['operating_entities_without_branches']}")
+    stdout.write(f"  duplicate_codes={canonical['duplicate_codes']}")
+    stdout.write(f"  orphaned_branches={len(canonical['orphaned_branches'])}")
     stdout.write(f"  departments_missing={canonical['departments_missing']}")
     stdout.write("")
     stdout.write(
