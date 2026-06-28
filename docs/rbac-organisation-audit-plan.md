@@ -3076,6 +3076,47 @@ Risks:
 - Rollback requires old Organization id to new OperatingEntity id mappings
   before any apply phase.
 
+#### Phase 10D - OperatingEntity Schema Only
+
+Date: 2026-06-28
+
+Branch: `codex/phase-10d-operating-entity-schema`
+
+Scope: add the `OperatingEntity` model and its schema migration only. No seed
+data, branch reparenting, membership updates, selector/API/queryset changes,
+RBAC enforcement changes, quote logic, SPOT logic, or UI changes.
+
+Migration:
+
+- `backend/parties/migrations/0010_operatingentity.py`
+- Creates `parties.OperatingEntity`.
+- Contains no `RunPython` or `RunSQL` data operation.
+
+Model:
+
+- `id`: UUID primary key.
+- `organization`: FK to `Organization`, `CASCADE`, related name
+  `operating_entities`.
+- `code`, `name`, `slug`, `country_code`.
+- `is_active`, `created_at`, `updated_at`.
+
+Constraints and indexes:
+
+- Unique `organization + code`.
+- Unique `organization + slug`.
+- Unique `organization + name`.
+- Index `organization + is_active`.
+- Index `organization + country_code`.
+
+Deferred work:
+
+1. Seed operating entities under `Express Freight Management`.
+2. Link branches to operating entities.
+3. Update memberships to include operating entity.
+4. Update readiness/reassignment tooling.
+5. Only then consider enforcement, selector, API, queryset, quote, SPOT, or UI
+   behavior changes.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
