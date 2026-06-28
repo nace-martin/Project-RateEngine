@@ -3006,6 +3006,76 @@ Safe next PR order:
 4. Add controlled migration/apply tooling with rollback mappings.
 5. Only after clean diagnostics, revisit enforcement/readiness selectors.
 
+#### Phase 10C - OperatingEntity Model Design Plan
+
+Date: 2026-06-28
+
+Branch: `codex/phase-10c-operating-entity-design`
+
+Scope: read-only schema design only. No migrations, data writes, reparenting,
+selector/API/queryset changes, or RBAC enforcement changes.
+
+Command:
+
+```bash
+python backend/manage.py rbac_operating_entity_model_design
+python backend/manage.py rbac_operating_entity_model_design --format json
+```
+
+Target hierarchy:
+
+- Organization: `Express Freight Management` only.
+- OperatingEntity: `EFM PNG`, `EFM Australia`, `EFM Fiji`,
+  `EFM Solomon Islands`.
+- Branch: `Port Moresby`, `Lae`, `Brisbane`, `Suva`, `Honiara`.
+- Department: `Air Freight`, `Sea Freight`, `Customs`, `Transport`.
+
+Proposed `OperatingEntity` model:
+
+- Fields: `id`, `organization`, `code`, `name`, `slug`, `country_code`,
+  `is_active`, `created_at`, `updated_at`.
+- Constraints: unique `organization + code`, `organization + slug`, and
+  `organization + name`.
+- Indexes: `organization + is_active` and `organization + country_code`.
+- Relationships: `Organization` has many operating entities; `Branch` should
+  later link to one operating entity; `Department` remains below branch;
+  `UserMembership` later becomes organization + operating entity + branch +
+  department.
+
+Current reference classification:
+
+- Needs `OperatingEntity` later: `Branch`, `Department`, `UserMembership`,
+  scoped CRM/customer records, shipments, Quote, and SPOT scope records.
+- Review separately: `OrganizationBranding`, because it is one-to-one with
+  `Organization` and cannot represent country-specific branding without a
+  separate approved design.
+- Organization parent only: roles and organization-level configuration that
+  should remain attached to `Express Freight Management`.
+
+Migration order:
+
+1. Add `OperatingEntity` model only; no data migration or enforcement.
+2. Seed `EFM PNG`, `EFM Australia`, `EFM Fiji`, and `EFM Solomon Islands`
+   under `Express Freight Management`.
+3. Add nullable `Branch.operating_entity` and link branches after duplicate-code
+   review.
+4. Add nullable `UserMembership.operating_entity` and update membership
+   planning/readiness tooling.
+5. Add nullable `operating_entity` to records that need country-division scope.
+6. Only then consider selector/API/queryset/RBAC enforcement changes.
+
+Risks:
+
+- Branch and department codes are currently unique per organization, not per
+  operating entity.
+- `OrganizationBranding` is one-to-one with `Organization`; country-specific
+  branding requires a separate design.
+- Membership semantics change and must not be inferred without a migration map.
+- Older readiness/reassignment commands still contain country-as-organization
+  assumptions.
+- Rollback requires old Organization id to new OperatingEntity id mappings
+  before any apply phase.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

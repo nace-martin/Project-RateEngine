@@ -2615,6 +2615,39 @@ class HierarchyToolingAlignmentAuditTests(TestCase):
         self.assertTrue(future_scope["spot_save_uses_resolve_create_scope_for_user"])
 
 
+class OperatingEntityModelDesignTests(TestCase):
+    def _call_design(self, *args):
+        stdout = StringIO()
+        call_command("rbac_operating_entity_model_design", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def test_json_defines_operating_entity_design(self):
+        payload = json.loads(self._call_design("--format", "json"))
+
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(payload["target_hierarchy"]["organization"], "Express Freight Management")
+        self.assertEqual(payload["proposed_model"]["name"], "OperatingEntity")
+        self.assertIn("UniqueConstraint(fields=['organization', 'code'])", payload["proposed_model"]["constraints"])
+        self.assertIn("add OperatingEntity model only; no data migration or enforcement", payload["migration_order"])
+
+    def test_classifies_current_scope_references(self):
+        payload = json.loads(self._call_design("--format", "json"))
+        references = {row["model"]: row for row in payload["current_scope_references"]}
+
+        self.assertEqual(references["parties.Branch"]["operating_entity_need"], "needs_operating_entity_later")
+        self.assertEqual(references["accounts.UserMembership"]["operating_entity_need"], "needs_operating_entity_later")
+        self.assertEqual(references["parties.OrganizationBranding"]["operating_entity_need"], "review_branding_model_separately")
+
+    def test_command_is_read_only(self):
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+
+        self._call_design()
+
+        org.refresh_from_db()
+        self.assertEqual(org.name, "Express Freight Management")
+        self.assertTrue(org.is_active)
+
+
 class FinalUserBlockerResolutionPlanTests(TestCase):
     def setUp(self):
         UserMembership.objects.all().delete()
