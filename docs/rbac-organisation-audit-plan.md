@@ -2922,6 +2922,77 @@ Test coverage:
 - Memberships and scoped CRM/customer/quote/SPOT records are counted.
 - JSON includes migration classification and the recommended target model.
 
+#### Phase 10B - RBAC Corrected Hierarchy Tooling Alignment
+
+Date: 2026-06-28
+
+Branch: `codex/phase-10b-rbac-hierarchy-tooling`
+
+Scope: read-only audit of RBAC diagnostic, readiness, planning, test, and doc
+assumptions that still treat country divisions as organizations.
+
+Command:
+
+```bash
+python backend/manage.py rbac_hierarchy_tooling_alignment_audit
+python backend/manage.py rbac_hierarchy_tooling_alignment_audit --format json
+```
+
+Corrected hierarchy:
+
+- Organization: `Express Freight Management` only.
+- Operating entities / country divisions: `EFM PNG`, `EFM Australia`,
+  `EFM Fiji`, and `EFM Solomon Islands`.
+- Branches: `Port Moresby`, `Lae`, `Brisbane`, `Suva`, and `Honiara`.
+- Departments: `Air Freight`, `Sea Freight`, `Customs`, and `Transport`.
+- `EFM Express Air Cargo` / `EAC` is legacy Air Freight wording only, not an
+  organization.
+
+Findings:
+
+- `rbac_post_membership_apply_readiness`,
+  `rbac_master_data_alignment_plan`, `rbac_membership_reassignment_plan`,
+  `rbac_membership_reassignment_csv_draft`,
+  `rbac_membership_reassignment_table_validate`, and
+  `rbac_final_user_blocker_resolution_plan` still encode
+  EFM PNG/Australia/Fiji/Solomon Islands as canonical organizations.
+- `rbac_master_data_seed_alignment` and
+  `rbac_final_user_blocker_resolution_apply` are apply-capable and must stay
+  frozen until an `OperatingEntity` schema, migration plan, and rollback mapping
+  exist.
+- `rbac_hierarchy_report`, `backend/parties/tests.py`, and this document can
+  be updated now because they are read-only/reporting surfaces.
+- `docs/beta-readiness-efm.md` and `docs/tenant-model-beta.md` still use EFM
+  Express Air Cargo as organization/workspace wording and should be retired or
+  replaced with corrected launch guidance.
+
+Classification:
+
+| Classification | Tooling |
+| --- | --- |
+| Safe to update now | `rbac_hierarchy_report`, Phase 10B tests, this audit plan |
+| Requires `OperatingEntity` model | Readiness and membership planning commands that need a place to store country division |
+| Requires migration phase | Apply-capable commands that would create/reparent master data or memberships |
+| Should be retired | Old beta/EAC organization docs |
+
+Safety:
+
+- The Phase 10B command is read-only and reports `write_enabled=false`.
+- It does not create migrations, write or reparent data, enforce RBAC, or change
+  selectors, APIs, querysets, quote logic, SPOT logic, ProductCode logic, or UI
+  behavior.
+- It does not change the older commands yet; it identifies stale assumptions so
+  follow-up PRs can be sequenced safely.
+
+Safe next PR order:
+
+1. Add `OperatingEntity` schema only, with no data migration or enforcement.
+2. Add a read-only operating-entity backfill planner and ID mapping report.
+3. Update membership reassignment CSV/planner tools to target organization plus
+   operating entity plus branch plus department.
+4. Add controlled migration/apply tooling with rollback mappings.
+5. Only after clean diagnostics, revisit enforcement/readiness selectors.
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

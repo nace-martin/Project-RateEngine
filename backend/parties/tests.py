@@ -2518,6 +2518,71 @@ class OrganizationModelRedesignAuditTests(TestCase):
         self.assertEqual(fixtures["membership"].organization_id, before)
 
 
+class HierarchyToolingAlignmentAuditTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_audit(self, *args):
+        stdout = StringIO()
+        call_command("rbac_hierarchy_tooling_alignment_audit", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def test_reports_stale_country_as_organization_tooling(self):
+        Organization.objects.create(name="Express Freight Management", slug="efm")
+        Organization.objects.create(name="EFM PNG", slug="efm-png")
+        Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        Organization.objects.create(name="EFM Fiji", slug="efm-fiji")
+        Organization.objects.create(name="EFM Solomon Islands", slug="efm-solomon-islands")
+        Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(payload["corrected_hierarchy"]["organization"], "Express Freight Management")
+        self.assertIn("requires OperatingEntity model", payload["summary"])
+        self.assertIn("requires migration phase", payload["summary"])
+        self.assertIn("safe to update now", payload["summary"])
+        self.assertIn("should be retired", payload["summary"])
+        self.assertEqual(
+            payload["current_master_data"]["organizations"]["country_entities_still_stored_as_organizations"],
+            ["EFM Australia", "EFM Fiji", "EFM PNG", "EFM Solomon Islands"],
+        )
+        self.assertTrue(payload["current_master_data"]["organizations"]["legacy_eac_organization_exists"])
+
+    def test_identifies_outdated_readiness_command_assumption(self):
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        row = next(
+            item
+            for item in payload["stale_assumptions"]
+            if item["path"].endswith("rbac_post_membership_apply_readiness.py")
+        )
+        self.assertTrue(row["mentions_country_as_organization"])
+        self.assertEqual(row["classification"], "requires OperatingEntity model")
+
+    def test_identifies_legacy_eac_docs_to_retire(self):
+        payload = json.loads(self._call_audit("--format", "json"))
+
+        retired = [
+            row for row in payload["stale_assumptions"]
+            if row["classification"] == "should be retired"
+        ]
+        self.assertTrue(any(row["mentions_legacy_eac"] for row in retired))
+
+    def test_command_is_read_only(self):
+        org = Organization.objects.create(name="EFM PNG", slug="efm-png")
+
+        self._call_audit()
+
+        org.refresh_from_db()
+        self.assertEqual(org.name, "EFM PNG")
+        self.assertTrue(org.is_active)
+
+
 class FinalUserBlockerResolutionPlanTests(TestCase):
     def setUp(self):
         UserMembership.objects.all().delete()
