@@ -309,10 +309,16 @@ def build_masterdata_audit() -> dict:
         )
 
     labels.sort(key=lambda item: (-item["occurrence_count"], item["normalized_label"]))
-    readiness_status = READY if not labels else NOT_READY
+    if estimated_fixes_required > 0:
+        readiness_status = NOT_READY
+    elif labels:
+        readiness_status = "READY_FOR_LAUNCH_WITH_MANUAL_REVIEW_EXCEPTIONS"
+    else:
+        readiness_status = READY
 
     return {
         "readiness_status": readiness_status,
+
         "readiness_summary": {
             "unique_unresolved_labels": len(labels),
             "unresolved_charge_lines": sum(item["occurrence_count"] for item in labels),
