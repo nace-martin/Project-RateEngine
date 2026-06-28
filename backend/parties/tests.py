@@ -2692,7 +2692,7 @@ class OperatingEntitySchemaTests(TestCase):
                         OperatingEntity.objects.create(organization=self.organization, **values)
 
     def test_migration_exists_without_data_operation(self):
-        migration_path = Path("backend/parties/migrations/0010_operatingentity.py")
+        migration_path = Path(__file__).resolve().parent / "migrations" / "0010_operatingentity.py"
 
         self.assertTrue(migration_path.exists())
         migration_text = migration_path.read_text(encoding="utf-8")
