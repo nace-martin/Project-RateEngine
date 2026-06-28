@@ -2965,6 +2965,16 @@ Findings:
 - `docs/beta-readiness-efm.md` and `docs/tenant-model-beta.md` still use EFM
   Express Air Cargo as organization/workspace wording and should be retired or
   replaced with corrected launch guidance.
+- Historical Quote and SPOT records are development/test data only for this
+  launch. The Phase 10B command classifies existing scoped Quote/SPOT records as
+  `DEV_TEST_LEGACY` and explicitly reports that production-safe historical
+  Quote/SPOT backfill tooling is not required.
+- Future Quote/SPOT records must still receive organization, branch, and
+  department scope from the corrected hierarchy create-scope path. This phase
+  only reports whether those code paths remain present; it does not enforce or
+  change them.
+- CRM/customer/user membership hierarchy work remains separate from Quote/SPOT
+  test-data handling.
 
 Classification:
 
@@ -2983,6 +2993,9 @@ Safety:
   behavior.
 - It does not change the older commands yet; it identifies stale assumptions so
   follow-up PRs can be sequenced safely.
+- It does not build Quote/SPOT historical backfill tooling. Quote/SPOT
+  development/test data may be deleted, reset, or ignored before launch in a
+  separate approved cleanup step.
 
 Safe next PR order:
 

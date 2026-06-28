@@ -2,6 +2,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from django.apps import apps
 from django.core.management.base import BaseCommand
 
 from parties.models import Branch, Department, Organization
@@ -123,11 +124,14 @@ def build_report():
             "legacy_eac_rule": "EFM Express Air Cargo / EAC is Air Freight wording only, not an organization.",
         },
         "current_master_data": current_master_data(),
+        "quote_spot_scope": quote_spot_scope_diagnostics(),
         "summary": dict(sorted(Counter(row["classification"] for row in rows).items())),
         "stale_assumptions": rows,
         "next_steps": [
             "Keep apply-capable commands frozen until an OperatingEntity schema and migration plan exist.",
             "Update read-only hierarchy wording before any enforcement or selector changes.",
+            "Classify historical Quote/SPOT scoped records as DEV_TEST_LEGACY; do not build historical backfill tooling.",
+            "Keep CRM/customer/user membership hierarchy work separate from Quote/SPOT test data cleanup.",
             "Retire beta EAC organization docs after replacement launch guidance exists.",
         ],
     }
@@ -168,11 +172,57 @@ def current_master_data():
     }
 
 
+def quote_spot_scope_diagnostics():
+    quote_model = apps.get_model("quotes", "Quote")
+    spot_model = apps.get_model("quotes", "SpotPricingEnvelopeDB")
+    return {
+        "classification": "DEV_TEST_LEGACY",
+        "historical_backfill_required": False,
+        "build_historical_backfill_tooling": False,
+        "production_launch_treatment": "Quote/SPOT test data may be deleted, reset, or ignored before launch.",
+        "separation_rule": "CRM/customer/user membership hierarchy work remains separate.",
+        "quote": scoped_record_summary(quote_model),
+        "spot": scoped_record_summary(spot_model),
+        "future_scope_expectation": {
+            "status": "FUTURE_SCOPE_DIAGNOSTIC_ONLY",
+            "quote_save_uses_resolve_create_scope_for_user": source_contains(
+                "backend/quotes/models.py", "resolve_create_scope_for_user"
+            ),
+            "spot_save_uses_resolve_create_scope_for_user": source_contains(
+                "backend/quotes/spot_models.py", "resolve_create_scope_for_user"
+            ),
+            "note": "Future Quote/SPOT records should receive scope from the corrected hierarchy create-scope path.",
+        },
+    }
+
+
+def scoped_record_summary(model):
+    fields = {field.name for field in model._meta.get_fields()}
+    queryset = model.objects.all()
+    total = queryset.count()
+    summary = {
+        "total": total,
+        "classification_by_record_policy": {"DEV_TEST_LEGACY": total},
+        "historical_backfill_required": False,
+        "sample_records": [str(value) for value in queryset.order_by("id").values_list("id", flat=True)[:5]],
+    }
+    for field_name in ("organization", "branch", "department"):
+        if field_name in fields:
+            summary[f"with_{field_name}"] = queryset.filter(**{f"{field_name}__isnull": False}).count()
+            summary[f"without_{field_name}"] = queryset.filter(**{f"{field_name}__isnull": True}).count()
+    return summary
+
+
 def read_source(relative_path):
     path = ROOT / relative_path
     if not path.exists():
         return None
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def source_contains(relative_path, text):
+    source = read_source(relative_path)
+    return bool(source and text in source)
 
 
 def write_text(stdout, report):
@@ -181,6 +231,13 @@ def write_text(stdout, report):
     stdout.write("Mode: read-only diagnostics")
     stdout.write(f"Correct organization: {report['corrected_hierarchy']['organization']}")
     stdout.write(f"Summary: {report['summary']}")
+    quote_spot = report["quote_spot_scope"]
+    stdout.write(
+        "Quote/SPOT scope: "
+        f"{quote_spot['classification']} "
+        f"(quotes={quote_spot['quote']['total']}, spot={quote_spot['spot']['total']}, "
+        f"historical_backfill_required={quote_spot['historical_backfill_required']})"
+    )
     stdout.write("")
     stdout.write("Stale assumptions:")
     for row in report["stale_assumptions"]:

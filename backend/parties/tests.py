@@ -2582,6 +2582,38 @@ class HierarchyToolingAlignmentAuditTests(TestCase):
         self.assertEqual(org.name, "EFM PNG")
         self.assertTrue(org.is_active)
 
+    def test_classifies_quote_spot_scoped_records_as_dev_test_legacy(self):
+        org = Organization.objects.create(name="EFM PNG", slug="efm-png")
+        branch = Branch.objects.create(organization=org, code="POM", name="Port Moresby")
+        department = Department.objects.create(organization=org, branch=branch, code="AIR", name="Air Freight")
+        customer = Company.objects.create(name="Dev Quote Customer", organization=org, branch=branch, department=department)
+        Quote.objects.create(customer=customer, mode="AIR", organization=org, branch=branch, department=department)
+        SpotPricingEnvelopeDB.objects.create(
+            organization=org,
+            branch=branch,
+            department=department,
+            shipment_context_json={"origin": "POM"},
+            expires_at=timezone.now(),
+        )
+
+        payload = json.loads(self._call_audit("--format", "json"))
+        quote_spot = payload["quote_spot_scope"]
+
+        self.assertEqual(quote_spot["classification"], "DEV_TEST_LEGACY")
+        self.assertFalse(quote_spot["historical_backfill_required"])
+        self.assertFalse(quote_spot["build_historical_backfill_tooling"])
+        self.assertEqual(quote_spot["quote"]["classification_by_record_policy"], {"DEV_TEST_LEGACY": 1})
+        self.assertEqual(quote_spot["spot"]["classification_by_record_policy"], {"DEV_TEST_LEGACY": 1})
+        self.assertEqual(quote_spot["separation_rule"], "CRM/customer/user membership hierarchy work remains separate.")
+
+    def test_reports_future_quote_spot_scope_expectation_without_enforcement(self):
+        payload = json.loads(self._call_audit("--format", "json"))
+        future_scope = payload["quote_spot_scope"]["future_scope_expectation"]
+
+        self.assertEqual(future_scope["status"], "FUTURE_SCOPE_DIAGNOSTIC_ONLY")
+        self.assertTrue(future_scope["quote_save_uses_resolve_create_scope_for_user"])
+        self.assertTrue(future_scope["spot_save_uses_resolve_create_scope_for_user"])
+
 
 class FinalUserBlockerResolutionPlanTests(TestCase):
     def setUp(self):
