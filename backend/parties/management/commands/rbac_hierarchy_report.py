@@ -5,16 +5,16 @@ from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import UserMembership
-from parties.models import Branch, Department, Organization
+from parties.models import Branch, Department, OperatingEntity, Organization
 
 
+INTENDED_ORGANIZATION = "Express Freight Management"
 INTENDED_OPERATING_ENTITIES = {
     "EFM PNG": {"branches": {"Port Moresby", "Lae"}},
     "EFM Australia": {"branches": {"Brisbane"}},
     "EFM Fiji": {"branches": {"Suva"}},
     "EFM Solomon Islands": {"branches": {"Honiara"}},
 }
-INTENDED_TENANT = "EFM Group"
 EXPECTED_DEPARTMENTS = {
     "Air Freight",
     "Sea Freight",
@@ -75,6 +75,7 @@ class Command(BaseCommand):
         self.stdout.write(
             "Stored data: "
             f"organizations={summary['organizations']}, "
+            f"operating_entities={summary['operating_entities']}, "
             f"branches={summary['branches']}, "
             f"departments={summary['departments']}, "
             f"memberships={summary['memberships']}, "
@@ -84,7 +85,7 @@ class Command(BaseCommand):
 
         self.stdout.write("")
         self.stdout.write("Intended hierarchy:")
-        self.stdout.write(f"  tenant={report['intended_hierarchy']['tenant']}")
+        self.stdout.write(f"  organization={report['intended_hierarchy']['organization']}")
         for entity, payload in report["intended_hierarchy"]["operating_entities"].items():
             branches = ", ".join(payload["branches"])
             self.stdout.write(f"  - {entity}: branches={branches}")
@@ -92,9 +93,14 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write("Mismatches:")
         mismatches = report["mismatches"]
+        self.stdout.write(f"  missing_organizations={mismatches['missing_organizations']}")
         self.stdout.write(f"  missing_operating_entities={mismatches['missing_operating_entities']}")
         self.stdout.write(f"  extra_organizations={mismatches['extra_organizations']}")
         self.stdout.write(f"  missing_branches_by_entity={mismatches['missing_branches_by_entity']}")
+        self.stdout.write(f"  branches_missing_operating_entity={len(mismatches['branches_missing_operating_entity'])}")
+        self.stdout.write(f"  operating_entities_without_branches={mismatches['operating_entities_without_branches']}")
+        self.stdout.write(f"  duplicate_codes={mismatches['duplicate_codes']}")
+        self.stdout.write(f"  orphaned_branches={len(mismatches['orphaned_branches'])}")
         self.stdout.write(f"  branches_under_unexpected_organization={mismatches['branches_under_unexpected_organization']}")
         self.stdout.write(f"  active_memberships_missing_branch={mismatches['active_memberships_missing_branch']}")
 
@@ -114,7 +120,12 @@ class Command(BaseCommand):
 
 def build_report(*, show_details=False, limit=50):
     organizations = list(Organization.objects.order_by("name", "id"))
-    branches = list(Branch.objects.select_related("organization").order_by("organization__name", "code", "id"))
+    operating_entities = list(
+        OperatingEntity.objects.select_related("organization").order_by("organization__name", "code", "id")
+    )
+    branches = list(
+        Branch.objects.select_related("organization", "operating_entity").order_by("organization__name", "code", "id")
+    )
     departments = list(
         Department.objects.select_related("organization", "branch").order_by("organization__name", "code", "id")
     )
@@ -123,7 +134,7 @@ def build_report(*, show_details=False, limit=50):
         .order_by("user__username", "organization__name", "id")
     )
     model_assessment = assess_model()
-    mismatches = hierarchy_mismatches(organizations, branches, memberships)
+    mismatches = hierarchy_mismatches(organizations, operating_entities, branches, departments, memberships)
     report = {
         "write_enabled": False,
         "intended_hierarchy": intended_hierarchy(),
@@ -131,8 +142,11 @@ def build_report(*, show_details=False, limit=50):
         "summary": {
             "organizations": len(organizations),
             "active_organizations": sum(1 for org in organizations if org.is_active),
+            "operating_entities": len(operating_entities),
+            "active_operating_entities": sum(1 for entity in operating_entities if entity.is_active),
             "branches": len(branches),
             "active_branches": sum(1 for branch in branches if branch.is_active),
+            "branches_missing_operating_entity": sum(1 for branch in branches if branch.operating_entity_id is None),
             "departments": len(departments),
             "active_departments": sum(1 for department in departments if department.is_active),
             "memberships": len(memberships),
@@ -150,6 +164,7 @@ def build_report(*, show_details=False, limit=50):
         },
         "records": {
             "organizations": [organization_row(org) for org in organizations],
+            "operating_entities": [operating_entity_row(entity) for entity in operating_entities],
             "branches": [branch_row(branch) for branch in branches],
             "departments": [department_row(department) for department in departments],
         },
@@ -160,6 +175,7 @@ def build_report(*, show_details=False, limit=50):
     if show_details:
         report["details"] = {
             "organizations": [organization_row(org) for org in organizations[:limit]],
+            "operating_entities": [operating_entity_row(entity) for entity in operating_entities[:limit]],
             "branches": [branch_row(branch) for branch in branches[:limit]],
             "departments": [department_row(department) for department in departments[:limit]],
             "memberships": [membership_row(membership) for membership in memberships[:limit]],
@@ -169,7 +185,7 @@ def build_report(*, show_details=False, limit=50):
 
 def intended_hierarchy():
     return {
-        "tenant": INTENDED_TENANT,
+        "organization": INTENDED_ORGANIZATION,
         "operating_entities": {
             entity: {"branches": sorted(payload["branches"])}
             for entity, payload in sorted(INTENDED_OPERATING_ENTITIES.items())
@@ -188,33 +204,35 @@ def assess_model():
         "tenant_model_exists": bool(tenant_models),
         "tenant_models": tenant_models,
         "organization_role": (
-            "Organization currently acts as the top workspace/operating entity model; "
-            "there is no separate EFM Group tenant layer."
+            "Organization is the top RateEngine workspace; OperatingEntity represents EFM country entities."
         ),
-        "branch_role": "Branch is an office/location under exactly one Organization.",
+        "operating_entity_role": "OperatingEntity belongs to one Organization and groups canonical branches.",
+        "branch_role": "Branch is an office/location under exactly one Organization and can link to one OperatingEntity.",
         "department_role": "Department belongs to one Organization and can optionally belong to one Branch.",
         "membership_role": "UserMembership ties user to Organization, optional Branch, optional Department, and Role.",
-        "can_represent_intended_hierarchy": False,
+        "can_represent_intended_hierarchy": True,
         "recommendation": (
-            "Do not redesign immediately. Treat Organization as operating entity for now, "
-            "document EFM Group as an external/business tenant concept, and consider a Tenant model only "
-            "if multi-group SaaS or explicit group-level ownership is required."
+            "Seed OperatingEntity records and nullable Branch.operating_entity links before any RBAC enforcement changes."
         ),
     }
 
 
-def hierarchy_mismatches(organizations, branches, memberships):
+def hierarchy_mismatches(organizations, operating_entities, branches, departments, memberships):
     organization_names = {org.name for org in organizations}
     expected_entities = set(INTENDED_OPERATING_ENTITIES)
-    branch_names_by_org = {}
+    entity_names = {entity.name for entity in operating_entities}
+    branch_names_by_entity = {}
     for branch in branches:
-        branch_names_by_org.setdefault(branch.organization.name, set()).add(branch.name)
+        if branch.operating_entity:
+            branch_names_by_entity.setdefault(branch.operating_entity.name, set()).add(branch.name)
 
-    missing_entities = sorted(expected_entities - organization_names)
-    extra_organizations = sorted(organization_names - expected_entities - {INTENDED_TENANT})
+    missing_organizations = [] if INTENDED_ORGANIZATION in organization_names else [INTENDED_ORGANIZATION]
+    extra_organizations = sorted(organization_names - {INTENDED_ORGANIZATION})
+    missing_entities = sorted(expected_entities - entity_names)
+    duplicate_codes = duplicate_scope_codes(organizations, operating_entities, branches, departments)
     missing_branches = {}
     for entity, payload in INTENDED_OPERATING_ENTITIES.items():
-        missing = sorted(payload["branches"] - branch_names_by_org.get(entity, set()))
+        missing = sorted(payload["branches"] - branch_names_by_entity.get(entity, set()))
         if missing:
             missing_branches[entity] = missing
 
@@ -229,22 +247,30 @@ def hierarchy_mismatches(organizations, branches, memberships):
             "organization": ascii_safe(branch.organization.name),
         }
         for branch in branches
-        if branch.name in expected_branch_names
-        and branch.organization.name not in expected_entities
+        if branch.name in expected_branch_names and branch.organization.name != INTENDED_ORGANIZATION
     ]
+    branches_missing_operating_entity = [branch_row(branch) for branch in branches if branch.operating_entity_id is None]
+    operating_entities_without_branches = sorted(
+        entity.name for entity in operating_entities if entity.name in expected_entities and entity.name not in branch_names_by_entity
+    )
+    orphaned_branches = [branch_row(branch) for branch in branches if branch.organization.name != INTENDED_ORGANIZATION]
     active_missing_branch = [
         membership_row(membership)
         for membership in memberships
         if membership.is_active and membership.branch_id is None
     ]
     return {
+        "missing_organizations": missing_organizations,
         "missing_operating_entities": missing_entities,
         "extra_organizations": extra_organizations,
         "missing_branches_by_entity": missing_branches,
+        "branches_missing_operating_entity": branches_missing_operating_entity,
+        "operating_entities_without_branches": operating_entities_without_branches,
+        "duplicate_codes": duplicate_codes,
+        "orphaned_branches": orphaned_branches,
         "branches_under_unexpected_organization": unexpected_branch_rows,
         "active_memberships_missing_branch": len(active_missing_branch),
         "active_memberships_missing_branch_examples": active_missing_branch[:10],
-        "efm_group_stored_as_organization": INTENDED_TENANT in organization_names,
     }
 
 
@@ -252,10 +278,10 @@ def answers(model_assessment, mismatches):
     no_tenant = not model_assessment["tenant_model_exists"]
     return {
         "is_there_a_tenant_model": "yes" if not no_tenant else "no",
-        "organization_currently_acts_as": "operating entity/workspace, not a separate EFM Group tenant",
-        "are_efm_operating_entities_represented_as_organizations": yes_no(not mismatches["missing_operating_entities"]),
+        "organization_currently_acts_as": "top workspace/tenant",
+        "are_efm_operating_entities_represented": yes_no(not mismatches["missing_operating_entities"]),
         "are_expected_offices_represented_as_branches": yes_no(not mismatches["missing_branches_by_entity"]),
-        "are_branches_tied_to_exactly_one_organization": "yes; Branch.organization is a required ForeignKey",
+        "are_branches_tied_to_operating_entity": yes_no(not mismatches["branches_missing_operating_entity"]),
         "are_departments_tied_to_organization_and_optionally_branch": "yes; Department.organization is required and Department.branch is nullable",
         "are_active_memberships_missing_branch": yes_no(mismatches["active_memberships_missing_branch"] > 0),
         "why_branch_readiness_is_low": (
@@ -263,10 +289,23 @@ def answers(model_assessment, mismatches):
             "are not consistently populated with branch."
         ),
         "recommended_next_step": (
-            "Confirm branch master data under operating entities, populate active user memberships with branch, "
-            "then rerun branch source diagnostics before historical backfill."
+            "Seed OperatingEntity rows, link canonical branches, then rerun diagnostics before any RBAC behavior change."
         ),
     }
+
+
+def duplicate_scope_codes(organizations, operating_entities, branches, departments):
+    return {
+        "organizations": duplicate_values(org.slug for org in organizations),
+        "operating_entities": duplicate_values(f"{entity.organization_id}:{entity.code}" for entity in operating_entities),
+        "branches": duplicate_values(f"{branch.organization_id}:{branch.code}" for branch in branches),
+        "departments": duplicate_values(f"{department.organization_id}:{department.code}" for department in departments),
+    }
+
+
+def duplicate_values(values):
+    counts = Counter(values)
+    return sorted(value for value, count in counts.items() if count > 1)
 
 
 def membership_summary(memberships):
@@ -299,12 +338,24 @@ def organization_row(organization):
     }
 
 
+def operating_entity_row(entity):
+    return {
+        "id": str(entity.pk),
+        "name": ascii_safe(entity.name),
+        "code": ascii_safe(entity.code),
+        "organization": scope_label(entity.organization),
+        "country_code": ascii_safe(entity.country_code),
+        "is_active": entity.is_active,
+    }
+
+
 def branch_row(branch):
     return {
         "id": str(branch.pk),
         "name": ascii_safe(branch.name),
         "code": ascii_safe(branch.code),
         "organization": scope_label(branch.organization),
+        "operating_entity": scope_label(branch.operating_entity),
         "is_active": branch.is_active,
     }
 

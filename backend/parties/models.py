@@ -186,6 +186,14 @@ class Branch(models.Model):
         on_delete=models.CASCADE,
         related_name="branches",
     )
+    operating_entity = models.ForeignKey(
+        OperatingEntity,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="branches",
+        help_text="Future RBAC operating-entity scope. Nullable until backfilled and enforced.",
+    )
     code = models.CharField(max_length=16)
     name = models.CharField(max_length=120)
     is_active = models.BooleanField(default=True, db_index=True)

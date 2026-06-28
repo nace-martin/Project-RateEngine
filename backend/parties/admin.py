@@ -9,6 +9,7 @@ from .models import (
     Contact,
     CustomerCommercialProfile,
     Department,
+    OperatingEntity,
     Organization,
     OrganizationBranding,
 )
@@ -88,9 +89,16 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 @admin.register(Branch)
 class BranchAdmin(admin.ModelAdmin):
-    list_display = ("code", "name", "organization", "is_active", "updated_at")
-    search_fields = ("code", "name", "organization__name", "organization__slug")
-    list_filter = ("organization", "is_active")
+    list_display = ("code", "name", "organization", "operating_entity", "is_active", "updated_at")
+    search_fields = ("code", "name", "organization__name", "organization__slug", "operating_entity__name")
+    list_filter = ("organization", "operating_entity", "is_active")
+
+
+@admin.register(OperatingEntity)
+class OperatingEntityAdmin(admin.ModelAdmin):
+    list_display = ("code", "name", "organization", "country_code", "is_active", "updated_at")
+    search_fields = ("code", "name", "slug", "organization__name", "organization__slug")
+    list_filter = ("organization", "country_code", "is_active")
 
 
 @admin.register(Department)
