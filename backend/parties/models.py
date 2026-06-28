@@ -125,6 +125,53 @@ class Organization(models.Model):
         super().save(*args, **kwargs)
 
 
+class OperatingEntity(models.Model):
+    """
+    Country operating entity under the single Express Freight Management organization.
+
+    Schema only for Phase 10D. Branches, memberships, and scoped records are not
+    linked to this model until later approved migration phases.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="operating_entities",
+    )
+    code = models.CharField(max_length=24)
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(max_length=64)
+    country_code = models.CharField(max_length=2)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["organization__name", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "code"],
+                name="unique_operating_entity_code_per_organization",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "slug"],
+                name="unique_operating_entity_slug_per_organization",
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "name"],
+                name="unique_operating_entity_name_per_organization",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organization", "is_active"], name="op_entity_org_active_idx"),
+            models.Index(fields=["organization", "country_code"], name="op_entity_org_country_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.organization.slug}:{self.code}"
+
+
 class Branch(models.Model):
     """
     Operational branch within an Organization.

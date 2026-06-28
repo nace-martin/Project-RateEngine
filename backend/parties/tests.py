@@ -4,9 +4,11 @@ from io import StringIO
 import csv
 import json
 from io import BytesIO
+from pathlib import Path
 
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError, transaction
 from django.urls import reverse
 from django.test import TestCase
 from django.utils import timezone
@@ -18,7 +20,7 @@ from accounts.models import CustomUser, Role, UserMembership
 from crm.models import Interaction, Opportunity, Task
 from core.models import Country, City, Location
 from core.models import Currency
-from parties.models import Branch, Company, Contact, Address, Department, Organization, OrganizationBranding
+from parties.models import Branch, Company, Contact, Address, Department, OperatingEntity, Organization, OrganizationBranding
 from quotes.models import Quote
 from quotes.spot_models import SpotPricingEnvelopeDB
 
@@ -2646,6 +2648,56 @@ class OperatingEntityModelDesignTests(TestCase):
         org.refresh_from_db()
         self.assertEqual(org.name, "Express Freight Management")
         self.assertTrue(org.is_active)
+
+
+class OperatingEntitySchemaTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(
+            name="Express Freight Management",
+            slug="express-freight-management",
+        )
+
+    def test_model_creation_and_organization_relationship(self):
+        entity = OperatingEntity.objects.create(
+            organization=self.organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+
+        self.assertEqual(entity.organization, self.organization)
+        self.assertEqual(list(self.organization.operating_entities.all()), [entity])
+        self.assertEqual(str(entity), "express-freight-management:PNG")
+        self.assertTrue(entity.is_active)
+
+    def test_unique_constraints_are_per_organization(self):
+        OperatingEntity.objects.create(
+            organization=self.organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+
+        duplicate_cases = [
+            {"code": "PNG", "name": "EFM Australia", "slug": "efm-australia", "country_code": "AU"},
+            {"code": "AU", "name": "EFM PNG", "slug": "efm-australia", "country_code": "AU"},
+            {"code": "AU", "name": "EFM Australia", "slug": "efm-png", "country_code": "AU"},
+        ]
+        for values in duplicate_cases:
+            with self.subTest(values=values):
+                with self.assertRaises(IntegrityError):
+                    with transaction.atomic():
+                        OperatingEntity.objects.create(organization=self.organization, **values)
+
+    def test_migration_exists_without_data_operation(self):
+        migration_path = Path(__file__).resolve().parent / "migrations" / "0010_operatingentity.py"
+
+        self.assertTrue(migration_path.exists())
+        migration_text = migration_path.read_text(encoding="utf-8")
+        self.assertNotIn("RunPython", migration_text)
+        self.assertNotIn("RunSQL", migration_text)
 
 
 class FinalUserBlockerResolutionPlanTests(TestCase):
