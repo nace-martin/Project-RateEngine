@@ -57,6 +57,7 @@ LEGACY_AUTHENTICATED_PERMISSION_CODES = {
 @dataclass(frozen=True)
 class EffectiveUserScope:
     organization_ids: frozenset[Any]
+    operating_entity_ids: frozenset[Any]
     branch_ids: frozenset[Any]
     department_ids: frozenset[Any]
     department_codes: frozenset[str]
@@ -70,6 +71,7 @@ class EffectiveUserScope:
 @dataclass(frozen=True)
 class CreateScope:
     organization: Any = None
+    operating_entity: Any = None
     branch: Any = None
     department: Any = None
     owner: Any = None
@@ -102,9 +104,42 @@ def get_active_memberships(user):
 
     return (
         UserMembership.objects.filter(user=user, is_active=True)
-        .select_related("organization", "branch", "department", "role")
+        .select_related("organization", "operating_entity", "branch", "branch__operating_entity", "department", "role")
         .prefetch_related("role__permissions")
     )
+
+
+def membership_operating_entity(membership):
+    if getattr(membership, "operating_entity_id", None):
+        return membership.operating_entity
+    branch = getattr(membership, "branch", None)
+    if branch is not None and getattr(branch, "operating_entity_id", None):
+        return branch.operating_entity
+    return None
+
+
+def membership_operating_entity_id(membership):
+    entity = membership_operating_entity(membership)
+    return getattr(entity, "id", None)
+
+
+def _agreed_membership_operating_entity(memberships):
+    values = {membership_operating_entity_id(membership) for membership in memberships}
+    if len(values) == 1 and next(iter(values)) is not None:
+        return membership_operating_entity(memberships[0])
+    return None
+
+
+def _model_has_field(model, field_name: str) -> bool:
+    current_model = model
+    parts = field_name.split("__")
+    try:
+        for part in parts:
+            field = current_model._meta.get_field(part)
+            current_model = getattr(field, "related_model", None) or current_model
+    except Exception:
+        return False
+    return True
 
 
 def user_has_cross_scope_access(user) -> bool:
@@ -142,13 +177,15 @@ def scoped_queryset_for_user(queryset, user, *, prefix: str = ""):
         return queryset.none()
 
     field_prefix = f"{prefix}__" if prefix else ""
-    return queryset.filter(
-        **{
-            f"{field_prefix}organization_id": membership.organization_id,
-            f"{field_prefix}branch_id": membership.branch_id,
-            f"{field_prefix}department_id": membership.department_id,
-        }
-    )
+    filters = {
+        f"{field_prefix}organization_id": membership.organization_id,
+        f"{field_prefix}branch_id": membership.branch_id,
+        f"{field_prefix}department_id": membership.department_id,
+    }
+    operating_entity_id = membership_operating_entity_id(membership)
+    if operating_entity_id and _model_has_field(queryset.model, f"{field_prefix}operating_entity"):
+        filters[f"{field_prefix}operating_entity_id"] = operating_entity_id
+    return queryset.filter(**filters)
 
 
 def scoped_q_for_user(user, *, prefix: str = "") -> Q:
@@ -162,13 +199,12 @@ def scoped_q_for_user(user, *, prefix: str = "") -> Q:
         return Q(pk__in=[])
 
     field_prefix = f"{prefix}__" if prefix else ""
-    return Q(
-        **{
-            f"{field_prefix}organization_id": membership.organization_id,
-            f"{field_prefix}branch_id": membership.branch_id,
-            f"{field_prefix}department_id": membership.department_id,
-        }
-    )
+    filters = {
+        f"{field_prefix}organization_id": membership.organization_id,
+        f"{field_prefix}branch_id": membership.branch_id,
+        f"{field_prefix}department_id": membership.department_id,
+    }
+    return Q(**filters)
 
 
 def _agreed_membership_value(memberships, field_name, id_field_name):
@@ -187,6 +223,7 @@ def resolve_create_scope_for_user(user) -> CreateScope:
         membership = memberships[0]
         return CreateScope(
             organization=membership.organization,
+            operating_entity=membership_operating_entity(membership),
             branch=membership.branch,
             department=membership.department,
             owner=user,
@@ -197,6 +234,7 @@ def resolve_create_scope_for_user(user) -> CreateScope:
     if len(memberships) > 1:
         return CreateScope(
             organization=_agreed_membership_value(memberships, "organization", "organization_id"),
+            operating_entity=_agreed_membership_operating_entity(memberships),
             branch=_agreed_membership_value(memberships, "branch", "branch_id"),
             department=_agreed_membership_value(memberships, "department", "department_id"),
             owner=user,
@@ -218,6 +256,7 @@ def _membership_create_scope_for_user(user) -> CreateScope:
         membership = memberships[0]
         return CreateScope(
             organization=membership.organization,
+            operating_entity=membership_operating_entity(membership),
             branch=membership.branch,
             department=membership.department,
             owner=user,
@@ -228,6 +267,7 @@ def _membership_create_scope_for_user(user) -> CreateScope:
     if len(memberships) > 1:
         return CreateScope(
             organization=_agreed_membership_value(memberships, "organization", "organization_id"),
+            operating_entity=_agreed_membership_operating_entity(memberships),
             branch=_agreed_membership_value(memberships, "branch", "branch_id"),
             department=_agreed_membership_value(memberships, "department", "department_id"),
             owner=user,
@@ -322,6 +362,7 @@ def get_effective_user_scope(user) -> EffectiveUserScope:
     if not _is_authenticated_active(user):
         return EffectiveUserScope(
             organization_ids=frozenset(),
+            operating_entity_ids=frozenset(),
             branch_ids=frozenset(),
             department_ids=frozenset(),
             department_codes=frozenset(),
@@ -343,6 +384,11 @@ def get_effective_user_scope(user) -> EffectiveUserScope:
             membership.branch_id
             for membership in memberships
             if membership.branch_id
+        }
+        operating_entity_ids = {
+            operating_entity_id
+            for operating_entity_id in (membership_operating_entity_id(membership) for membership in memberships)
+            if operating_entity_id
         }
         department_ids = {
             membership.department_id
@@ -370,6 +416,7 @@ def get_effective_user_scope(user) -> EffectiveUserScope:
 
         return EffectiveUserScope(
             organization_ids=frozenset(organization_ids),
+            operating_entity_ids=frozenset(operating_entity_ids),
             branch_ids=frozenset(branch_ids),
             department_ids=frozenset(department_ids),
             department_codes=frozenset(department_codes),
@@ -386,6 +433,7 @@ def get_effective_user_scope(user) -> EffectiveUserScope:
 
     return EffectiveUserScope(
         organization_ids=frozenset({organization_id} if organization_id else set()),
+        operating_entity_ids=frozenset(),
         branch_ids=frozenset(),
         department_ids=frozenset(),
         department_codes=frozenset({department_code} if department_code else set()),
@@ -457,6 +505,10 @@ def user_can_access_branch(user, branch) -> bool:
     if branch_organization_id not in scope.organization_ids:
         return False
 
+    branch_operating_entity_id = getattr(branch, "operating_entity_id", None)
+    if branch_operating_entity_id and scope.operating_entity_ids and branch_operating_entity_id not in scope.operating_entity_ids:
+        return False
+
     if not scope.has_null_branch_scope:
         return False
 
@@ -485,6 +537,15 @@ def user_can_access_department(user, department) -> bool:
 
     department_organization_id = getattr(department, "organization_id", None)
     if department_organization_id not in scope.organization_ids:
+        return False
+
+    branch = getattr(department, "branch", None)
+    department_operating_entity_id = getattr(branch, "operating_entity_id", None)
+    if (
+        department_operating_entity_id
+        and scope.operating_entity_ids
+        and department_operating_entity_id not in scope.operating_entity_ids
+    ):
         return False
 
     department_code = _normalize_department_code(getattr(department, "code", ""))

@@ -28,6 +28,7 @@ from pricing_v4.tests.test_export_engine import seed_all_export_product_codes
 
 
 @override_settings(
+    RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True,
     REST_FRAMEWORK={
         "DEFAULT_PERMISSION_CLASSES": [
             "rest_framework.permissions.IsAuthenticated",

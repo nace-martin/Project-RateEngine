@@ -3213,6 +3213,54 @@ npx fallow --format json
 graphify update .
 ```
 
+#### Phase 10G - OperatingEntity Scope Resolution and RBAC Alignment
+
+Date: 2026-06-29
+
+Branch: `codex/phase-10g-operating-entity-scope`
+
+Scope: teach shared runtime scope resolution about `OperatingEntity` while
+preserving the transition state where `UserMembership.operating_entity` may be
+null.
+
+Runtime resolution rules:
+
+- `UserMembership.operating_entity` wins when present.
+- If membership `operating_entity` is null and `membership.branch` has
+  `operating_entity`, runtime scope infers the entity from the branch.
+- If neither membership nor branch can provide an entity, existing
+  organization, branch, and department behavior is preserved.
+- Queryset filtering only adds `operating_entity` where the target model has
+  that field. Current CRM/customer/quote/SPOT scoped records do not yet have
+  that field.
+
+Diagnostics now include:
+
+- `memberships_missing_operating_entity`
+- `memberships_inferable_from_branch`
+- `memberships_not_inferable`
+- `branch_operating_entity_completeness`
+- `scope_resolution_operating_entity_ready`
+
+Out of scope:
+
+- No required `operating_entity` field.
+- No destructive data migration.
+- No legacy organization deletion or deactivation.
+- No Quote/SPOT historical backfill tooling.
+- No pricing, ProductCode, quote pricing, SPOT pricing, or rating changes.
+
+Verification:
+
+```bash
+python backend/manage.py makemigrations --check --dry-run
+python backend/manage.py test accounts.tests parties.tests crm.tests quotes.tests
+python backend/manage.py check
+npx fallow --format json
+graphify update .
+git diff --check
+```
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

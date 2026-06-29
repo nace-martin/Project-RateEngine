@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.http import Http404
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -74,6 +74,7 @@ class QuoteCommoditySchemaTests(TestCase):
         self.assertTrue(payload.is_dangerous_goods)
 
 
+@override_settings(RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True)
 class QuoteCommodityPersistenceTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -437,6 +438,7 @@ class QuoteCommodityPersistenceTests(TestCase):
             )
 
 
+@override_settings(RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True)
 class QuoteCommodityAPITests(APITestCase):
     def setUp(self):
         user_model = get_user_model()

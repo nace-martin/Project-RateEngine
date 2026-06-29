@@ -98,6 +98,7 @@ def canonical_report(organizations, operating_entities, branches, departments):
     }
     entity_names = {entity.name for entity in operating_entities}
     duplicate_codes = duplicate_codes_for(organizations.values(), operating_entities, branches, departments)
+    branches_with_operating_entity = sum(1 for branch in branches if branch.operating_entity_id)
     return {
         "organizations_present": sorted(organizations),
         "organizations_missing": [name for name in CANONICAL_TOP_ORGANIZATIONS if name not in organizations],
@@ -105,6 +106,12 @@ def canonical_report(organizations, operating_entities, branches, departments):
         "operating_entities_missing": [name for name in CANONICAL_OPERATING_ENTITIES if name not in entity_names],
         "branches_missing": {org: names for org, names in missing_branches.items() if names},
         "branches_missing_operating_entity": [branch_row(branch) for branch in branches if branch.operating_entity_id is None],
+        "branch_operating_entity_completeness": {
+            "total": len(branches),
+            "with_operating_entity": branches_with_operating_entity,
+            "missing_operating_entity": len(branches) - branches_with_operating_entity,
+            "ready": bool(branches) and branches_with_operating_entity == len(branches),
+        },
         "operating_entities_without_branches": sorted(
             entity.name for entity in operating_entities if entity.name not in branch_names_by_entity
         ),
@@ -140,15 +147,22 @@ def membership_report(memberships, active_users):
         for user_id, memberships_for_user in memberships_by_user.items()
         if user_id in active_user_ids and len(memberships_for_user) > 1
     ]
-    missing_operating_entity = sum(1 for membership in memberships if membership.operating_entity_id is None)
+    missing_operating_entity = [membership for membership in memberships if membership.operating_entity_id is None]
+    inferable_from_branch = [
+        membership for membership in missing_operating_entity if membership.branch_id and membership.branch.operating_entity_id
+    ]
+    not_inferable = [membership for membership in missing_operating_entity if membership not in inferable_from_branch]
     return {
         "active_users": len(active_users),
         "active_memberships": len(memberships),
         "complete_canonical_memberships": sum(1 for membership in memberships if membership_is_complete_canonical(membership)),
         "missing_organization": sum(1 for membership in memberships if membership.organization_id is None),
         "missing_branch": sum(1 for membership in memberships if membership.branch_id is None),
-        "memberships_missing_operating_entity": missing_operating_entity,
-        "missing_operating_entity": missing_operating_entity,
+        "memberships_missing_operating_entity": len(missing_operating_entity),
+        "memberships_inferable_from_branch": len(inferable_from_branch),
+        "memberships_not_inferable": len(not_inferable),
+        "scope_resolution_operating_entity_ready": len(not_inferable) == 0,
+        "missing_operating_entity": len(missing_operating_entity),
         "missing_department": sum(1 for membership in memberships if membership.department_id is None),
         "missing_role": sum(1 for membership in memberships if membership.role_id is None),
         "legacy_non_canonical_organization_memberships": sum(
@@ -178,6 +192,8 @@ def membership_status(membership):
     if membership.organization.name not in CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS:
         return "legacy_organization"
     if not membership.operating_entity_id:
+        if membership.branch_id and membership.branch.operating_entity_id:
+            return "operating_entity_inferable_from_branch"
         return "missing_operating_entity"
     if not membership.branch_id:
         return "missing_branch"
@@ -234,6 +250,7 @@ def write_text(stdout, report):
     stdout.write(f"  operating_entities_missing={canonical['operating_entities_missing']}")
     stdout.write(f"  branches_missing={canonical['branches_missing']}")
     stdout.write(f"  branches_missing_operating_entity={len(canonical['branches_missing_operating_entity'])}")
+    stdout.write(f"  branch_operating_entity_completeness={canonical['branch_operating_entity_completeness']}")
     stdout.write(f"  operating_entities_without_branches={canonical['operating_entities_without_branches']}")
     stdout.write(f"  duplicate_codes={canonical['duplicate_codes']}")
     stdout.write(f"  orphaned_branches={len(canonical['orphaned_branches'])}")
@@ -246,6 +263,9 @@ def write_text(stdout, report):
         f"complete_canonical={membership['complete_canonical_memberships']}, "
         f"missing_org={membership['missing_organization']}, "
         f"memberships_missing_operating_entity={membership['memberships_missing_operating_entity']}, "
+        f"memberships_inferable_from_branch={membership['memberships_inferable_from_branch']}, "
+        f"memberships_not_inferable={membership['memberships_not_inferable']}, "
+        f"scope_resolution_operating_entity_ready={membership['scope_resolution_operating_entity_ready']}, "
         f"missing_branch={membership['missing_branch']}, "
         f"missing_department={membership['missing_department']}, "
         f"missing_role={membership['missing_role']}, "
