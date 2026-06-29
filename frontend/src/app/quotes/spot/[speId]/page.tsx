@@ -1357,14 +1357,24 @@ export default function SpotRateEntryPage() {
                                                     });
                                                     if (cbCharges.length === 0) return null;
                                                     
-                                                    // Calculate total for this bucket if amount is parseable
-                                                    const totalVal = cbCharges.reduce((sum, c) => {
+                                                    // Group totals by currency
+                                                    const currencyTotals: Record<string, number> = {};
+                                                    let hasNumericAmounts = false;
+                                                    cbCharges.forEach((c) => {
+                                                        // Omit percentage/rule base lines from direct sum if they don't have static amount
                                                         const amt = parseFloat(c.amount);
-                                                        return isNaN(amt) ? sum : sum + amt;
-                                                    }, 0);
+                                                        if (!isNaN(amt)) {
+                                                            const cur = (c.currency || "USD").toUpperCase();
+                                                            currencyTotals[cur] = (currencyTotals[cur] || 0) + amt;
+                                                            hasNumericAmounts = true;
+                                                        }
+                                                    });
                                                     
-                                                    // Map currency symbols or labels if any. Default USD/PGK.
-                                                    const currencyLabel = cbCharges[0]?.currency || "USD";
+                                                    const totalString = hasNumericAmounts
+                                                        ? Object.entries(currencyTotals)
+                                                            .map(([cur, total]) => `${total.toFixed(2)} ${cur}`)
+                                                            .join(" / ")
+                                                        : "—";
 
                                                     return (
                                                         <div key={cb.id} className="flex justify-between py-2 text-xs">
@@ -1372,7 +1382,7 @@ export default function SpotRateEntryPage() {
                                                                 {cb.label} ({cbCharges.length} {cbCharges.length === 1 ? "charge" : "charges"})
                                                             </span>
                                                             <span className="font-semibold text-slate-900">
-                                                                {totalVal.toFixed(2)} {currencyLabel}
+                                                                {totalString}
                                                             </span>
                                                         </div>
                                                     );
