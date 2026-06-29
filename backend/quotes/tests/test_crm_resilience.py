@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -15,6 +16,7 @@ from services.models import ServiceComponent
 from quotes.models import Quote
 
 
+@override_settings(RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS=True)
 class CRMResilienceTests(APITestCase):
     def setUp(self):
         User = get_user_model()

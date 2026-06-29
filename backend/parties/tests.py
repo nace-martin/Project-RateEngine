@@ -2463,8 +2463,32 @@ class PostMembershipApplyReadinessTests(TestCase):
         payload = json.loads(self._call_report("--format", "json"))
 
         self.assertEqual(payload["memberships"]["memberships_missing_operating_entity"], 1)
+        self.assertEqual(payload["memberships"]["memberships_inferable_from_branch"], 1)
+        self.assertEqual(payload["memberships"]["memberships_not_inferable"], 0)
+        self.assertTrue(payload["memberships"]["scope_resolution_operating_entity_ready"])
         self.assertEqual(payload["memberships"]["missing_operating_entity"], 1)
-        self.assertEqual(payload["memberships"]["active_memberships_by_status"]["missing_operating_entity"], 1)
+        self.assertEqual(payload["memberships"]["active_memberships_by_status"]["operating_entity_inferable_from_branch"], 1)
+
+    def test_missing_operating_entity_without_branch_link_reported_not_inferable(self):
+        self._canonical_master_data()
+        org = Organization.objects.get(name="Express Freight Management")
+        branch = Branch.objects.create(organization=org, code="LEG", name="Legacy Branch")
+        user = CustomUser.objects.create_user(username="not-inferable-entity-ready-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=branch,
+            department=Department.objects.get(organization=org, name="Air Freight"),
+            role=self._role(),
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["memberships_missing_operating_entity"], 1)
+        self.assertEqual(payload["memberships"]["memberships_inferable_from_branch"], 0)
+        self.assertEqual(payload["memberships"]["memberships_not_inferable"], 1)
+        self.assertFalse(payload["memberships"]["scope_resolution_operating_entity_ready"])
+        self.assertFalse(payload["canonical"]["branch_operating_entity_completeness"]["ready"])
 
     def test_active_user_with_no_membership_blocks(self):
         self._canonical_master_data()

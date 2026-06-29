@@ -24,6 +24,8 @@ from .models import CustomUser, Permission, Role, RolePermission, UserMembership
 from .scope import (
     get_active_memberships,
     get_effective_user_scope,
+    resolve_create_scope_for_user,
+    scoped_queryset_for_user,
     user_can_access_branch,
     user_can_access_department,
     user_can_access_organization,
@@ -324,6 +326,38 @@ class RBACScopeHelperTests(TestCase):
             slug='efm-png',
             country_code='PG',
         )
+        self.branch_a.operating_entity = self.operating_entity_a
+        self.branch_a.save(update_fields=['operating_entity'])
+        self.operating_entity_a_alt = OperatingEntity.objects.create(
+            organization=self.org_a,
+            code='AUS',
+            name='EFM Australia',
+            slug='efm-australia',
+            country_code='AU',
+        )
+        self.branch_a_alt = Branch.objects.create(
+            organization=self.org_a,
+            operating_entity=self.operating_entity_a_alt,
+            code='BNE',
+            name='Brisbane',
+        )
+        self.department_a_alt = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a_alt,
+            code='BNEAIR',
+            name='Brisbane Air Freight',
+        )
+        self.branch_a_legacy = Branch.objects.create(
+            organization=self.org_a,
+            code='LEG',
+            name='Legacy Branch',
+        )
+        self.department_a_legacy = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a_legacy,
+            code='LEGAIR',
+            name='Legacy Air Freight',
+        )
         self.branch_b = Branch.objects.create(
             organization=self.org_b,
             code='LAE',
@@ -425,19 +459,80 @@ class RBACScopeHelperTests(TestCase):
 
         membership.refresh_from_db()
         scope = get_effective_user_scope(user)
+        create_scope = resolve_create_scope_for_user(user)
 
         self.assertEqual(membership.operating_entity, self.operating_entity_a)
+        self.assertEqual(create_scope.operating_entity, self.operating_entity_a)
         self.assertIn(self.org_a.id, scope.organization_ids)
+        self.assertIn(self.operating_entity_a.id, scope.operating_entity_ids)
         self.assertIn(self.branch_a.id, scope.branch_ids)
 
-    def test_membership_operating_entity_can_remain_null_during_transition(self):
-        user = self._create_user(username='null-operating-entity-user')
+    def test_membership_operating_entity_infers_from_branch_during_transition(self):
+        user = self._create_user(username='branch-inferred-operating-entity-user')
         membership = self._create_membership(user)
 
         membership.refresh_from_db()
+        create_scope = resolve_create_scope_for_user(user)
+        scope = get_effective_user_scope(user)
 
         self.assertIsNone(membership.operating_entity)
+        self.assertEqual(create_scope.operating_entity, self.operating_entity_a)
+        self.assertIn(self.operating_entity_a.id, scope.operating_entity_ids)
         self.assertEqual(list(get_active_memberships(user)), [membership])
+
+    def test_membership_without_operating_entity_or_branch_link_preserves_old_scope(self):
+        user = self._create_user(username='legacy-null-operating-entity-user')
+        membership = self._create_membership(user, branch=self.branch_a_legacy, department=self.department_a_legacy)
+
+        create_scope = resolve_create_scope_for_user(user)
+        scope = get_effective_user_scope(user)
+
+        self.assertIsNone(membership.operating_entity)
+        self.assertIsNone(create_scope.operating_entity)
+        self.assertEqual(create_scope.organization, self.org_a)
+        self.assertEqual(create_scope.branch, self.branch_a_legacy)
+        self.assertEqual(create_scope.department, self.department_a_legacy)
+        self.assertEqual(scope.operating_entity_ids, frozenset())
+
+    def test_operating_entity_limits_org_wide_branch_and_department_access_when_known(self):
+        user = self._create_user(username='entity-wide-admin')
+        self._create_membership(
+            user,
+            role=self.admin_role,
+            operating_entity=self.operating_entity_a,
+            branch=None,
+            department=None,
+        )
+
+        self.assertTrue(user_can_access_branch(user, self.branch_a))
+        self.assertTrue(user_can_access_department(user, self.department_a))
+        self.assertFalse(user_can_access_branch(user, self.branch_a_alt))
+        self.assertFalse(user_can_access_department(user, self.department_a_alt))
+
+    def test_scoped_queryset_adds_operating_entity_only_for_models_that_have_field(self):
+        user = self._create_user(username='entity-filter-user')
+        self._create_membership(user, operating_entity=self.operating_entity_a)
+        matching = UserMembership.objects.create(
+            user=self._create_user(username='entity-filter-target'),
+            organization=self.org_a,
+            operating_entity=self.operating_entity_a,
+            branch=self.branch_a,
+            department=self.department_a,
+            role=self.manager_role,
+        )
+        UserMembership.objects.create(
+            user=self._create_user(username='entity-filter-other'),
+            organization=self.org_a,
+            operating_entity=self.operating_entity_a_alt,
+            branch=self.branch_a,
+            department=self.department_a,
+            role=self.manager_role,
+        )
+
+        scoped_ids = set(scoped_queryset_for_user(UserMembership.objects.all(), user).values_list("id", flat=True))
+
+        self.assertIn(matching.id, scoped_ids)
+        self.assertNotIn(UserMembership.objects.get(user__username='entity-filter-other').id, scoped_ids)
 
     def test_inactive_membership_ignored(self):
         user = self._create_user()
