@@ -1,12 +1,16 @@
 import json
 from collections import Counter
+from pathlib import Path
 
+from django.apps import apps
 from django.core.management.base import BaseCommand
+from django.db import models
 
 from accounts.models import CustomUser, UserMembership
 from parties.models import Branch, Department, OperatingEntity, Organization
 
 
+ROOT = Path(__file__).resolve().parents[4]
 CANONICAL_ORGANIZATIONS = ("EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands")
 CANONICAL_TOP_ORGANIZATIONS = ("Express Freight Management",)
 CANONICAL_OPERATING_ENTITIES = ("EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands")
@@ -17,6 +21,13 @@ CANONICAL_BRANCHES = {
     "EFM Solomon Islands": ("Honiara",),
 }
 CANONICAL_DEPARTMENTS = ("Air Freight", "Sea Freight", "Customs", "Transport")
+LEGACY_EAC_NAMES = ("EAC", "EFM Express Air Cargo", "Express Air Cargo")
+STALE_ARTIFACTS = (
+    "backend/parties/management/commands/rbac_hierarchy_tooling_alignment_audit.py",
+    "docs/beta-readiness-efm.md",
+    "docs/tenant-model-beta.md",
+    "docs/rbac-organisation-audit-plan.md",
+)
 
 
 class Command(BaseCommand):
@@ -68,14 +79,28 @@ def build_report():
 
     canonical = canonical_report(organizations, operating_entities, branches, departments)
     membership = membership_report(memberships, active_users)
+    legacy = legacy_report()
+    stale_artifacts = stale_artifact_report()
     blockers = blockers_for(canonical, membership)
+    final_blockers = final_blockers_for(canonical, membership, legacy, stale_artifacts)
     return {
         "write_enabled": False,
         "canonical": canonical,
         "memberships": membership,
+        "legacy": legacy,
+        "stale_artifacts": stale_artifacts,
         "readiness": {
             "status": "READY_FOR_BACKFILL_PLANNING" if not blockers else "NOT_READY_FOR_BACKFILL_PLANNING",
             "blockers": blockers,
+        },
+        "final_readiness": {
+            "status": "READY" if not final_blockers else "NOT_READY",
+            "blockers": final_blockers,
+            "notes": [
+                "country-as-organization assumptions are obsolete",
+                "EAC is legacy Air Freight wording only",
+                "Quote/SPOT historical records remain DEV_TEST_LEGACY; no historical backfill is planned",
+            ],
         },
     }
 
@@ -102,8 +127,18 @@ def canonical_report(organizations, operating_entities, branches, departments):
     return {
         "organizations_present": sorted(organizations),
         "organizations_missing": [name for name in CANONICAL_TOP_ORGANIZATIONS if name not in organizations],
+        "organization_completeness": {
+            "present": len([name for name in CANONICAL_TOP_ORGANIZATIONS if name in organizations]),
+            "expected": len(CANONICAL_TOP_ORGANIZATIONS),
+            "ready": all(name in organizations for name in CANONICAL_TOP_ORGANIZATIONS),
+        },
         "operating_entities_present": sorted(entity_names),
         "operating_entities_missing": [name for name in CANONICAL_OPERATING_ENTITIES if name not in entity_names],
+        "operating_entity_completeness": {
+            "present": len(entity_names),
+            "expected": len(CANONICAL_OPERATING_ENTITIES),
+            "ready": all(name in entity_names for name in CANONICAL_OPERATING_ENTITIES),
+        },
         "branches_missing": {org: names for org, names in missing_branches.items() if names},
         "branches_missing_operating_entity": [branch_row(branch) for branch in branches if branch.operating_entity_id is None],
         "branch_operating_entity_completeness": {
@@ -156,6 +191,12 @@ def membership_report(memberships, active_users):
         "active_users": len(active_users),
         "active_memberships": len(memberships),
         "complete_canonical_memberships": sum(1 for membership in memberships if membership_is_complete_canonical(membership)),
+        "membership_operating_entity_completeness": {
+            "total": len(memberships),
+            "with_operating_entity": len(memberships) - len(missing_operating_entity),
+            "missing_operating_entity": len(missing_operating_entity),
+            "ready": len(not_inferable) == 0,
+        },
         "missing_organization": sum(1 for membership in memberships if membership.organization_id is None),
         "missing_branch": sum(1 for membership in memberships if membership.branch_id is None),
         "memberships_missing_operating_entity": len(missing_operating_entity),
@@ -204,17 +245,113 @@ def membership_status(membership):
     return "complete_canonical"
 
 
+def legacy_report():
+    return {
+        "country_as_organization_dependencies": dependency_report(CANONICAL_ORGANIZATIONS),
+        "eac_legacy_references": dependency_report(LEGACY_EAC_NAMES),
+        "quote_spot_historical_records": quote_spot_legacy_report(),
+    }
+
+
+def dependency_report(names):
+    organizations = list(Organization.objects.filter(name__in=names).order_by("name"))
+    rows = []
+    for model in sorted(apps.get_models(), key=lambda item: item._meta.label):
+        for field in model._meta.fields:
+            if not isinstance(field, models.ForeignKey):
+                continue
+            target = field.remote_field.model
+            if target is Organization:
+                filters = {f"{field.name}__name__in": names}
+            elif target is Branch:
+                filters = {f"{field.name}__organization__name__in": names}
+            elif target is Department:
+                filters = {f"{field.name}__organization__name__in": names}
+            else:
+                continue
+            count = model.objects.filter(**filters).count()
+            if count:
+                rows.append({"model": model._meta.label, "field": field.name, "count": count})
+    total = sum(row["count"] for row in rows)
+    return {
+        "organization_names": [safe(org.name) for org in organizations],
+        "organization_count": len(organizations),
+        "dependency_count": total,
+        "dependencies": rows,
+        "ready_for_deactivation_review": len(organizations) > 0 and total == 0,
+        "rollback_mapping_required": len(organizations) > 0,
+    }
+
+
+def quote_spot_legacy_report():
+    quote_model = apps.get_model("quotes", "Quote")
+    spot_model = apps.get_model("quotes", "SpotPricingEnvelopeDB")
+    return {
+        "classification": "DEV_TEST_LEGACY",
+        "historical_backfill_required": False,
+        "build_historical_backfill_tooling": False,
+        "quote_count": quote_model.objects.count(),
+        "spot_count": spot_model.objects.count(),
+    }
+
+
+def stale_artifact_report():
+    rows = []
+    for relative_path in STALE_ARTIFACTS:
+        source = read_source(relative_path)
+        rows.append(
+            {
+                "path": relative_path,
+                "exists": source is not None,
+                "mentions_country_as_organization": bool(source and all(name in source for name in CANONICAL_ORGANIZATIONS)),
+                "mentions_legacy_eac": bool(source and any(name in source for name in LEGACY_EAC_NAMES)),
+                "status": "superseded_legacy_reference",
+                "note": "country-as-organization assumptions are obsolete; EAC is legacy Air Freight wording only",
+            }
+        )
+    return rows
+
+
+def read_source(relative_path):
+    path = ROOT / relative_path
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def blockers_for(canonical, membership):
     blockers = []
+    if canonical["organizations_missing"]:
+        blockers.append(f"missing canonical organization: {canonical['organizations_missing']}")
+    if canonical["operating_entities_missing"]:
+        blockers.append(f"missing operating entities: {canonical['operating_entities_missing']}")
     if canonical["branches_missing"]:
         blockers.append(f"missing canonical branches: {canonical['branches_missing']}")
+    if canonical["branches_missing_operating_entity"]:
+        blockers.append(f"branches_missing_operating_entity: {len(canonical['branches_missing_operating_entity'])}")
+    if canonical["operating_entities_without_branches"]:
+        blockers.append(f"operating_entities_without_branches: {canonical['operating_entities_without_branches']}")
     if any(canonical["duplicate_codes"].values()):
         blockers.append(f"duplicate_codes: {canonical['duplicate_codes']}")
     if canonical["departments_missing"]:
         blockers.append(f"missing canonical departments: {canonical['departments_missing']}")
-    for key in ("legacy_non_canonical_organization_memberships", "missing_organization", "missing_branch", "missing_department", "missing_role", "users_with_no_active_membership", "users_with_multiple_active_memberships"):
+    for key in ("legacy_non_canonical_organization_memberships", "missing_organization", "memberships_not_inferable", "missing_branch", "missing_department", "missing_role", "users_with_no_active_membership", "users_with_multiple_active_memberships"):
         if membership[key]:
             blockers.append(f"{key}: {membership[key]}")
+    return blockers
+
+
+def final_blockers_for(canonical, membership, legacy, stale_artifacts):
+    blockers = blockers_for(canonical, membership)
+    country_dependencies = legacy["country_as_organization_dependencies"]["dependency_count"]
+    eac_dependencies = legacy["eac_legacy_references"]["dependency_count"]
+    if country_dependencies:
+        blockers.append(f"legacy_country_as_organization_dependencies: {country_dependencies}")
+    if eac_dependencies:
+        blockers.append(f"eac_legacy_references: {eac_dependencies}")
+    stale_count = sum(1 for row in stale_artifacts if row["exists"] and row["mentions_country_as_organization"])
+    if stale_count:
+        blockers.append(f"stale_country_as_organization_artifacts: {stale_count}")
     return blockers
 
 
@@ -244,8 +381,11 @@ def write_text(stdout, report):
     stdout.write("====================================")
     stdout.write("Mode: read-only diagnostics")
     stdout.write(f"Readiness: {readiness['status']}")
+    stdout.write(f"Final readiness: {report['final_readiness']['status']}")
     stdout.write("")
     stdout.write("Canonical master data:")
+    stdout.write(f"  organization_completeness={canonical['organization_completeness']}")
+    stdout.write(f"  operating_entity_completeness={canonical['operating_entity_completeness']}")
     stdout.write(f"  organizations_missing={canonical['organizations_missing']}")
     stdout.write(f"  operating_entities_missing={canonical['operating_entities_missing']}")
     stdout.write(f"  branches_missing={canonical['branches_missing']}")
@@ -261,6 +401,7 @@ def write_text(stdout, report):
         f"active_users={membership['active_users']}, "
         f"active_memberships={membership['active_memberships']}, "
         f"complete_canonical={membership['complete_canonical_memberships']}, "
+        f"membership_operating_entity_completeness={membership['membership_operating_entity_completeness']}, "
         f"missing_org={membership['missing_organization']}, "
         f"memberships_missing_operating_entity={membership['memberships_missing_operating_entity']}, "
         f"memberships_inferable_from_branch={membership['memberships_inferable_from_branch']}, "
@@ -274,10 +415,24 @@ def write_text(stdout, report):
         f"users_multiple_memberships={membership['users_with_multiple_active_memberships']}"
     )
     stdout.write(f"  by_status={membership['active_memberships_by_status']}")
+    legacy = report["legacy"]
+    stdout.write("")
+    stdout.write(
+        "Legacy dependencies: "
+        f"country_as_organization={legacy['country_as_organization_dependencies']['dependency_count']}, "
+        f"eac_legacy_references={legacy['eac_legacy_references']['dependency_count']}, "
+        f"quote_spot={legacy['quote_spot_historical_records']['classification']}"
+    )
+    stdout.write(f"Stale artifacts={len(report['stale_artifacts'])}")
     if readiness["blockers"]:
         stdout.write("")
         stdout.write("Blockers:")
         for blocker in readiness["blockers"]:
+            stdout.write(f"  - {blocker}")
+    if report["final_readiness"]["blockers"]:
+        stdout.write("")
+        stdout.write("Final blockers:")
+        for blocker in report["final_readiness"]["blockers"]:
             stdout.write(f"  - {blocker}")
 
 
