@@ -4,19 +4,20 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import CustomUser, Role
-from parties.models import Branch, Department, Organization
+from parties.models import Branch, Department, OperatingEntity, Organization
 
 
 REQUIRED_COLUMNS = (
     "username",
     "target_organization",
+    "target_operating_entity",
     "target_branch",
     "target_department",
     "target_role",
     "approved",
     "notes",
 )
-CANONICAL_ORGANIZATIONS = {"EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands"}
+CANONICAL_ORGANIZATIONS = {"Express Freight Management"}
 CANONICAL_DEPARTMENTS = {"Air Freight", "Sea Freight", "Customs", "Transport"}
 EAC_VALUES = {"eac", "efm express air cargo", "express air cargo"}
 TRUE_VALUES = {"true", "yes"}
@@ -92,6 +93,7 @@ def validate_row(row_number, row):
         errors.append("user inactive")
 
     organization = Organization.objects.filter(name=values["target_organization"]).first()
+    operating_entity = None
     if contains_eac(values["target_organization"]):
         errors.append("EAC target value is not allowed")
     elif values["target_organization"] and values["target_organization"] not in CANONICAL_ORGANIZATIONS:
@@ -102,12 +104,22 @@ def validate_row(row_number, row):
     branch = None
     department = None
     role = None
+    if values["target_operating_entity"]:
+        operating_entity = OperatingEntity.objects.filter(
+            organization=organization,
+            name=values["target_operating_entity"],
+        ).first() if organization else None
+        if operating_entity is None:
+            errors.append("target operating_entity not found under target organization")
+
     if contains_eac(values["target_branch"]):
         errors.append("EAC target value is not allowed")
     elif organization and values["target_branch"]:
         branch = Branch.objects.filter(organization=organization, name=values["target_branch"]).first()
         if branch is None:
             errors.append("target branch not found under target organization")
+        elif operating_entity and branch.operating_entity_id and branch.operating_entity_id != operating_entity.id:
+            errors.append("target branch does not belong to target operating_entity")
 
     if contains_eac(values["target_department"]):
         errors.append("EAC target value is not allowed")
@@ -133,6 +145,7 @@ def validate_row(row_number, row):
         "row_number": row_number,
         **values,
         "target_organization_id": str(organization.pk) if organization else None,
+        "target_operating_entity_id": str(operating_entity.pk) if operating_entity else None,
         "target_branch_id": str(branch.pk) if branch else None,
         "target_department_id": str(department.pk) if department else None,
         "target_role_id": str(role.pk) if role else None,

@@ -8,17 +8,19 @@ from accounts.models import CustomUser, UserMembership
 FIELDNAMES = (
     "username",
     "current_organization",
+    "current_operating_entity",
     "current_branch",
     "current_department",
     "current_role",
     "target_organization",
+    "target_operating_entity",
     "target_branch",
     "target_department",
     "target_role",
     "approved",
     "notes",
 )
-CANONICAL_ORGANIZATIONS = {"EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands"}
+CANONICAL_ORGANIZATIONS = {"Express Freight Management"}
 
 
 class Command(BaseCommand):
@@ -75,6 +77,7 @@ def membership_is_complete_canonical(membership):
     return (
         membership.organization
         and membership.organization.name in CANONICAL_ORGANIZATIONS
+        and membership.operating_entity_id
         and membership.branch_id
         and membership.department_id
         and membership.role_id
@@ -86,6 +89,7 @@ def row_for_membership(membership):
     return {
         "username": safe(membership.user.username),
         "current_organization": label(membership.organization),
+        "current_operating_entity": label(membership.operating_entity),
         "current_branch": label(membership.branch),
         "current_department": label(membership.department),
         "current_role": safe(getattr(membership.role, "code", "")),
@@ -103,6 +107,7 @@ def row_for_user_without_membership(user):
         "current_department": safe(user.department),
         "current_role": safe(user.role),
         "target_organization": "",
+        "target_operating_entity": "",
         "target_branch": "",
         "target_department": "",
         "target_role": "",
@@ -115,12 +120,14 @@ def target_fields(membership):
     if membership_is_complete_canonical(membership):
         return {
             "target_organization": label(membership.organization),
+            "target_operating_entity": label(membership.operating_entity),
             "target_branch": label(membership.branch),
             "target_department": label(membership.department),
             "target_role": safe(getattr(membership.role, "code", "")),
         }
     return {
         "target_organization": "",
+        "target_operating_entity": suggested_operating_entity(membership),
         "target_branch": "",
         "target_department": "",
         "target_role": "",
@@ -135,11 +142,19 @@ def notes_for(membership):
         notes.append("legacy/non-canonical membership")
     if membership.branch_id is None:
         notes.append("missing branch")
+    if membership.operating_entity_id is None:
+        notes.append("missing operating_entity")
     if membership.department_id is None:
         notes.append("missing department")
     if membership.role_id is None:
         notes.append("missing role")
     return "; ".join(notes)
+
+
+def suggested_operating_entity(membership):
+    if membership.branch_id and membership.branch.operating_entity_id:
+        return label(membership.branch.operating_entity)
+    return ""
 
 
 def write_csv(handle, rows):

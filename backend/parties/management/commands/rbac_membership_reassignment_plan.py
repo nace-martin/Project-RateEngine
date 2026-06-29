@@ -4,10 +4,11 @@ from collections import Counter
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import UserMembership
-from parties.models import Branch, Department, Organization
+from parties.models import Branch, Department, OperatingEntity, Organization
 
 
 CANONICAL_ORGANIZATIONS = ("EFM PNG", "EFM Australia", "EFM Fiji", "EFM Solomon Islands")
+CANONICAL_TOP_ORGANIZATION = "Express Freight Management"
 CANONICAL_BRANCHES = {
     "EFM PNG": ("Port Moresby", "Lae"),
     "EFM Australia": ("Brisbane",),
@@ -47,7 +48,7 @@ class Command(BaseCommand):
 
 def build_report():
     memberships = (
-        UserMembership.objects.select_related("user", "organization", "branch", "department", "role")
+        UserMembership.objects.select_related("user", "organization", "operating_entity", "branch", "department", "role")
         .filter(is_active=True)
         .order_by("user__username", "organization__name", "id")
     )
@@ -72,8 +73,9 @@ def plan_membership(membership):
     current_department = membership.department
 
     suggested_org = suggest_organization(current_org)
+    suggested_operating_entity = suggest_operating_entity(membership, suggested_org)
     suggested_department = suggest_department(current_department)
-    suggested_branch, branch_reason = suggest_branch(suggested_org, current_branch)
+    suggested_branch, branch_reason = suggest_branch(suggested_org, suggested_operating_entity, current_branch)
     status, reason = status_for(
         current_org=current_org,
         current_branch=current_branch,
@@ -92,6 +94,7 @@ def plan_membership(membership):
         "current_department": label(current_department),
         "current_role": safe(getattr(membership.role, "code", "")),
         "suggested_organization": suggested_org,
+        "suggested_operating_entity": suggested_operating_entity,
         "suggested_branch": suggested_branch,
         "suggested_department": suggested_department,
         "status": status,
@@ -100,15 +103,29 @@ def plan_membership(membership):
 
 
 def suggest_organization(organization):
-    if organization and organization.name in CANONICAL_ORGANIZATIONS:
-        return organization.name
+    if organization and organization.name in (CANONICAL_TOP_ORGANIZATION, *CANONICAL_ORGANIZATIONS):
+        return CANONICAL_TOP_ORGANIZATION
     return None
 
 
-def suggest_branch(suggested_org, current_branch):
+def suggest_operating_entity(membership, suggested_org):
+    if membership.operating_entity_id:
+        return membership.operating_entity.name
+    if membership.branch_id and membership.branch.operating_entity_id:
+        return membership.branch.operating_entity.name
+    if membership.organization and membership.organization.name in CANONICAL_ORGANIZATIONS:
+        entity = OperatingEntity.objects.filter(name=membership.organization.name).first()
+        if entity:
+            return entity.name
+        return membership.organization.name
+    return suggested_org if suggested_org in CANONICAL_ORGANIZATIONS else None
+
+
+def suggest_branch(suggested_org, suggested_operating_entity, current_branch):
     if not suggested_org:
         return None, "organization is not canonical"
-    canonical = CANONICAL_BRANCHES[suggested_org]
+    entity_name = current_branch.operating_entity.name if current_branch and current_branch.operating_entity_id else None
+    canonical = CANONICAL_BRANCHES.get(entity_name or suggested_operating_entity) or ()
     if current_branch and current_branch.name in canonical:
         return current_branch.name, "current branch is canonical"
     if len(canonical) == 1:
@@ -127,7 +144,7 @@ def suggest_department(department):
 
 
 def status_for(*, current_org, current_branch, current_department, suggested_org, suggested_branch, suggested_department, branch_reason):
-    org_canonical = bool(current_org and current_org.name in CANONICAL_ORGANIZATIONS)
+    org_canonical = bool(current_org and current_org.name == CANONICAL_TOP_ORGANIZATION)
     branch_canonical = bool(suggested_branch and current_branch and current_branch.name == suggested_branch)
     department_canonical = bool(
         suggested_department and current_department and current_department.name == suggested_department
@@ -160,6 +177,7 @@ def write_text(stdout, report, *, limit):
             f"current_branch={row['current_branch'] or '-'} "
             f"current_department={row['current_department'] or '-'} "
             f"suggested_org={row['suggested_organization'] or '-'} "
+            f"suggested_operating_entity={row['suggested_operating_entity'] or '-'} "
             f"suggested_branch={row['suggested_branch'] or '-'} "
             f"suggested_department={row['suggested_department'] or '-'} "
             f"status={row['status']} reason={row['reason']}"

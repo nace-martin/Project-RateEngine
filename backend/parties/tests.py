@@ -1449,17 +1449,32 @@ class MembershipReassignmentPlanTests(TestCase):
         return Role.objects.create(code=code, name=code.title(), is_system=True)
 
     def test_already_canonical_membership(self):
-        org = Organization.objects.create(name="EFM Australia", slug="efm-australia")
-        branch = Branch.objects.create(organization=org, code="BNE", name="Brisbane")
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=org,
+            code="AUS",
+            name="EFM Australia",
+            slug="efm-australia",
+            country_code="AU",
+        )
+        branch = Branch.objects.create(organization=org, operating_entity=entity, code="BNE", name="Brisbane")
         department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
         user = CustomUser.objects.create_user(username="canonical-user")
-        UserMembership.objects.create(user=user, organization=org, branch=branch, department=department, role=self._role())
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            operating_entity=entity,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
 
         payload = json.loads(self._call_report("--format", "json"))
 
         row = payload["memberships"][0]
         self.assertEqual(row["status"], "ALREADY_CANONICAL")
-        self.assertEqual(row["suggested_organization"], "EFM Australia")
+        self.assertEqual(row["suggested_organization"], "Express Freight Management")
+        self.assertEqual(row["suggested_operating_entity"], "EFM Australia")
         self.assertEqual(row["suggested_branch"], "Brisbane")
         self.assertEqual(row["suggested_department"], "Air Freight")
 
@@ -1495,6 +1510,8 @@ class MembershipReassignmentPlanTests(TestCase):
 
         row = payload["memberships"][0]
         self.assertEqual(row["status"], "READY")
+        self.assertEqual(row["suggested_organization"], "Express Freight Management")
+        self.assertEqual(row["suggested_operating_entity"], "EFM Fiji")
         self.assertEqual(row["suggested_branch"], "Suva")
 
     def test_missing_department_needs_manual_decision(self):
@@ -1571,10 +1588,17 @@ class MembershipReassignmentCsvDraftTests(TestCase):
         return role
 
     def _canonical_scope(self):
-        org = Organization.objects.create(name="EFM Australia", slug="efm-australia")
-        branch = Branch.objects.create(organization=org, code="BNE", name="Brisbane")
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=org,
+            code="AUS",
+            name="EFM Australia",
+            slug="efm-australia",
+            country_code="AU",
+        )
+        branch = Branch.objects.create(organization=org, operating_entity=entity, code="BNE", name="Brisbane")
         department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
-        return org, branch, department
+        return org, entity, branch, department
 
     def test_includes_legacy_memberships(self):
         legacy = Organization.objects.create(name="Legacy Org", slug="legacy-org")
@@ -1588,7 +1612,7 @@ class MembershipReassignmentCsvDraftTests(TestCase):
         self.assertIn("legacy/non-canonical membership", rows[0]["notes"])
 
     def test_includes_missing_branch_users(self):
-        org, _branch, department = self._canonical_scope()
+        org, _entity, _branch, department = self._canonical_scope()
         user = CustomUser.objects.create_user(username="missing-branch-draft-user")
         UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
 
@@ -1598,7 +1622,7 @@ class MembershipReassignmentCsvDraftTests(TestCase):
         self.assertIn("missing branch", rows[0]["notes"])
 
     def test_includes_missing_department_users(self):
-        org, branch, _department = self._canonical_scope()
+        org, _entity, branch, _department = self._canonical_scope()
         user = CustomUser.objects.create_user(username="missing-department-draft-user")
         UserMembership.objects.create(user=user, organization=org, branch=branch, role=self._role())
 
@@ -1616,18 +1640,34 @@ class MembershipReassignmentCsvDraftTests(TestCase):
         self.assertEqual(rows[0]["notes"], "no active membership")
 
     def test_target_fields_remain_blank_when_not_deterministic(self):
-        org, _branch, department = self._canonical_scope()
+        org, _entity, _branch, department = self._canonical_scope()
         user = CustomUser.objects.create_user(username="blank-target-draft-user")
         UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
 
         rows = self._rows()
 
-        for field in ("target_organization", "target_branch", "target_department", "target_role"):
+        for field in ("target_organization", "target_operating_entity", "target_branch", "target_department", "target_role"):
             self.assertEqual(rows[0][field], "")
 
     def test_complete_canonical_membership_is_not_included(self):
-        org, branch, department = self._canonical_scope()
+        org, entity, branch, department = self._canonical_scope()
         user = CustomUser.objects.create_user(username="complete-draft-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            operating_entity=entity,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
+
+        rows = self._rows()
+
+        self.assertEqual(rows, [])
+
+    def test_proposes_operating_entity_from_branch(self):
+        org, _entity, branch, department = self._canonical_scope()
+        user = CustomUser.objects.create_user(username="branch-entity-draft-user")
         UserMembership.objects.create(
             user=user,
             organization=org,
@@ -1638,7 +1678,9 @@ class MembershipReassignmentCsvDraftTests(TestCase):
 
         rows = self._rows()
 
-        self.assertEqual(rows, [])
+        self.assertEqual(rows[0]["current_operating_entity"], "")
+        self.assertEqual(rows[0]["target_operating_entity"], "EFM Australia")
+        self.assertIn("missing operating_entity", rows[0]["notes"])
 
     def test_output_option_writes_csv_file(self):
         CustomUser.objects.create_user(username="file-output-draft-user")
@@ -1654,7 +1696,7 @@ class MembershipReassignmentCsvDraftTests(TestCase):
         self.assertEqual(rows[0]["username"], "file-output-draft-user")
 
     def test_no_writes_occur(self):
-        org, _branch, department = self._canonical_scope()
+        org, _entity, _branch, department = self._canonical_scope()
         user = CustomUser.objects.create_user(username="no-write-draft-user")
         membership = UserMembership.objects.create(user=user, organization=org, department=department, role=self._role())
 
@@ -1911,6 +1953,7 @@ class MembershipReassignmentTableValidateTests(TestCase):
                 fieldnames=[
                     "username",
                     "target_organization",
+                    "target_operating_entity",
                     "target_branch",
                     "target_department",
                     "target_role",
@@ -1925,8 +1968,15 @@ class MembershipReassignmentTableValidateTests(TestCase):
         return stdout.getvalue()
 
     def _scope(self):
-        organization = Organization.objects.create(name="EFM Australia", slug="efm-australia")
-        Branch.objects.create(organization=organization, code="BNE", name="Brisbane")
+        organization = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=organization,
+            code="AUS",
+            name="EFM Australia",
+            slug="efm-australia",
+            country_code="AU",
+        )
+        Branch.objects.create(organization=organization, operating_entity=entity, code="BNE", name="Brisbane")
         Department.objects.create(organization=organization, code="AIR", name="Air Freight")
         return organization
 
@@ -1937,7 +1987,8 @@ class MembershipReassignmentTableValidateTests(TestCase):
     def _row(self, username="approved-user", **overrides):
         row = {
             "username": username,
-            "target_organization": "EFM Australia",
+            "target_organization": "Express Freight Management",
+            "target_operating_entity": "EFM Australia",
             "target_branch": "Brisbane",
             "target_department": "Air Freight",
             "target_role": "sales",
@@ -1975,13 +2026,13 @@ class MembershipReassignmentTableValidateTests(TestCase):
         self.assertIn("user inactive", payload["rows"][0]["errors"])
 
     def test_non_canonical_organization_is_blocked(self):
-        Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        Organization.objects.create(name="EFM PNG", slug="efm-png")
         self._role()
         CustomUser.objects.create_user(username="legacy-org-user")
 
         payload = json.loads(
             self._call_validate(
-                [self._row(username="legacy-org-user", target_organization="Express Freight Management")],
+                [self._row(username="legacy-org-user", target_organization="EFM PNG")],
                 "--format",
                 "json",
             )
@@ -1989,10 +2040,23 @@ class MembershipReassignmentTableValidateTests(TestCase):
 
         self.assertIn("target organization is not canonical", payload["rows"][0]["errors"])
 
+    def test_target_operating_entity_must_belong_to_target_organization(self):
+        self._scope()
+        self._role()
+        CustomUser.objects.create_user(username="wrong-entity-user")
+
+        payload = json.loads(
+            self._call_validate(
+                [self._row(username="wrong-entity-user", target_operating_entity="EFM PNG")],
+                "--format",
+                "json",
+            )
+        )
+
+        self.assertIn("target operating_entity not found under target organization", payload["rows"][0]["errors"])
+
     def test_branch_must_belong_to_target_organization(self):
         self._scope()
-        png = Organization.objects.create(name="EFM PNG", slug="efm-png")
-        Branch.objects.create(organization=png, code="POM", name="Port Moresby")
         self._role()
         CustomUser.objects.create_user(username="wrong-branch-user")
 
@@ -2084,6 +2148,7 @@ class MembershipReassignmentApplyTests(TestCase):
                 fieldnames=[
                     "username",
                     "target_organization",
+                    "target_operating_entity",
                     "target_branch",
                     "target_department",
                     "target_role",
@@ -2101,18 +2166,26 @@ class MembershipReassignmentApplyTests(TestCase):
         return stdout.getvalue()
 
     def _scope(self):
-        organization = Organization.objects.create(name="EFM Australia", slug="efm-australia")
-        branch = Branch.objects.create(organization=organization, code="BNE", name="Brisbane")
+        organization = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=organization,
+            code="AUS",
+            name="EFM Australia",
+            slug="efm-australia",
+            country_code="AU",
+        )
+        branch = Branch.objects.create(organization=organization, operating_entity=entity, code="BNE", name="Brisbane")
         department = Department.objects.create(organization=organization, code="AIR", name="Air Freight")
         legacy_org = Organization.objects.create(name="Legacy Org", slug="legacy-org")
         legacy_department = Department.objects.create(organization=legacy_org, code="SEA", name="Sea Freight")
         role, _created = Role.objects.get_or_create(code="sales", defaults={"name": "Sales", "is_system": True})
-        return organization, branch, department, legacy_org, legacy_department, role
+        return organization, entity, branch, department, legacy_org, legacy_department, role
 
     def _row(self, username="apply-user", **overrides):
         row = {
             "username": username,
-            "target_organization": "EFM Australia",
+            "target_organization": "Express Freight Management",
+            "target_operating_entity": "EFM Australia",
             "target_branch": "Brisbane",
             "target_department": "Air Freight",
             "target_role": "sales",
@@ -2123,7 +2196,7 @@ class MembershipReassignmentApplyTests(TestCase):
         return row
 
     def _membership(self, username="apply-user"):
-        _org, _branch, _dept, legacy_org, legacy_department, role = self._scope()
+        _org, _entity, _branch, _dept, legacy_org, legacy_department, role = self._scope()
         user = CustomUser.objects.create_user(username=username)
         return UserMembership.objects.create(
             user=user,
@@ -2150,7 +2223,8 @@ class MembershipReassignmentApplyTests(TestCase):
         membership.refresh_from_db()
 
         self.assertIn("status=APPLIED", output)
-        self.assertEqual(membership.organization.name, "EFM Australia")
+        self.assertEqual(membership.organization.name, "Express Freight Management")
+        self.assertEqual(membership.operating_entity.name, "EFM Australia")
         self.assertEqual(membership.branch.name, "Brisbane")
         self.assertEqual(membership.department.name, "Air Freight")
         self.assertEqual(membership.role.code, "sales")
@@ -2205,7 +2279,8 @@ class MembershipReassignmentApplyTests(TestCase):
         membership.refresh_from_db()
 
         self.assertIn("unchanged=1", output)
-        self.assertEqual(membership.organization.name, "EFM Australia")
+        self.assertEqual(membership.organization.name, "Express Freight Management")
+        self.assertEqual(membership.operating_entity.name, "EFM Australia")
 
     def test_previous_state_reported(self):
         self._membership(username="previous-state-user")
@@ -2214,7 +2289,8 @@ class MembershipReassignmentApplyTests(TestCase):
 
         row = payload["rows"][0]
         self.assertEqual(row["previous"]["organization"], "Legacy Org")
-        self.assertEqual(row["target"]["organization"], "EFM Australia")
+        self.assertEqual(row["target"]["organization"], "Express Freight Management")
+        self.assertEqual(row["target"]["operating_entity"], "EFM Australia")
 
     def test_no_customer_or_crm_writes_occur(self):
         membership = self._membership(username="no-customer-write-user")
@@ -2290,6 +2366,7 @@ class PostMembershipApplyReadinessTests(TestCase):
         return UserMembership.objects.create(
             user=user,
             organization=org,
+            operating_entity=branch.operating_entity,
             branch=branch,
             department=department,
             role=self._role(),
@@ -2340,10 +2417,12 @@ class PostMembershipApplyReadinessTests(TestCase):
     def test_missing_branch_membership_blocks(self):
         self._canonical_master_data()
         org = Organization.objects.get(name="Express Freight Management")
+        entity = OperatingEntity.objects.get(organization=org, name="EFM Australia")
         user = CustomUser.objects.create_user(username="missing-branch-ready-user")
         UserMembership.objects.create(
             user=user,
             organization=org,
+            operating_entity=entity,
             department=Department.objects.get(organization=org, name="Air Freight"),
             role=self._role(),
         )
@@ -2355,17 +2434,37 @@ class PostMembershipApplyReadinessTests(TestCase):
     def test_missing_department_membership_blocks(self):
         self._canonical_master_data()
         org = Organization.objects.get(name="Express Freight Management")
+        branch = Branch.objects.filter(organization=org).first()
         user = CustomUser.objects.create_user(username="missing-dept-ready-user")
         UserMembership.objects.create(
             user=user,
             organization=org,
-            branch=Branch.objects.filter(organization=org).first(),
+            operating_entity=branch.operating_entity,
+            branch=branch,
             role=self._role(),
         )
 
         payload = json.loads(self._call_report("--format", "json"))
 
         self.assertEqual(payload["memberships"]["missing_department"], 1)
+
+    def test_missing_operating_entity_membership_reported(self):
+        self._canonical_master_data()
+        org = Organization.objects.get(name="Express Freight Management")
+        user = CustomUser.objects.create_user(username="missing-entity-ready-user")
+        UserMembership.objects.create(
+            user=user,
+            organization=org,
+            branch=Branch.objects.filter(organization=org).first(),
+            department=Department.objects.get(organization=org, name="Air Freight"),
+            role=self._role(),
+        )
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["memberships"]["memberships_missing_operating_entity"], 1)
+        self.assertEqual(payload["memberships"]["missing_operating_entity"], 1)
+        self.assertEqual(payload["memberships"]["active_memberships_by_status"]["missing_operating_entity"], 1)
 
     def test_active_user_with_no_membership_blocks(self):
         self._canonical_master_data()
@@ -2381,6 +2480,7 @@ class PostMembershipApplyReadinessTests(TestCase):
         UserMembership.objects.create(
             user=membership.user,
             organization=membership.organization,
+            operating_entity=membership.operating_entity,
             branch=membership.branch,
             department=membership.department,
             role=membership.role,
@@ -2414,6 +2514,7 @@ class OrganizationModelRedesignAuditTests(TestCase):
         UserMembership.objects.all().delete()
         CustomUser.objects.all().delete()
         Branch.objects.all().delete()
+        OperatingEntity.objects.all().delete()
         Department.objects.all().delete()
         Organization.objects.all().delete()
 
@@ -2810,10 +2911,17 @@ class FinalUserBlockerResolutionPlanTests(TestCase):
         return role
 
     def _canonical_scope(self):
-        org = Organization.objects.create(name="EFM PNG", slug="efm-png")
-        branch = Branch.objects.create(organization=org, code="POM", name="Port Moresby")
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=org,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+        branch = Branch.objects.create(organization=org, operating_entity=entity, code="POM", name="Port Moresby")
         department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
-        return org, branch, department
+        return org, entity, branch, department
 
     def _spot_envelope(self, user, *, owner=None):
         return SpotPricingEnvelopeDB.objects.create(
@@ -2827,10 +2935,17 @@ class FinalUserBlockerResolutionPlanTests(TestCase):
         )
 
     def test_reports_testuser_spot_created_by_dependencies(self):
-        org, branch, department = self._canonical_scope()
+        org, entity, branch, department = self._canonical_scope()
         testuser = CustomUser.objects.create_user(username="testuser", email="test@example.com")
         owner = CustomUser.objects.create_user(username="admin", role=CustomUser.ROLE_ADMIN)
-        UserMembership.objects.create(user=owner, organization=org, branch=branch, department=department, role=self._role())
+        UserMembership.objects.create(
+            user=owner,
+            organization=org,
+            operating_entity=entity,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
         self._spot_envelope(testuser, owner=owner)
         self._spot_envelope(testuser)
 
@@ -2859,7 +2974,8 @@ class FinalUserBlockerResolutionPlanTests(TestCase):
         self.assertEqual(
             row["candidate_canonical_membership"],
             {
-                "organization": "EFM PNG",
+                "organization": "Express Freight Management",
+                "operating_entity": "EFM PNG",
                 "branch": "Port Moresby",
                 "department": "Air Freight",
                 "role": "admin",
@@ -2868,14 +2984,22 @@ class FinalUserBlockerResolutionPlanTests(TestCase):
         self.assertEqual(row["recommended_action"], "READY_FOR_MEMBERSHIP_REASSIGNMENT")
 
     def test_candidate_reassignment_users_are_complete_canonical_admins(self):
-        org, branch, department = self._canonical_scope()
+        org, entity, branch, department = self._canonical_scope()
         admin = CustomUser.objects.create_user(username="approved-admin", role=CustomUser.ROLE_ADMIN)
         sales = CustomUser.objects.create_user(username="sales-user", role=CustomUser.ROLE_SALES)
         testuser = CustomUser.objects.create_user(username="testuser")
-        UserMembership.objects.create(user=admin, organization=org, branch=branch, department=department, role=self._role())
+        UserMembership.objects.create(
+            user=admin,
+            organization=org,
+            operating_entity=entity,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
         UserMembership.objects.create(
             user=sales,
             organization=org,
+            operating_entity=entity,
             branch=branch,
             department=department,
             role=self._role(CustomUser.ROLE_SALES),
@@ -2916,6 +3040,7 @@ class FinalUserBlockerResolutionApplyTests(TestCase):
         UserMembership.objects.all().delete()
         CustomUser.objects.all().delete()
         Branch.objects.all().delete()
+        OperatingEntity.objects.all().delete()
         Department.objects.all().delete()
         Organization.objects.all().delete()
 
@@ -2939,30 +3064,51 @@ class FinalUserBlockerResolutionApplyTests(TestCase):
             "EFM Fiji": ("Suva",),
             "EFM Solomon Islands": ("Honiara",),
         }
-        for org_name, branches in specs.items():
-            org = Organization.objects.create(name=org_name, slug=org_name.lower().replace(" ", "-"))
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        for entity_name, branches in specs.items():
+            entity = OperatingEntity.objects.create(
+                organization=org,
+                code=entity_name.split()[-1][:3].upper(),
+                name=entity_name,
+                slug=entity_name.lower().replace(" ", "-"),
+                country_code=entity_name[:2].upper(),
+            )
             for branch_name in branches:
-                Branch.objects.create(organization=org, code=branch_name[:3].upper(), name=branch_name)
-            for department_name in ("Air Freight", "Sea Freight", "Customs", "Transport"):
-                Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
+                Branch.objects.create(
+                    organization=org,
+                    operating_entity=entity,
+                    code=branch_name[:3].upper(),
+                    name=branch_name,
+                )
+        for department_name in ("Air Freight", "Sea Freight", "Customs", "Transport"):
+            Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
 
     def _canonical_scope(self):
-        org = Organization.objects.get(name="EFM PNG")
+        org = Organization.objects.get(name="Express Freight Management")
+        entity = OperatingEntity.objects.get(organization=org, name="EFM PNG")
         return (
             org,
+            entity,
             Branch.objects.get(organization=org, name="Port Moresby"),
             Department.objects.get(organization=org, name="Air Freight"),
         )
 
     def _fixtures(self, *, with_customer_dependency=False):
         self._canonical_master_data()
-        org, branch, department = self._canonical_scope()
+        org, entity, branch, department = self._canonical_scope()
         admin = CustomUser.objects.create_user(
             username="nason.martin",
             email="nason.martin@efmpng.com",
             role=CustomUser.ROLE_ADMIN,
         )
-        UserMembership.objects.create(user=admin, organization=org, branch=branch, department=department, role=self._role())
+        UserMembership.objects.create(
+            user=admin,
+            organization=org,
+            operating_entity=entity,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
         testuser = CustomUser.objects.create_user(username="testuser", email="test@example.com")
         for _index in range(2):
             envelope = SpotPricingEnvelopeDB.objects.create(
@@ -3031,12 +3177,13 @@ class FinalUserBlockerResolutionApplyTests(TestCase):
         self._call_apply("--apply")
 
         legacy_membership.refresh_from_db()
-        active = UserMembership.objects.select_related("organization", "branch", "department", "role").get(
+        active = UserMembership.objects.select_related("organization", "operating_entity", "branch", "department", "role").get(
             user=sysadmin,
             is_active=True,
         )
         self.assertFalse(legacy_membership.is_active)
-        self.assertEqual(active.organization.name, "EFM PNG")
+        self.assertEqual(active.organization.name, "Express Freight Management")
+        self.assertIsNone(active.operating_entity)
         self.assertEqual(active.branch.name, "Port Moresby")
         self.assertEqual(active.department.name, "Air Freight")
         self.assertEqual(active.role.code, "admin")

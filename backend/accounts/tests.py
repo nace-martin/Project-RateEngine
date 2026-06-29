@@ -19,7 +19,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from PIL import Image
 from core.models import Currency
-from parties.models import Branch, Department, Organization, OrganizationBranding
+from parties.models import Branch, Department, OperatingEntity, Organization, OrganizationBranding
 from .models import CustomUser, Permission, Role, RolePermission, UserMembership
 from .scope import (
     get_active_memberships,
@@ -317,6 +317,13 @@ class RBACScopeHelperTests(TestCase):
             code='POM',
             name='Port Moresby',
         )
+        self.operating_entity_a = OperatingEntity.objects.create(
+            organization=self.org_a,
+            code='PNG',
+            name='EFM PNG',
+            slug='efm-png',
+            country_code='PG',
+        )
         self.branch_b = Branch.objects.create(
             organization=self.org_b,
             code='LAE',
@@ -411,6 +418,26 @@ class RBACScopeHelperTests(TestCase):
         self.assertIn(self.org_a.id, scope.organization_ids)
         self.assertIn(self.branch_a.id, scope.branch_ids)
         self.assertIn(self.department_a.id, scope.department_ids)
+
+    def test_membership_accepts_operating_entity_without_scope_change(self):
+        user = self._create_user(username='operating-entity-user')
+        membership = self._create_membership(user, operating_entity=self.operating_entity_a)
+
+        membership.refresh_from_db()
+        scope = get_effective_user_scope(user)
+
+        self.assertEqual(membership.operating_entity, self.operating_entity_a)
+        self.assertIn(self.org_a.id, scope.organization_ids)
+        self.assertIn(self.branch_a.id, scope.branch_ids)
+
+    def test_membership_operating_entity_can_remain_null_during_transition(self):
+        user = self._create_user(username='null-operating-entity-user')
+        membership = self._create_membership(user)
+
+        membership.refresh_from_db()
+
+        self.assertIsNone(membership.operating_entity)
+        self.assertEqual(list(get_active_memberships(user)), [membership])
 
     def test_inactive_membership_ignored(self):
         user = self._create_user()

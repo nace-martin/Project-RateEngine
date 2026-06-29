@@ -259,6 +259,13 @@ class UserMembership(models.Model):
         on_delete=models.CASCADE,
         related_name="user_memberships",
     )
+    operating_entity = models.ForeignKey(
+        "parties.OperatingEntity",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="user_memberships",
+    )
     branch = models.ForeignKey(
         "parties.Branch",
         on_delete=models.SET_NULL,
