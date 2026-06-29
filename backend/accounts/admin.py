@@ -36,7 +36,7 @@ class RoleAdmin(admin.ModelAdmin):
 
 @admin.register(UserMembership)
 class UserMembershipAdmin(admin.ModelAdmin):
-    list_display = ("user", "organization", "branch", "department", "role", "is_primary", "is_active")
-    search_fields = ("user__username", "organization__name", "organization__slug", "role__code")
-    list_filter = ("organization", "branch", "department", "role", "is_primary", "is_active")
-    autocomplete_fields = ("user", "organization", "branch", "department", "role")
+    list_display = ("user", "organization", "operating_entity", "branch", "department", "role", "is_primary", "is_active")
+    search_fields = ("user__username", "organization__name", "organization__slug", "operating_entity__name", "role__code")
+    list_filter = ("organization", "operating_entity", "branch", "department", "role", "is_primary", "is_active")
+    autocomplete_fields = ("user", "organization", "operating_entity", "branch", "department", "role")

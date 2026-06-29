@@ -150,7 +150,7 @@ def sysadmin_action(context, *, apply):
         return blocked(row, ["sysadmin not found"])
 
     active = list(
-        UserMembership.objects.select_related("organization", "branch", "department", "role")
+        UserMembership.objects.select_related("organization", "operating_entity", "branch", "department", "role")
         .filter(user=user, is_active=True)
         .order_by("id")
     )
@@ -179,7 +179,7 @@ def sysadmin_action(context, *, apply):
             "after_dependency_counts": before,
             "details": [
                 f"previous={membership_state(active[0]) if active else None}",
-                "target=EFM PNG / Port Moresby / Air Freight / admin",
+                "target=Express Freight Management / EFM PNG / Port Moresby / Air Freight / admin",
             ],
         }
     )

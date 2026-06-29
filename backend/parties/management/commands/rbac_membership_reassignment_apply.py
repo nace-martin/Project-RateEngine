@@ -60,7 +60,7 @@ def plan_row(row, *, apply):
         }
 
     membership = (
-        UserMembership.objects.select_related("organization", "branch", "department", "role")
+        UserMembership.objects.select_related("organization", "operating_entity", "branch", "department", "role")
         .filter(user__username=row["username"], is_active=True)
         .order_by("-is_primary", "id")
         .first()
@@ -80,10 +80,11 @@ def plan_row(row, *, apply):
     status = "UNCHANGED" if unchanged else ("APPLIED" if apply else "PLANNED")
     if apply and not unchanged:
         membership.organization_id = row["target_organization_id"]
+        membership.operating_entity_id = row["target_operating_entity_id"]
         membership.branch_id = row["target_branch_id"]
         membership.department_id = row["target_department_id"]
         membership.role_id = row["target_role_id"]
-        membership.save(update_fields=["organization", "branch", "department", "role", "updated_at"])
+        membership.save(update_fields=["organization", "operating_entity", "branch", "department", "role", "updated_at"])
     return {
         **public_row(row),
         "status": status,
@@ -103,6 +104,7 @@ def public_row(row):
 def membership_state(membership):
     return {
         "organization": label(membership.organization),
+        "operating_entity": label(membership.operating_entity),
         "branch": label(membership.branch),
         "department": label(membership.department),
         "role": getattr(membership.role, "code", None),
@@ -112,6 +114,7 @@ def membership_state(membership):
 def target_state(row):
     return {
         "organization": row["target_organization"],
+        "operating_entity": row["target_operating_entity"],
         "branch": row["target_branch"],
         "department": row["target_department"],
         "role": row["target_role"],

@@ -6,11 +6,12 @@ from accounts.models import CustomUser, UserMembership
 from quotes.spot_models import SpotPricingEnvelopeDB
 
 from .rbac_obsolete_user_cleanup_plan import dependency_counts, empty_counts, label, safe
-from .rbac_post_membership_apply_readiness import CANONICAL_ORGANIZATIONS, user_row
+from .rbac_post_membership_apply_readiness import CANONICAL_TOP_ORGANIZATIONS, user_row
 
 
 SYSADMIN_TARGET = {
-    "organization": "EFM PNG",
+    "organization": "Express Freight Management",
+    "operating_entity": "EFM PNG",
     "branch": "Port Moresby",
     "department": "Air Freight",
     "role": "admin",
@@ -103,11 +104,11 @@ def candidate_admin_users():
     rows = []
     for user in CustomUser.objects.filter(is_active=True, role=CustomUser.ROLE_ADMIN).order_by("username", "id"):
         memberships = list(
-            UserMembership.objects.select_related("organization", "branch", "department", "role").filter(
+            UserMembership.objects.select_related("organization", "operating_entity", "branch", "department", "role").filter(
                 user=user,
                 is_active=True,
                 role__code=CustomUser.ROLE_ADMIN,
-                organization__name__in=CANONICAL_ORGANIZATIONS,
+                organization__name__in=CANONICAL_TOP_ORGANIZATIONS,
                 branch__isnull=False,
                 department__isnull=False,
             )
@@ -134,6 +135,7 @@ def membership_plan(membership):
 def membership_state(membership):
     return {
         "organization": label(membership.organization),
+        "operating_entity": label(membership.operating_entity),
         "branch": label(membership.branch),
         "department": label(membership.department),
         "role": safe(getattr(membership.role, "code", "")),
@@ -141,7 +143,7 @@ def membership_state(membership):
 
 
 def is_legacy(membership):
-    return bool(membership.organization and membership.organization.name not in CANONICAL_ORGANIZATIONS)
+    return bool(membership.organization and membership.organization.name not in CANONICAL_TOP_ORGANIZATIONS)
 
 
 def write_text(stdout, report):

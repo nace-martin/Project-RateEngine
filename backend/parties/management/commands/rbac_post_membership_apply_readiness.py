@@ -60,7 +60,7 @@ def build_report():
         )
     )
     memberships = list(
-        UserMembership.objects.select_related("user", "organization", "branch", "department", "role")
+        UserMembership.objects.select_related("user", "organization", "operating_entity", "branch", "department", "role")
         .filter(is_active=True)
         .order_by("user__username", "id")
     )
@@ -140,12 +140,15 @@ def membership_report(memberships, active_users):
         for user_id, memberships_for_user in memberships_by_user.items()
         if user_id in active_user_ids and len(memberships_for_user) > 1
     ]
+    missing_operating_entity = sum(1 for membership in memberships if membership.operating_entity_id is None)
     return {
         "active_users": len(active_users),
         "active_memberships": len(memberships),
         "complete_canonical_memberships": sum(1 for membership in memberships if membership_is_complete_canonical(membership)),
         "missing_organization": sum(1 for membership in memberships if membership.organization_id is None),
         "missing_branch": sum(1 for membership in memberships if membership.branch_id is None),
+        "memberships_missing_operating_entity": missing_operating_entity,
+        "missing_operating_entity": missing_operating_entity,
         "missing_department": sum(1 for membership in memberships if membership.department_id is None),
         "missing_role": sum(1 for membership in memberships if membership.role_id is None),
         "legacy_non_canonical_organization_memberships": sum(
@@ -174,6 +177,8 @@ def membership_status(membership):
         return "missing_organization"
     if membership.organization.name not in CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS:
         return "legacy_organization"
+    if not membership.operating_entity_id:
+        return "missing_operating_entity"
     if not membership.branch_id:
         return "missing_branch"
     if not membership.department_id:
@@ -240,6 +245,7 @@ def write_text(stdout, report):
         f"active_memberships={membership['active_memberships']}, "
         f"complete_canonical={membership['complete_canonical_memberships']}, "
         f"missing_org={membership['missing_organization']}, "
+        f"memberships_missing_operating_entity={membership['memberships_missing_operating_entity']}, "
         f"missing_branch={membership['missing_branch']}, "
         f"missing_department={membership['missing_department']}, "
         f"missing_role={membership['missing_role']}, "

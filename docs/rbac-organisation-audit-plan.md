@@ -3166,6 +3166,53 @@ npx fallow --format json
 graphify update .
 ```
 
+#### Phase 10F - UserMembership OperatingEntity Integration
+
+Date: 2026-06-29
+
+Branch: `codex/phase-10f-membership-operating-entity`
+
+Scope: add nullable `UserMembership.operating_entity`, add the schema
+migration only, and update membership diagnostics, readiness, planning,
+reassignment CSV/reporting tools, admin, and tests.
+
+Hierarchy represented on memberships:
+
+- Organization: `Express Freight Management`.
+- OperatingEntity: `EFM PNG`, `EFM Australia`, `EFM Fiji`, or
+  `EFM Solomon Islands`.
+- Branch: canonical branch under the same organization and operating entity.
+- Department: canonical department under the organization.
+
+Transition behavior:
+
+- Existing memberships remain valid with `operating_entity=null`.
+- Diagnostics report `memberships_missing_operating_entity` /
+  `missing_operating_entity`.
+- Planning tools can propose the target `OperatingEntity` from an existing
+  branch link or legacy country-level organization name when safe.
+- CSV reassignment tooling now includes `current_operating_entity` and
+  `target_operating_entity`.
+- Apply-capable CSV reassignment remains explicit and tested; no destructive
+  data migration or broad auto-fill was added.
+
+Out of scope:
+
+- No RBAC enforcement behavior changes.
+- No selector, queryset, serializer, API, or UI changes.
+- No quote, SPOT, ProductCode, pricing, or permission changes.
+- No legacy organization deletion or deactivation.
+
+Verification:
+
+```bash
+python backend/manage.py makemigrations --check --dry-run
+python backend/manage.py test accounts.tests parties.tests
+python backend/manage.py check
+npx fallow --format json
+graphify update .
+```
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

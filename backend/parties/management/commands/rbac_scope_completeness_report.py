@@ -104,6 +104,7 @@ class Command(BaseCommand):
         self.stdout.write(
             "  populated: "
             f"organization={membership['organization_populated']}, "
+            f"operating_entity={membership['operating_entity_populated']}, "
             f"branch={membership['branch_populated']}, "
             f"department={membership['department_populated']}"
         )
@@ -274,6 +275,7 @@ def membership_coverage():
         "users_with_multiple_memberships": 0,
         "users_with_no_memberships": 0,
         "organization_populated": 0,
+        "operating_entity_populated": 0,
         "branch_populated": 0,
         "department_populated": 0,
         "referenced_by_field": dict(sorted(referenced_user_field_counts().items())),
@@ -288,6 +290,8 @@ def membership_coverage():
             summary["users_with_no_memberships"] += 1
         if any(membership.organization_id for membership in memberships):
             summary["organization_populated"] += 1
+        if any(getattr(membership, "operating_entity_id", None) for membership in memberships):
+            summary["operating_entity_populated"] += 1
         if any(membership.branch_id for membership in memberships):
             summary["branch_populated"] += 1
         if any(membership.department_id for membership in memberships):
