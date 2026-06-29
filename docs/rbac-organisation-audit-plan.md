@@ -3071,8 +3071,9 @@ Risks:
 - `OrganizationBranding` is one-to-one with `Organization`; country-specific
   branding requires a separate design.
 - Membership semantics change and must not be inferred without a migration map.
-- Older readiness/reassignment commands still contain country-as-organization
-  assumptions.
+- Superseded legacy diagnostics/docs may still mention country-as-organization
+  history; Phase 10H readiness reports these as obsolete references, not target
+  design.
 - Rollback requires old Organization id to new OperatingEntity id mappings
   before any apply phase.
 
@@ -3249,6 +3250,66 @@ Out of scope:
 - No legacy organization deletion or deactivation.
 - No Quote/SPOT historical backfill tooling.
 - No pricing, ProductCode, quote pricing, SPOT pricing, or rating changes.
+
+Verification:
+
+```bash
+python backend/manage.py makemigrations --check --dry-run
+python backend/manage.py test accounts.tests parties.tests crm.tests quotes.tests
+python backend/manage.py check
+npx fallow --format json
+graphify update .
+git diff --check
+```
+
+#### Phase 10H - Final OperatingEntity Readiness Audit
+
+Date: 2026-06-29
+
+Branch: `codex/phase-10h-operating-entity-readiness`
+
+Scope: final read-only readiness validation for the OperatingEntity RBAC
+hierarchy. No destructive cleanup, no legacy organization deactivation, no
+Quote/SPOT historical backfill.
+
+Command:
+
+- `python backend/manage.py rbac_post_membership_apply_readiness`
+- `python backend/manage.py rbac_post_membership_apply_readiness --format json`
+
+Final readiness now reports:
+
+- `organization_completeness`
+- `operating_entity_completeness`
+- `branch_operating_entity_completeness`
+- `membership_operating_entity_completeness`
+- `memberships_inferable_from_branch`
+- `memberships_not_inferable`
+- `legacy.country_as_organization_dependencies`
+- `legacy.eac_legacy_references`
+- `stale_artifacts`
+- `final_readiness.status`: `READY` or `NOT_READY`
+
+Final transition rules:
+
+- Country-as-organization assumptions are obsolete.
+- `EAC` / `EFM Express Air Cargo` is legacy Air Freight wording only, not a
+  live target organization.
+- Historical Quote/SPOT records remain `DEV_TEST_LEGACY`; no historical
+  backfill tooling should be built for them.
+- Legacy organizations must not be deleted or deactivated unless diagnostics
+  prove zero dependencies and a rollback mapping exists.
+
+Final roadmap:
+
+1. Run final readiness in production-like data.
+2. Resolve any missing OperatingEntity, Branch, Department, or membership
+   completeness blockers.
+3. Review legacy country-as-organization and EAC dependency counts.
+4. Only after zero-dependency proof and rollback mapping, consider a separate
+   legacy organization deactivation PR.
+5. Keep Quote/SPOT historical cleanup separate from OperatingEntity RBAC
+   readiness.
 
 Verification:
 

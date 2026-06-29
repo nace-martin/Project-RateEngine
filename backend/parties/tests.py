@@ -2380,6 +2380,8 @@ class PostMembershipApplyReadinessTests(TestCase):
 
         self.assertEqual(payload["readiness"]["status"], "READY_FOR_BACKFILL_PLANNING")
         self.assertEqual(payload["memberships"]["complete_canonical_memberships"], 1)
+        self.assertTrue(payload["canonical"]["organization_completeness"]["ready"])
+        self.assertTrue(payload["canonical"]["operating_entity_completeness"]["ready"])
 
     def test_missing_canonical_org_blocks(self):
         self._canonical_master_data(skip_org="Express Freight Management")
@@ -2466,6 +2468,7 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertEqual(payload["memberships"]["memberships_inferable_from_branch"], 1)
         self.assertEqual(payload["memberships"]["memberships_not_inferable"], 0)
         self.assertTrue(payload["memberships"]["scope_resolution_operating_entity_ready"])
+        self.assertTrue(payload["memberships"]["membership_operating_entity_completeness"]["ready"])
         self.assertEqual(payload["memberships"]["missing_operating_entity"], 1)
         self.assertEqual(payload["memberships"]["active_memberships_by_status"]["operating_entity_inferable_from_branch"], 1)
 
@@ -2488,7 +2491,55 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertEqual(payload["memberships"]["memberships_inferable_from_branch"], 0)
         self.assertEqual(payload["memberships"]["memberships_not_inferable"], 1)
         self.assertFalse(payload["memberships"]["scope_resolution_operating_entity_ready"])
+        self.assertFalse(payload["memberships"]["membership_operating_entity_completeness"]["ready"])
         self.assertFalse(payload["canonical"]["branch_operating_entity_completeness"]["ready"])
+        self.assertEqual(payload["final_readiness"]["status"], "NOT_READY")
+        self.assertTrue(any("memberships_not_inferable" in blocker for blocker in payload["final_readiness"]["blockers"]))
+
+    def test_final_readiness_command_is_read_only(self):
+        self._canonical_master_data()
+        membership = self._complete_membership()
+        before = (Organization.objects.count(), Branch.objects.count(), UserMembership.objects.count())
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        membership.refresh_from_db()
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual((Organization.objects.count(), Branch.objects.count(), UserMembership.objects.count()), before)
+        self.assertTrue(membership.is_active)
+
+    def test_final_readiness_detects_missing_operating_entity_links(self):
+        self._canonical_master_data()
+        branch = Branch.objects.get(name="Port Moresby")
+        branch.operating_entity = None
+        branch.save(update_fields=["operating_entity"])
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertEqual(payload["canonical"]["branch_operating_entity_completeness"]["missing_operating_entity"], 1)
+        self.assertFalse(payload["canonical"]["branch_operating_entity_completeness"]["ready"])
+        self.assertEqual(payload["final_readiness"]["status"], "NOT_READY")
+
+    def test_final_readiness_reports_legacy_organization_dependencies(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+        Company.objects.create(name="Legacy EAC Customer", organization=legacy)
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        eac = payload["legacy"]["eac_legacy_references"]
+        self.assertEqual(eac["organization_names"], ["EFM Express Air Cargo"])
+        self.assertGreaterEqual(eac["dependency_count"], 1)
+        self.assertEqual(payload["final_readiness"]["status"], "NOT_READY")
+
+    def test_final_readiness_reports_superseded_stale_artifacts(self):
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertTrue(payload["stale_artifacts"])
+        self.assertTrue(all(row["status"] == "superseded_legacy_reference" for row in payload["stale_artifacts"]))
+        self.assertTrue(
+            any("Quote/SPOT historical records remain DEV_TEST_LEGACY" in note for note in payload["final_readiness"]["notes"])
+        )
 
     def test_active_user_with_no_membership_blocks(self):
         self._canonical_master_data()
