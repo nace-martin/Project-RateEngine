@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 export interface SpotWorkspaceSummaryProps {
     customerName: string;
@@ -22,41 +22,44 @@ export function SpotWorkspaceSummary({
     paymentTerms,
 }: SpotWorkspaceSummaryProps) {
     return (
-        <Card className="mb-6">
-            <CardHeader className="pb-3">
-                <CardTitle className="text-base font-semibold">Shipment Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-                <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4 xl:grid-cols-7">
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Customer</span>
-                        <span className="font-bold text-slate-900">{customerName}</span>
+        <Card className="mb-6 border-slate-200 bg-slate-50/70 shadow-sm">
+            <CardContent className="px-5 py-3">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Customer</span>
+                        <span className="font-semibold text-slate-900">{customerName}</span>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Route</span>
-                        <span className="font-bold text-slate-900">
-                            {originCode} {"->"} {destinationCode}
+                    <span className="hidden text-slate-300 sm:inline" aria-hidden="true">|</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Route</span>
+                        <span className="font-semibold text-slate-900">
+                            {originCode} {"→"} {destinationCode}
                         </span>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Commodity</span>
-                        <span className="font-bold text-slate-900">{commodity}</span>
+                    <span className="hidden text-slate-300 sm:inline" aria-hidden="true">|</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Commodity</span>
+                        <span className="font-semibold text-slate-900">{commodity}</span>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Weight</span>
-                        <span className="font-bold text-slate-900">{weightKg} kg</span>
+                    <span className="hidden text-slate-300 sm:inline" aria-hidden="true">|</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Weight</span>
+                        <span className="font-semibold text-slate-900">{weightKg} kg</span>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Pieces</span>
-                        <span className="font-bold text-slate-900">{pieces}</span>
+                    <span className="hidden text-slate-300 sm:inline" aria-hidden="true">|</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Pcs</span>
+                        <span className="font-semibold text-slate-900">{pieces}</span>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Service Scope</span>
-                        <span className="font-bold text-slate-900">{serviceScope}</span>
+                    <span className="hidden text-slate-300 sm:inline" aria-hidden="true">|</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Scope</span>
+                        <span className="font-semibold text-slate-900">{serviceScope}</span>
                     </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-muted-foreground font-medium">Payment Terms</span>
-                        <span className="font-bold text-slate-900">{paymentTerms}</span>
+                    <span className="hidden text-slate-300 sm:inline" aria-hidden="true">|</span>
+                    <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-slate-500">Payment</span>
+                        <span className="font-semibold text-slate-900">{paymentTerms}</span>
                     </div>
                 </div>
             </CardContent>

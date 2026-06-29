@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { Edit2 } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,19 +14,21 @@ import { Control, FieldArrayWithId, UseFieldArrayRemove, useWatch } from "react-
 import { useToast } from "@/context/toast-context";
 import { useConfirm } from "@/hooks/useConfirm";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
-import type { SPEChargeBucket, SPEProductCodeSummary } from "@/lib/spot-types";
+import type { SPEProductCodeSummary } from "@/lib/spot-types";
+import { COMMERCIAL_BUCKETS } from "@/lib/spot-commercial-buckets";
 
 import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
 import { SmartMoneyInput } from "./SmartMoneyInput";
 
 interface ChargeBucketSectionProps {
-    bucket: { id: SPEChargeBucket; label: string };
+    bucket: { id: string; label: string };
     control: Control<SpotFormValues>;
     fields: { field: FieldArrayWithId<SpotFormValues, "charges", "id">; index: number }[];
     onAdd: () => void;
     onRemove: UseFieldArrayRemove;
     onOpenManualReview?: (chargeLine: SpotFormValues["charges"][number]) => void;
     activeChargeLineId?: string | null;
+    duplicateIndices?: Set<number>;
 }
 
 const CHARGE_UNITS = [
@@ -91,21 +95,28 @@ export function ChargeBucketSection({
     onRemove,
     onOpenManualReview,
     activeChargeLineId,
+    duplicateIndices = new Set(),
 }: ChargeBucketSectionProps) {
     const confirm = useConfirm();
     const { toast } = useToast();
     const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+    const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+
     const watchedCharges = useWatch({
         control,
         name: "charges",
     });
 
-    const toggleDetails = (fieldId: string) => {
-        setExpandedRows((current) => ({
-            ...current,
-            [fieldId]: !current[fieldId],
-        }));
-    };
+    const prevFieldsLengthRef = useRef(fields.length);
+    useEffect(() => {
+        if (fields.length > prevFieldsLengthRef.current) {
+            const newField = fields[fields.length - 1];
+            if (newField) {
+                setEditingFieldId(newField.field.id);
+            }
+        }
+        prevFieldsLengthRef.current = fields.length;
+    }, [fields]);
 
     const handleRemove = async (index: number) => {
         const currentLine = watchedCharges?.[index];
@@ -167,8 +178,14 @@ export function ChargeBucketSection({
                 {fields.length > 0 ? (
                     <div className="space-y-3">
                         {fields.map(({ field, index }) => {
-                            const chargeLine = watchedCharges?.[index];
                             const isDetailsOpen = Boolean(expandedRows[field.id]);
+                            const toggleDetails = (fieldId: string) => {
+                                setExpandedRows((current) => ({
+                                    ...current,
+                                    [fieldId]: !current[fieldId],
+                                }));
+                            };
+                            const chargeLine = watchedCharges?.[index];
                             const canOpenManualReview = Boolean(
                                 chargeLine?.charge_line_id &&
                                 chargeLine?.manual_resolution_status !== "RESOLVED" &&
@@ -187,246 +204,548 @@ export function ChargeBucketSection({
                                 "Imported charge";
                             const sourceEvidenceLabel = getSourceEvidenceLabel(chargeLine);
 
+                            const isEditing = editingFieldId === field.id;
+
                             return (
                                 <div
                                     key={field.id}
                                     id={chargeLineRowId}
                                     className={`rounded-xl border p-4 shadow-sm transition-colors ${statusCardClassName(chargeLine, isActiveRow)}`}
                                 >
-                                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)_minmax(170px,0.55fr)_minmax(210px,0.75fr)] lg:items-start">
-                                        <div className="min-w-0 space-y-2">
-                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                                Description
-                                            </div>
-                                            <FormField
-                                                control={control}
-                                                name={`charges.${index}.description`}
-                                                render={({ field }) => (
-                                                    <FormItem className="space-y-2">
-                                                        <div>
-                                                            <div className="whitespace-normal break-words text-base font-semibold leading-6 text-slate-950">
-                                                                {displayDescription}
-                                                            </div>
-                                                            {productCode?.code ? (
-                                                                <div className="mt-1 text-xs font-medium text-slate-500">
-                                                                    ProductCode {productCode.code}
+                                    {!isEditing ? (
+                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between w-full">
+                                            <div className="space-y-1.5 min-w-0 flex-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="text-base font-semibold text-slate-900 break-words">
+                                                        {displayDescription}
+                                                    </span>
+                                                    {chargeLine?.conditional && (
+                                                        <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                                                            Conditional
+                                                        </Badge>
+                                                    )}
+                                                    {chargeLine?.manual_resolution_status === "RESOLVED" ? (
+                                                        <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700 text-[10px] font-semibold">
+                                                            Manually Resolved
+                                                        </Badge>
+                                                    ) : chargeLine?.normalization_status === "MATCHED" ? (
+                                                        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 text-[10px] font-semibold">
+                                                            Matched
+                                                        </Badge>
+                                                    ) : chargeLine?.normalization_status === "AMBIGUOUS" ? (
+                                                        <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700 text-[10px] font-semibold">
+                                                            Ambiguous
+                                                        </Badge>
+                                                    ) : chargeLine?.normalization_status === "UNMAPPED" ? (
+                                                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700 text-[10px] font-semibold">
+                                                            Needs Mapping
+                                                        </Badge>
+                                                    ) : null}
+                                                    {duplicateIndices.has(index) && (
+                                                        <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 text-[10px] font-semibold">
+                                                            Possible duplicate charge
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                                                    {productCode?.code && (
+                                                        <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">
+                                                            ProductCode: {productCode.code}
+                                                        </span>
+                                                    )}
+                                                    {sourceEvidenceLabel && (
+                                                        <Popover>
+                                                            <PopoverTrigger asChild>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="link"
+                                                                    className="h-auto p-0 text-xs text-primary hover:text-primary/80"
+                                                                >
+                                                                    Source Excerpt
+                                                                </Button>
+                                                            </PopoverTrigger>
+                                                            <PopoverContent align="start" className="w-96 max-w-[calc(100vw-2rem)] space-y-3 text-sm">
+                                                                <div>
+                                                                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                        Source
+                                                                    </div>
+                                                                    <div className="mt-1 text-xs text-slate-600">{sourceEvidenceLabel}</div>
                                                                 </div>
-                                                            ) : null}
-                                                            {sourceEvidenceLabel ? (
-                                                                <Popover>
-                                                                    <PopoverTrigger asChild>
-                                                                        <Button
-                                                                            type="button"
-                                                                            variant="ghost"
-                                                                            size="sm"
-                                                                            className="mt-2 h-7 px-2 text-xs text-primary hover:bg-primary/5"
-                                                                        >
-                                                                            Source
-                                                                        </Button>
-                                                                    </PopoverTrigger>
-                                                                    <PopoverContent align="start" className="w-96 max-w-[calc(100vw-2rem)] space-y-3 text-sm">
-                                                                        <div>
-                                                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                {chargeLine?.source_excerpt ? (
+                                                                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-800">
+                                                                        {chargeLine.source_excerpt}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-sm text-slate-500">No source snippet captured for this line.</div>
+                                                                )}
+                                                            </PopoverContent>
+                                                        </Popover>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            {chargeLine?.unit === "percentage" ? (
+                                                <div className="flex flex-col sm:items-end justify-center min-w-[150px]">
+                                                    <div className="text-lg font-bold text-slate-900">
+                                                        {chargeLine?.percent ? `${parseFloat(String(chargeLine.percent)).toLocaleString()}%` : "0.00%"}
+                                                    </div>
+                                                    <div className="text-xs text-slate-500 flex items-center gap-1">
+                                                        <span>of</span>
+                                                        {chargeLine?.percent_basis ? (
+                                                            <span className="font-semibold text-slate-700 uppercase">{chargeLine.percent_basis}</span>
+                                                        ) : (
+                                                            <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 text-[10px] font-semibold py-0 px-1">
+                                                                Base charge missing
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col sm:items-end justify-center min-w-[150px]">
+                                                    <div className="text-lg font-bold text-slate-900">
+                                                        {chargeLine?.currency} {chargeLine?.amount ? parseFloat(chargeLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
+                                                    </div>
+                                                    <div className="text-xs text-slate-500">
+                                                        {chargeLine?.unit === "min_or_per_kg" ? (
+                                                            <>Per KG (Min {chargeLine.currency} {chargeLine.min_charge || "0.00"})</>
+                                                        ) : (
+                                                            CHARGE_UNITS.find(u => u.value === chargeLine?.unit)?.label || chargeLine?.unit
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            <div className="flex flex-wrap items-center gap-2 justify-end">
+                                                {canOpenManualReview && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-8 border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 font-medium"
+                                                        onClick={() => {
+                                                            if (chargeLine) {
+                                                                onOpenManualReview?.(chargeLine);
+                                                            }
+                                                        }}
+                                                    >
+                                                        Resolve ProductCode
+                                                    </Button>
+                                                )}
+                                                {Boolean((chargeLine as Record<string, unknown>)?.suggested_approved_product_code) && chargeLine?.manual_resolution_status !== "RESOLVED" && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-8 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-medium"
+                                                        onClick={() => {
+                                                            if (chargeLine) {
+                                                                onOpenManualReview?.(chargeLine);
+                                                            }
+                                                        }}
+                                                    >
+                                                        Accept Suggested Match
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-8 text-slate-700 hover:bg-slate-100"
+                                                    onClick={() => setEditingFieldId(field.id)}
+                                                >
+                                                    <Edit2 className="h-3.5 w-3.5 mr-1" />
+                                                    Edit Charge
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => void handleRemove(index)}
+                                                    className="h-8 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                                                >
+                                                    Remove
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.9fr)_minmax(170px,0.55fr)_minmax(210px,0.75fr)] lg:items-start">
+                                            <div className="min-w-0 space-y-2">
+                                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                    Description
+                                                </div>
+                                                <FormField
+                                                    control={control}
+                                                    name={`charges.${index}.description`}
+                                                    render={({ field }) => (
+                                                        <FormItem className="space-y-2">
+                                                            <div>
+                                                                <div className="whitespace-normal break-words text-base font-semibold leading-6 text-slate-950">
+                                                                    {displayDescription}
+                                                                </div>
+                                                                {productCode?.code ? (
+                                                                    <div className="mt-1 text-xs font-medium text-slate-500">
+                                                                        ProductCode {productCode.code}
+                                                                    </div>
+                                                                ) : null}
+                                                                {sourceEvidenceLabel ? (
+                                                                    <Popover>
+                                                                        <PopoverTrigger asChild>
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                size="sm"
+                                                                                className="mt-2 h-7 px-2 text-xs text-primary hover:bg-primary/5"
+                                                                            >
                                                                                 Source
+                                                                            </Button>
+                                                                        </PopoverTrigger>
+                                                                        <PopoverContent align="start" className="w-96 max-w-[calc(100vw-2rem)] space-y-3 text-sm">
+                                                                            <div>
+                                                                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                                    Source
+                                                                                </div>
+                                                                                <div className="mt-1 text-xs text-slate-600">{sourceEvidenceLabel}</div>
                                                                             </div>
-                                                                            <div className="mt-1 text-xs text-slate-600">{sourceEvidenceLabel}</div>
-                                                                        </div>
-                                                                        {chargeLine?.source_excerpt ? (
-                                                                            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-800">
-                                                                                {chargeLine.source_excerpt}
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="text-sm text-slate-500">No source snippet captured for this line.</div>
-                                                                        )}
-                                                                        {chargeLine?.source_line_identity ? (
-                                                                            <div className="break-all text-xs text-slate-500">
-                                                                                {chargeLine.source_line_identity}
-                                                                            </div>
-                                                                        ) : null}
-                                                                    </PopoverContent>
-                                                                </Popover>
-                                                            ) : null}
-                                                        </div>
-                                                        <details className="group">
-                                                            <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-900">
-                                                                Edit display label
-                                                            </summary>
-                                                            <FormControl>
-                                                                <Input
-                                                                    placeholder="Description"
-                                                                    {...field}
-                                                                    className="mt-2 h-9 bg-white"
-                                                                />
-                                                            </FormControl>
-                                                        </details>
-                                                        <FormMessage />
-                                                    </FormItem>
-                                                )}
-                                            />
-                                            <div className="text-xs text-slate-500">
-                                                {bucket.label}
+                                                                            {chargeLine?.source_excerpt ? (
+                                                                                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-800">
+                                                                                    {chargeLine.source_excerpt}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="text-sm text-slate-500">No source snippet captured for this line.</div>
+                                                                            )}
+                                                                            {chargeLine?.source_line_identity ? (
+                                                                                <div className="break-all text-xs text-slate-500">
+                                                                                    {chargeLine.source_line_identity}
+                                                                                </div>
+                                                                            ) : null}
+                                                                        </PopoverContent>
+                                                                    </Popover>
+                                                                ) : null}
+                                                            </div>
+                                                            <details className="group">
+                                                                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-900">
+                                                                    Edit display label
+                                                                </summary>
+                                                                <FormControl>
+                                                                    <Input
+                                                                        placeholder="Description"
+                                                                        {...field}
+                                                                        className="mt-2 h-9 bg-white"
+                                                                    />
+                                                                </FormControl>
+                                                            </details>
+                                                            <FormMessage />
+                                                        </FormItem>
+                                                    )}
+                                                />
+                                                <div className="text-xs text-slate-500">
+                                                    {bucket.label}
+                                                </div>
                                             </div>
-                                        </div>
 
-                                        <div className="space-y-2">
-                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                                Amount
-                                            </div>
-                                            <FormField
-                                                control={control}
-                                                name={`charges.${index}.unit`}
-                                                render={({ field: unitField }) => (
-                                                    <SmartMoneyInput
-                                                        control={control}
-                                                        index={index}
-                                                        currencyName={`charges.${index}.currency`}
-                                                        amountName={`charges.${index}.amount`}
-                                                        unit={unitField.value}
-                                                        showMinCharge={unitField.value === "min_or_per_kg"}
-                                                        minChargeName={`charges.${index}.min_charge`}
-                                                    />
-                                                )}
-                                            />
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                                Unit
-                                            </div>
-                                            <FormField
-                                                control={control}
-                                                name={`charges.${index}.unit`}
-                                                render={({ field }) => (
-                                                    <FormItem>
-                                                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                                            <FormControl>
-                                                                <SelectTrigger className="h-8">
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                            </FormControl>
-                                                            <SelectContent>
-                                                                {CHARGE_UNITS.map((unit) => (
-                                                                    <SelectItem key={unit.value} value={unit.value}>
-                                                                        {unit.label}
-                                                                    </SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
-                                                        <FormMessage />
-                                                    </FormItem>
-                                                )}
-                                            />
-                                        </div>
-
-                                        <div>
-                                            <ChargeNormalizationAudit
-                                                normalizationStatus={chargeLine?.normalization_status}
-                                                normalizationMethod={chargeLine?.normalization_method}
-                                                sourceLabel={chargeLine?.source_label}
-                                                normalizedLabel={chargeLine?.normalized_label}
-                                                resolvedProductCode={chargeLine?.resolved_product_code}
-                                                manualResolutionStatus={chargeLine?.manual_resolution_status}
-                                                manualResolvedProductCode={chargeLine?.manual_resolved_product_code}
-                                                manualResolutionByUsername={chargeLine?.manual_resolution_by_username}
-                                                manualResolutionAt={chargeLine?.manual_resolution_at}
-                                                canOpenManualReview={canOpenManualReview}
-                                                onOpenManualReview={() => {
-                                                    if (chargeLine) {
-                                                        onOpenManualReview?.(chargeLine);
-                                                    }
-                                                }}
-                                                detailsOpen={isDetailsOpen}
-                                                onToggleDetails={() => toggleDetails(field.id)}
-                                            >
-                                                <div className="grid gap-3">
-                                                    <div className="grid gap-3 md:grid-cols-2">
-                                                        <FormField
-                                                            control={control}
-                                                            name={`charges.${index}.source_reference`}
-                                                            render={({ field }) => (
-                                                                <FormItem>
-                                                                    <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                                                        Source reference
-                                                                    </FormLabel>
-                                                                    <FormControl>
-                                                                        <Input placeholder="Source Ref" {...field} className="h-8 text-xs" />
-                                                                    </FormControl>
-                                                                    <FormMessage />
-                                                                </FormItem>
-                                                            )}
-                                                        />
-                                                        {chargeLine?.unit === "percentage" ? (
+                                            <div className="space-y-2">
+                                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                    {chargeLine?.unit === "percentage" ? "Percentage Rate" : "Amount"}
+                                                </div>
+                                                <FormField
+                                                    control={control}
+                                                    name={`charges.${index}.unit`}
+                                                    render={({ field: unitField }) => (
+                                                        unitField.value === "percentage" ? (
                                                             <FormField
                                                                 control={control}
-                                                                name={`charges.${index}.percentage_basis`}
-                                                                render={({ field }) => (
+                                                                name={`charges.${index}.percent`}
+                                                                render={({ field: percentField }) => (
                                                                     <FormItem>
-                                                                        <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                                                            Percentage basis
-                                                                        </FormLabel>
                                                                         <FormControl>
-                                                                            <Input
-                                                                                placeholder="Basis e.g. FREIGHT"
-                                                                                {...field}
-                                                                                value={field.value || ""}
-                                                                                className="h-8 text-xs"
-                                                                            />
+                                                                            <div className="relative">
+                                                                                <Input
+                                                                                    type="number"
+                                                                                    step="any"
+                                                                                    placeholder="Rate"
+                                                                                    {...percentField}
+                                                                                    value={percentField.value || ""}
+                                                                                    className="h-8 pr-6 text-right bg-white text-sm"
+                                                                                />
+                                                                                <span className="absolute right-2 top-1.5 text-xs font-semibold text-slate-500 pointer-events-none">%</span>
+                                                                            </div>
                                                                         </FormControl>
                                                                         <FormMessage />
                                                                     </FormItem>
                                                                 )}
                                                             />
-                                                        ) : null}
-                                                    </div>
+                                                        ) : (
+                                                            <SmartMoneyInput
+                                                                control={control}
+                                                                index={index}
+                                                                currencyName={`charges.${index}.currency`}
+                                                                amountName={`charges.${index}.amount`}
+                                                                unit={unitField.value}
+                                                                showMinCharge={unitField.value === "min_or_per_kg"}
+                                                                minChargeName={`charges.${index}.min_charge`}
+                                                            />
+                                                        )
+                                                    )}
+                                                />
+                                            </div>
 
-                                                    <div className="flex flex-wrap items-center justify-between gap-3">
-                                                        <div className="flex flex-wrap items-center gap-4">
-                                                            {bucket.id === "airfreight" ? (
+                                            <div className="space-y-2">
+                                                {chargeLine?.unit === "percentage" ? (
+                                                    <>
+                                                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                            Applies To
+                                                        </div>
+                                                        <FormField
+                                                            control={control}
+                                                            name={`charges.${index}.percent_basis`}
+                                                            render={({ field: basisField }) => {
+                                                                const baseOptions = [
+                                                                    { value: "freight", label: "Freight" },
+                                                                    { value: "origin", label: "Origin Charges" },
+                                                                    { value: "destination", label: "Destination Charges" },
+                                                                    { value: "total", label: "Total Quote" },
+                                                                ];
+                                                                if (watchedCharges) {
+                                                                    watchedCharges.forEach((c) => {
+                                                                        if (c.code && !["freight", "origin", "destination", "total"].includes(c.code.toLowerCase())) {
+                                                                            baseOptions.push({
+                                                                                value: c.code.toLowerCase(),
+                                                                                label: c.description || c.code,
+                                                                            });
+                                                                        }
+                                                                    });
+                                                                }
+                                                                return (
+                                                                    <FormItem>
+                                                                        <Select onValueChange={basisField.onChange} defaultValue={basisField.value || undefined}>
+                                                                            <FormControl>
+                                                                                <SelectTrigger className="h-8">
+                                                                                    <SelectValue placeholder="Select basis" />
+                                                                                </SelectTrigger>
+                                                                            </FormControl>
+                                                                            <SelectContent>
+                                                                                {baseOptions.map((opt) => (
+                                                                                    <SelectItem key={opt.value} value={opt.value}>
+                                                                                        {opt.label}
+                                                                                    </SelectItem>
+                                                                                ))}
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                        <FormMessage />
+                                                                    </FormItem>
+                                                                );
+                                                            }}
+                                                        />
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                            Unit
+                                                        </div>
+                                                        <FormField
+                                                            control={control}
+                                                            name={`charges.${index}.unit`}
+                                                            render={({ field }) => (
+                                                                <FormItem>
+                                                                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                                                        <FormControl>
+                                                                            <SelectTrigger className="h-8">
+                                                                                <SelectValue />
+                                                                            </SelectTrigger>
+                                                                        </FormControl>
+                                                                        <SelectContent>
+                                                                            {CHARGE_UNITS.map((unit) => (
+                                                                                <SelectItem key={unit.value} value={unit.value}>
+                                                                                    {unit.label}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    <FormMessage />
+                                                                </FormItem>
+                                                            )}
+                                                        />
+                                                    </>
+                                                )}
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                    Reviewed Bucket
+                                                </div>
+                                                <FormField
+                                                    control={control}
+                                                    name={`charges.${index}.reviewed_bucket`}
+                                                    render={({ field }) => (
+                                                        <FormItem>
+                                                            <Select onValueChange={field.onChange} defaultValue={field.value || undefined}>
+                                                                <FormControl>
+                                                                    <SelectTrigger className="h-8">
+                                                                        <SelectValue placeholder="Select bucket" />
+                                                                    </SelectTrigger>
+                                                                </FormControl>
+                                                                <SelectContent>
+                                                                    {COMMERCIAL_BUCKETS.map((cb) => (
+                                                                        <SelectItem key={cb.id} value={cb.id}>
+                                                                            {cb.label}
+                                                                        </SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
+                                                            <FormMessage />
+                                                        </FormItem>
+                                                    )}
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <ChargeNormalizationAudit
+                                                    normalizationStatus={chargeLine?.normalization_status}
+                                                    normalizationMethod={chargeLine?.normalization_method}
+                                                    sourceLabel={chargeLine?.source_label}
+                                                    normalizedLabel={chargeLine?.normalized_label}
+                                                    resolvedProductCode={chargeLine?.resolved_product_code}
+                                                    manualResolutionStatus={chargeLine?.manual_resolution_status}
+                                                    manualResolvedProductCode={chargeLine?.manual_resolved_product_code}
+                                                    manualResolutionByUsername={chargeLine?.manual_resolution_by_username}
+                                                    manualResolutionAt={chargeLine?.manual_resolution_at}
+                                                    canOpenManualReview={canOpenManualReview}
+                                                    onOpenManualReview={() => {
+                                                        if (chargeLine) {
+                                                            onOpenManualReview?.(chargeLine);
+                                                        }
+                                                    }}
+                                                    detailsOpen={isDetailsOpen}
+                                                    onToggleDetails={() => toggleDetails(field.id)}
+                                                >
+                                                    <div className="grid gap-3">
+                                                        <div className="grid gap-3 md:grid-cols-2">
+                                                            <FormField
+                                                                control={control}
+                                                                name={`charges.${index}.source_reference`}
+                                                                render={({ field }) => (
+                                                                    <FormItem>
+                                                                        <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                            Source reference
+                                                                        </FormLabel>
+                                                                        <FormControl>
+                                                                            <Input placeholder="Source Ref" {...field} className="h-8 text-xs" />
+                                                                        </FormControl>
+                                                                        <FormMessage />
+                                                                    </FormItem>
+                                                                )}
+                                                            />
+                                                            <FormField
+                                                                control={control}
+                                                                name={`charges.${index}.note`}
+                                                                render={({ field }) => (
+                                                                    <FormItem>
+                                                                        <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                            Notes
+                                                                        </FormLabel>
+                                                                        <FormControl>
+                                                                            <Input placeholder="Internal notes" {...field} value={field.value || ""} className="h-8 text-xs" />
+                                                                        </FormControl>
+                                                                        <FormMessage />
+                                                                    </FormItem>
+                                                                )}
+                                                            />
+                                                            {chargeLine?.unit === "percentage" ? (
+                                                                <>
+                                                                    <FormField
+                                                                        control={control}
+                                                                        name={`charges.${index}.min_amount`}
+                                                                        render={({ field }) => (
+                                                                            <FormItem>
+                                                                                <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                                    Minimum Limit
+                                                                                </FormLabel>
+                                                                                <FormControl>
+                                                                                    <Input placeholder="e.g. 150.00" {...field} value={field.value || ""} className="h-8 text-xs" />
+                                                                                </FormControl>
+                                                                                <FormMessage />
+                                                                            </FormItem>
+                                                                        )}
+                                                                    />
+                                                                    <FormField
+                                                                        control={control}
+                                                                        name={`charges.${index}.max_amount`}
+                                                                        render={({ field }) => (
+                                                                            <FormItem>
+                                                                                <FormLabel className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                                                                    Maximum Limit
+                                                                                </FormLabel>
+                                                                                <FormControl>
+                                                                                    <Input placeholder="e.g. 500.00" {...field} value={field.value || ""} className="h-8 text-xs" />
+                                                                                </FormControl>
+                                                                                <FormMessage />
+                                                                            </FormItem>
+                                                                        )}
+                                                                    />
+                                                                </>
+                                                            ) : null}
+                                                        </div>
+
+                                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                                            <div className="flex flex-wrap items-center gap-4">
+                                                                {bucket.id === "airfreight" ? (
+                                                                    <FormField
+                                                                        control={control}
+                                                                        name={`charges.${index}.is_primary_cost`}
+                                                                        render={({ field }) => (
+                                                                            <FormItem className="flex items-center space-x-2 space-y-0">
+                                                                                <FormControl>
+                                                                                    <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                                                                                </FormControl>
+                                                                                <FormLabel className="text-[10px] font-medium uppercase text-muted-foreground">
+                                                                                    Primary
+                                                                                </FormLabel>
+                                                                            </FormItem>
+                                                                        )}
+                                                                    />
+                                                                ) : null}
                                                                 <FormField
                                                                     control={control}
-                                                                    name={`charges.${index}.is_primary_cost`}
+                                                                    name={`charges.${index}.conditional`}
                                                                     render={({ field }) => (
                                                                         <FormItem className="flex items-center space-x-2 space-y-0">
                                                                             <FormControl>
                                                                                 <Checkbox checked={field.value} onCheckedChange={field.onChange} />
                                                                             </FormControl>
                                                                             <FormLabel className="text-[10px] font-medium uppercase text-muted-foreground">
-                                                                                Primary
+                                                                                Conditional
                                                                             </FormLabel>
                                                                         </FormItem>
                                                                     )}
                                                                 />
-                                                            ) : null}
-                                                            <FormField
-                                                                control={control}
-                                                                name={`charges.${index}.conditional`}
-                                                                render={({ field }) => (
-                                                                    <FormItem className="flex items-center space-x-2 space-y-0">
-                                                                        <FormControl>
-                                                                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                                                                        </FormControl>
-                                                                        <FormLabel className="text-[10px] font-medium uppercase text-muted-foreground">
-                                                                            Conditional
-                                                                        </FormLabel>
-                                                                    </FormItem>
-                                                                )}
-                                                            />
-                                                        </div>
+                                                            </div>
 
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => void handleRemove(index)}
-                                                            className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
-                                                        >
-                                                            Remove line
-                                                        </Button>
+                                                            <div className="flex items-center gap-2">
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="default"
+                                                                    size="sm"
+                                                                    onClick={() => setEditingFieldId(null)}
+                                                                    className="h-7 px-3 text-[11px]"
+                                                                >
+                                                                    Done
+                                                                </Button>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="sm"
+                                                                    onClick={() => void handleRemove(index)}
+                                                                    className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                                                                >
+                                                                    Remove line
+                                                                </Button>
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            </ChargeNormalizationAudit>
+                                                </ChargeNormalizationAudit>
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             );
                         })}

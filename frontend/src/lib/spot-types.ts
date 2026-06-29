@@ -181,6 +181,12 @@ export interface SPEChargeLine {
     manual_resolution_by_username?: string | null;
     manual_resolution_at?: string | null;
     suggested_approved_product_code?: SPEProductCodeSummary | null;
+    reviewed_bucket?: string | null;
+    calculation_type?: string | null;
+    percent?: string | number | null;
+    percent_basis?: string | null;
+    min_amount?: string | number | null;
+    max_amount?: string | number | null;
 }
 
 /** SPE conditions */

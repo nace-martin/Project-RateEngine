@@ -38,6 +38,7 @@ import type { ReplyAnalysisResult } from "@/lib/spot-types";
 import { getSpotStandardCharges, reviewSpotFinding } from "@/lib/api";
 import { getEffectiveProductCode, getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 import { getSpotFinalizeDisabledReason } from "@/lib/spot-finalization";
+import { COMMERCIAL_BUCKETS, inferCommercialBucket } from "@/lib/spot-commercial-buckets";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -701,6 +702,7 @@ export default function SpotRateEntryPage() {
     } | null>(null);
     const [finalizeError, setFinalizeError] = useState<string | null>(null);
     const [reviewMode, setReviewMode] = useState<ReviewMode>("issues");
+    const [allChargesFilter, setAllChargesFilter] = useState<"all" | "matched" | "conditional">("all");
     const [activeIssueDetails, setActiveIssueDetails] = useState<ImportedReviewLine | null>(null);
     const [sourceComparisonOpen, setSourceComparisonOpen] = useState(false);
     const [selectedSourceChargeKey, setSelectedSourceChargeKey] = useState<string | null>(null);
@@ -1090,38 +1092,81 @@ export default function SpotRateEntryPage() {
                                     </Tabs>
                                 </div>
                                 <div className="grid gap-3 sm:grid-cols-4">
-                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setReviewMode("allCharges");
+                                            setAllChargesFilter("all");
+                                        }}
+                                        className={`text-left rounded-xl border px-4 py-3 shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                                            reviewMode === "allCharges" && allChargesFilter === "all"
+                                                ? "border-primary bg-slate-100 ring-2 ring-primary/20"
+                                                : "border-white/25 bg-white text-slate-900"
+                                        }`}
+                                    >
                                         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Imported
                                         </div>
                                         <div className="mt-2 text-2xl font-semibold text-slate-950">
                                             {totalImportedLines}
                                         </div>
-                                    </div>
-                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setReviewMode("issues");
+                                        }}
+                                        className={`text-left rounded-xl border px-4 py-3 shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                                            reviewMode === "issues"
+                                                ? "border-amber-500 bg-amber-50 ring-2 ring-amber-500/20"
+                                                : "border-white/25 bg-white text-slate-900"
+                                        }`}
+                                    >
                                         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Needs review
                                         </div>
                                         <div className={`mt-2 text-2xl font-semibold ${unresolvedReviewIssueCount > 0 ? "text-amber-700" : "text-emerald-700"}`}>
                                             {unresolvedReviewIssueCount}
                                         </div>
-                                    </div>
-                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setReviewMode("allCharges");
+                                            setAllChargesFilter("matched");
+                                        }}
+                                        className={`text-left rounded-xl border px-4 py-3 shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                                            reviewMode === "allCharges" && allChargesFilter === "matched"
+                                                ? "border-emerald-600 bg-emerald-50 ring-2 ring-emerald-600/20"
+                                                : "border-white/25 bg-white text-slate-900"
+                                        }`}
+                                    >
                                         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Matched
                                         </div>
                                         <div className="mt-2 text-2xl font-semibold text-emerald-700">
                                             {matchedImportedLineCount}
                                         </div>
-                                    </div>
-                                    <div className="rounded-xl border border-white/25 bg-white px-4 py-3 shadow-sm">
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setReviewMode("allCharges");
+                                            setAllChargesFilter("conditional");
+                                        }}
+                                        className={`text-left rounded-xl border px-4 py-3 shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                                            reviewMode === "allCharges" && allChargesFilter === "conditional"
+                                                ? "border-amber-600 bg-amber-50 ring-2 ring-amber-600/20"
+                                                : "border-white/25 bg-white text-slate-900"
+                                        }`}
+                                    >
                                         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                                             Conditional
                                         </div>
                                         <div className={`mt-2 text-2xl font-semibold ${importedReviewCounts.conditional > 0 ? "text-amber-700" : "text-emerald-700"}`}>
                                             {importedReviewCounts.conditional}
                                         </div>
-                                    </div>
+                                    </button>
                                 </div>
                             </div>
                         </CardHeader>
@@ -1188,7 +1233,7 @@ export default function SpotRateEntryPage() {
                                                                                     onClick={() => void handleConditionalDecision(line, "KEEP")}
                                                                                     disabled={!line.chargeLineId || state.isLoading}
                                                                                 >
-                                                                                    Keep in quote
+                                                                                    Accept Conditional
                                                                                 </Button>
                                                                                 <Button
                                                                                     type="button"
@@ -1197,7 +1242,7 @@ export default function SpotRateEntryPage() {
                                                                                     onClick={() => void handleConditionalDecision(line, "REMOVE")}
                                                                                     disabled={!line.chargeLineId || state.isLoading}
                                                                                 >
-                                                                                    Remove
+                                                                                    Remove from Quote
                                                                                 </Button>
                                                                             </>
                                                                         ) : null}
@@ -1208,7 +1253,7 @@ export default function SpotRateEntryPage() {
                                                                                 onClick={() => handleReviewLine(line)}
                                                                                 disabled={!line.chargeLineId || state.isLoading}
                                                                             >
-                                                                                Resolve
+                                                                                Resolve ProductCode
                                                                             </Button>
                                                                         ) : null}
                                                                         <Button
@@ -1217,7 +1262,7 @@ export default function SpotRateEntryPage() {
                                                                             size="sm"
                                                                             onClick={() => setActiveIssueDetails(line)}
                                                                         >
-                                                                            Details
+                                                                            View Issue Details
                                                                         </Button>
                                                                     </div>
                                                                 </div>
@@ -1286,6 +1331,7 @@ export default function SpotRateEntryPage() {
                                             productCodeDomain={resolvedShipmentType}
                                             envelopeId={state.spe?.id}
                                             reviewRequest={activeReviewRequest}
+                                            filterType={allChargesFilter}
                                         />
 
                                         {importWideChecks.length > 0 ? (
@@ -1301,13 +1347,61 @@ export default function SpotRateEntryPage() {
                                             </details>
                                         ) : null}
 
-                                        <Card className="border-amber-200 bg-amber-50/60">
-                                            <CardContent className="pt-4">
-                                                <p className="text-sm text-amber-900">
-                                                    Creating the quote records the SPOT acknowledgement. Rates remain conditional until carrier and space are confirmed.
-                                                </p>
-                                            </CardContent>
-                                        </Card>
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-5 py-4 space-y-4">
+                                            <div className="text-sm font-semibold text-slate-900">Final Review by Commercial Bucket</div>
+                                            <div className="divide-y divide-slate-200">
+                                                {COMMERCIAL_BUCKETS.map((cb) => {
+                                                    const cbCharges = allReviewFormCharges.filter((charge) => {
+                                                        const rb = charge.reviewed_bucket || inferCommercialBucket(charge);
+                                                        return rb === cb.id;
+                                                    });
+                                                    if (cbCharges.length === 0) return null;
+                                                    
+                                                    // Calculate total for this bucket if amount is parseable
+                                                    const totalVal = cbCharges.reduce((sum, c) => {
+                                                        const amt = parseFloat(c.amount);
+                                                        return isNaN(amt) ? sum : sum + amt;
+                                                    }, 0);
+                                                    
+                                                    // Map currency symbols or labels if any. Default USD/PGK.
+                                                    const currencyLabel = cbCharges[0]?.currency || "USD";
+
+                                                    return (
+                                                        <div key={cb.id} className="flex justify-between py-2 text-xs">
+                                                            <span className="text-slate-600 font-medium">
+                                                                {cb.label} ({cbCharges.length} {cbCharges.length === 1 ? "charge" : "charges"})
+                                                            </span>
+                                                            <span className="font-semibold text-slate-900">
+                                                                {totalVal.toFixed(2)} {currencyLabel}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            <div className="grid gap-2 sm:grid-cols-3 text-xs pt-2 border-t border-slate-200">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                                                    <span className="text-slate-700">Matched: <span className="font-semibold text-slate-900">{matchedImportedLineCount}</span></span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`inline-block h-2 w-2 rounded-full ${importedReviewCounts.conditional > 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
+                                                    <span className="text-slate-700">Conditional: <span className="font-semibold text-slate-900">{importedReviewCounts.conditional}</span></span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`inline-block h-2 w-2 rounded-full ${unresolvedReviewIssueCount > 0 ? "bg-red-500" : "bg-emerald-500"}`} />
+                                                    <span className="text-slate-700">Unresolved: <span className="font-semibold text-slate-900">{unresolvedReviewIssueCount}</span></span>
+                                                </div>
+                                            </div>
+                                            {quoteSubmitDisabledReason ? (
+                                                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                                                    <span className="font-medium">Cannot create quote:</span> {quoteSubmitDisabledReason}
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                                                    All blockers resolved. Ready to create quote. Rates remain conditional until carrier and space are confirmed.
+                                                </div>
+                                            )}
+                                        </div>
                                     </TabsContent>
                                 </Tabs>
 

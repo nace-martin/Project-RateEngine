@@ -20,6 +20,12 @@ import { ChargeBucketSection } from "./ChargeBucketSection";
 import { SpotChargeLineManualReviewSheet } from "./SpotChargeLineManualReviewSheet";
 import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 import { getSpotChargeFormDisabledReason } from "@/lib/spot-charge-readiness";
+import {
+    type CommercialBucket,
+    COMMERCIAL_BUCKETS,
+    inferCommercialBucket,
+    getDuplicateChargeIndices
+} from "@/lib/spot-commercial-buckets";
 
 type ReviewRequest = {
     chargeLineId: string;
@@ -47,6 +53,7 @@ interface SpotRateEntryFormProps {
     productCodeDomain?: string;
     envelopeId?: string;
     reviewRequest?: ReviewRequest | null;
+    filterType?: "all" | "matched" | "conditional";
 }
 
 const normalizeSourceReference = (value?: string | null) => {
@@ -59,11 +66,8 @@ const normalizeSourceReference = (value?: string | null) => {
         .replace(/^Analysis Suggestion$/i, "Imported rates");
 };
 
-const CHARGE_BUCKETS: { id: SPEChargeBucket; label: string }[] = [
-    { id: "airfreight", label: "Airfreight" },
-    { id: "origin_charges", label: "Origin Charges" },
-    { id: "destination_charges", label: "Agent Quoted Charges" },
-];
+// Define bucket grouping list
+const CHARGE_BUCKETS = COMMERCIAL_BUCKETS;
 
 type FormErrorWithMessage = { message?: string };
 
@@ -129,6 +133,7 @@ export function SpotRateEntryForm({
     productCodeDomain,
     envelopeId,
     reviewRequest,
+    filterType = "all",
 }: SpotRateEntryFormProps) {
     const submitLockRef = useRef(false);
     const draftLockRef = useRef(false);
@@ -297,6 +302,7 @@ export function SpotRateEntryForm({
             conditional_acknowledged: charge.conditional_acknowledged,
             conditional_acknowledged_by: charge.conditional_acknowledged_by,
             conditional_acknowledged_at: charge.conditional_acknowledged_at,
+            reviewed_bucket: (charge.reviewed_bucket || inferCommercialBucket(charge)) as unknown as SpotFormInputValues["charges"][number]["reviewed_bucket"],
             source_reference: normalizeSourceReference(charge.source_reference),
             source_excerpt: charge.source_excerpt || "",
             source_line_number: charge.source_line_number ?? null,
@@ -319,6 +325,11 @@ export function SpotRateEntryForm({
             manual_resolution_by_user_id: charge.manual_resolution_by_user_id ?? null,
             manual_resolution_by_username: charge.manual_resolution_by_username ?? null,
             manual_resolution_at: charge.manual_resolution_at ?? null,
+            calculation_type: charge.calculation_type ?? null,
+            percent: charge.percent != null ? String(charge.percent) : null,
+            percent_basis: charge.percent_basis ?? null,
+            min_amount: charge.min_amount != null ? String(charge.min_amount) : null,
+            max_amount: charge.max_amount != null ? String(charge.max_amount) : null,
         }));
     }, [mergedCharges, visibleBuckets]);
 
@@ -338,8 +349,7 @@ export function SpotRateEntryForm({
 
     const hiddenExistingCharges = useMemo(
         () => {
-            // Preserve non-visible SPOT charges so saving one bucket does not wipe out
-            // previously imported or edited charges in the other required buckets.
+            // Keep preserving based on the underlying backend bucket
             return initialCharges.filter(c => !visibleBuckets.includes(c.bucket));
         },
         [initialCharges, visibleBuckets]
@@ -352,7 +362,12 @@ export function SpotRateEntryForm({
     const watchedFormCharges = useWatch({
         control: form.control,
         name: "charges",
-    }) || [];
+    });
+    const memoizedWatchedFormCharges = useMemo(() => watchedFormCharges || [], [watchedFormCharges]);
+
+    const duplicateIndices = useMemo(() => {
+        return getDuplicateChargeIndices(memoizedWatchedFormCharges);
+    }, [memoizedWatchedFormCharges]);
 
     const mapEditableLineToSubmitCharge = (
         line: SpotFormSubmitValues["charges"][number]
@@ -393,6 +408,11 @@ export function SpotRateEntryForm({
             note: line.note,
             exclude_from_totals: line.exclude_from_totals,
             percentage_basis: line.percentage_basis || undefined,
+            calculation_type: line.unit === "percentage" ? "percent_of" : (line.calculation_type || (line.unit === "min_or_per_kg" ? "min_or_per_unit" : "flat")),
+            percent: line.unit === "percentage" && line.percent ? parseFloat(line.percent) : undefined,
+            percent_basis: line.unit === "percentage" ? (line.percent_basis || undefined) : undefined,
+            min_amount: line.min_amount ? parseFloat(line.min_amount) : undefined,
+            max_amount: line.max_amount ? parseFloat(line.max_amount) : undefined,
         };
     };
 
@@ -431,6 +451,11 @@ export function SpotRateEntryForm({
         note: charge.note,
         exclude_from_totals: charge.exclude_from_totals,
         percentage_basis: charge.percentage_basis,
+        calculation_type: charge.calculation_type,
+        percent: charge.percent,
+        percent_basis: charge.percent_basis,
+        min_amount: charge.min_amount,
+        max_amount: charge.max_amount,
     });
 
     const handleFormSubmit = async (data: SpotFormSubmitValues) => {
@@ -524,6 +549,7 @@ export function SpotRateEntryForm({
             source_line_identity: "",
             min_charge: null,
             exclude_from_totals: false,
+            reviewed_bucket: bucket === "airfreight" ? "freight" : (bucket === "origin_charges" ? "origin" : "destination"),
             source_label: "",
             normalized_label: "",
             normalization_status: null,
@@ -565,6 +591,7 @@ export function SpotRateEntryForm({
             note: line.note || undefined,
             exclude_from_totals: line.exclude_from_totals,
             percentage_basis: line.percentage_basis || undefined,
+            reviewed_bucket: (line.reviewed_bucket || inferCommercialBucket({ bucket: line.bucket, description: line.description, code: line.code })) as unknown as SpotFormInputValues["charges"][number]["reviewed_bucket"],
             source_label: line.source_label || undefined,
             normalized_label: line.normalized_label || undefined,
             normalization_status: line.normalization_status ?? null,
@@ -579,6 +606,11 @@ export function SpotRateEntryForm({
             manual_resolution_by_user_id: line.manual_resolution_by_user_id ?? null,
             manual_resolution_by_username: line.manual_resolution_by_username ?? null,
             manual_resolution_at: line.manual_resolution_at ?? null,
+            calculation_type: line.calculation_type ?? null,
+            percent: line.percent != null ? String(line.percent) : null,
+            percent_basis: line.percent_basis ?? null,
+            min_amount: line.min_amount != null ? String(line.min_amount) : null,
+            max_amount: line.max_amount != null ? String(line.max_amount) : null,
         });
     }, []);
 
@@ -624,8 +656,34 @@ export function SpotRateEntryForm({
         }
     }, [manualReviewCharge, onManualResolveChargeLine]);
 
-    const getFieldsByBucket = (bucket: SPEChargeBucket) =>
-        fields.map((field, index) => ({ field, index })).filter(item => item.field.bucket === bucket);
+    const getFieldsByBucket = (bucketId: CommercialBucket) => {
+        return fields
+            .map((field, index) => ({ field, index }))
+            .filter((item) => {
+                const chargeLine = watchedFormCharges[item.index];
+                if (!chargeLine) return false;
+                
+                const currentReviewedBucket = chargeLine.reviewed_bucket || inferCommercialBucket({
+                    bucket: chargeLine.bucket,
+                    description: chargeLine.description,
+                    code: chargeLine.code
+                });
+                
+                if (currentReviewedBucket !== bucketId) return false;
+                if (!filterType || filterType === "all") return true;
+
+                if (filterType === "matched") {
+                    return (
+                        chargeLine.manual_resolution_status === "RESOLVED" ||
+                        chargeLine.normalization_status === "MATCHED"
+                    );
+                }
+                if (filterType === "conditional") {
+                    return Boolean(chargeLine.conditional);
+                }
+                return true;
+            });
+    };
 
     return (
         <Form {...form}>
@@ -642,20 +700,30 @@ export function SpotRateEntryForm({
                     </Alert>
                 )}
 
-                {visibleBuckets.map(bucketId => {
-                    const bucket = CHARGE_BUCKETS.find(b => b.id === bucketId);
-                    if (!bucket) return null;
+                {CHARGE_BUCKETS.map(bucket => {
                     const bucketItems = getFieldsByBucket(bucket.id);
+                    // Map commercial bucket default backend category for item addition
+                    const defaultBackendBucketMap: Record<CommercialBucket, SPEChargeBucket> = {
+                        freight: "airfreight",
+                        origin: "origin_charges",
+                        destination: "destination_charges",
+                        security: "origin_charges",
+                        customs: "origin_charges",
+                        transport: "origin_charges",
+                        other: "origin_charges"
+                    };
+                    const targetBackendBucket = defaultBackendBucketMap[bucket.id];
                     return (
                         <ChargeBucketSection
                             key={bucket.id}
                             bucket={bucket}
                             control={form.control}
                             fields={bucketItems}
-                            onAdd={() => addLine(bucket.id)}
+                            onAdd={() => addLine(targetBackendBucket)}
                             onRemove={remove}
                             onOpenManualReview={handleOpenManualReview}
                             activeChargeLineId={reviewRequest?.chargeLineId ?? null}
+                            duplicateIndices={duplicateIndices}
                         />
                     );
                 })}
