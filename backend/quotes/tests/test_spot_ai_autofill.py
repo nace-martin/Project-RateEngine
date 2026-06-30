@@ -1918,3 +1918,64 @@ def test_api_boundary_returns_400_for_invalid_context(monkeypatch):
     assert "error" in response.data
     assert "only supports routes to or from PNG" in response.data["error"]
 
+
+def test_ai_reply_analysis_persists_structured_intake_metadata(monkeypatch):
+    import json
+    user, origin, destination = _setup_user_and_locations()
+    spe = _create_spe(
+        user=user,
+        origin_code=origin.code,
+        dest_code=destination.code,
+        origin_country="AU",
+        dest_country="PG",
+        service_scope="D2D",
+        status="draft",
+        missing_components=[COMPONENT_FREIGHT, COMPONENT_ORIGIN_LOCAL, COMPONENT_DESTINATION_LOCAL],
+    )
+
+    analysis_result = _analysis_result_with_components()
+    monkeypatch.setattr(ReplyAnalysisService, "analyze_with_ai", lambda *args, **kwargs: analysis_result)
+    monkeypatch.setattr(
+        "quotes.spot_services.RateAvailabilityService.get_availability",
+        lambda **kwargs: {
+            COMPONENT_FREIGHT: False,
+            COMPONENT_ORIGIN_LOCAL: False,
+            COMPONENT_DESTINATION_LOCAL: False,
+        },
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    structured_data = {
+        "source_type": "tsv",
+        "raw_text": "Code\tRate\tUnit\nEXP-FSC\t22\t%",
+        "detected_tables": [
+            {
+                "headers": ["Code", "Rate", "Unit"],
+                "rows": [["EXP-FSC", "22", "%"]],
+                "columnCount": 3,
+                "sourceIndex": 0,
+                "warnings": []
+            }
+        ]
+    }
+
+    response = client.post(
+        "/api/v3/spot/analyze-reply/",
+        {
+            "text": "Code\tRate\tUnit\nEXP-FSC\t22\t%",
+            "spe_id": str(spe.id),
+            "use_ai": True,
+            "structured_intake": json.dumps(structured_data),
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    source_batch = SPESourceBatchDB.objects.get(id=payload["source_batch_id"])
+    assert source_batch.analysis_summary_json.get("structured_intake") == structured_data
+
+

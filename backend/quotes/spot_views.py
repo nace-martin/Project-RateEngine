@@ -2309,6 +2309,13 @@ class SpotReplyAnalysisAPIView(APIView):
             pdf_file = request.FILES.get('file')
             spe_id = request.data.get('spe_id')
             source_batch_id = request.data.get('source_batch_id')
+            structured_intake_raw = request.data.get('structured_intake')
+            structured_intake = None
+            if structured_intake_raw:
+                try:
+                    structured_intake = json.loads(structured_intake_raw)
+                except Exception:
+                    pass
             source_kind = _normalize_source_kind(request.data.get('source_kind'))
             target_bucket = _normalize_target_bucket(request.data.get('target_bucket'))
             source_type = _normalize_source_type(request.data.get('source_type'), pdf_file=pdf_file)
@@ -2480,6 +2487,17 @@ class SpotReplyAnalysisAPIView(APIView):
                             if str(charge.get("currency") or "").strip()
                         }
                     )
+                    summary_payload = build_source_analysis_summary_payload(
+                        warnings=result.warnings or [],
+                        assertion_count=len(result.assertions or []),
+                        can_proceed=getattr(result.summary, "can_proceed", False),
+                        ai_used=True,
+                        detected_currencies=detected_currencies,
+                        safety_signals=safety_signals,
+                    )
+                    if structured_intake:
+                        summary_payload["structured_intake"] = structured_intake
+
                     batch = _get_or_create_source_batch(
                         spe_db=spe_db,
                         request=request,
@@ -2492,14 +2510,7 @@ class SpotReplyAnalysisAPIView(APIView):
                         raw_text=text,
                         file_name=pdf_file.name if pdf_file else "",
                         file_content_type=getattr(pdf_file, "content_type", "") if pdf_file else "",
-                        analysis_summary_json=build_source_analysis_summary_payload(
-                            warnings=result.warnings or [],
-                            assertion_count=len(result.assertions or []),
-                            can_proceed=getattr(result.summary, "can_proceed", False),
-                            ai_used=True,
-                            detected_currencies=detected_currencies,
-                            safety_signals=safety_signals,
-                        ),
+                        analysis_summary_json=summary_payload,
                     )
 
                     now = timezone.now()

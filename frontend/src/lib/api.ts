@@ -872,6 +872,7 @@ export async function analyzeSpotReply(
     label?: string;
     sourceReference?: string;
     useAi?: boolean;
+    structuredIntake?: Record<string, unknown>;
   }
 ): Promise<ReplyAnalysisResult> {
   const {
@@ -885,6 +886,7 @@ export async function analyzeSpotReply(
     label,
     sourceReference,
     useAi = true,
+    structuredIntake,
   } = options;
   const url = API_BASE_URL + '/api/v3/spot/analyze-reply/';
   const formData = new FormData();
@@ -915,6 +917,9 @@ export async function analyzeSpotReply(
   }
   if (sourceReference) {
     formData.append('source_reference', sourceReference);
+  }
+  if (structuredIntake) {
+    formData.append('structured_intake', JSON.stringify(structuredIntake));
   }
   formData.append('use_ai', String(useAi));
 
