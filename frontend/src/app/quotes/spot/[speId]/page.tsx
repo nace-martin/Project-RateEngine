@@ -1329,7 +1329,7 @@ export default function SpotRateEntryPage() {
                                             suggestedCharges={analysisResult?.assertions || []}
                                             shipmentType={resolvedShipmentType}
                                             serviceScope={serviceScope}
-                                            missingComponents={EMPTY_COMPONENTS}
+                                            missingComponents={missingComponents}
                                             submitLabel="Create Quote"
                                             submitDisabled={quoteSubmitDisabled}
                                             submitDisabledReason={quoteSubmitDisabledReason}
@@ -1359,7 +1359,7 @@ export default function SpotRateEntryPage() {
                                             <div className="text-sm font-semibold text-slate-900">Charge Summary by Commercial Bucket</div>
                                             <div className="divide-y divide-slate-200">
                                                 {getVisibleCommercialBuckets({
-                                                    missingComponents: EMPTY_COMPONENTS,
+                                                    missingComponents: missingComponents,
                                                     serviceScope: serviceScope,
                                                     shipmentType: resolvedShipmentType,
                                                     charges: allReviewFormCharges,

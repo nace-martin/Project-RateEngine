@@ -588,7 +588,7 @@ export function ChargeBucketSection({
                                                     name={`charges.${index}.reviewed_bucket`}
                                                     render={({ field }) => (
                                                         <FormItem>
-                                                            <Select onValueChange={field.onChange} defaultValue={field.value || undefined}>
+                                                            <Select onValueChange={field.onChange} value={field.value || undefined}>
                                                                 <FormControl>
                                                                     <SelectTrigger className="h-8">
                                                                         <SelectValue placeholder="Select bucket" />
@@ -597,7 +597,7 @@ export function ChargeBucketSection({
                                                                 <SelectContent>
                                                                     {getDropdownBucketOptionsForCharge(
                                                                         chargeLine || {},
-                                                                        { missingComponents, serviceScope, shipmentType }
+                                                                        { missingComponents, serviceScope, shipmentType, charges: watchedCharges }
                                                                     ).map((cb) => (
                                                                         <SelectItem key={cb.id} value={cb.id}>
                                                                             {cb.label}

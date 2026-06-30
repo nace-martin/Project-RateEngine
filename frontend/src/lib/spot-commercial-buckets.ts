@@ -321,30 +321,67 @@ export function getDropdownBucketOptionsForCharge(
         missingComponents?: string[];
         serviceScope?: string;
         shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
+        charges?: Array<{
+            bucket?: string;
+            description?: string;
+            reviewed_bucket?: string | null;
+            code?: string;
+            resolved_product_code?: { code?: string; description?: string } | null;
+            effective_resolved_product_code?: { code?: string; description?: string } | null;
+        }>;
     }
 ): CommercialBucketDef[] {
     const scope = (context.serviceScope || "D2D").toUpperCase();
     const type = context.shipmentType || "EXPORT";
     const missing = (context.missingComponents || []).map(c => c.toUpperCase());
+    const contextCharges = context.charges || [];
 
-    // Determine which core backend buckets are in scope
-    const requiredComponents = missing.length > 0
-        ? missing
-        : type === "DOMESTIC"
+    // Determine which core backend buckets are in scope by default based on service scope
+    const defaultComponents = type === "DOMESTIC"
+        ? ["FREIGHT"]
+        : scope === "A2A"
             ? ["FREIGHT"]
-            : scope === "A2A"
-                ? ["FREIGHT"]
-                : scope === "D2A"
-                    ? ["ORIGIN_LOCAL", "FREIGHT"]
-                    : scope === "A2D"
-                        ? ["DESTINATION_LOCAL"]
-                        : ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"];
+            : scope === "D2A"
+                ? ["ORIGIN_LOCAL", "FREIGHT"]
+                : scope === "A2D"
+                    ? ["DESTINATION_LOCAL"]
+                    : ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"];
+
+    const activeBackendBuckets = new Set<string>();
+
+    // Add buckets from missing components
+    if (missing.length > 0) {
+        missing.forEach(c => {
+            if (c === "FREIGHT") activeBackendBuckets.add("airfreight");
+            if (c === "ORIGIN_LOCAL") activeBackendBuckets.add("origin_charges");
+            if (c === "DESTINATION_LOCAL") activeBackendBuckets.add("destination_charges");
+        });
+    }
+
+    // Add buckets from actual charges in context
+    contextCharges.forEach(c => {
+        if (c.bucket) activeBackendBuckets.add(c.bucket);
+    });
+
+    // Add current charge's own bucket
+    if (charge.bucket) {
+        activeBackendBuckets.add(charge.bucket);
+    }
+
+    // If activeBackendBuckets is completely empty, fall back to service scope defaults
+    if (activeBackendBuckets.size === 0) {
+        defaultComponents.forEach(c => {
+            if (c === "FREIGHT") activeBackendBuckets.add("airfreight");
+            if (c === "ORIGIN_LOCAL") activeBackendBuckets.add("origin_charges");
+            if (c === "DESTINATION_LOCAL") activeBackendBuckets.add("destination_charges");
+        });
+    }
 
     const inScopeCommercial = new Set<CommercialBucket>();
-    for (const comp of requiredComponents) {
-        if (comp === "FREIGHT") inScopeCommercial.add("freight");
-        if (comp === "ORIGIN_LOCAL") inScopeCommercial.add("origin");
-        if (comp === "DESTINATION_LOCAL") inScopeCommercial.add("destination");
+    for (const comp of defaultComponents) {
+        if (comp === "FREIGHT" && activeBackendBuckets.has("airfreight")) inScopeCommercial.add("freight");
+        if (comp === "ORIGIN_LOCAL" && activeBackendBuckets.has("origin_charges")) inScopeCommercial.add("origin");
+        if (comp === "DESTINATION_LOCAL" && activeBackendBuckets.has("destination_charges")) inScopeCommercial.add("destination");
     }
 
     // Infer this charge's bucket
@@ -372,9 +409,6 @@ export function getDropdownBucketOptionsForCharge(
     if (charge.bucket === "airfreight") allowed.add("freight");
     if (charge.bucket === "origin_charges") allowed.add("origin");
     if (charge.bucket === "destination_charges") allowed.add("destination");
-
-    // Sub-buckets only if THIS charge is assigned to them (already handled
-    // by including currentBucket above — no extra logic needed)
 
     return COMMERCIAL_BUCKETS.filter(cb => allowed.has(cb.id));
 }

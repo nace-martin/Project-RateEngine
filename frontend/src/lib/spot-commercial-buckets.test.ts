@@ -13,7 +13,7 @@ import {
     getVisibleCommercialBuckets,
     getDropdownBucketOptionsForCharge,
     isCoreCommercialBucket,
-} from "./spot-commercial-buckets";
+} from "./spot-commercial-buckets.ts";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -239,7 +239,7 @@ function testDropdownAlwaysIncludesCurrentBucket() {
     );
 }
 
-// ─── Test 8: Dropdown includes in-scope core buckets ─────────────────
+// ─── Test 8: Dropdown includes in-scope core buckets when active ──────
 
 function testDropdownIncludesInScopeCoreBuckets() {
     const charge = {
@@ -247,7 +247,7 @@ function testDropdownIncludesInScopeCoreBuckets() {
         description: "Air freight",
     };
     const context = {
-        missingComponents: [] as string[],
+        missingComponents: ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"],
         serviceScope: "D2D",
         shipmentType: "EXPORT" as const,
     };
@@ -257,6 +257,114 @@ function testDropdownIncludesInScopeCoreBuckets() {
     assert(ids.includes("freight"), "D2D freight charge sees freight");
     assert(ids.includes("origin"), "D2D freight charge sees origin");
     assert(ids.includes("destination"), "D2D freight charge sees destination");
+}
+
+// ─── Test 9: Normal Air Freight SPOT review regression test ──────────
+
+function testNormalAirFreightReview() {
+    const charges = [
+        { bucket: "airfreight", description: "Air freight rate", code: "AF" },
+        { bucket: "origin_charges", description: "AWB Fee", code: "AWB" },
+        { bucket: "origin_charges", description: "Documentation Fee", code: "DOC" },
+        { bucket: "origin_charges", description: "Origin handling charge", code: "OHC" }
+    ];
+    const context = {
+        missingComponents: ["ORIGIN_LOCAL", "FREIGHT"],
+        serviceScope: "D2D",
+        shipmentType: "EXPORT" as const,
+        charges
+    };
+
+    const visible = getVisibleCommercialBuckets(context);
+    const visibleIds = bucketIds(visible);
+
+    assert(visibleIds.includes("freight"), "Freight card is visible");
+    assert(visibleIds.includes("origin"), "Origin charges card is visible");
+    assert(!visibleIds.includes("destination"), "Destination card is NOT visible");
+    assert(!visibleIds.includes("security"), "Security card is NOT visible");
+    assert(!visibleIds.includes("customs"), "Customs card is NOT visible");
+    assert(!visibleIds.includes("transport"), "Transport card is NOT visible");
+    assert(!visibleIds.includes("other"), "Other card is NOT visible");
+
+    // Dropdown check for Freight row
+    const freightOptions = getDropdownBucketOptionsForCharge(charges[0], context);
+    const freightOptIds = bucketIds(freightOptions);
+    assert(!freightOptIds.includes("customs"), "Freight row does not include Customs option");
+    assert(!freightOptIds.includes("transport"), "Freight row does not include Transport option");
+    assert(!freightOptIds.includes("security"), "Freight row does not include Security option");
+    assert(!freightOptIds.includes("other"), "Freight row does not include Other option");
+
+    // AWB/Doc rows infer Origin Charges
+    assert(inferCommercialBucket(charges[1]) === "origin", "AWB fee row infers origin");
+    assert(inferCommercialBucket(charges[2]) === "origin", "Doc fee row infers origin");
+}
+
+// ─── Test 10: Pickup Fee dropdown isolation regression test ──────────
+
+function testPickupFeeDropdownIsolation() {
+    const charges = [
+        { bucket: "airfreight", description: "Air freight rate", code: "AF" },
+        { bucket: "origin_charges", description: "Pickup Fee", code: "PKP" } // infers transport
+    ];
+    const context = {
+        missingComponents: ["ORIGIN_LOCAL", "FREIGHT"],
+        serviceScope: "D2D",
+        shipmentType: "EXPORT" as const,
+        charges
+    };
+
+    const visible = getVisibleCommercialBuckets(context);
+    const visibleIds = bucketIds(visible);
+    assert(visibleIds.includes("transport"), "Transport card IS visible due to Pickup Fee");
+
+    const freightOptions = getDropdownBucketOptionsForCharge(charges[0], context);
+    assert(!bucketIds(freightOptions).includes("transport"), "Freight row does NOT inherit transport option");
+
+    const pickupOptions = getDropdownBucketOptionsForCharge(charges[1], context);
+    assert(bucketIds(pickupOptions).includes("transport"), "Pickup row DOES get transport option");
+}
+
+// ─── Test 11: Customs Clearance dropdown isolation regression test ────
+
+function testCustomsDropdownIsolation() {
+    const charges = [
+        { bucket: "airfreight", description: "Air freight rate", code: "AF" },
+        { bucket: "origin_charges", description: "Customs Clearance", code: "CUS" } // infers customs
+    ];
+    const context = {
+        missingComponents: ["ORIGIN_LOCAL", "FREIGHT"],
+        serviceScope: "D2D",
+        shipmentType: "EXPORT" as const,
+        charges
+    };
+
+    const visible = getVisibleCommercialBuckets(context);
+    const visibleIds = bucketIds(visible);
+    assert(visibleIds.includes("customs"), "Customs card IS visible due to Customs Clearance");
+
+    const freightOptions = getDropdownBucketOptionsForCharge(charges[0], context);
+    assert(!bucketIds(freightOptions).includes("customs"), "Freight row does NOT inherit customs option");
+
+    const customsOptions = getDropdownBucketOptionsForCharge(charges[1], context);
+    assert(bucketIds(customsOptions).includes("customs"), "Customs row DOES get customs option");
+}
+
+// ─── Test 12: Empty Destination not visible unless required ───────────
+
+function testEmptyDestinationNotVisibleWithoutInputRequirement() {
+    const charges = [
+        { bucket: "airfreight", description: "Air freight rate", code: "AF" }
+    ];
+    // Scope is D2D but missingComponents only has FREIGHT and ORIGIN_LOCAL (no destination required)
+    const context = {
+        missingComponents: ["FREIGHT", "ORIGIN_LOCAL"],
+        serviceScope: "D2D",
+        shipmentType: "EXPORT" as const,
+        charges
+    };
+
+    const visible = getVisibleCommercialBuckets(context);
+    assert(!bucketIds(visible).includes("destination"), "Empty destination NOT visible when destination input not required");
 }
 
 // ─── Run all tests ───────────────────────────────────────────────────
@@ -269,6 +377,10 @@ testAwbDocumentInferToOrigin();
 testIsCoreCommercialBucket();
 testDropdownAlwaysIncludesCurrentBucket();
 testDropdownIncludesInScopeCoreBuckets();
+testNormalAirFreightReview();
+testPickupFeeDropdownIsolation();
+testCustomsDropdownIsolation();
+testEmptyDestinationNotVisibleWithoutInputRequirement();
 
 console.log("");
 console.log("========================================================");
