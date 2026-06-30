@@ -3322,6 +3322,75 @@ graphify update .
 git diff --check
 ```
 
+#### Phase 10I - Legacy Organization Cleanup Plan
+
+Date: 2026-06-30
+
+Branch: `codex/phase-10i-legacy-organization-cleanup`
+
+Scope: safe planning and guarded migration tooling for legacy `Organization`
+rows after the OperatingEntity redesign. This phase does not delete rows,
+does not backfill historical Quote/SPOT records, and does not touch pricing,
+ProductCode, rating, or UI behavior.
+
+Commands:
+
+- `python backend/manage.py rbac_legacy_organization_cleanup_plan`
+- `python backend/manage.py rbac_legacy_organization_cleanup_plan --format json`
+- `python backend/manage.py rbac_legacy_organization_cleanup_apply`
+- `python backend/manage.py rbac_legacy_organization_cleanup_apply --apply --format json`
+
+Safety rules:
+
+- `rbac_legacy_organization_cleanup_plan` is read-only.
+- `rbac_legacy_organization_cleanup_apply` is dry-run by default and only
+  writes with `--apply`.
+- Apply runs inside a transaction and only updates dependencies classified as
+  auto-migratable by the same planner.
+- Legacy organizations are only deactivated after dependency counts reach zero.
+- No command hard-deletes organizations.
+- `EFM Express Air Cargo` / `EAC` is treated as legacy Air Freight wording, not
+  a canonical organization.
+- `Test Org` is `DEV_TEST_LEGACY` and stays manual review unless it has zero
+  dependencies.
+- Quote/SPOT historical records are reported as `DEV_TEST_LEGACY` and are not
+  mutated by cleanup tooling.
+
+Mapping:
+
+- `EFM PNG` -> `Express Freight Management` + OperatingEntity `EFM PNG`
+- `EFM Australia` -> `Express Freight Management` + OperatingEntity
+  `EFM Australia`
+- `EFM Fiji` -> `Express Freight Management` + OperatingEntity `EFM Fiji`
+- `EFM Solomon Islands` -> `Express Freight Management` + OperatingEntity
+  `EFM Solomon Islands`
+- `EFM Express Air Cargo` -> `Express Freight Management` + Department
+  `Air Freight`; OperatingEntity only when inferable from a branch.
+- `Test Org` -> `DEV_TEST_LEGACY` / manual review.
+
+Manual runbook:
+
+1. Run the plan command in JSON mode and save the output with the release
+   evidence.
+2. Confirm `target_organization` is `Express Freight Management`.
+3. Review every dependency row with `auto_migratable=false`.
+4. Confirm Quote/SPOT rows are classified but not planned for mutation.
+5. Run apply without `--apply` and compare before/after counts.
+6. Run apply with `--apply` only after blockers are understood.
+7. Re-run the plan command. Legacy organizations are only eligible for
+   deactivation after dependency counts are zero.
+
+Verification:
+
+```bash
+python backend/manage.py makemigrations --check --dry-run
+python backend/manage.py test accounts.tests parties.tests crm.tests quotes.tests
+python backend/manage.py check
+npx fallow --format json
+graphify update .
+git diff --check
+```
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:
