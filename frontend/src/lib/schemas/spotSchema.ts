@@ -15,6 +15,8 @@ export const chargeLineSchema = z.object({
         "per_trip", "per_set", "per_man"
     ]),
     bucket: z.enum(["airfreight", "origin_charges", "destination_charges"]),
+    /** Frontend-only commercial grouping for display. NEVER sent to backend. */
+    reviewed_bucket: z.enum(["freight", "origin", "destination", "security", "customs", "transport", "other"]).optional().nullable(),
     is_primary_cost: z.boolean().default(false),
     conditional: z.boolean().default(false),
     conditional_acknowledged: z.boolean().optional(),
@@ -63,6 +65,11 @@ export const chargeLineSchema = z.object({
     manual_resolution_by_user_id: z.string().optional().nullable(),
     manual_resolution_by_username: z.string().optional().nullable(),
     manual_resolution_at: z.string().optional().nullable(),
+    calculation_type: z.string().optional().nullable(),
+    percent: z.string().optional().nullable(),
+    percent_basis: z.string().optional().nullable(),
+    min_amount: z.string().optional().nullable(),
+    max_amount: z.string().optional().nullable(),
 });
 
 export const spotFormSchema = z.object({
