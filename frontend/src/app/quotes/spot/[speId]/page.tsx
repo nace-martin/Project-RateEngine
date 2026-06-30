@@ -1348,7 +1348,7 @@ export default function SpotRateEntryPage() {
                                         ) : null}
 
                                         <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-5 py-4 space-y-4">
-                                            <div className="text-sm font-semibold text-slate-900">Final Review by Commercial Bucket</div>
+                                            <div className="text-sm font-semibold text-slate-900">Charge Summary by Commercial Bucket</div>
                                             <div className="divide-y divide-slate-200">
                                                 {COMMERCIAL_BUCKETS.map((cb) => {
                                                     const cbCharges = allReviewFormCharges.filter((charge) => {
@@ -1357,36 +1357,26 @@ export default function SpotRateEntryPage() {
                                                     });
                                                     if (cbCharges.length === 0) return null;
                                                     
-                                                    // Group totals by currency
-                                                    const currencyTotals: Record<string, number> = {};
-                                                    let hasNumericAmounts = false;
-                                                    cbCharges.forEach((c) => {
-                                                        // Omit percentage/rule base lines from direct sum if they don't have static amount
-                                                        const amt = parseFloat(c.amount);
-                                                        if (!isNaN(amt)) {
-                                                            const cur = (c.currency || "USD").toUpperCase();
-                                                            currencyTotals[cur] = (currencyTotals[cur] || 0) + amt;
-                                                            hasNumericAmounts = true;
-                                                        }
-                                                    });
+                                                    const currencies = Array.from(
+                                                        new Set(cbCharges.map((c) => (c.currency || "USD").toUpperCase()))
+                                                    );
+                                                    const currenciesString = currencies.length > 0 ? currencies.join(", ") : "—";
                                                     
-                                                    const totalString = hasNumericAmounts
-                                                        ? Object.entries(currencyTotals)
-                                                            .map(([cur, total]) => `${total.toFixed(2)} ${cur}`)
-                                                            .join(" / ")
-                                                        : "—";
-
                                                     return (
                                                         <div key={cb.id} className="flex justify-between py-2 text-xs">
                                                             <span className="text-slate-600 font-medium">
                                                                 {cb.label} ({cbCharges.length} {cbCharges.length === 1 ? "charge" : "charges"})
                                                             </span>
                                                             <span className="font-semibold text-slate-900">
-                                                                {totalString}
+                                                                {currenciesString}
                                                             </span>
                                                         </div>
                                                     );
                                                 })}
+                                            </div>
+                                            
+                                            <div className="text-[11px] text-slate-500 bg-slate-100/60 rounded-lg p-2.5 leading-relaxed border border-slate-200/50">
+                                                Calculated commercial totals are shown during the live preview step. This summary shows charge grouping only.
                                             </div>
                                             <div className="grid gap-2 sm:grid-cols-3 text-xs pt-2 border-t border-slate-200">
                                                 <div className="flex items-center gap-2">
