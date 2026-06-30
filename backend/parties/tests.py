@@ -3598,6 +3598,144 @@ class LegacyOrganizationCleanupTests(TestCase):
         self.assertTrue(legacy.is_active)
 
 
+class DuplicateMasterDataConsolidationTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        OperatingEntity.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_plan(self, *args):
+        stdout = StringIO()
+        call_command("rbac_duplicate_master_data_consolidation_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _call_apply(self, *args):
+        stdout = StringIO()
+        call_command("rbac_duplicate_master_data_consolidation_apply", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _canonical_master_data(self):
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        entity = OperatingEntity.objects.create(
+            organization=org,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+        branch = Branch.objects.create(organization=org, operating_entity=entity, code="POM", name="Port Moresby")
+        department = Department.objects.create(organization=org, code="AIR", name="Air Freight")
+        return org, branch, department
+
+    def test_plan_is_read_only_and_detects_duplicate_master_data(self):
+        _org, branch, department = self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        duplicate_branch = Branch.objects.create(organization=legacy, code="POM", name="Port Moresby")
+        duplicate_department = Department.objects.create(organization=legacy, code="AIR", name="Air Freight")
+        before = (duplicate_branch.is_active, duplicate_department.is_active)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        duplicate_branch.refresh_from_db()
+        duplicate_department.refresh_from_db()
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(before, (duplicate_branch.is_active, duplicate_department.is_active))
+        self.assertEqual(payload["branches"][0]["canonical_target"], f"Express Freight Management:{branch.code} {branch.name}")
+        self.assertEqual(payload["departments"][0]["canonical_target"], f"Express Freight Management:{department.code} {department.name}")
+
+    def test_dry_run_writes_nothing(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        duplicate_branch = Branch.objects.create(organization=legacy, code="POM", name="Port Moresby")
+        company = Company.objects.create(name="Legacy Branch Customer", organization=legacy, branch=duplicate_branch)
+
+        payload = json.loads(self._call_apply("--format", "json"))
+
+        company.refresh_from_db()
+        duplicate_branch.refresh_from_db()
+        self.assertEqual(payload["mode"], "dry-run")
+        self.assertEqual(company.branch, duplicate_branch)
+        self.assertTrue(duplicate_branch.is_active)
+
+    def test_apply_repoints_safe_branch_and_department_references(self):
+        _org, canonical_branch, canonical_department = self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        duplicate_branch = Branch.objects.create(organization=legacy, code="POM", name="Port Moresby")
+        duplicate_department = Department.objects.create(organization=legacy, code="AIR", name="Air Freight")
+        company = Company.objects.create(
+            name="Legacy Scoped Customer",
+            organization=legacy,
+            branch=duplicate_branch,
+            department=duplicate_department,
+        )
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        company.refresh_from_db()
+        duplicate_branch.refresh_from_db()
+        duplicate_department.refresh_from_db()
+        self.assertGreaterEqual(payload["summary"]["applied"], 2)
+        self.assertEqual(company.branch, canonical_branch)
+        self.assertEqual(company.department, canonical_department)
+        self.assertFalse(duplicate_branch.is_active)
+        self.assertFalse(duplicate_department.is_active)
+
+    def test_quote_spot_historical_records_are_not_mutated(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        duplicate_branch = Branch.objects.create(organization=legacy, code="POM", name="Port Moresby")
+        duplicate_department = Department.objects.create(organization=legacy, code="AIR", name="Air Freight")
+        company = Company.objects.create(name="Legacy Quote Customer", organization=legacy)
+        quote = Quote.objects.create(
+            customer=company,
+            organization=legacy,
+            branch=duplicate_branch,
+            department=duplicate_department,
+        )
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        quote.refresh_from_db()
+        duplicate_branch.refresh_from_db()
+        duplicate_department.refresh_from_db()
+        self.assertEqual(quote.branch, duplicate_branch)
+        self.assertEqual(quote.department, duplicate_department)
+        self.assertTrue(duplicate_branch.is_active)
+        self.assertTrue(duplicate_department.is_active)
+        self.assertTrue(any(action["model"] == "quotes.Quote" and action["status"] == "BLOCKED" for action in payload["actions"]))
+
+    def test_test_org_duplicate_departments_are_manual_review_only(self):
+        self._canonical_master_data()
+        test_org = Organization.objects.create(name="Test Org", slug="test-org")
+        duplicate_department = Department.objects.create(organization=test_org, code="AIR", name="Air Freight")
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        duplicate_department.refresh_from_db()
+        row = next(item for item in payload["actions"] if item["source"] == "Test Org:AIR Air Freight")
+        self.assertTrue(duplicate_department.is_active)
+        self.assertEqual(row["status"], "UNCHANGED")
+
+    def test_legacy_cleanup_plan_improves_after_consolidation(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        Branch.objects.create(organization=legacy, code="POM", name="Port Moresby")
+        Department.objects.create(organization=legacy, code="AIR", name="Air Freight")
+        before = StringIO()
+        call_command("rbac_legacy_organization_cleanup_plan", "--format", "json", stdout=before)
+
+        self._call_apply("--apply", "--format", "json")
+        after = StringIO()
+        call_command("rbac_legacy_organization_cleanup_plan", "--format", "json", stdout=after)
+
+        before_row = next(item for item in json.loads(before.getvalue())["organizations"] if item["name"] == "EFM PNG")
+        after_row = next(item for item in json.loads(after.getvalue())["organizations"] if item["name"] == "EFM PNG")
+        self.assertGreater(before_row["blocked_dependency_count"], after_row["blocked_dependency_count"])
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()
