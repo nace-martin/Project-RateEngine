@@ -1,5 +1,5 @@
 import assert from "assert";
-import { detectTableStructure } from "./spot-table-parser.ts";
+import { detectTableStructure, stripHtmlTags } from "./spot-table-parser.ts";
 
 // =============================================================================
 // TEST SUITE: SPOT Table Parser
@@ -123,6 +123,25 @@ function testPlainFallback() {
     console.log("✓ testPlainFallback passed");
 }
 
+// 7. Sanitization of script and style tags (including malformed & mixed case)
+function testHtmlSanitization() {
+    // Malformed scripts and styles
+    const input1 = "Prefix <script>alert(1)</script > Suffix";
+    const result1 = stripHtmlTags(input1);
+    assert.strictEqual(result1, "Prefix Suffix");
+
+    const input2 = "Prefix <style>body{}</style > Suffix";
+    const result2 = stripHtmlTags(input2);
+    assert.strictEqual(result2, "Prefix Suffix");
+
+    // Mixed case script tag
+    const input3 = "Prefix <sCrIpT>alert(2)</ScRiPt> Suffix";
+    const result3 = stripHtmlTags(input3);
+    assert.strictEqual(result3, "Prefix Suffix");
+
+    console.log("✓ testHtmlSanitization passed");
+}
+
 // RUN ALL TESTS
 try {
     testHtmlEmailPaste();
@@ -131,6 +150,7 @@ try {
     testMixedContent();
     testInconsistentRows();
     testPlainFallback();
+    testHtmlSanitization();
     console.log("\n========================================================");
     console.log("ALL SPOT TABLE PARSER TESTS PASSED SUCCESSFULLY!");
     console.log("========================================================\n");
@@ -138,3 +158,4 @@ try {
     console.error("Test execution failed:", error);
     process.exit(1);
 }
+

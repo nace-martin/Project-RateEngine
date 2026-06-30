@@ -18,9 +18,25 @@ export interface StructuredPreview {
 
 /** Helper to strip HTML tags from a string */
 export function stripHtmlTags(html: string): string {
+    if (typeof window !== "undefined" && typeof DOMParser !== "undefined") {
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            doc.querySelectorAll("script, style").forEach(el => el.remove());
+            return (doc.body.textContent || doc.documentElement.textContent || "")
+                .replace(/&nbsp;/g, " ")
+                .replace(/\s+/g, " ")
+                .trim();
+        } catch {
+            // Fallback to text regex sanitization if DOMParser throws
+        }
+    }
+
+    // Node/test fallback: conservative regex matching that handles whitespace inside tags
+    // e.g. <script>...</script >
     return html
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
         .replace(/<\/?[^>]+(>|$)/g, " ")
         .replace(/&nbsp;/g, " ")
         .replace(/\s+/g, " ")
