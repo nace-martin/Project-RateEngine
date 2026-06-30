@@ -2398,6 +2398,17 @@ class PostMembershipApplyReadinessTests(TestCase):
 
         self.assertIn("EFM Australia", payload["canonical"]["branches_missing"])
 
+    def test_legacy_branch_does_not_satisfy_final_canonical_branch(self):
+        self._canonical_master_data(skip_branch=("EFM Fiji", "Suva"))
+        legacy = Organization.objects.create(name="EFM Fiji", slug="efm-fiji")
+        Branch.objects.create(organization=legacy, code="SUV", name="Suva")
+        self._complete_membership()
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        self.assertIn("EFM Fiji", payload["canonical"]["branches_missing"])
+        self.assertIn("Suva", payload["canonical"]["branches_missing"]["EFM Fiji"])
+
     def test_missing_department_blocks(self):
         self._canonical_master_data(skip_department=("Express Freight Management", "Air Freight"))
         self._complete_membership()
@@ -2531,6 +2542,21 @@ class PostMembershipApplyReadinessTests(TestCase):
         self.assertEqual(eac["organization_names"], ["EFM Express Air Cargo"])
         self.assertGreaterEqual(eac["dependency_count"], 1)
         self.assertEqual(payload["final_readiness"]["status"], "NOT_READY")
+
+    def test_inactive_legacy_organization_dependencies_do_not_block_final_readiness(self):
+        self._canonical_master_data()
+        self._complete_membership()
+        legacy = Organization.objects.create(name="EFM Australia", slug="efm-australia", is_active=False)
+        Company.objects.create(name="Inactive Legacy AU Customer", organization=legacy)
+
+        payload = json.loads(self._call_report("--format", "json"))
+
+        country = payload["legacy"]["country_as_organization_dependencies"]
+        self.assertEqual(country["active_dependency_count"], 0)
+        self.assertTrue(country["inactive_or_dependency_free"])
+        self.assertFalse(
+            any("active_legacy_country_as_organization_dependencies" in blocker for blocker in payload["final_readiness"]["blockers"])
+        )
 
     def test_final_readiness_reports_superseded_stale_artifacts(self):
         payload = json.loads(self._call_report("--format", "json"))
@@ -2920,9 +2946,9 @@ class OperatingEntitySchemaTests(TestCase):
 
 
 class OperatingEntitySeedCommandTests(TestCase):
-    def _call(self, command):
+    def _call(self, command, *args):
         stdout = StringIO()
-        call_command(command, stdout=stdout)
+        call_command(command, *args, stdout=stdout)
         return stdout.getvalue()
 
     def test_seed_command_creates_canonical_entities(self):
@@ -2962,6 +2988,46 @@ class OperatingEntitySeedCommandTests(TestCase):
         output = self._call("link_branch_operating_entities")
 
         self.assertIn("existing=5", output)
+
+    def test_final_hierarchy_seed_creates_missing_branches_and_departments(self):
+        self._call("seed_operating_entities")
+
+        output = self._call("seed_final_rbac_hierarchy")
+
+        organization = Organization.objects.get(name="Express Freight Management")
+        self.assertEqual(Branch.objects.filter(organization=organization).count(), 5)
+        self.assertEqual(Department.objects.filter(organization=organization).count(), 4)
+        self.assertEqual(Branch.objects.get(organization=organization, name="Suva").operating_entity.name, "EFM Fiji")
+        self.assertIn("created=9", output)
+
+    def test_final_hierarchy_seed_is_idempotent(self):
+        self._call("seed_operating_entities")
+        self._call("seed_final_rbac_hierarchy")
+        output = self._call("seed_final_rbac_hierarchy")
+
+        self.assertEqual(Branch.objects.count(), 5)
+        self.assertEqual(Department.objects.count(), 4)
+        self.assertIn("existing=9", output)
+
+    def test_final_hierarchy_seed_dry_run_writes_nothing(self):
+        self._call("seed_operating_entities")
+
+        output = self._call("seed_final_rbac_hierarchy", "--dry-run")
+
+        self.assertEqual(Branch.objects.count(), 0)
+        self.assertEqual(Department.objects.count(), 0)
+        self.assertIn("created=9", output)
+
+    def test_final_hierarchy_seed_deactivates_dependency_free_extra_branch(self):
+        self._call("seed_operating_entities")
+        organization = Organization.objects.get(name="Express Freight Management")
+        extra = Branch.objects.create(organization=organization, code="FIJ", name="Fiji")
+
+        output = self._call("seed_final_rbac_hierarchy")
+
+        extra.refresh_from_db()
+        self.assertFalse(extra.is_active)
+        self.assertIn("deactivated=1", output)
 
 
 class FinalUserBlockerResolutionPlanTests(TestCase):
@@ -3246,6 +3312,22 @@ class FinalUserBlockerResolutionApplyTests(TestCase):
             ["EFM Express Air Cargo"],
         )
 
+    def test_apply_deactivates_zero_dependency_user_with_no_membership(self):
+        self._fixtures()
+        orphan = CustomUser.objects.create_user(username="orphan-zero-dependency", email="orphan@example.com")
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        orphan.refresh_from_db()
+        self.assertFalse(orphan.is_active)
+        self.assertTrue(
+            any(
+                row["username"] == "orphan-zero-dependency"
+                and row["action"] == "DEACTIVATE_ZERO_DEPENDENCY_USER_WITH_NO_MEMBERSHIP"
+                for row in payload["actions"]
+            )
+        )
+
     def test_apply_moves_sysadmin_to_canonical_membership(self):
         _admin, _testuser, sysadmin, legacy_membership = self._fixtures()
 
@@ -3492,6 +3574,28 @@ class LegacyOrganizationCleanupTests(TestCase):
         self.assertTrue(
             any(action["model"] == "quotes.Quote" and "DEV_TEST_LEGACY quote/SPOT historical record" in action["blockers"] for action in payload["actions"])
         )
+
+    def test_legacy_country_org_can_be_deactivated_after_only_protected_dependencies_remain(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        company = Company.objects.create(name="Protected Quote Customer", organization=legacy)
+        Quote.objects.create(customer=company, organization=legacy)
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        legacy.refresh_from_db()
+        self.assertFalse(legacy.is_active)
+        self.assertTrue(any(action["organization"] == "EFM Australia" and action["field"] == "is_active" for action in payload["actions"]))
+
+    def test_test_org_is_not_deactivated_with_dependencies(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="Test Org", slug="test-org")
+        Company.objects.create(name="Test Org Customer With Dependency", organization=legacy)
+
+        self._call_apply("--apply")
+
+        legacy.refresh_from_db()
+        self.assertTrue(legacy.is_active)
 
 
 class CustomerListAPITests(APITestCase):

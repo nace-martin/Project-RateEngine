@@ -38,9 +38,11 @@ class Command(BaseCommand):
 def build_apply_report(*, apply):
     context = resolve_context()
     actions = [testuser_action(context, apply=False), sysadmin_action(context, apply=False)]
+    actions.extend(generic_no_membership_actions(apply=False))
     blocked_count = sum(1 for row in actions if row["status"] == "BLOCKED")
     if apply and blocked_count == 0:
         actions = [testuser_action(context, apply=True), sysadmin_action(context, apply=True)]
+        actions.extend(generic_no_membership_actions(apply=True))
     return {
         "mode": "apply" if apply else "dry-run",
         "write_enabled": bool(apply) and blocked_count == 0,
@@ -184,6 +186,35 @@ def sysadmin_action(context, *, apply):
         }
     )
     return row
+
+
+def generic_no_membership_actions(*, apply):
+    actions = []
+    users = (
+        CustomUser.objects.filter(is_active=True)
+        .exclude(username__in=["testuser", "sysadmin"])
+        .order_by("username", "id")
+    )
+    for user in users:
+        if UserMembership.objects.filter(user=user, is_active=True).exists():
+            continue
+        before = dependency_counts(user)
+        row = base_action(user.username, "DEACTIVATE_ZERO_DEPENDENCY_USER_WITH_NO_MEMBERSHIP", before)
+        if sum(before.values()):
+            row.update({"status": "BLOCKED", "details": ["dependencies remain"]})
+        else:
+            if apply:
+                user.is_active = False
+                user.save(update_fields=["is_active"])
+            row.update(
+                {
+                    "status": "APPLIED" if apply else "PLANNED",
+                    "after_dependency_counts": before,
+                    "details": ["zero dependencies; user has no active membership"],
+                }
+            )
+        actions.append(row)
+    return actions
 
 
 def membership_matches(membership, target):

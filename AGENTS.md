@@ -37,6 +37,17 @@ RateEngine is quote-first. Quote creation, quote calculation, quote finalization
 - Do not introduce global CRM navigation, buttons, banners, or shortcuts unless explicitly requested.
 - Before changing quote creation, SPOT, pricing, FX, CAF, GST, margin, charge grouping, public quote rendering, or CRM quote logging, inspect the full workflow end-to-end.
 
+## RBAC Organization Hierarchy
+
+The final ERP hierarchy is:
+
+- Organization: `Express Freight Management` only.
+- OperatingEntity: `EFM PNG`, `EFM Australia`, `EFM Fiji`, and `EFM Solomon Islands`.
+- Branch: `Port Moresby`, `Lae`, `Brisbane`, `Suva`, and `Honiara`.
+- Department: `Air Freight`, `Sea Freight`, `Customs`, and `Transport`.
+
+`EFM PNG`, `EFM Australia`, `EFM Fiji`, and `EFM Solomon Islands` are not canonical Organization rows. `EAC` / `EFM Express Air Cargo` is legacy Air Freight wording only. Historical Quote/SPOT rows that still reference legacy hierarchy records are `DEV_TEST_LEGACY`; do not build historical Quote/SPOT backfill tooling or mutate pricing/ProductCode/rating behavior as part of RBAC hierarchy cleanup.
+
 ## Verification Rule
 
 Tests passing is not enough.

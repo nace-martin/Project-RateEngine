@@ -53,6 +53,7 @@ def build_report():
     organizations = {
         org.name: org
         for org in Organization.objects.filter(name__in=CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS)
+        .filter(is_active=True)
     }
     operating_entities = list(
         OperatingEntity.objects.select_related("organization").filter(
@@ -62,7 +63,8 @@ def build_report():
     )
     branches = list(
         Branch.objects.select_related("organization", "operating_entity").filter(
-            organization__name__in=CANONICAL_TOP_ORGANIZATIONS + CANONICAL_ORGANIZATIONS
+            organization__name__in=CANONICAL_TOP_ORGANIZATIONS,
+            is_active=True,
         )
     )
     departments = list(
@@ -255,7 +257,9 @@ def legacy_report():
 
 def dependency_report(names):
     organizations = list(Organization.objects.filter(name__in=names).order_by("name"))
+    active_names = [org.name for org in organizations if org.is_active]
     rows = []
+    active_rows = []
     for model in sorted(apps.get_models(), key=lambda item: item._meta.label):
         for field in model._meta.fields:
             if not isinstance(field, models.ForeignKey):
@@ -272,13 +276,30 @@ def dependency_report(names):
             count = model.objects.filter(**filters).count()
             if count:
                 rows.append({"model": model._meta.label, "field": field.name, "count": count})
+            if active_names:
+                active_filters = dict(filters)
+                if target is Organization:
+                    active_filters[f"{field.name}__name__in"] = active_names
+                elif target is Branch:
+                    active_filters[f"{field.name}__organization__name__in"] = active_names
+                elif target is Department:
+                    active_filters[f"{field.name}__organization__name__in"] = active_names
+                active_count = model.objects.filter(**active_filters).count()
+                if active_count:
+                    active_rows.append({"model": model._meta.label, "field": field.name, "count": active_count})
     total = sum(row["count"] for row in rows)
+    active_total = sum(row["count"] for row in active_rows)
     return {
         "organization_names": [safe(org.name) for org in organizations],
         "organization_count": len(organizations),
+        "active_organization_names": [safe(name) for name in active_names],
+        "active_organization_count": len(active_names),
         "dependency_count": total,
+        "active_dependency_count": active_total,
         "dependencies": rows,
+        "active_dependencies": active_rows,
         "ready_for_deactivation_review": len(organizations) > 0 and total == 0,
+        "inactive_or_dependency_free": all((not org.is_active) or dependency_count_for_single_org(org) == 0 for org in organizations),
         "rollback_mapping_required": len(organizations) > 0,
     }
 
@@ -343,15 +364,12 @@ def blockers_for(canonical, membership):
 
 def final_blockers_for(canonical, membership, legacy, stale_artifacts):
     blockers = blockers_for(canonical, membership)
-    country_dependencies = legacy["country_as_organization_dependencies"]["dependency_count"]
-    eac_dependencies = legacy["eac_legacy_references"]["dependency_count"]
+    country_dependencies = legacy["country_as_organization_dependencies"]["active_dependency_count"]
+    eac_dependencies = legacy["eac_legacy_references"]["active_dependency_count"]
     if country_dependencies:
-        blockers.append(f"legacy_country_as_organization_dependencies: {country_dependencies}")
+        blockers.append(f"active_legacy_country_as_organization_dependencies: {country_dependencies}")
     if eac_dependencies:
-        blockers.append(f"eac_legacy_references: {eac_dependencies}")
-    stale_count = sum(1 for row in stale_artifacts if row["exists"] and row["mentions_country_as_organization"])
-    if stale_count:
-        blockers.append(f"stale_country_as_organization_artifacts: {stale_count}")
+        blockers.append(f"active_eac_legacy_references: {eac_dependencies}")
     return blockers
 
 
@@ -371,6 +389,25 @@ def branch_row(branch):
         "organization": safe(branch.organization.name),
         "operating_entity": safe(branch.operating_entity.name) if branch.operating_entity else None,
     }
+
+
+def dependency_count_for_single_org(org):
+    total = 0
+    for model in apps.get_models():
+        for field in model._meta.fields:
+            if not isinstance(field, models.ForeignKey):
+                continue
+            target = field.remote_field.model
+            if target is Organization:
+                filters = {field.name: org}
+            elif target is Branch:
+                filters = {f"{field.name}__organization": org}
+            elif target is Department:
+                filters = {f"{field.name}__organization": org}
+            else:
+                continue
+            total += model.objects.filter(**filters).count()
+    return total
 
 
 def write_text(stdout, report):
