@@ -46,7 +46,7 @@ export default function ChargeCard({
 
     const buyAmountNum = Number(buyAmount || 0);
     const sellExGstNum = Number(sellExGst || 0);
-    const costPgk = Number(rawLine?.cost_pgk || (canonicalItem as any)?.cost_pgk || (buyCurrency === "PGK" ? buyAmount : 0) || 0);
+    const costPgk = Number(rawLine?.cost_pgk || canonicalItem?.cost_amount || (buyCurrency === "PGK" ? buyAmount : 0) || 0);
     
     let finalMarginAmount = line.margin_amount || rawLine?.margin_amount;
     let finalMarginPercent = line.margin_percent || rawLine?.margin_percent;
