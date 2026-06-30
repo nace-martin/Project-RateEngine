@@ -3309,6 +3309,191 @@ class FinalUserBlockerResolutionApplyTests(TestCase):
         self.assertEqual(payload["readiness"]["status"], "READY_FOR_BACKFILL_PLANNING")
 
 
+class LegacyOrganizationCleanupTests(TestCase):
+    def setUp(self):
+        UserMembership.objects.all().delete()
+        CustomUser.objects.all().delete()
+        Branch.objects.all().delete()
+        OperatingEntity.objects.all().delete()
+        Department.objects.all().delete()
+        Organization.objects.all().delete()
+
+    def _call_plan(self, *args):
+        stdout = StringIO()
+        call_command("rbac_legacy_organization_cleanup_plan", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _call_apply(self, *args):
+        stdout = StringIO()
+        call_command("rbac_legacy_organization_cleanup_apply", *args, stdout=stdout)
+        return stdout.getvalue()
+
+    def _role(self):
+        role, _created = Role.objects.get_or_create(
+            code="sales",
+            organization=None,
+            defaults={"name": "Sales", "is_system": True},
+        )
+        return role
+
+    def _canonical_master_data(self):
+        org = Organization.objects.create(name="Express Freight Management", slug="express-freight-management")
+        for name, branches in {
+            "EFM PNG": ("Port Moresby", "Lae"),
+            "EFM Australia": ("Brisbane",),
+            "EFM Fiji": ("Suva",),
+            "EFM Solomon Islands": ("Honiara",),
+        }.items():
+            entity = OperatingEntity.objects.create(
+                organization=org,
+                code=name.split()[-1][:3].upper(),
+                name=name,
+                slug=name.lower().replace(" ", "-"),
+                country_code=name[:2].upper(),
+            )
+            for branch_name in branches:
+                Branch.objects.create(organization=org, operating_entity=entity, code=branch_name[:3].upper(), name=branch_name)
+        for department_name in ("Air Freight", "Sea Freight", "Customs", "Transport"):
+            Department.objects.create(organization=org, code=department_name[:3].upper(), name=department_name)
+        return org
+
+    def test_plan_command_is_read_only_and_detects_dependencies(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        company = Company.objects.create(name="Legacy AU Customer", organization=legacy)
+        before = (Organization.objects.count(), Company.objects.count())
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        company.refresh_from_db()
+        row = next(item for item in payload["organizations"] if item["name"] == "EFM Australia")
+        self.assertFalse(payload["write_enabled"])
+        self.assertEqual(before, (Organization.objects.count(), Company.objects.count()))
+        self.assertEqual(company.organization, legacy)
+        self.assertGreaterEqual(row["dependency_count"], 1)
+
+    def test_country_organization_dependency_is_planned_for_safe_migration(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        Company.objects.create(name="Legacy AU Customer", organization=legacy)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(item for item in payload["organizations"] if item["name"] == "EFM Australia")
+        dep = next(item for item in row["dependencies"] if item["model"] == "parties.Company" and item["field"] == "organization")
+        self.assertEqual(row["recommended_action"], "migrate_references")
+        self.assertTrue(dep["auto_migratable"])
+        self.assertEqual(dep["target_organization"], "Express Freight Management")
+        self.assertEqual(dep["target_operating_entity"], "EFM Australia")
+
+    def test_non_inferable_branch_dependency_is_blocked(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        branch = Branch.objects.create(organization=legacy, code="MAD", name="Madang")
+        Company.objects.create(name="Legacy Branch Customer", organization=legacy, branch=branch)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(item for item in payload["organizations"] if item["name"] == "EFM PNG")
+        dep = next(item for item in row["dependencies"] if item["model"] == "parties.Company" and item["field"] == "branch")
+        self.assertFalse(dep["auto_migratable"])
+        self.assertIn("target branch not inferable", dep["blockers"])
+        self.assertEqual(row["recommended_action"], "manual_review_required")
+
+    def test_dry_run_apply_writes_nothing(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Fiji", slug="efm-fiji-legacy")
+        company = Company.objects.create(name="Legacy Fiji Customer", organization=legacy)
+
+        payload = json.loads(self._call_apply("--format", "json"))
+
+        company.refresh_from_db()
+        legacy.refresh_from_db()
+        self.assertEqual(payload["mode"], "dry-run")
+        self.assertEqual(company.organization, legacy)
+        self.assertTrue(legacy.is_active)
+
+    def test_apply_migrates_safe_records_and_is_idempotent(self):
+        org = self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM PNG", slug="efm-png-legacy")
+        branch = Branch.objects.get(organization=org, name="Port Moresby")
+        department = Department.objects.get(organization=org, name="Air Freight")
+        user = CustomUser.objects.create_user(username="legacy-png-user")
+        membership = UserMembership.objects.create(
+            user=user,
+            organization=legacy,
+            branch=branch,
+            department=department,
+            role=self._role(),
+        )
+        Company.objects.create(name="Legacy PNG Customer", organization=legacy)
+
+        first = json.loads(self._call_apply("--apply", "--format", "json"))
+        second = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        membership.refresh_from_db()
+        legacy.refresh_from_db()
+        self.assertGreater(first["summary"]["applied"], 0)
+        self.assertGreaterEqual(second["summary"]["unchanged"], 1)
+        self.assertEqual(membership.organization.name, "Express Freight Management")
+        self.assertEqual(membership.operating_entity.name, "EFM PNG")
+        self.assertFalse(legacy.is_active)
+
+    def test_zero_dependency_legacy_organization_is_deactivated_only_after_apply(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Solomon Islands", slug="efm-solomon-islands-legacy")
+
+        dry_run = json.loads(self._call_apply("--format", "json"))
+        legacy.refresh_from_db()
+        self.assertTrue(legacy.is_active)
+
+        applied = json.loads(self._call_apply("--apply", "--format", "json"))
+        legacy.refresh_from_db()
+        self.assertFalse(legacy.is_active)
+        self.assertGreaterEqual(dry_run["summary"]["planned"], 1)
+        self.assertGreaterEqual(applied["summary"]["applied"], 1)
+
+    def test_eac_is_legacy_air_freight_wording(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Express Air Cargo", slug="efm-express-air-cargo")
+        user = CustomUser.objects.create_user(username="legacy-eac-user")
+        UserMembership.objects.create(user=user, organization=legacy, role=self._role())
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(item for item in payload["organizations"] if item["name"] == "EFM Express Air Cargo")
+        dep = next(item for item in row["dependencies"] if item["model"] == "accounts.UserMembership")
+        self.assertEqual(row["classification"], "legacy_air_freight_wording")
+        self.assertEqual(dep["target_department"], "Air Freight")
+        self.assertIsNone(dep["target_operating_entity"])
+
+    def test_test_org_is_not_blindly_migrated(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="Test Org", slug="test-org")
+        Company.objects.create(name="Test Org Customer", organization=legacy)
+
+        payload = json.loads(self._call_plan("--format", "json"))
+
+        row = next(item for item in payload["organizations"] if item["name"] == "Test Org")
+        self.assertEqual(row["classification"], "DEV_TEST_LEGACY")
+        self.assertEqual(row["recommended_action"], "manual_review_required")
+        self.assertIn("DEV_TEST_LEGACY manual review required", row["blockers"])
+
+    def test_quote_records_are_classified_not_mutated(self):
+        self._canonical_master_data()
+        legacy = Organization.objects.create(name="EFM Australia", slug="efm-australia")
+        company = Company.objects.create(name="Quote Legacy Customer", organization=legacy)
+        quote = Quote.objects.create(customer=company, organization=legacy)
+
+        payload = json.loads(self._call_apply("--apply", "--format", "json"))
+
+        quote.refresh_from_db()
+        self.assertEqual(quote.organization, legacy)
+        self.assertTrue(
+            any(action["model"] == "quotes.Quote" and "DEV_TEST_LEGACY quote/SPOT historical record" in action["blockers"] for action in payload["actions"])
+        )
+
+
 class CustomerListAPITests(APITestCase):
     def setUp(self):
         self.client = APIClient()
