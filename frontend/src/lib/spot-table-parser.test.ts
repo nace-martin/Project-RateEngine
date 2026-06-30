@@ -128,16 +128,16 @@ function testHtmlSanitization() {
     // Malformed scripts and styles
     const input1 = "Prefix <script>alert(1)</script > Suffix";
     const result1 = stripHtmlTags(input1);
-    assert.strictEqual(result1, "Prefix Suffix");
+    assert.strictEqual(result1, "");
 
     const input2 = "Prefix <style>body{}</style > Suffix";
     const result2 = stripHtmlTags(input2);
-    assert.strictEqual(result2, "Prefix Suffix");
+    assert.strictEqual(result2, "");
 
     // Mixed case script tag
     const input3 = "Prefix <sCrIpT>alert(2)</ScRiPt> Suffix";
     const result3 = stripHtmlTags(input3);
-    assert.strictEqual(result3, "Prefix Suffix");
+    assert.strictEqual(result3, "");
 
     console.log("✓ testHtmlSanitization passed");
 }

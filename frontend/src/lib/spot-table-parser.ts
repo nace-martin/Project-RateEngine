@@ -28,15 +28,17 @@ export function stripHtmlTags(html: string): string {
                 .replace(/\s+/g, " ")
                 .trim();
         } catch {
-            // Fallback to text regex sanitization if DOMParser throws
+            // Fallback to non-browser sanitization if DOMParser throws
         }
     }
 
-    // Node/test fallback: conservative regex matching that handles whitespace inside tags
-    // e.g. <script>...</script >
+    // Node/test fallback: if script or style tags are present, return an empty string safely
+    if (/<(script|style)\b/i.test(html)) {
+        return "";
+    }
+
+    // Simple tag-token replacement
     return html
-        .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "")
-        .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
         .replace(/<\/?[^>]+(>|$)/g, " ")
         .replace(/&nbsp;/g, " ")
         .replace(/\s+/g, " ")
