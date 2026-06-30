@@ -15,6 +15,7 @@ import { useToast } from "@/context/toast-context";
 import { useConfirm } from "@/hooks/useConfirm";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
 import type { SPEProductCodeSummary } from "@/lib/spot-types";
+import type { PreviewChargeLine } from "@/lib/spot-recalculation";
 import { COMMERCIAL_BUCKETS } from "@/lib/spot-commercial-buckets";
 
 import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
@@ -29,6 +30,7 @@ interface ChargeBucketSectionProps {
     onOpenManualReview?: (chargeLine: SpotFormValues["charges"][number]) => void;
     activeChargeLineId?: string | null;
     duplicateIndices?: Set<number>;
+    previewCharges?: Record<number, PreviewChargeLine>;
 }
 
 const CHARGE_UNITS = [
@@ -96,6 +98,7 @@ export function ChargeBucketSection({
     onOpenManualReview,
     activeChargeLineId,
     duplicateIndices = new Set(),
+    previewCharges,
 }: ChargeBucketSectionProps) {
     const confirm = useConfirm();
     const { toast } = useToast();
@@ -186,6 +189,7 @@ export function ChargeBucketSection({
                                 }));
                             };
                             const chargeLine = watchedCharges?.[index];
+                            const preview = previewCharges?.[index];
                             const canOpenManualReview = Boolean(
                                 chargeLine?.charge_line_id &&
                                 chargeLine?.manual_resolution_status !== "RESOLVED" &&
@@ -284,36 +288,36 @@ export function ChargeBucketSection({
                                                 </div>
                                             </div>
                                             
-                                            {chargeLine?.unit === "percentage" ? (
-                                                <div className="flex flex-col sm:items-end justify-center min-w-[150px]">
-                                                    <div className="text-lg font-bold text-slate-900">
-                                                        {chargeLine?.percent ? `${parseFloat(String(chargeLine.percent)).toLocaleString()}%` : "0.00%"}
-                                                    </div>
-                                                    <div className="text-xs text-slate-500 flex items-center gap-1">
-                                                        <span>of</span>
-                                                        {chargeLine?.percent_basis ? (
-                                                            <span className="font-semibold text-slate-700 uppercase">{chargeLine.percent_basis}</span>
-                                                        ) : (
-                                                            <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 text-[10px] font-semibold py-0 px-1">
-                                                                Base charge missing
-                                                            </Badge>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="flex flex-col sm:items-end justify-center min-w-[150px]">
-                                                    <div className="text-lg font-bold text-slate-900">
-                                                        {chargeLine?.currency} {chargeLine?.amount ? parseFloat(chargeLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
-                                                    </div>
-                                                    <div className="text-xs text-slate-500">
-                                                        {chargeLine?.unit === "min_or_per_kg" ? (
-                                                            <>Per KG (Min {chargeLine.currency} {chargeLine.min_charge || "0.00"})</>
-                                                        ) : (
-                                                            CHARGE_UNITS.find(u => u.value === chargeLine?.unit)?.label || chargeLine?.unit
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
+                                             <div className="flex flex-col sm:items-end justify-center min-w-[150px]">
+                                                 <div className="text-lg font-bold text-slate-900">
+                                                     {chargeLine?.currency} {preview?.display_amount || (chargeLine?.amount ? parseFloat(chargeLine.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00")}
+                                                 </div>
+                                                 <div className="text-xs text-slate-500 flex flex-col sm:items-end">
+                                                     {chargeLine?.unit === "percentage" ? (
+                                                         <span className="text-slate-600 font-medium">
+                                                             {chargeLine?.percent ? `${parseFloat(String(chargeLine.percent)).toLocaleString()}%` : "0.00%"} of {chargeLine?.percent_basis || "base"}
+                                                         </span>
+                                                     ) : (
+                                                         <span>
+                                                             {chargeLine?.unit === "min_or_per_kg" ? (
+                                                                 <>Per KG (Min {chargeLine.currency} {chargeLine.min_charge || "0.00"})</>
+                                                             ) : (
+                                                                 CHARGE_UNITS.find(u => u.value === chargeLine?.unit)?.label || chargeLine?.unit
+                                                             )}
+                                                         </span>
+                                                     )}
+                                                     {preview?.calculation_preview && (
+                                                         <span className="text-[10px] text-slate-400 max-w-[200px] text-right truncate" title={preview.calculation_preview}>
+                                                             {preview.calculation_preview}
+                                                         </span>
+                                                     )}
+                                                     {preview?.warnings && preview.warnings.map((w: string, idx: number) => (
+                                                         <Badge key={idx} variant="outline" className="mt-1 border-amber-200 bg-amber-50 text-amber-800 text-[9px] font-semibold py-0 px-1">
+                                                             {w}
+                                                         </Badge>
+                                                     ))}
+                                                 </div>
+                                             </div>
 
                                             <div className="flex flex-wrap items-center gap-2 justify-end">
                                                 {canOpenManualReview && (

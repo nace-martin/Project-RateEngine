@@ -200,6 +200,14 @@ export default function SpotRateEntryPage() {
     const [primarySourceBatchId, setPrimarySourceBatchId] = useState<string | null>(null);
     const [intakeDirtyMap, setIntakeDirtyMap] = useState<Record<string, boolean>>({});
     const [standardPrefillCharges, setStandardPrefillCharges] = useState<SPEChargeLine[]>([]);
+    const [recalculatedTotals, setRecalculatedTotals] = useState<Record<string, Record<string, number>> | null>(null);
+    const [recalculatedWarnings, setRecalculatedWarnings] = useState<string[]>([]);
+    
+    const handleRecalculate = useCallback((totals: Record<string, Record<string, number>>, warnings: string[]) => {
+        setRecalculatedTotals(totals);
+        setRecalculatedWarnings(warnings);
+    }, []);
+
     // Guard ref: prevents the auto-detection useEffect from overriding
     // an explicit step transition (e.g. after analysis completes).
     const userAdvancedToReviewRef = useRef(false);
