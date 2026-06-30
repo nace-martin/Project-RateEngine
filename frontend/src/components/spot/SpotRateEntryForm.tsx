@@ -14,10 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Form } from "@/components/ui/form";
 
-import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion } from "@/lib/spot-types";
+import type { SPEChargeLine, SPEChargeBucket, SPEChargeUnit, ExtractedAssertion, SPEShipmentContext } from "@/lib/spot-types";
 import { spotFormSchema, type SpotFormInputValues, type SpotFormSubmitValues } from "@/lib/schemas/spotSchema";
 import { ChargeBucketSection } from "./ChargeBucketSection";
 import { SpotChargeLineManualReviewSheet } from "./SpotChargeLineManualReviewSheet";
+import { recalculateSpotCharges, type PreviewChargeLine } from "@/lib/spot-recalculation";
 import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 import { getSpotChargeFormDisabledReason } from "@/lib/spot-charge-readiness";
 import {
@@ -54,6 +55,8 @@ interface SpotRateEntryFormProps {
     envelopeId?: string;
     reviewRequest?: ReviewRequest | null;
     filterType?: "all" | "matched" | "conditional";
+    shipmentContext?: SPEShipmentContext | null;
+    onRecalculate?: (totals: Record<string, Record<string, number>>, warnings: string[]) => void;
 }
 
 const normalizeSourceReference = (value?: string | null) => {
@@ -134,6 +137,8 @@ export function SpotRateEntryForm({
     envelopeId,
     reviewRequest,
     filterType = "all",
+    shipmentContext = null,
+    onRecalculate,
 }: SpotRateEntryFormProps) {
     const submitLockRef = useRef(false);
     const draftLockRef = useRef(false);
@@ -364,6 +369,56 @@ export function SpotRateEntryForm({
         name: "charges",
     });
     const memoizedWatchedFormCharges = useMemo(() => watchedFormCharges || [], [watchedFormCharges]);
+
+    // Dynamic Recalculation Memo
+    const currentRecalculation = useMemo(() => {
+        if (!watchedFormCharges) return null;
+        
+        // Map form values to SPEChargeLine format for recalculator
+        const visibleMapped: SPEChargeLine[] = watchedFormCharges.map((line) => {
+            return {
+                id: line.charge_line_id || undefined,
+                code: line.code || "",
+                description: line.description || "",
+                amount: line.amount || "0",
+                currency: line.currency || "USD",
+                unit: line.unit as SPEChargeUnit,
+                min_charge: line.min_charge ? parseFloat(line.min_charge) : undefined,
+                bucket: line.bucket,
+                is_primary_cost: line.is_primary_cost,
+                conditional: line.conditional,
+                conditional_acknowledged: line.conditional_acknowledged,
+                exclude_from_totals: line.exclude_from_totals,
+                percentage_basis: line.percentage_basis || undefined,
+                calculation_type: line.unit === "percentage" ? "percent_of" : (line.min_charge ? "min_or_per_unit" : "flat"),
+                percent: line.percent != null ? parseFloat(String(line.percent)) : undefined,
+                percent_basis: line.percent_basis || undefined,
+                min_amount: line.min_amount || undefined,
+                max_amount: line.max_amount || undefined,
+                reviewed_bucket: line.reviewed_bucket || undefined,
+                source_reference: "UI Edit",
+            };
+        });
+
+        return recalculateSpotCharges(visibleMapped, hiddenExistingCharges, shipmentContext);
+    }, [watchedFormCharges, hiddenExistingCharges, shipmentContext]);
+
+    // Notify parent component of recalculated totals
+    useEffect(() => {
+        if (currentRecalculation && onRecalculate) {
+            onRecalculate(currentRecalculation.bucketTotals, currentRecalculation.warnings);
+        }
+    }, [currentRecalculation, onRecalculate]);
+
+    // Map preview charges to index for ChargeBucketSection rendering
+    const previewChargesMap = useMemo(() => {
+        if (!currentRecalculation?.charges) return {};
+        const map: Record<number, PreviewChargeLine> = {};
+        currentRecalculation.charges.forEach((c, idx) => {
+            map[idx] = c;
+        });
+        return map;
+    }, [currentRecalculation]);
 
     const duplicateIndices = useMemo(() => {
         return getDuplicateChargeIndices(memoizedWatchedFormCharges);
@@ -724,6 +779,7 @@ export function SpotRateEntryForm({
                             onOpenManualReview={handleOpenManualReview}
                             activeChargeLineId={reviewRequest?.chargeLineId ?? null}
                             duplicateIndices={duplicateIndices}
+                            previewCharges={previewChargesMap}
                         />
                     );
                 })}
