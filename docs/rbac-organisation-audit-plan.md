@@ -3391,6 +3391,113 @@ graphify update .
 git diff --check
 ```
 
+#### Phase 10J - Final OperatingEntity Hierarchy Cleanup
+
+Date: 2026-07-01
+
+Branch: `codex/finalize-operatingentity-hierarchy`
+
+Scope: final development-database cleanup readiness and guardrails after
+Phases 10A-10I. This phase keeps cleanup tooling guarded, dry-run by default,
+and idempotent. It does not hard-delete records, does not mutate historical
+Quote/SPOT rows, and does not change pricing, ProductCode, rating, selectors,
+APIs, or UI.
+
+Canonical hierarchy:
+
+- Organization: `Express Freight Management` only.
+- OperatingEntity: `EFM PNG`, `EFM Australia`, `EFM Fiji`,
+  `EFM Solomon Islands`.
+- Branch: `Port Moresby`, `Lae`, `Brisbane`, `Suva`, `Honiara`.
+- Department: `Air Freight`, `Sea Freight`, `Customs`, `Transport`.
+
+Closeout findings from the development database before final hardening:
+
+- `seed_operating_entities` was idempotent: `created=0`, `updated=0`,
+  `existing=4`.
+- `link_branch_operating_entities` showed missing final canonical branches for
+  `Suva` and `Honiara`.
+- `rbac_legacy_organization_cleanup_plan --format json` reported protected
+  blockers, including duplicate legacy Branch/Department rows, one-to-one
+  dependencies requiring manual review, `Test Org` manual review, and
+  Quote/SPOT historical rows classified as `DEV_TEST_LEGACY`.
+- `rbac_legacy_organization_cleanup_apply` default dry-run wrote nothing and
+  reported `planned=19`, `applied=0`, `blocked=28`.
+- `--apply` was not run while the plan still contained manual-review and
+  protected historical blockers.
+
+Final hardening:
+
+- Added `seed_final_rbac_hierarchy`, an idempotent additive command that seeds
+  missing final canonical Branch and Department rows under `Express Freight
+  Management` and links branches to canonical OperatingEntities.
+- Tightened final readiness so legacy country-organization branches no longer
+  satisfy final canonical Branch completeness.
+- Allowed guarded deactivation of legacy country/EAC organizations only after
+  all auto-migratable dependencies are exhausted; retained Quote/SPOT
+  historical references stay classified as `DEV_TEST_LEGACY`.
+- Extended final user blocker apply tooling to deactivate active users with no
+  active membership only when direct dependency counts are zero.
+
+Final development database result after guarded apply:
+
+- `rbac_legacy_organization_cleanup_apply --apply` migrated auto-approved
+  references, then deactivated legacy country and EAC organizations after no
+  auto-migratable dependencies remained.
+- `rbac_final_user_blocker_resolution_apply --apply --format json` deactivated
+  `tester_fx`, which had no active membership and zero direct dependencies.
+- `rbac_post_membership_apply_readiness --format json` reported
+  `final_readiness.status=READY`.
+- Active Organization set: `Express Freight Management`.
+- Canonical OperatingEntity set: `EFM PNG`, `EFM Australia`, `EFM Fiji`,
+  `EFM Solomon Islands`.
+- Active Branch completeness: 5 of 5 linked to OperatingEntity.
+- Active membership OperatingEntity completeness: 12 of 12 complete.
+- Legacy country/EAC dependencies remain visible as inactive retained history;
+  active legacy dependency counts are zero.
+- Quote/SPOT historical records remain `DEV_TEST_LEGACY`; no historical
+  Quote/SPOT backfill or mutation was performed.
+
+Final runbook:
+
+```bash
+python backend/manage.py migrate
+python backend/manage.py seed_operating_entities
+python backend/manage.py seed_final_rbac_hierarchy
+python backend/manage.py link_branch_operating_entities
+python backend/manage.py rbac_legacy_organization_cleanup_plan --format json
+python backend/manage.py rbac_legacy_organization_cleanup_apply
+python backend/manage.py rbac_post_membership_apply_readiness --format json
+```
+
+Only run the guarded write command after the JSON plan has no unexpected
+manual-review blockers:
+
+```bash
+python backend/manage.py rbac_legacy_organization_cleanup_apply --apply
+```
+
+Stop conditions:
+
+- Any `target branch not inferable` or `target department not inferable` row.
+- Any Quote/SPOT row planned for mutation instead of `DEV_TEST_LEGACY`
+  classification.
+- Any `Test Org` row planned for blind migration.
+- Any `Test Org` deactivation planned while dependency counts remain nonzero.
+- Any country/EAC legacy organization deactivation planned while
+  auto-migratable dependencies remain.
+
+Verification:
+
+```bash
+python backend/manage.py makemigrations --check --dry-run
+python backend/manage.py test accounts.tests parties.tests crm.tests quotes.tests
+python backend/manage.py check
+npx fallow --format json
+graphify update .
+git diff --check
+```
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

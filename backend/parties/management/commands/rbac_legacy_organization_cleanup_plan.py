@@ -178,9 +178,11 @@ def apply_cleanup(*, apply):
             action.pop("apply", None)
             actions.append(action)
     for org in with_orgs:
-        remaining = dependency_count_for_org(org)
+        row = organization_row(org, target_org)
+        remaining = row["dependency_count"]
+        can_deactivate = remaining == 0 or can_deactivate_with_remaining_blockers(row)
         status = "UNCHANGED"
-        if remaining == 0 and org.is_active:
+        if can_deactivate and org.is_active:
             status = "APPLIED" if apply else "PLANNED"
             if apply:
                 org.is_active = False
@@ -191,8 +193,8 @@ def apply_cleanup(*, apply):
                 "model": "parties.Organization",
                 "field": "is_active",
                 "count": 1,
-                "status": status if remaining == 0 else "BLOCKED",
-                "blockers": [] if remaining == 0 else [f"dependencies remain: {remaining}"],
+                "status": status if can_deactivate else "BLOCKED",
+                "blockers": [] if can_deactivate else [f"dependencies remain: {remaining}"],
             }
         )
     after = build_report()
@@ -269,6 +271,23 @@ def dependency_count_for_org(org):
                 if filters:
                     total += model.objects.filter(**filters).count()
     return total
+
+
+def can_deactivate_with_remaining_blockers(row):
+    if row["name"] == TEST_ORGANIZATION or row["auto_migratable_dependency_count"]:
+        return False
+    if row["classification"] not in {"legacy_country_as_organization", "legacy_air_freight_wording"}:
+        return False
+    allowed = {
+        "DEV_TEST_LEGACY quote/SPOT historical record",
+        "one-to-one dependency requires manual review",
+    }
+    return all(
+        reason in allowed
+        or reason.startswith("target branch code collision:")
+        or reason.startswith("target department code collision:")
+        for reason in row["blockers"]
+    )
 
 
 def infer_operating_entity(org, target_org):
