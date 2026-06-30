@@ -46,21 +46,32 @@ export default function ChargeCard({
 
     const buyAmountNum = Number(buyAmount || 0);
     const sellExGstNum = Number(sellExGst || 0);
+    const costPgk = Number(rawLine?.cost_pgk || (canonicalItem as any)?.cost_pgk || (buyCurrency === "PGK" ? buyAmount : 0) || 0);
     
     let finalMarginAmount = line.margin_amount || rawLine?.margin_amount;
     let finalMarginPercent = line.margin_percent || rawLine?.margin_percent;
     
     if (finalMarginAmount === undefined || finalMarginAmount === null) {
-        finalMarginAmount = String(sellExGstNum - buyAmountNum);
+        if (isShowingFCY) {
+            finalMarginAmount = String(sellExGstNum - buyAmountNum);
+        } else {
+            finalMarginAmount = String(sellExGstNum - costPgk);
+        }
     }
     
     if (finalMarginPercent === undefined || finalMarginPercent === null || finalMarginPercent === "0" || finalMarginPercent === "0.00") {
-        if (buyAmountNum > 0) {
-            finalMarginPercent = String(((sellExGstNum - buyAmountNum) / buyAmountNum) * 100);
-        } else if (sellExGstNum > 0) {
-            finalMarginPercent = "100.00";
+        if (isShowingFCY) {
+            if (sellExGstNum > 0) {
+                finalMarginPercent = String(((sellExGstNum - buyAmountNum) / sellExGstNum) * 100);
+            } else {
+                finalMarginPercent = "0.00";
+            }
         } else {
-            finalMarginPercent = "0.00";
+            if (sellExGstNum > 0) {
+                finalMarginPercent = String(((sellExGstNum - costPgk) / sellExGstNum) * 100);
+            } else {
+                finalMarginPercent = "0.00";
+            }
         }
     }
 
