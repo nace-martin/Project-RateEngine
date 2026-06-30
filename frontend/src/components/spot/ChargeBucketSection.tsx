@@ -16,7 +16,7 @@ import { useConfirm } from "@/hooks/useConfirm";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
 import type { SPEProductCodeSummary } from "@/lib/spot-types";
 import type { PreviewChargeLine } from "@/lib/spot-recalculation";
-import { getVisibleCommercialBuckets } from "@/lib/spot-commercial-buckets";
+import { getDropdownBucketOptionsForCharge } from "@/lib/spot-commercial-buckets";
 
 import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
 import { SmartMoneyInput } from "./SmartMoneyInput";
@@ -114,13 +114,6 @@ export function ChargeBucketSection({
     const watchedCharges = useWatch({
         control,
         name: "charges",
-    });
-
-    const visibleCommercialBuckets = getVisibleCommercialBuckets({
-        missingComponents,
-        serviceScope,
-        shipmentType,
-        charges: watchedCharges
     });
 
     const prevFieldsLengthRef = useRef(fields.length);
@@ -602,7 +595,10 @@ export function ChargeBucketSection({
                                                                     </SelectTrigger>
                                                                 </FormControl>
                                                                 <SelectContent>
-                                                                    {visibleCommercialBuckets.map((cb) => (
+                                                                    {getDropdownBucketOptionsForCharge(
+                                                                        chargeLine || {},
+                                                                        { missingComponents, serviceScope, shipmentType }
+                                                                    ).map((cb) => (
                                                                         <SelectItem key={cb.id} value={cb.id}>
                                                                             {cb.label}
                                                                         </SelectItem>

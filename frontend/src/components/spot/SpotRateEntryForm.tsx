@@ -25,7 +25,8 @@ import {
     type CommercialBucket,
     inferCommercialBucket,
     getDuplicateChargeIndices,
-    getVisibleCommercialBuckets
+    getVisibleCommercialBuckets,
+    isCoreCommercialBucket
 } from "@/lib/spot-commercial-buckets";
 
 type ReviewRequest = {
@@ -767,6 +768,19 @@ export function SpotRateEntryForm({
 
                 {visibleCommercialBuckets.map(bucket => {
                     const bucketItems = getFieldsByBucket(bucket.id);
+
+                    // Skip empty non-core buckets (security/customs/transport/other).
+                    // Core buckets only show empty if they are a required editable bucket.
+                    if (bucketItems.length === 0) {
+                        if (!isCoreCommercialBucket(bucket.id)) return null;
+                        // Core bucket but not required for this shipment — skip
+                        const backendBucketForCore =
+                            bucket.id === "freight" ? "airfreight"
+                            : bucket.id === "origin" ? "origin_charges"
+                            : "destination_charges";
+                        if (!visibleBuckets.includes(backendBucketForCore)) return null;
+                    }
+
                     // Map commercial bucket default backend category for item addition
                     const defaultBackendBucketMap: Record<CommercialBucket, SPEChargeBucket> = {
                         freight: "airfreight",

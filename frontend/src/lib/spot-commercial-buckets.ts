@@ -290,3 +290,99 @@ export function getVisibleCommercialBuckets(options: {
     });
 }
 
+// ─── Core bucket IDs (always offered in dropdowns when in scope) ─────────────
+
+const CORE_BUCKET_IDS: Set<CommercialBucket> = new Set(["freight", "origin", "destination"]);
+
+// ─── Per-charge dropdown options ─────────────────────────────────────────────
+
+/**
+ * Returns the dropdown options for a single charge row's Reviewed Bucket
+ * select. Unlike the global getVisibleCommercialBuckets, this is scoped to
+ * the individual charge so that one customs charge does not leak "Customs"
+ * into every other row's dropdown.
+ *
+ * Rules:
+ * 1. Always include the charge's current selected/inferred bucket.
+ * 2. Include core buckets (freight/origin/destination) when in scope.
+ * 3. Include security/customs/transport/other ONLY if THIS charge is
+ *    already assigned/inferred to that bucket.
+ */
+export function getDropdownBucketOptionsForCharge(
+    charge: {
+        bucket?: string;
+        description?: string;
+        reviewed_bucket?: string | null;
+        code?: string;
+        resolved_product_code?: { code?: string; description?: string } | null;
+        effective_resolved_product_code?: { code?: string; description?: string } | null;
+    },
+    context: {
+        missingComponents?: string[];
+        serviceScope?: string;
+        shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
+    }
+): CommercialBucketDef[] {
+    const scope = (context.serviceScope || "D2D").toUpperCase();
+    const type = context.shipmentType || "EXPORT";
+    const missing = (context.missingComponents || []).map(c => c.toUpperCase());
+
+    // Determine which core backend buckets are in scope
+    const requiredComponents = missing.length > 0
+        ? missing
+        : type === "DOMESTIC"
+            ? ["FREIGHT"]
+            : scope === "A2A"
+                ? ["FREIGHT"]
+                : scope === "D2A"
+                    ? ["ORIGIN_LOCAL", "FREIGHT"]
+                    : scope === "A2D"
+                        ? ["DESTINATION_LOCAL"]
+                        : ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"];
+
+    const inScopeCommercial = new Set<CommercialBucket>();
+    for (const comp of requiredComponents) {
+        if (comp === "FREIGHT") inScopeCommercial.add("freight");
+        if (comp === "ORIGIN_LOCAL") inScopeCommercial.add("origin");
+        if (comp === "DESTINATION_LOCAL") inScopeCommercial.add("destination");
+    }
+
+    // Infer this charge's bucket
+    const normalizedCharge = {
+        bucket: charge.bucket || "",
+        description: charge.description || "",
+        code: charge.code || "",
+        resolved_product_code: charge.resolved_product_code || null,
+        effective_resolved_product_code: charge.effective_resolved_product_code || null,
+    };
+    const currentBucket: CommercialBucket = (charge.reviewed_bucket as CommercialBucket) || inferCommercialBucket(normalizedCharge);
+
+    // Build the allowed set
+    const allowed = new Set<CommercialBucket>();
+
+    // Always include current bucket
+    allowed.add(currentBucket);
+
+    // Include in-scope core buckets
+    for (const cb of inScopeCommercial) {
+        allowed.add(cb);
+    }
+
+    // Include core buckets from the charge's own backend bucket
+    if (charge.bucket === "airfreight") allowed.add("freight");
+    if (charge.bucket === "origin_charges") allowed.add("origin");
+    if (charge.bucket === "destination_charges") allowed.add("destination");
+
+    // Sub-buckets only if THIS charge is assigned to them (already handled
+    // by including currentBucket above — no extra logic needed)
+
+    return COMMERCIAL_BUCKETS.filter(cb => allowed.has(cb.id));
+}
+
+/**
+ * Returns true if a commercial bucket is a "core" bucket that may show
+ * as an empty section (add target) when required by the shipment scope.
+ */
+export function isCoreCommercialBucket(bucketId: CommercialBucket): boolean {
+    return CORE_BUCKET_IDS.has(bucketId);
+}
