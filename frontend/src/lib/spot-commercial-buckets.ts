@@ -7,6 +7,8 @@
  * and does NOT alter pricing or component routing.
  */
 
+import type { SPEChargeBucket } from "./spot-types";
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type CommercialBucket =
@@ -51,6 +53,9 @@ const ORIGIN_CHARGE_PATTERNS = [
     /\bawb\b/i,
     /\bair\s*waybill\b/i,
     /\bdocument/i,
+    /\bdoc\b/i,
+    /\bdox\b/i,
+    /\borigin\b/i,
     /\bhandling\b/i,
     /\bterminal\b/i,
     /\bwarehouse\b/i,
@@ -173,3 +178,115 @@ export function getDuplicateChargeIndices(
     }
     return dupeSet;
 }
+
+/**
+ * Dynamically filter COMMERCIAL_BUCKETS based on shipment context
+ * and current charges to prevent global bucket exposure.
+ */
+export function getVisibleCommercialBuckets(options: {
+    missingComponents?: string[];
+    serviceScope?: string;
+    shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
+    charges?: Array<{
+        bucket?: string;
+        description?: string;
+        reviewed_bucket?: string | null;
+        code?: string;
+        resolved_product_code?: { code?: string; description?: string } | null;
+        effective_resolved_product_code?: { code?: string; description?: string } | null;
+    }>;
+}): CommercialBucketDef[] {
+    const missing = (options.missingComponents || []).map(c => c.toUpperCase());
+    const scope = (options.serviceScope || "D2D").toUpperCase();
+    const type = options.shipmentType || "EXPORT";
+    const charges = options.charges || [];
+
+    // 1. Map missing components or required components to backend buckets
+    const missingBuckets = missing.length > 0
+        ? missing.map(c => {
+            if (c === "FREIGHT") return "airfreight" as SPEChargeBucket;
+            if (c === "ORIGIN_LOCAL") return "origin_charges" as SPEChargeBucket;
+            if (c === "DESTINATION_LOCAL") return "destination_charges" as SPEChargeBucket;
+            return null;
+        }).filter((b): b is SPEChargeBucket => b !== null)
+        : [];
+
+    const requiredComponents = type === "DOMESTIC"
+        ? ["FREIGHT"]
+        : scope === "A2A"
+            ? ["FREIGHT"]
+            : scope === "D2A"
+                ? ["ORIGIN_LOCAL", "FREIGHT"]
+                : scope === "A2D"
+                    ? ["DESTINATION_LOCAL"]
+                    : ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"];
+
+    const requiredBuckets = requiredComponents.map(c => {
+        if (c === "FREIGHT") return "airfreight" as SPEChargeBucket;
+        if (c === "ORIGIN_LOCAL") return "origin_charges" as SPEChargeBucket;
+        if (c === "DESTINATION_LOCAL") return "destination_charges" as SPEChargeBucket;
+        return null;
+    }).filter((b): b is SPEChargeBucket => b !== null);
+
+    const activeBackendBuckets = new Set<string>();
+    if (missing.length > 0) {
+        missingBuckets.forEach(b => activeBackendBuckets.add(b));
+    } else {
+        requiredBuckets.forEach(b => activeBackendBuckets.add(b));
+    }
+    // Always include any backend bucket present in charges
+    charges.forEach(c => {
+        if (c.bucket) activeBackendBuckets.add(c.bucket);
+    });
+
+    // 2. Base commercial bucket mapping
+    const allowedCommercial = new Set<CommercialBucket>();
+    if (activeBackendBuckets.has("airfreight")) {
+        allowedCommercial.add("freight");
+    }
+    if (activeBackendBuckets.has("origin_charges")) {
+        allowedCommercial.add("origin");
+    }
+    if (activeBackendBuckets.has("destination_charges")) {
+        allowedCommercial.add("destination");
+    }
+
+    // 3. Collect buckets that have at least one charge assigned/inferred
+    const assignedBuckets = new Set<string>();
+    charges.forEach(c => {
+        const normalizedCharge = {
+            bucket: c.bucket || "",
+            description: c.description || "",
+            code: c.code || "",
+            resolved_product_code: c.resolved_product_code || null,
+            effective_resolved_product_code: c.effective_resolved_product_code || null,
+        };
+        const rb = c.reviewed_bucket || inferCommercialBucket(normalizedCharge);
+        if (rb) {
+            assignedBuckets.add(rb);
+        }
+    });
+
+    // 4. Filter: core buckets (freight/origin/destination) are visible when
+    //    in scope OR assigned. Sub-buckets (security/customs/transport/other)
+    //    are visible ONLY when a charge is already assigned/inferred to them.
+    return COMMERCIAL_BUCKETS.filter(cb => {
+        switch (cb.id) {
+            case "freight":
+                return allowedCommercial.has("freight") || assignedBuckets.has("freight");
+            case "origin":
+                return allowedCommercial.has("origin") || assignedBuckets.has("origin");
+            case "destination":
+                return allowedCommercial.has("destination") || assignedBuckets.has("destination");
+            case "security":
+            case "customs":
+            case "transport":
+            case "other":
+                // Only visible if at least one charge is assigned/inferred to this bucket
+                return assignedBuckets.has(cb.id);
+            default:
+                return false;
+        }
+    });
+}
+

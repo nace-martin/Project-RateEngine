@@ -38,7 +38,7 @@ import type { ReplyAnalysisResult } from "@/lib/spot-types";
 import { getSpotStandardCharges, reviewSpotFinding } from "@/lib/api";
 import { getEffectiveProductCode, getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 import { getSpotFinalizeDisabledReason } from "@/lib/spot-finalization";
-import { COMMERCIAL_BUCKETS, inferCommercialBucket } from "@/lib/spot-commercial-buckets";
+import { inferCommercialBucket, getVisibleCommercialBuckets } from "@/lib/spot-commercial-buckets";
 import {
     Breadcrumb,
     BreadcrumbItem,
@@ -1358,7 +1358,12 @@ export default function SpotRateEntryPage() {
                                         <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-5 py-4 space-y-4">
                                             <div className="text-sm font-semibold text-slate-900">Charge Summary by Commercial Bucket</div>
                                             <div className="divide-y divide-slate-200">
-                                                {COMMERCIAL_BUCKETS.map((cb) => {
+                                                {getVisibleCommercialBuckets({
+                                                    missingComponents: EMPTY_COMPONENTS,
+                                                    serviceScope: serviceScope,
+                                                    shipmentType: resolvedShipmentType,
+                                                    charges: allReviewFormCharges,
+                                                }).map((cb) => {
                                                     const cbCharges = allReviewFormCharges.filter((charge) => {
                                                         const rb = charge.reviewed_bucket || inferCommercialBucket(charge);
                                                         return rb === cb.id;

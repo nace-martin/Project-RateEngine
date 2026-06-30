@@ -23,9 +23,9 @@ import { getSpotChargeDisplayLabel } from "@/lib/spot-charge-display";
 import { getSpotChargeFormDisabledReason } from "@/lib/spot-charge-readiness";
 import {
     type CommercialBucket,
-    COMMERCIAL_BUCKETS,
     inferCommercialBucket,
-    getDuplicateChargeIndices
+    getDuplicateChargeIndices,
+    getVisibleCommercialBuckets
 } from "@/lib/spot-commercial-buckets";
 
 type ReviewRequest = {
@@ -70,7 +70,6 @@ const normalizeSourceReference = (value?: string | null) => {
 };
 
 // Define bucket grouping list
-const CHARGE_BUCKETS = COMMERCIAL_BUCKETS;
 
 type FormErrorWithMessage = { message?: string };
 
@@ -284,6 +283,17 @@ export function SpotRateEntryForm({
         defaultValues,
         mode: "onChange",
     });
+
+    const watchCharges = useWatch({ control: form.control, name: "charges" });
+    const visibleCommercialBuckets = useMemo(() => {
+        const inputCharges = watchCharges && watchCharges.length > 0 ? watchCharges : mergedCharges;
+        return getVisibleCommercialBuckets({
+            missingComponents,
+            serviceScope,
+            shipmentType,
+            charges: inputCharges
+        });
+    }, [missingComponents, serviceScope, shipmentType, watchCharges, mergedCharges]);
 
     const formattedVisibleCharges = useMemo<SpotFormInputValues["charges"]>(() => {
         // Only visible buckets are editable in this form.
@@ -755,7 +765,7 @@ export function SpotRateEntryForm({
                     </Alert>
                 )}
 
-                {CHARGE_BUCKETS.map(bucket => {
+                {visibleCommercialBuckets.map(bucket => {
                     const bucketItems = getFieldsByBucket(bucket.id);
                     // Map commercial bucket default backend category for item addition
                     const defaultBackendBucketMap: Record<CommercialBucket, SPEChargeBucket> = {
@@ -780,6 +790,9 @@ export function SpotRateEntryForm({
                             activeChargeLineId={reviewRequest?.chargeLineId ?? null}
                             duplicateIndices={duplicateIndices}
                             previewCharges={previewChargesMap}
+                            missingComponents={missingComponents}
+                            serviceScope={serviceScope}
+                            shipmentType={shipmentType}
                         />
                     );
                 })}

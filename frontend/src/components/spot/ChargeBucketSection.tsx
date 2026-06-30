@@ -16,7 +16,7 @@ import { useConfirm } from "@/hooks/useConfirm";
 import type { SpotFormValues } from "@/lib/schemas/spotSchema";
 import type { SPEProductCodeSummary } from "@/lib/spot-types";
 import type { PreviewChargeLine } from "@/lib/spot-recalculation";
-import { COMMERCIAL_BUCKETS } from "@/lib/spot-commercial-buckets";
+import { getVisibleCommercialBuckets } from "@/lib/spot-commercial-buckets";
 
 import { ChargeNormalizationAudit } from "./ChargeNormalizationAudit";
 import { SmartMoneyInput } from "./SmartMoneyInput";
@@ -31,6 +31,9 @@ interface ChargeBucketSectionProps {
     activeChargeLineId?: string | null;
     duplicateIndices?: Set<number>;
     previewCharges?: Record<number, PreviewChargeLine>;
+    missingComponents?: string[];
+    serviceScope?: string;
+    shipmentType?: "EXPORT" | "IMPORT" | "DOMESTIC";
 }
 
 const CHARGE_UNITS = [
@@ -99,6 +102,9 @@ export function ChargeBucketSection({
     activeChargeLineId,
     duplicateIndices = new Set(),
     previewCharges,
+    missingComponents,
+    serviceScope,
+    shipmentType,
 }: ChargeBucketSectionProps) {
     const confirm = useConfirm();
     const { toast } = useToast();
@@ -108,6 +114,13 @@ export function ChargeBucketSection({
     const watchedCharges = useWatch({
         control,
         name: "charges",
+    });
+
+    const visibleCommercialBuckets = getVisibleCommercialBuckets({
+        missingComponents,
+        serviceScope,
+        shipmentType,
+        charges: watchedCharges
     });
 
     const prevFieldsLengthRef = useRef(fields.length);
@@ -589,7 +602,7 @@ export function ChargeBucketSection({
                                                                     </SelectTrigger>
                                                                 </FormControl>
                                                                 <SelectContent>
-                                                                    {COMMERCIAL_BUCKETS.map((cb) => (
+                                                                    {visibleCommercialBuckets.map((cb) => (
                                                                         <SelectItem key={cb.id} value={cb.id}>
                                                                             {cb.label}
                                                                         </SelectItem>
