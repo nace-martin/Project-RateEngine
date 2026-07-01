@@ -33,6 +33,15 @@ def parse_decimal_safe(val: Any) -> Optional[Decimal]:
             return None
     return None
 
+def is_header_row_candidate(row: List[str]) -> bool:
+    # A header row should not contain numeric rate expressions
+    for cell in row:
+        cell_lower = cell.lower().strip()
+        if re.search(r'\b(usd|sgd|aud|pgk|nzd)?\s*[0-9]+', cell_lower):
+            return False
+    header_keywords = ["description", "charge description", "currency", "ccy", "unit", "minimum", "min", "per unit", "rate", "amount", "price"]
+    return any(any(kw in cell.lower() for kw in header_keywords) for cell in row)
+
 def detect_probable_table_blocks(text: str) -> List[List[str]]:
     """Split text into blocks of lines that resemble structured table data."""
     if not text:
@@ -85,8 +94,12 @@ def detect_column_headers(parts: List[str]) -> Dict[str, int]:
             indices["description"] = idx
         elif any(term in col_lower for term in ["currency", "ccy"]):
             indices["currency"] = idx
-        elif any(term in col_lower for term in ["minimum", "min"]):
+        elif any(term in col_lower for term in ["minimum", "min", "amount", "price"]):
             indices["minimum"] = idx
+            
+        currency_match = re.search(r'\b(sgd|usd|aud|pgk|nzd|eur|hkd)\b', col_lower)
+        if currency_match:
+            indices["currency_header"] = currency_match.group(1).upper()
     return indices
 
 def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
@@ -138,13 +151,7 @@ def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
             continue
             
         # 3. Column Header detection
-        is_header = False
-        lower_parts = [p.lower() for p in parts]
-        if any(re.search(r'\b(charge|description)\b', lp) for lp in lower_parts) or \
-           any(re.search(r'\b(currency|ccy)\b', lp) for lp in lower_parts) or \
-           any(re.search(r'\bunit\b', lp) for lp in lower_parts) or \
-           any(re.search(r'\b(minimum|min)\b', lp) for lp in lower_parts):
-            is_header = True
+        is_header = is_header_row_candidate(parts)
             
         if is_header:
             column_indices = detect_column_headers(parts)
@@ -164,33 +171,50 @@ def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
         raw_min = parts[min_idx] if min_idx < len(parts) else None
         raw_rate = parts[rate_idx] if rate_idx < len(parts) else None
         
-        # Sparse row heuristic adjustments
+        # Content-based/sparse row heuristic adjustments
         if len(parts) < 5:
-            remaining = parts[1:]
+            remaining_parts = [p for i, p in enumerate(parts) if i != desc_idx]
             detected_ccy = None
-            for p in remaining[:]:
-                if len(p) == 3 and p.isupper():
-                    detected_ccy = p
-                    remaining.remove(p)
-                    break
             detected_unit = None
-            for p in remaining[:]:
-                if any(u in p.lower() for u in ["kg", "awb", "shipment", "entry", "trip", "cbm"]):
-                    detected_unit = p
-                    remaining.remove(p)
-                    break
             detected_min = None
             detected_rate = None
-            if remaining:
-                if len(remaining) == 1:
-                    detected_min = remaining[0]
+            
+            for p in remaining_parts:
+                p_lower = p.lower().strip()
+                if len(p) == 3 and p.isupper() and p in ["SGD", "USD", "AUD", "PGK", "NZD", "EUR"]:
+                    detected_ccy = p
+                elif any(term in p_lower for term in ["per", "min or", "minimum or", "subject to", "applicable", "%"]):
+                    if detected_unit is None:
+                        detected_unit = p
+                    else:
+                        detected_unit = f"{detected_unit} {p}"
                 else:
-                    detected_min = remaining[0]
-                    detected_rate = remaining[1]
-            raw_ccy = detected_ccy or (raw_ccy if raw_ccy and raw_ccy not in [detected_unit, detected_min, detected_rate] else None)
-            raw_unit = detected_unit or (raw_unit if raw_unit and raw_unit not in [detected_ccy, detected_min, detected_rate] else None)
-            raw_min = detected_min or (raw_min if raw_min and raw_min not in [detected_ccy, detected_unit, detected_rate] else None)
-            raw_rate = detected_rate or (raw_rate if raw_rate and raw_rate not in [detected_ccy, detected_unit, detected_min] else None)
+                    dec = parse_decimal_safe(p)
+                    if dec is not None:
+                        if detected_min is None:
+                            detected_min = p
+                        else:
+                            detected_rate = p
+            
+            raw_ccy = detected_ccy
+            raw_unit = detected_unit
+            raw_min = detected_min
+            raw_rate = detected_rate
+
+            # Check if the label ends with a numeric amount (merged cell with description)
+            # e.g., "Service Fee (if via LH/AF/KLM) 12" -> label="Service Fee (if via LH/AF/KLM)", amount="12"
+            if raw_label:
+                label_match = re.search(r"^(.*?)\s+([0-9]+(?:\.[0-9]+)?)$", raw_label)
+                if label_match:
+                    raw_label = label_match.group(1).strip()
+                    merged_num = label_match.group(2)
+                    if not raw_min:
+                        raw_min = merged_num
+                    elif not raw_rate:
+                        raw_rate = merged_num
+
+        if not raw_ccy and "currency_header" in column_indices:
+            raw_ccy = column_indices["currency_header"]
 
         if not raw_label:
             continue
@@ -209,6 +233,12 @@ def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
         # Parse numeric amounts
         min_amount = parse_decimal_safe(raw_min)
         rate_amount = parse_decimal_safe(raw_rate)
+        if rate_amount is None and raw_unit:
+            # Match pattern like "0.25 per KGS" or "0.25/kg" or "0.25 per kg"
+            rate_match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*(?:per|/)\s*kgs?\b", raw_unit.lower())
+            if rate_match:
+                rate_amount = Decimal(rate_match.group(1))
+                
         percentage_val = None
         
         if is_percentage:
@@ -216,20 +246,38 @@ def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
             if pct_match:
                 percentage_val = Decimal(pct_match.group(1))
                 
-        # Handle unit text normalization
+        # Handle unit text normalization based on order of appearance
         unit_hint = None
         if raw_unit:
             u_lower = raw_unit.lower()
-            if "per kg" in u_lower or "per_kg" in u_lower or u_lower == "kg":
-                unit_hint = "per_kg"
-            elif "per awb" in u_lower or "awb" in u_lower:
-                unit_hint = "per_awb"
-            elif "per entry" in u_lower or "entry" in u_lower:
-                unit_hint = "per_entry"
-            elif "per shipment" in u_lower or "shipment" in u_lower or "flat" in u_lower:
-                unit_hint = "per_shipment"
-            elif "%" in u_lower or "percentage" in u_lower:
-                unit_hint = "percentage"
+            patterns = {
+                "per_kg": ["per kg", "per_kg", "kg", "per kgs", "kgs"],
+                "per_awb": ["per awb", "awb"],
+                "per_entry": ["per entry", "entry"],
+                "per_shipment": ["per shipment", "shipment", "flat", "shpt", "per shpt"],
+                "per_set": ["per set", "set"],
+                "per_trip": ["per trip", "trip"],
+                "per_man": ["per man", "man"],
+                "percentage": ["%", "percentage"]
+            }
+            first_idx = len(u_lower)
+            best_role = None
+            for role, terms in patterns.items():
+                for term in terms:
+                    if term in ["kg", "kgs", "awb", "trip", "set", "man"]:
+                        m = re.search(rf"\b{term}\b", u_lower)
+                        if m:
+                            term_idx = m.start()
+                            if term_idx < first_idx:
+                                first_idx = term_idx
+                                best_role = role
+                    else:
+                        term_idx = u_lower.find(term)
+                        if term_idx != -1 and term_idx < first_idx:
+                            first_idx = term_idx
+                            best_role = role
+            if best_role:
+                unit_hint = best_role
                 
         line_item = ParsedTableLine(
             raw_label=raw_label,

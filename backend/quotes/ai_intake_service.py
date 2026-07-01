@@ -1452,6 +1452,7 @@ Additional rules:
 - amount must be numeric and non-negative.
 - If raw_amount_string has a currency and amount but no explicit unit (e.g. "USD50"), set unit_basis to PER_SHIPMENT.
 - Parenthetical descriptive text in raw_amount_string is note/context, not a reason to drop the charge.
+- Non-charge business rules (e.g. "Import GST to be 9% of Commercial Invoice" or payment terms), terms/conditions, signatures, or section headers are NOT standard cargo charges. You MUST map them with `v4_product_code = "UNMAPPED"` and set `confidence = LOW` so they remain reviewable and are not processed as regular flat/percentage charges. Do NOT invent a standard amount for them.
 - For PERCENTAGE, set unit_basis to PERCENTAGE, populate `percentage` and `percent_applies_to` (and set `amount` to the same numeric percentage value).
 - For MIN_OR_PER_KG, set unit_basis to MIN_OR_PER_KG, populate both `rate_per_unit` and `minimum_amount` (and set `amount` equal to `rate_per_unit`).
 - confidence must be HIGH or LOW only.

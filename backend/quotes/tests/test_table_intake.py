@@ -414,3 +414,75 @@ def test_table_intake_to_spe_charge_lines_mapping(mock_parse):
     assert db_add.amount == Decimal("0.00")
     assert "poa" in db_add.note.lower()
 
+
+SINGAPORE_AGENT_TABLE_FIXTURE = """
+IMPORT AIR CHARGES
+
+Description                    Amount (SGD $)
+
+Terminal Fee                   35    min or 0.25 per KGS
+Agent Clearance Fee            35    min or 0.25 per KGS
+Clear from agent warehouse      35    min or 0.25 per KGS    (If Applicable)
+Airline Doc Fee                15    per AWB
+Cargo Terminal Collection Fee  10    min or 0.04 per KGS
+Permit                         50    per set (max 5 lines, thereafter @ sgd 2 / line)
+Transport                      105   min or 0.12 per KGS
+Fuel Surcharge                 5     min or 0.02 per KGS
+CMD Fee                        20    per shpt
+Handling                       50    per shpt
+DNATA Imp Processing Fee       10    per shpt    (If Applicable)
+Labour                         75    per man
+Tailgate Truck                 135   per trip (if applicable) or 0.12 per KGS
+Service Fee (if via LH/AF/KLM) 12    per shpt    (If Applicable)
+Import GST to be 9% of Commercial Invoice
+"""
+
+def test_singapore_agent_table_diagnostics():
+    results = parse_table_text_to_intermediate(SINGAPORE_AGENT_TABLE_FIXTURE)
+    res_map = {r.raw_label: r for r in results}
+    
+    # 1. Terminal Fee: SGD, minimum 35, rate 0.25, unit per_kg
+    tf = res_map["Terminal Fee"]
+    assert tf.currency_hint == "SGD"
+    assert tf.min_amount == Decimal("35")
+    assert tf.rate_per_unit == Decimal("0.25")
+    assert tf.unit_hint == "per_kg"
+    assert tf.is_conditional is False
+    
+    # 2. Clear from agent warehouse: SGD, minimum 35, rate 0.25, unit per_kg, conditional
+    cf = res_map["Clear from agent warehouse"]
+    assert cf.currency_hint == "SGD"
+    assert cf.min_amount == Decimal("35")
+    assert cf.rate_per_unit == Decimal("0.25")
+    assert cf.unit_hint == "per_kg"
+    assert cf.is_conditional is True
+    
+    # 3. Airline Doc Fee: SGD, 15, per_awb
+    adf = res_map["Airline Doc Fee"]
+    assert adf.currency_hint == "SGD"
+    assert adf.min_amount == Decimal("15")
+    assert adf.rate_per_unit is None
+    assert adf.unit_hint == "per_awb"
+    
+    # 4. Permit: SGD, 50, per_set
+    permit = res_map["Permit"]
+    assert permit.currency_hint == "SGD"
+    assert permit.min_amount == Decimal("50")
+    assert permit.unit_hint == "per_set"
+    
+    # 5. Tailgate Truck: SGD, 135, per_trip, conditional
+    tt = res_map["Tailgate Truck"]
+    assert tt.currency_hint == "SGD"
+    assert tt.min_amount == Decimal("135")
+    assert tt.rate_per_unit == Decimal("0.12")
+    assert tt.unit_hint == "per_trip"
+    assert tt.is_conditional is True
+    
+    # 6. Service Fee: SGD, 12, per_shipment, conditional
+    sf = res_map["Service Fee (if via LH/AF/KLM)"]
+    assert sf.currency_hint == "SGD"
+    assert sf.min_amount == Decimal("12")
+    assert sf.unit_hint == "per_shipment"
+    assert sf.is_conditional is True
+
+
