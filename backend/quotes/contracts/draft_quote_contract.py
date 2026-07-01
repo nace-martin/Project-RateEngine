@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field, model_validator
+
+
+class EvidenceSchema(BaseModel):
+    source_text: str = Field(..., description="Exact matched text from source document")
+    page: Optional[int] = Field(None, description="1-based page number")
+    section: Optional[str] = Field(None, description="Section heading or context")
+    row_index: Optional[int] = Field(None, description="Row index in a table")
+    table_index: Optional[int] = Field(None, description="Table index in document")
+    document_reference: Optional[str] = Field(None, description="Identifier of the source document")
+    bounding_box: Optional[List[float]] = Field(None, description="[x_min, y_min, x_max, y_max] bbox coordinates")
+    extraction_note: Optional[str] = Field(None, description="Qualitative note from parsing system")
+
+
+class DraftChargeSchema(BaseModel):
+    id: str = Field(..., description="Unique stable ID or hash of the charge")
+    status: str = Field(..., description="Status must be one of: suggested, needs_review, unclassified, ignored, accepted_by_user")
+    display_label: str = Field(..., description="Human-friendly charge label")
+    raw_label: str = Field(..., description="Raw text label from document")
+    suggested_product_code: Optional[str] = Field(None, description="Inferred ERP product code")
+    product_code_conflict: bool = Field(False, description="True if product code mapping is ambiguous")
+    bucket: str = Field(..., description="Category bucket: airfreight, origin_charges, destination_charges, or other/unclassified")
+    currency: str = Field(..., description="3-letter currency code (e.g., USD)")
+    amount: Decimal = Field(..., description="Charge monetary amount")
+    rate: Optional[Decimal] = Field(None, description="Unit rate")
+    unit: Optional[str] = Field(None, description="Unit basis, e.g., per_kg, flat")
+    calculation_basis: Optional[str] = Field(None, description="Calculation basis")
+    minimum_charge: Optional[Decimal] = Field(None, description="Minimum charge limit")
+    percentage_base: Optional[str] = Field(None, description="Base charge target for percentage surcharges")
+    quantity: Optional[Decimal] = Field(None, description="Multiplier quantity")
+    include_in_totals: bool = Field(True, description="Whether to include this charge in calculated totals")
+    conditions: Optional[List[str]] = Field(default_factory=list, description="Extracted conditions")
+    warnings: Optional[List[str]] = Field(default_factory=list, description="Validation warnings specific to this charge")
+    review_reason: Optional[str] = Field(None, description="Explanation of why manual review is needed")
+    evidence: Optional[EvidenceSchema] = Field(None, description="Source document evidence")
+    similarity_group_id: Optional[str] = Field(None, description="ID for grouping identical charges across variants")
+    correction_actions: Optional[List[str]] = Field(default_factory=list, description="Suggested correction actions")
+
+    @model_validator(mode="after")
+    def validate_charge_rules(self) -> DraftChargeSchema:
+        valid_statuses = {"suggested", "needs_review", "unclassified", "ignored", "accepted_by_user"}
+        if self.status not in valid_statuses:
+            raise ValueError(f"Status '{self.status}' is not valid. Must be one of: {valid_statuses}")
+        
+        # Every suggested charge must have evidence and source_text
+        if self.status == "suggested":
+            if not self.evidence or not self.evidence.source_text:
+                raise ValueError("Suggested charges must have evidence containing source_text.")
+            
+        return self
+
+
+class CommercialTermSchema(BaseModel):
+    type: str = Field(..., description="Type of commercial term (e.g. validity, density_ratio)")
+    text: str = Field(..., description="Raw text of the commercial term")
+    normalized_value: Optional[Any] = Field(None, description="Parsed value")
+    status: str = Field("suggested", description="Workflow status")
+    evidence: Optional[EvidenceSchema] = Field(None, description="Traceability evidence")
+    review_reason: Optional[str] = Field(None, description="Explanation of why review is needed")
+
+
+class UnclassifiedItemSchema(BaseModel):
+    id: str = Field(..., description="Unique identifier for unclassified item")
+    raw_text: str = Field(..., description="Text segment looking commercial but not parsed")
+    evidence: Optional[EvidenceSchema] = Field(None, description="Traceability evidence")
+    review_reason: str = Field("Unclassified commercial-looking item requires operator classification", description="Reason for review")
+
+
+class IgnoredItemSchema(BaseModel):
+    id: str = Field(..., description="Unique identifier for ignored item")
+    raw_text: str = Field(..., description="Text segment ignored")
+    ignored_reason: str = Field(..., description="Reason why the item was ignored (must not be empty)")
+    evidence: Optional[EvidenceSchema] = Field(None, description="Traceability evidence")
+
+
+class TotalsValidationSchema(BaseModel):
+    math_balances: bool = Field(..., description="True if calculated_total matches extracted_total")
+    currency_consistent: bool = Field(..., description="True if all active charges share the same currency")
+    extracted_total: Optional[Decimal] = Field(None, description="Total extracted from the document")
+    calculated_total: Optional[Decimal] = Field(None, description="Sum of active suggested charges")
+    difference: Optional[Decimal] = Field(None, description="Calculated - Extracted total")
+    tolerance: Decimal = Field(Decimal("0.00"), description="Acceptable calculation tolerance")
+    warnings: List[str] = Field(default_factory=list, description="Totals-related warnings")
+
+
+class DraftQuoteSchema(BaseModel):
+    contract_version: str = Field(..., description="Version of the draft quote contract")
+    quote_summary: str = Field(..., description="Summary overview of the draft quote")
+    shipment_context: Dict[str, Any] = Field(..., description="Shipment metrics and route parameters")
+    supplier_context: Dict[str, Any] = Field(..., description="Vendor/Agent identification context")
+    freight: Dict[str, Any] = Field(..., description="Main leg freight details")
+    suggested_charges: List[DraftChargeSchema] = Field(default_factory=list, description="Extracted charge suggestions")
+    commercial_terms: List[CommercialTermSchema] = Field(default_factory=list, description="Extracted commercial terms")
+    warnings: List[str] = Field(default_factory=list, description="Top-level validation warnings")
+    unclassified_items: List[UnclassifiedItemSchema] = Field(default_factory=list, description="Unclassified commercial items")
+    ignored_items: List[IgnoredItemSchema] = Field(default_factory=list, description="Ignored document segments")
+    totals_validation: TotalsValidationSchema = Field(..., description="Mathematical comparison of totals")
+    review_queue: List[Dict[str, Any]] = Field(default_factory=list, description="Items queued for manual operator review")
+    correction_actions: List[Dict[str, Any]] = Field(default_factory=list, description="Action descriptors to correct validation issues")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata and sender-based memory placeholders")
+
+    @model_validator(mode="after")
+    def validate_draft_quote(self) -> DraftQuoteSchema:
+        # Check that ignored items have non-empty ignored_reason
+        for item in self.ignored_items:
+            if not item.ignored_reason or not item.ignored_reason.strip():
+                raise ValueError(f"Ignored item {item.id} requires a non-empty ignored_reason.")
+
+        # Ensure no suggested charge has status accepted_by_user on initial intake
+        # Verify that unclassified and needs_review charges are correctly referenced in the review_queue
+        review_ids = {item.get("id") for item in self.review_queue if item.get("id")}
+        
+        for charge in self.suggested_charges:
+            if charge.status == "needs_review":
+                if charge.id not in review_ids:
+                    raise ValueError(f"Charge {charge.id} requires review but is not in the review_queue.")
+        
+        for item in self.unclassified_items:
+            if item.id not in review_ids:
+                raise ValueError(f"Unclassified item {item.id} is not present in the review_queue.")
+
+        return self
