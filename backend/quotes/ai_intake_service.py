@@ -221,7 +221,7 @@ def _infer_quote_currency_from_text(text: str) -> Optional[str]:
                 return code
 
     counts = Counter()
-    codes = re.findall(r"\b[A-Z]{3}\b", upper)
+    codes = re.findall(r"(?<![A-Z])[A-Z]{3}(?![A-Z])", upper)
     for code in codes:
         if code in VALID_CURRENCIES:
             counts[code] += 1
@@ -621,6 +621,9 @@ def _text_indicates_conditional(value: str) -> bool:
         "optional",
         "where applicable",
         "as applicable",
+        "if application",
+        "if required",
+        "if apply",
     )
     lowered = value.lower()
     return any(term in lowered for term in conditional_terms)

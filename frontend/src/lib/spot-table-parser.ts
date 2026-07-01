@@ -47,7 +47,7 @@ export function stripHtmlTags(html: string): string {
 
 /** Detect common currencies in text */
 export function detectCurrencies(text: string): string[] {
-    const curRegex = /\b(USD|PGK|AUD|SGD|NZD|FJD|EUR|GBP|HKD|CNY)\b|[$K]/gi;
+    const curRegex = /(?<![A-Z])(USD|PGK|AUD|SGD|NZD|FJD|EUR|GBP|HKD|CNY)(?![A-Z])|[$]|(?<![A-Z])K(?=\d)|(?<=\d)K(?![A-Z])|\bK\b/gi;
     const matches = text.match(curRegex) || [];
     const normalized = matches.map(m => {
         const val = m.toUpperCase();
@@ -227,7 +227,8 @@ export function detectTableStructure(text: string, html?: string | null): Struct
             trimmed.length > 3 && 
             trimmed.length < 50 &&
             !trimmed.includes('\t') &&
-            !trimmed.includes('|')
+            !trimmed.includes('|') &&
+            !/[:：]\s*(?:USD|PGK|AUD|SGD|NZD|FJD|EUR|GBP|HKD|CNY|\$|K)?\s*\d/i.test(trimmed)
         ) {
             detected_sections.push(trimmed);
         }

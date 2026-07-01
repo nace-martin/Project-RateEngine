@@ -381,3 +381,80 @@ def test_tabular_intake_preserves_table_structure(monkeypatch):
 
     # Assert no duplicate final SpotChargeLines by description
     assert len(final_labels) == len(set(final_labels)), f"Found duplicate descriptions in final SpotChargeLines: {final_labels}"
+
+
+@pytest.mark.django_db
+def test_regression_can_pom_import_compact_intake(monkeypatch):
+    monkeypatch.setattr(
+        "quotes.ai_intake_service.get_gemini_client",
+        lambda: _FakeGeminiClient(),
+    )
+    # Mock extractor to return empty to force pattern matching
+    monkeypatch.setattr(
+        "quotes.ai_intake_service._extract_raw_charges",
+        lambda *_args, **_kwargs: [],
+    )
+    
+    text = """A/F:USD6.8/kg(+45kgs)
+Handle:USD50(for small cargo)
+Air Line:CZ
+Route:CAN-POM
+Ex-work Charge
+DOC:USD30
+CUS:USD50
+Export License:USD50(if application)
+Pick Up+Gate In:USD200"""
+
+    context = {
+        "shipment_type": "IMPORT",
+        "origin_code": "CAN",
+        "destination_code": "POM",
+        "service_scope": "P2P",
+        "payment_term": "COLLECT",
+        "missing_components": ["ORIGIN_LOCAL", "FREIGHT"]
+    }
+    
+    result = parse_rate_quote_text(text, context=context)
+    
+    # We should have successfully parsed the lines
+    assert len(result.raw_extracted_charges) >= 6
+    
+    raw_map = {r.raw_label: r for r in result.raw_extracted_charges}
+    
+    # Verify exact pattern parsed fields:
+    # A/F:USD6.8/kg(+45kgs)
+    af = raw_map["A/F"]
+    assert af.currency_hint == "USD"
+    assert af.raw_amount_string == "USD6.8/kg(+45kgs)"
+    
+    # Handle:USD50(for small cargo)
+    handle = raw_map["Handle"]
+    assert handle.currency_hint == "USD"
+    
+    # DOC:USD30
+    doc = raw_map["DOC"]
+    assert doc.currency_hint == "USD"
+    
+    # CUS:USD50
+    cus = raw_map["CUS"]
+    assert cus.currency_hint == "USD"
+    
+    # Export License:USD50(if application)
+    el = raw_map["Export License"]
+    assert el.currency_hint == "USD"
+    assert el.is_conditional is True
+    
+    # Pick Up+Gate In:USD200
+    pu = raw_map["Pick Up+Gate In"]
+    assert pu.currency_hint == "USD"
+    
+    # Verify normalized properties
+    norm_map = {n.original_raw_label: n for n in result.normalized_charges}
+    
+    af_norm = norm_map["A/F"]
+    assert af_norm.v4_bucket == "FREIGHT"
+    assert af_norm.unit_basis == "PER_KG"
+    assert af_norm.amount == Decimal("6.8")
+    assert af_norm.rate_per_unit == Decimal("6.8")
+    assert af_norm.currency == "USD"
+
