@@ -468,6 +468,78 @@ def _extract_tabular_charge_candidates(text: str) -> List[RawExtractedCharge]:
     return candidates
 
 
+def _extract_diagnostic_table_candidates(text: str) -> List[RawExtractedCharge]:
+    """Phase 8B: Extract RawExtractedCharge candidates using table diagnostics."""
+    from quotes.services.table_diagnostics import parse_table_text_to_intermediate
+    try:
+        diag_lines = parse_table_text_to_intermediate(text)
+    except Exception as e:
+        logger.warning("Structured table diagnostics parser failed: %s", e)
+        return []
+
+    candidates: List[RawExtractedCharge] = []
+    lines = text.splitlines()
+
+    for line in diag_lines:
+        currency_hint = None
+        if line.currency_hint:
+            norm_curr = _normalize_currency_value(line.currency_hint)
+            if norm_curr and len(norm_curr) == 3 and norm_curr in VALID_CURRENCIES:
+                currency_hint = norm_curr
+
+        amt_parts = []
+        if currency_hint:
+            amt_parts.append(currency_hint)
+        if line.rate_per_unit is not None:
+            unit_lbl = line.unit_hint or "KG"
+            if unit_lbl == "per_kg":
+                unit_lbl = "KG"
+            elif unit_lbl == "per_awb":
+                unit_lbl = "AWB"
+            elif unit_lbl == "per_entry":
+                unit_lbl = "Entry"
+            elif unit_lbl == "per_shipment":
+                unit_lbl = "Shipment"
+            elif unit_lbl == "percentage":
+                unit_lbl = "%"
+            amt_parts.append(f"{line.rate_per_unit} per {unit_lbl}")
+        if line.min_amount is not None:
+            amt_parts.append(f"min {line.min_amount}")
+        if line.percentage is not None:
+            amt_parts.append(f"{line.percentage}%")
+        if line.is_poa:
+            amt_parts.append("POA")
+            
+        raw_amount_str = " ".join(amt_parts)
+        if not raw_amount_str:
+            raw_amount_str = "0.00"
+
+        source_excerpt = None
+        if line.source_line_number and 1 <= line.source_line_number <= len(lines):
+            source_excerpt = lines[line.source_line_number - 1].strip()
+
+        raw_lbl_stripped = line.raw_label[2:].strip() if line.raw_label.startswith("**") else (line.raw_label[1:].strip() if line.raw_label.startswith("*") else line.raw_label)
+
+        charge = RawExtractedCharge(
+            raw_label=raw_lbl_stripped,
+            raw_amount_string=raw_amount_str,
+            currency_hint=currency_hint,
+            is_conditional=line.is_conditional,
+            source_excerpt=source_excerpt,
+            source_line_number=line.source_line_number,
+            source_line_identity=f"diag-table-line:{line.source_line_number or 0}:{_normalize_fallback_label(line.raw_label)}",
+            raw_unit=line.raw_unit or line.unit_hint,
+            raw_minimum=str(line.min_amount) if line.min_amount is not None else ("POA" if line.is_poa else None),
+            raw_rate=str(line.rate_per_unit) if line.rate_per_unit is not None else None,
+            raw_percentage=f"{line.percentage}%" if line.percentage is not None else None,
+            section_context=line.section_context,
+            raw_notes=line.raw_notes,
+        )
+        candidates.append(charge)
+
+    return candidates
+
+
 def _sections_overlap(sec1: Optional[str], sec2: Optional[str]) -> bool:
     s1 = _normalize_fallback_label(sec1 or "")
     s2 = _normalize_fallback_label(sec2 or "")
@@ -489,6 +561,7 @@ def _merge_all_charge_candidates(
     ai_charges: List[RawExtractedCharge],
     tabular_charges: List[RawExtractedCharge],
     pattern_charges: List[RawExtractedCharge],
+    diag_charges: Optional[List[RawExtractedCharge]] = None,
 ) -> List[RawExtractedCharge]:
     merged: List[RawExtractedCharge] = []
 
@@ -534,7 +607,16 @@ def _merge_all_charge_candidates(
         if new_amt and new_amt not in ext_amt:
             existing.raw_amount_string = f"{ext_amt} {new_amt}"
 
-    # First add tabular charges (highest priority)
+    # First add diag charges (highest priority)
+    if diag_charges:
+        for charge in diag_charges:
+            existing = find_overlapping(charge)
+            if existing:
+                merge_two_raw(existing, charge)
+            else:
+                merged.append(charge)
+
+    # Next add tabular charges (highest priority)
     for charge in tabular_charges:
         existing = find_overlapping(charge)
         if existing:
@@ -949,6 +1031,7 @@ def parse_rate_quote_text(
             logger.warning("AI Intake Extractor failed, using pattern extraction only: %s", e)
             ai_charges = []
             
+        diag_charges = _extract_diagnostic_table_candidates(text)
         tabular_charges = _extract_tabular_charge_candidates(text)
         pattern_charges = _extract_pattern_charge_candidates(text)
         
@@ -956,6 +1039,7 @@ def parse_rate_quote_text(
             ai_charges=ai_charges,
             tabular_charges=tabular_charges,
             pattern_charges=pattern_charges,
+            diag_charges=diag_charges,
         )
 
         # Stage 2: Normalizer

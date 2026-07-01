@@ -113,3 +113,71 @@ def test_parse_table_text_to_intermediate():
     assert add.is_poa is True
     assert add.is_conditional is True
     assert "airline or customs" in add.raw_notes.lower()
+
+
+def test_table_intake_produces_normalized_candidates():
+    # We call parse_rate_quote_text directly with the rate sheet text
+    from quotes.ai_intake_service import parse_rate_quote_text
+    
+    result = parse_rate_quote_text(CARRIER_RATE_SHEET_FIXTURE, source_type="TEXT")
+    
+    # Assert result is populated and has normalized charges
+    assert result.quote_input is not None
+    
+    # Check that we built final SpotChargeLine items
+    final_lines = result.lines
+    assert len(final_lines) >= 14
+    
+    def find_line(sub: str):
+        for l in final_lines:
+            match_str = f"{l.description or ''} {l.original_raw_label or ''}".lower()
+            if sub.lower() in match_str:
+                return l
+        raise KeyError(f"Could not find charge line matching: {sub}")
+
+    # 1. Airfreight AKL-POM via PX(BNE)
+    af = find_line("Airfreight")
+    assert af.currency == "NZD"
+    assert af.unit_basis == "MIN_OR_PER_KG"
+    assert af.minimum == Decimal("315.00")
+    assert af.rate_per_unit == Decimal("7.30")
+    assert af.conditional is False
+    
+    # 2. PX AWB Fee
+    px = find_line("PX AWB")
+    assert px.currency == "NZD"
+    assert px.unit_basis == "PER_SHIPMENT"
+    assert px.amount == Decimal("25.00")
+    
+    # 3. Documentation Fee
+    doc = find_line("Documentation Fee")
+    assert doc.currency == "NZD"
+    assert doc.unit_basis == "PER_SHIPMENT"
+    assert doc.amount == Decimal("60.00")
+    
+    # 4. Pick Up - metro area
+    pu = find_line("Pick Up")
+    assert pu.currency == "NZD"
+    assert pu.unit_basis == "MIN_OR_PER_KG"
+    assert pu.minimum == Decimal("35.00")
+    assert pu.rate_per_unit == Decimal("0.32")
+    
+    # 5. Fuel Surcharge
+    fuel = find_line("Fuel Surcharge")
+    assert fuel.unit_basis == "PERCENTAGE"
+    assert fuel.percentage == Decimal("22.00")
+    
+    # 6. X-ray
+    xray = find_line("X-ray")
+    assert xray.currency == "NZD"
+    assert xray.unit_basis == "MIN_OR_PER_KG"
+    assert xray.minimum == Decimal("45.00")
+    assert xray.rate_per_unit == Decimal("0.25")
+    assert xray.conditional is True
+    
+    # 7. Additional Screening
+    add = find_line("Additional Screening")
+    assert add.conditional is True
+    assert add.amount == Decimal("0.00") or add.amount is None or add.minimum == Decimal("0.00")
+    assert "poa" in add.notes.lower()
+

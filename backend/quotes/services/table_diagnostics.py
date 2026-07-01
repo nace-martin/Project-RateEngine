@@ -8,6 +8,7 @@ class ParsedTableLine(BaseModel):
     section_context: Optional[str] = None
     currency_hint: Optional[str] = None
     unit_hint: Optional[str] = None
+    raw_unit: Optional[str] = None
     min_amount: Optional[Decimal] = None
     rate_per_unit: Optional[Decimal] = None
     percentage: Optional[Decimal] = None
@@ -163,6 +164,34 @@ def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
         raw_min = parts[min_idx] if min_idx < len(parts) else None
         raw_rate = parts[rate_idx] if rate_idx < len(parts) else None
         
+        # Sparse row heuristic adjustments
+        if len(parts) < 5:
+            remaining = parts[1:]
+            detected_ccy = None
+            for p in remaining[:]:
+                if len(p) == 3 and p.isupper():
+                    detected_ccy = p
+                    remaining.remove(p)
+                    break
+            detected_unit = None
+            for p in remaining[:]:
+                if any(u in p.lower() for u in ["kg", "awb", "shipment", "entry", "trip", "cbm"]):
+                    detected_unit = p
+                    remaining.remove(p)
+                    break
+            detected_min = None
+            detected_rate = None
+            if remaining:
+                if len(remaining) == 1:
+                    detected_min = remaining[0]
+                else:
+                    detected_min = remaining[0]
+                    detected_rate = remaining[1]
+            raw_ccy = detected_ccy or (raw_ccy if raw_ccy and raw_ccy not in [detected_unit, detected_min, detected_rate] else None)
+            raw_unit = detected_unit or (raw_unit if raw_unit and raw_unit not in [detected_ccy, detected_min, detected_rate] else None)
+            raw_min = detected_min or (raw_min if raw_min and raw_min not in [detected_ccy, detected_unit, detected_rate] else None)
+            raw_rate = detected_rate or (raw_rate if raw_rate and raw_rate not in [detected_ccy, detected_unit, detected_min] else None)
+
         if not raw_label:
             continue
             
@@ -207,6 +236,7 @@ def parse_table_text_to_intermediate(text: str) -> List[ParsedTableLine]:
             section_context=current_section,
             currency_hint=raw_ccy.strip() if raw_ccy else None,
             unit_hint=unit_hint or (raw_unit.strip() if raw_unit else None),
+            raw_unit=raw_unit.strip() if raw_unit else None,
             min_amount=min_amount,
             rate_per_unit=rate_amount,
             percentage=percentage_val,
