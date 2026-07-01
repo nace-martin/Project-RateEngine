@@ -2520,9 +2520,16 @@ class SpotReplyAnalysisAPIView(APIView):
                     if auto_charges:
                         for charge in auto_charges:
                             amount_val = _to_decimal(charge.get("amount"))
-                            if amount_val is None or amount_val <= 0:
+                            is_poa_or_conditional = (
+                                charge.get("conditional")
+                                or charge.get("is_poa")
+                                or "poa" in str(charge.get("description") or "").lower()
+                                or charge.get("unit") == "percentage"
+                            )
+                            if (amount_val is None or amount_val <= 0) and not is_poa_or_conditional:
                                 continue
 
+                            amount_val = amount_val or Decimal("0.00")
                             min_charge_val = _to_decimal(charge.get("min_charge"))
                             normalized_auto_charges.append(
                                 {

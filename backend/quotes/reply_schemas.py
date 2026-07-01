@@ -108,6 +108,8 @@ class ExtractedAssertion(BaseModel):
     rate_unit: Optional[str] = Field(None, description="per_kg, flat, min_or_per_kg, etc.")
     percentage_basis: Optional[str] = Field(None, description="What the percentage applies to")
     validity_date: Optional[str] = Field(None, description="ISO date string")
+    notes: Optional[str] = None
+    is_poa: bool = False
 
 
 class AnalysisSummary(BaseModel):

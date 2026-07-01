@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 import pytest
 from quotes.services.table_diagnostics import (
     detect_probable_table_blocks,
@@ -180,4 +181,236 @@ def test_table_intake_produces_normalized_candidates():
     assert add.conditional is True
     assert add.amount == Decimal("0.00") or add.amount is None or add.minimum == Decimal("0.00")
     assert "poa" in add.notes.lower()
+
+
+@pytest.mark.django_db
+@patch("quotes.ai_intake_service.parse_rate_quote_text")
+def test_table_intake_to_spe_charge_lines_mapping(mock_parse):
+    from quotes.spot_services import ReplyAnalysisService
+    from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
+    from quotes.reply_schemas import AssertionCategory
+    from quotes.ai_intake_schemas import SpotChargeLine, QuoteInputPayload
+    from quotes.ai_intake_service import AIRateIntakePipelineResult
+    
+    charge_lines = [
+        SpotChargeLine(
+            bucket="FREIGHT",
+            description="Airfreight",
+            original_raw_label="Airfreight AKL – POM via PX(BNE)",
+            v4_product_code="AIR_FREIGHT",
+            currency="NZD",
+            unit_basis="MIN_OR_PER_KG",
+            minimum=Decimal("315.00"),
+            rate_per_unit=Decimal("7.30"),
+        ),
+        SpotChargeLine(
+            bucket="FREIGHT",
+            description="PX AWB FEE",
+            original_raw_label="PX AWB FEE",
+            v4_product_code="AWB_FEE",
+            currency="NZD",
+            unit_basis="PER_SHIPMENT",
+            unit_type="AWB",
+            amount=Decimal("25.00"),
+        ),
+        SpotChargeLine(
+            bucket="ORIGIN",
+            description="Documentation Fee",
+            original_raw_label="Documentation Fee",
+            v4_product_code="DOC_FEE",
+            currency="NZD",
+            unit_basis="PER_SHIPMENT",
+            unit_type="AWB",
+            amount=Decimal("60.00"),
+        ),
+        SpotChargeLine(
+            bucket="ORIGIN",
+            description="Pick Up - metro area",
+            original_raw_label="Pick Up - metro area",
+            v4_product_code="PICKUP",
+            currency="NZD",
+            unit_basis="MIN_OR_PER_KG",
+            minimum=Decimal("35.00"),
+            rate_per_unit=Decimal("0.32"),
+        ),
+        SpotChargeLine(
+            bucket="FREIGHT",
+            description="Fuel Surcharge",
+            original_raw_label="Fuel Surcharge",
+            v4_product_code="FUEL_SURCHARGE",
+            currency="NZD",
+            unit_basis="PERCENTAGE",
+            percentage=Decimal("22.00"),
+            percent_applies_to="FREIGHT",
+        ),
+        SpotChargeLine(
+            bucket="ORIGIN",
+            description="X-ray",
+            original_raw_label="*X-ray",
+            v4_product_code="XRAY",
+            currency="NZD",
+            unit_basis="MIN_OR_PER_KG",
+            minimum=Decimal("45.00"),
+            rate_per_unit=Decimal("0.25"),
+            conditional=True,
+        ),
+        SpotChargeLine(
+            bucket="ORIGIN",
+            description="Additional Screening",
+            original_raw_label="*Additional Screening",
+            v4_product_code="ADDITIONAL_SCREENING",
+            currency="NZD",
+            unit_basis="PER_SHIPMENT",
+            amount=Decimal("0.00"),
+            notes="POA - manual review required",
+            conditional=True,
+        ),
+    ]
+    
+    mock_parse.return_value = AIRateIntakePipelineResult(
+        success=True,
+        quote_input=QuoteInputPayload(
+            quote_currency="NZD",
+            charge_lines=charge_lines,
+        ),
+        quote_currency="NZD",
+        model_used="mock-gemini",
+    )
+    
+    # Analyze the rate sheet text (which runs Phase 8B table candidate extraction)
+    analysis = ReplyAnalysisService.analyze_with_ai(CARRIER_RATE_SHEET_FIXTURE)
+    
+    # Assert currency assertion exists
+    currency_assertions = [a for a in analysis.assertions if a.category == AssertionCategory.CURRENCY]
+    assert len(currency_assertions) >= 1
+    assert currency_assertions[0].rate_currency == "NZD"
+    
+    print("ASSERTIONS:", analysis.assertions)
+    # Run mapping to SPE charge lines
+    shipment_context = {
+        "origin_country": "NZ",
+        "destination_country": "PG",
+        "missing_components": ["ORIGIN_LOCAL", "FREIGHT", "DESTINATION_LOCAL"],
+    }
+    spe_charges = ReplyAnalysisService.build_spe_charges_from_analysis(
+        analysis,
+        source_reference="NZ Agent Quote",
+        shipment_context=shipment_context,
+    )
+    print("SPE CHARGES:", spe_charges)
+    
+    # Assert SPE charge lines have correct properties
+    def find_spe(sub: str):
+        for c in spe_charges:
+            match_str = f"{c.get('description') or ''}".lower()
+            if sub.lower() in match_str:
+                return c
+        raise KeyError(f"Could not find SPE charge line matching: {sub}")
+        
+    # 1. Airfreight
+    af = find_spe("Airfreight")
+    assert af["currency"] == "NZD"
+    assert af["unit"] == "per_kg"
+    assert af["min_amount"] == "315.00"
+    assert af["rate"] == "7.30"
+    assert af["bucket"] == "airfreight"
+    
+    # 2. PX AWB Fee
+    px = find_spe("PX AWB")
+    assert px["currency"] == "NZD"
+    assert px["unit"] == "per_shipment"
+    assert px["unit_type"] == "shipment"
+    assert px["amount"] == "25.00"
+    
+    # 3. Documentation Fee
+    doc = find_spe("Documentation Fee")
+    assert doc["currency"] == "NZD"
+    assert doc["unit"] == "per_shipment"
+    assert doc["unit_type"] == "shipment"
+    assert doc["amount"] == "60.00"
+    
+    # 4. Pick Up
+    pu = find_spe("Pick Up")
+    assert pu["currency"] == "NZD"
+    assert pu["unit"] == "per_kg"
+    assert pu["min_amount"] == "35.00"
+    assert pu["rate"] == "0.32"
+    
+    # 5. Fuel Surcharge
+    fuel = find_spe("Fuel Surcharge")
+    assert fuel["unit"] == "percentage"
+    assert fuel["percent"] == "22.00"
+    assert fuel["amount"] == "22.00"
+    
+    # 6. X-ray (conditional)
+    xray = find_spe("X-ray")
+    assert xray["currency"] == "NZD"
+    assert xray["unit"] == "per_kg"
+    assert xray["min_amount"] == "45.00"
+    assert xray["rate"] == "0.25"
+    assert xray["conditional"] is True
+    
+    # 7. Additional Screening (POA, conditional, notes preserved)
+    add = find_spe("Additional Screening")
+    assert add["conditional"] is True
+    assert add["amount"] == "0.00"
+    assert "poa" in add["note"].lower()
+    
+    # Let's save the charges to a test envelope
+    from django.utils import timezone
+    envelope = SpotPricingEnvelopeDB.objects.create(
+        shipment_context_json=shipment_context,
+        expires_at=timezone.now() + timezone.timedelta(days=7),
+    )
+    
+    # Reconcile SPE charges
+    from quotes.spot_views import _reconcile_spe_charge_lines
+    from django.utils import timezone
+    
+    # Pre-populate normalized list with Decimals (similar to views.py POST method)
+    normalized_incoming = []
+    for c in spe_charges:
+        normalized_incoming.append({
+            **c,
+            "amount": Decimal(c["amount"]),
+            "min_charge": Decimal(c["min_charge"]) if c.get("min_charge") else None,
+            "rate": Decimal(c["rate"]) if c.get("rate") else None,
+            "min_amount": Decimal(c["min_amount"]) if c.get("min_amount") else None,
+            "max_amount": Decimal(c["max_amount"]) if c.get("max_amount") else None,
+            "percent": Decimal(c["percent"]) if c.get("percent") else None,
+        })
+        
+    _reconcile_spe_charge_lines(
+        spe_db=envelope,
+        existing_lines=[],
+        incoming_charges=normalized_incoming,
+        entered_by=None,
+        entered_at=timezone.now(),
+        shipment_context=shipment_context,
+    )
+    
+    # Check that draft charge lines were successfully created in the database
+    db_lines = list(envelope.charge_lines.all())
+    assert len(db_lines) == 7
+    
+    def find_db(sub: str):
+        for l in db_lines:
+            if sub.lower() in l.description.lower():
+                return l
+        raise KeyError(f"Could not find db line matching: {sub}")
+        
+    db_af = find_db("Airfreight")
+    assert db_af.currency == "NZD"
+    assert db_af.unit == "per_kg"
+    assert db_af.min_amount == Decimal("315.00")
+    assert db_af.rate == Decimal("7.30")
+    
+    db_fuel = find_db("Fuel Surcharge")
+    assert db_fuel.unit == "percentage"
+    assert db_fuel.percent == Decimal("22.00")
+    
+    db_add = find_db("Additional Screening")
+    assert db_add.conditional is True
+    assert db_add.amount == Decimal("0.00")
+    assert "poa" in db_add.note.lower()
 

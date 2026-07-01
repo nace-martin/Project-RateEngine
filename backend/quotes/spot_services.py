@@ -2119,6 +2119,15 @@ class ReplyAnalysisService:
                     elif has_low_norm_conf:
                         assertion_confidence = min(assertion_confidence, 0.5)
 
+                    line_notes = getattr(line, "notes", None)
+                    is_poa = False
+                    if line_notes and "poa" in line_notes.lower():
+                        is_poa = True
+                    elif line.source_excerpt and "poa" in line.source_excerpt.lower():
+                        is_poa = True
+                    elif getattr(line, "raw_minimum", None) == "POA" or getattr(line, "raw_rate", None) == "POA":
+                        is_poa = True
+
                     ai_assertions.append(ExtractedAssertion(
                         text=line.description,
                         category=category,
@@ -2132,6 +2141,8 @@ class ReplyAnalysisService:
                         rate_currency=final_currency,
                         rate_unit=line.unit_basis.lower() if line.unit_basis else "per_kg",
                         percentage_basis=basis,
+                        notes=line_notes,
+                        is_poa=is_poa,
                     ))
         
         all_assertions = ai_assertions
@@ -2307,7 +2318,7 @@ class ReplyAnalysisService:
         Returns:
             List of charge line dicts ready for SPE creation
         """
-        from decimal import InvalidOperation
+        from decimal import Decimal, InvalidOperation
         from quotes.reply_schemas import AssertionStatus, AssertionCategory
         from quotes.completeness import (
             COMPONENT_ORIGIN_LOCAL,
@@ -2467,8 +2478,18 @@ class ReplyAnalysisService:
                     unit_type = unit_to_unit_type.get(unit, "shipment")
                     rate = amount
 
-            if amount is None or amount <= 0:
+            is_poa_or_conditional = (
+                a.status == AssertionStatus.CONDITIONAL
+                or getattr(a, "is_poa", False)
+                or "poa" in (a.text or "").lower()
+                or (unit == "percentage" and amount is not None)
+            )
+
+            if (amount is None or amount <= 0) and not is_poa_or_conditional:
                 continue
+
+            if amount is None or amount <= 0:
+                amount = Decimal("0.00")
 
             # Contextual applicability guardrail for known opposite-direction taxes.
             desc_lower = (a.text or "").lower()
@@ -2515,6 +2536,9 @@ class ReplyAnalysisService:
                 ),
                 "confidence": a.confidence,
                 "source_section_label": source_section_label,
+                "note": a.notes or "",
+                "percentage_basis": a.percentage_basis or percent_basis,
+                "is_poa": getattr(a, "is_poa", False),
             })
 
         return charges
