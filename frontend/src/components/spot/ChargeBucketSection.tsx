@@ -516,12 +516,17 @@ export function ChargeBucketSection({
                                                                     { value: "total", label: "Total Quote" },
                                                                 ];
                                                                 if (watchedCharges) {
+                                                                    const seenValues = new Set(baseOptions.map((opt) => opt.value));
                                                                     watchedCharges.forEach((c) => {
-                                                                        if (c.code && !["freight", "origin", "destination", "total"].includes(c.code.toLowerCase())) {
-                                                                            baseOptions.push({
-                                                                                value: c.code.toLowerCase(),
-                                                                                label: c.description || c.code,
-                                                                            });
+                                                                        if (c.code) {
+                                                                            const valLower = c.code.toLowerCase();
+                                                                            if (!seenValues.has(valLower)) {
+                                                                                seenValues.add(valLower);
+                                                                                baseOptions.push({
+                                                                                    value: valLower,
+                                                                                    label: c.description || c.code,
+                                                                                });
+                                                                            }
                                                                         }
                                                                     });
                                                                 }
