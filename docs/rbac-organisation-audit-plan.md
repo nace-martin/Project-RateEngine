@@ -3498,6 +3498,74 @@ graphify update .
 git diff --check
 ```
 
+#### Phase 10K - Duplicate Branch/Department Master Data Consolidation
+
+Date: 2026-07-01
+
+Branch: `codex/consolidate-duplicate-hierarchy-master-data`
+
+Scope: consolidate duplicate Branch and Department master data left under
+legacy organizations after the final OperatingEntity hierarchy cleanup. This
+phase is guarded, dry-run by default, transactional, and idempotent. It does
+not hard-delete records and does not mutate Quote/SPOT historical records,
+pricing, ProductCode, rating, selectors, APIs, or UI.
+
+Added commands:
+
+```bash
+python backend/manage.py rbac_duplicate_master_data_consolidation_plan --format json
+python backend/manage.py rbac_duplicate_master_data_consolidation_apply --format json
+python backend/manage.py rbac_duplicate_master_data_consolidation_apply --apply --format json
+```
+
+Behavior:
+
+- The plan reports active duplicate Branch and Department rows under legacy
+  organizations, their canonical target when one exists, FK dependency counts,
+  blocked dependencies, and recommended action.
+- The apply command repoints only safe non-Quote/SPOT FK references to the
+  canonical Branch or Department.
+- Duplicate Branch/Department rows are deactivated only after their FK
+  dependency count is zero.
+- `Test Org` duplicate master data remains `DEV_TEST_LEGACY` manual review and
+  is not blindly migrated or deactivated by this command.
+- Quote/SPOT historical rows remain classified as `DEV_TEST_LEGACY` and are
+  never repointed by this command.
+- The legacy organization cleanup planner now ignores inactive Branch and
+  Department master rows so the guarded cleanup apply cannot attempt a unique
+  code collision against deactivated duplicates.
+
+Development database result:
+
+- `rbac_duplicate_master_data_consolidation_apply --apply --format json`
+  applied 28 safe deactivations, blocked 6 Quote/SPOT historical dependency
+  groups, and left 8 Test Org/protected rows unchanged.
+- Active duplicate master-data report now shows only protected active
+  Quote/SPOT-linked duplicates plus Test Org manual-review departments.
+- `rbac_legacy_organization_cleanup_plan --format json` improved from 252
+  dependencies to 224 after consolidation.
+- `rbac_post_membership_apply_readiness --format json` remained
+  `final_readiness.status=READY`.
+
+Stop conditions:
+
+- Any Quote/SPOT row planned for repointing instead of
+  `DEV_TEST_LEGACY` blocking.
+- Any `Test Org` row planned for automatic migration or deactivation.
+- Any duplicate Branch/Department deactivation planned while FK dependencies
+  remain.
+- Any canonical target outside the final active Branch/Department code set.
+
+Runbook:
+
+```bash
+python backend/manage.py rbac_duplicate_master_data_consolidation_plan --format json
+python backend/manage.py rbac_duplicate_master_data_consolidation_apply --format json
+python backend/manage.py rbac_duplicate_master_data_consolidation_apply --apply --format json
+python backend/manage.py rbac_legacy_organization_cleanup_plan --format json
+python backend/manage.py rbac_post_membership_apply_readiness --format json
+```
+
 ## 12. What Not To Touch Yet
 
 Do not touch these in the first implementation slice:

@@ -88,6 +88,8 @@ def dependency_rows(org, target_org):
             if filters is None:
                 continue
             queryset = model.objects.filter(**filters).order_by("pk")
+            if model in (Branch, Department) and field.name == "organization":
+                queryset = queryset.filter(is_active=True)
             count = queryset.count()
             if not count:
                 continue
@@ -226,6 +228,8 @@ def planned_updates_for_org(org, target_org):
             if filters is None:
                 continue
             queryset = model.objects.filter(**filters)
+            if model in (Branch, Department) and field.name == "organization":
+                queryset = queryset.filter(is_active=True)
             count = queryset.count()
             if not count:
                 continue
@@ -320,7 +324,7 @@ def eac_air_freight_department(org, target_org):
 
 def branch_reparent_blockers(org, target_org):
     blockers = []
-    for branch in Branch.objects.filter(organization=org):
+    for branch in Branch.objects.filter(organization=org, is_active=True):
         if Branch.objects.filter(organization=target_org, code=branch.code).exclude(pk=branch.pk).exists():
             blockers.append(f"target branch code collision: {branch.code}")
     return blockers
@@ -328,7 +332,7 @@ def branch_reparent_blockers(org, target_org):
 
 def department_reparent_blockers(org, target_org):
     blockers = []
-    for department in Department.objects.filter(organization=org):
+    for department in Department.objects.filter(organization=org, is_active=True):
         if Department.objects.filter(organization=target_org, code=department.code).exclude(pk=department.pk).exists():
             blockers.append(f"target department code collision: {department.code}")
     return blockers
