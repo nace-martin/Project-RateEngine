@@ -656,7 +656,7 @@ export function ExceptionWorkspace() {
                         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Still Needs Attention</h2>
                         <div className="flex flex-col gap-2.5">
                             {combinedUnresolved.map(item => (
-                                <div key={item.id} className="bg-slate-950 border border-slate-850 rounded-xl p-3 flex justify-between items-center text-xs">
+                                <div key={`${item.type}-${item.id}`} className="bg-slate-950 border border-slate-850 rounded-xl p-3 flex justify-between items-center text-xs">
                                     <div>
                                         <strong className="block text-slate-200">{item.title}</strong>
                                         <span className="text-slate-400 mt-0.5 block">{item.problem}</span>
