@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
 import { hardCaseAirImportData } from "../../data/hardCaseAirImport";
-import { DraftCharge, DraftChargeStatus, Evidence } from "../../lib/draft-quote-types";
+import { DraftCharge, DraftChargeStatus, Evidence, DraftQuote } from "../../lib/draft-quote-types";
 
 // Helper to convert rate specs into human-friendly text
 function humanizeRate(rate: number | null, unit: string | null, label: string): string {
@@ -51,18 +51,18 @@ interface Decision {
     };
 }
 
-export function ExceptionWorkspace() {
+export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive = false }: { initialData?: DraftQuote; isLive?: boolean }) {
     // Single state containers for mock database updates
-    const [draftQuote] = useState(hardCaseAirImportData);
+    const [draftQuote] = useState(initialData);
     const [explainTotals, setExplainTotals] = useState(false);
-    const [suggestedCharges, setSuggestedCharges] = useState(hardCaseAirImportData.suggested_charges);
-    const [reviewQueue, setReviewQueue] = useState(hardCaseAirImportData.review_queue);
-    const [unclassifiedItems, setUnclassifiedItems] = useState(hardCaseAirImportData.unclassified_items);
-    const [ignoredItems, setIgnoredItems] = useState<Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>>([]);
+    const [suggestedCharges, setSuggestedCharges] = useState(initialData.suggested_charges);
+    const [reviewQueue, setReviewQueue] = useState(initialData.review_queue);
+    const [unclassifiedItems, setUnclassifiedItems] = useState(initialData.unclassified_items);
+    const [ignoredItems, setIgnoredItems] = useState<Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>>(initialData.ignored_items || []);
     const [decisions, setDecisions] = useState<Decision[]>([]);
 
     // Guided resolving workflow states
-    const [activeIssueId, setActiveIssueId] = useState<string | null>("chg-002");
+    const [activeIssueId, setActiveIssueId] = useState<string | null>(initialData.review_queue?.[0]?.id || null);
     const [selectedActionType, setSelectedActionType] = useState<string | null>(null);
     const [showHelpText, setShowHelpText] = useState(false);
 
@@ -261,9 +261,7 @@ export function ExceptionWorkspace() {
                 id: item.id,
                 type: "review_item",
                 title: charge?.display_label || "Needs Review",
-                problem: item.id === "chg-002"
-                    ? "No approved ProductCode mapping found in RateEngine."
-                    : "Currency was inherited from shipment context and requires validation.",
+                problem: charge?.review_reason || item.message || "Requires validation.",
                 evidence: charge?.evidence,
                 charge
             };
@@ -311,15 +309,22 @@ export function ExceptionWorkspace() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
+        <div className="min-h-screen bg-slate-955 text-slate-100 p-6 font-sans">
             <div className="max-w-4xl mx-auto flex flex-col gap-6">
+
+                {isLive && (
+                    <div className="bg-yellow-950/40 border border-yellow-900/60 text-yellow-300 p-4 rounded-xl text-xs flex items-center gap-3">
+                        <Info className="w-5 h-5 text-yellow-400 shrink-0" />
+                        <span className="font-medium">Live draft data loaded — decisions are not saved yet</span>
+                    </div>
+                )}
 
                 {/* Brand Header */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
                         <div className="text-xs uppercase tracking-wider font-bold text-indigo-400 mb-1">Express Freight Management</div>
                         <h1 className="text-xl font-bold text-slate-50">SPOT Draft Quote Review</h1>
-                        <p className="text-sm text-slate-400 mt-0.5">{hardCaseAirImportData.quote_summary}</p>
+                        <p className="text-sm text-slate-400 mt-0.5">{draftQuote.quote_summary}</p>
                     </div>
                     <div className="bg-slate-950 border border-slate-800 px-4 py-2.5 rounded-xl shrink-0 text-center sm:text-right">
                         <span className="text-xs text-slate-500 block">Remaining Blockers</span>
