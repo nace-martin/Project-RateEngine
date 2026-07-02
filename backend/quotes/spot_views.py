@@ -3280,6 +3280,36 @@ class SpotTemplateValidationMaintenanceInsightsAPIView(APIView):
         return Response(serializer.data)
 
 
+class SpotEnvelopeDraftQuoteAPIView(APIView):
+    """
+    GET /api/v3/spot/envelopes/<id>/draft-quote/
+
+    Get unified draft quote payload for the exception workspace, validated against the DraftQuoteSchema.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, envelope_id):
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
+            _spe_queryset(),
+        )
+
+        try:
+            from quotes.services.draft_quote_adapter import get_validated_draft_quote
+            import json
+            draft_quote = get_validated_draft_quote(spe_db)
+            data = json.loads(draft_quote.model_dump_json())
+            return Response(data)
+        except Exception as exc:
+            logger.exception("Failed to build or validate draft quote payload for envelope %s", envelope_id)
+            return Response(
+                {"error": f"Failed to build or validate draft quote: {str(exc)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
 
 
 
