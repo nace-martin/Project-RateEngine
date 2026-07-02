@@ -309,7 +309,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     }
 
     return (
-        <div className="min-h-screen bg-slate-955 text-slate-100 p-6 font-sans">
+        <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
             <div className="max-w-4xl mx-auto flex flex-col gap-6">
 
                 {isLive && (
@@ -688,7 +688,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Review Decisions</h2>
                         <div className="flex flex-col gap-2 text-xs">
                             {decisions.map(d => (
-                                <div key={d.id} className="bg-slate-955 border border-slate-850 p-2.5 rounded-lg flex justify-between items-center">
+                                <div key={d.id} className="bg-slate-950 border border-slate-850 p-2.5 rounded-lg flex justify-between items-center">
                                     <span className="text-slate-300">✓ {d.description}</span>
                                     <div className="flex gap-2">
                                         <button

@@ -69,7 +69,7 @@ export default function ExceptionWorkspaceLivePage() {
 
   if (error) {
     return (
-      <div className="w-full min-h-screen bg-slate-955 flex flex-col items-center justify-center text-slate-200 p-6">
+      <div className="w-full min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-200 p-6">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-lg w-full shadow-2xl flex flex-col items-center text-center gap-6">
           <div className="bg-rose-950/40 border border-rose-900/60 p-4 rounded-full text-rose-400">
             <AlertCircle className="w-10 h-10" />
