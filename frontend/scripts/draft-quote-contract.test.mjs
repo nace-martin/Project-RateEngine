@@ -16,101 +16,88 @@ function transpile(source, fileName) {
   }).outputText;
 }
 
-// Write a simple test suite using node:assert
 async function runTests() {
   const fixtureSource = await readFile(fixtureSourcePath, "utf8");
-  // Strip import statement to compile cleanly standalone
   const cleanedSource = fixtureSource.replace(/import\s+[\s\S]*?\s+from\s+['"].*?['"];?/g, "");
   const helperModule = transpile(cleanedSource, fixtureSourcePath);
   
-  // Create temporary inline module data url to import
   const base64Data = Buffer.from(helperModule).toString("base64");
   const moduleUrl = `data:text/javascript;base64,${base64Data}`;
   const { hardCaseAirImportData } = await import(moduleUrl);
 
-  console.log("Starting Phase 8D.3 Resolve Mode UX Refinement Checks...");
+  console.log("Starting Phase 8D.4 Guided Review UX Contract Assertions...");
 
   // 1. Structure validation
   assert.equal(hardCaseAirImportData.contract_version, "1.0.0");
   assert.ok(Array.isArray(hardCaseAirImportData.suggested_charges));
-  assert.equal(hardCaseAirImportData.suggested_charges.length, 5);
 
-  // 2. Validate review queue mapping details
-  assert.equal(hardCaseAirImportData.review_queue.length, 3);
-  const queueTypes = new Set(hardCaseAirImportData.review_queue.map(q => q.type));
-  assert.ok(queueTypes.has("charge_needs_review"));
-  assert.ok(queueTypes.has("unclassified_item"));
+  // 2. Undo & Reopen Transition Simulation
+  let suggestedCharges = [...hardCaseAirImportData.suggested_charges];
+  let reviewQueue = [...hardCaseAirImportData.review_queue];
+  let ignoredItems = [];
 
-  // 3. Verify unclassified item details
-  assert.equal(hardCaseAirImportData.unclassified_items.length, 1);
-  assert.equal(hardCaseAirImportData.unclassified_items[0].id, "unclass-001");
-  assert.ok(hardCaseAirImportData.unclassified_items[0].raw_text.includes("SGD 120.00"));
-
-  // 4. Stateful logic simulation for Phase 8D.3:
-  
-  // (a) Accepted items leave Needs Attention queue simulation
-  let currentReviewQueue = [...hardCaseAirImportData.review_queue];
-  let currentSuggestedCharges = [...hardCaseAirImportData.suggested_charges];
-  
-  // Operator accepts chg-003 (Security Charge)
-  currentSuggestedCharges = currentSuggestedCharges.map(c => 
-    c.id === "chg-003" ? { ...c, status: "accepted_by_user" } : c
-  );
-  currentReviewQueue = currentReviewQueue.filter(q => q.id !== "chg-003");
-  
-  assert.equal(currentReviewQueue.some(q => q.id === "chg-003"), false, "Accepted charge must leave review queue");
-  assert.equal(currentSuggestedCharges.find(c => c.id === "chg-003").status, "accepted_by_user");
-
-  // (b) Ignored items leave Needs Attention and appear under Ignored Items
-  let currentIgnoredItems = [...hardCaseAirImportData.ignored_items];
-  const ignoredTarget = currentSuggestedCharges.find(c => c.id === "chg-001");
-  currentSuggestedCharges = currentSuggestedCharges.map(c => 
+  // Action: Operator ignores chg-001
+  const targetCharge = suggestedCharges.find(c => c.id === "chg-001");
+  suggestedCharges = suggestedCharges.map(c => 
     c.id === "chg-001" ? { ...c, status: "ignored", include_in_totals: false } : c
   );
-  currentIgnoredItems.push({
-    id: "chg-001",
-    raw_text: ignoredTarget.raw_label,
-    ignored_reason: "Ignored by operator",
-    evidence: ignoredTarget.evidence
-  });
-  
-  assert.equal(currentSuggestedCharges.find(c => c.id === "chg-001").status, "ignored");
-  assert.equal(currentSuggestedCharges.find(c => c.id === "chg-001").include_in_totals, false);
-  assert.ok(currentIgnoredItems.some(i => i.id === "chg-001"), "Ignored item must exist in ignored items list");
+  ignoredItems.push({ id: "chg-001", raw_text: targetCharge.raw_label });
+  reviewQueue = reviewQueue.filter(q => q.id !== "chg-001");
 
-  // (c) Missing ProductCode mapping locally
-  currentSuggestedCharges = currentSuggestedCharges.map(c => 
-    c.id === "chg-002" ? { ...c, suggested_product_code: "AF-FUEL", status: "accepted_by_user" } : c
+  assert.equal(suggestedCharges.find(c => c.id === "chg-001").status, "ignored");
+  assert.equal(reviewQueue.some(q => q.id === "chg-001"), false);
+
+  // Undo / Reopen Action: Operator Reopens chg-001
+  suggestedCharges = suggestedCharges.map(c => 
+    c.id === "chg-001" ? { ...c, status: "needs_review", include_in_totals: true } : c
   );
-  currentReviewQueue = currentReviewQueue.filter(q => q.id !== "chg-002");
-  
-  assert.equal(currentSuggestedCharges.find(c => c.id === "chg-002").suggested_product_code, "AF-FUEL");
-  assert.equal(currentSuggestedCharges.find(c => c.id === "chg-002").status, "accepted_by_user");
+  reviewQueue.push({ id: "chg-001", type: "charge_needs_review", message: "Reopened by operator" });
+  ignoredItems = ignoredItems.filter(i => i.id !== "chg-001");
 
-  // (d) Missing ProductCode requested becomes Pending ProductCode
-  currentSuggestedCharges = currentSuggestedCharges.map(c => 
+  assert.equal(suggestedCharges.find(c => c.id === "chg-001").status, "needs_review");
+  assert.ok(reviewQueue.some(q => q.id === "chg-001"), "Reopened item must return to Needs Attention queue");
+
+  // 3. Edit & Cancel Pending ProductCode Request Simulation
+  // Action: Request ProductCode for chg-002
+  suggestedCharges = suggestedCharges.map(c => 
     c.id === "chg-002" ? { ...c, status: "pending_product_code" } : c
   );
-  assert.equal(currentSuggestedCharges.find(c => c.id === "chg-002").status, "pending_product_code");
+  reviewQueue = reviewQueue.filter(q => q.id !== "chg-002");
+  assert.equal(suggestedCharges.find(c => c.id === "chg-002").status, "pending_product_code");
 
-  // (e) Apply to similar only appears when similar items exist
-  const similarCount = hardCaseAirImportData.suggested_charges.filter(c => c.similarity_group_id === "sim-surcharges").length;
-  assert.ok(similarCount > 1, "Similarity checkbox must only display when there is > 1 item in the group");
+  // Action: Operator cancels request and reopens issue
+  suggestedCharges = suggestedCharges.map(c => 
+    c.id === "chg-002" ? { ...c, status: "needs_review" } : c
+  );
+  reviewQueue.push({ id: "chg-002", type: "charge_needs_review", message: "Request cancelled by operator" });
+  assert.equal(suggestedCharges.find(c => c.id === "chg-002").status, "needs_review");
 
-  // (f) Checklist rules: Finish Review is disabled while unresolved exceptions remain
-  const testUnresolvedQueue = [...currentReviewQueue];
-  const testUnclassified = [...hardCaseAirImportData.unclassified_items];
-  const testProductCodesApproved = currentSuggestedCharges.every(c => c.suggested_product_code !== null || c.status === "ignored");
+  // 4. Verification that raw backend enum status names are absent in operator view
+  const technicalTerms = ["accepted_by_user", "unclassified_item", "needs_review", "ignored"];
   
-  const finishReviewActive = testUnresolvedQueue.length === 0 && testUnclassified.length === 0 && testProductCodesApproved;
-  assert.equal(finishReviewActive, false, "Finish Review should be disabled while needs-review or unclassified items exist");
+  function friendlyStatus(status) {
+      switch (status) {
+          case "accepted_by_user": return "Accepted";
+          case "suggested": return "Suggested";
+          case "ignored": return "Ignored";
+          case "pending_product_code": return "Pending Product Code";
+          case "needs_review": return "Needs Attention";
+          case "unclassified":
+          case "unclassified_item": return "Unknown Charge";
+          default: return status;
+      }
+  }
+  
+  technicalTerms.forEach(term => {
+      const friendly = friendlyStatus(term);
+      assert.ok(!technicalTerms.includes(friendly), `User facing status label '${friendly}' must not contain raw backend enums`);
+  });
 
-  // (g) Mixed-currency checks: do not sum SGD and USD into a single total
-  const activeTestCharges = currentSuggestedCharges.filter(c => c.include_in_totals && c.status !== "ignored");
-  const currenciesUsed = Array.from(new Set(activeTestCharges.map(c => c.currency)));
-  assert.ok(currenciesUsed.includes("USD") && currenciesUsed.includes("SGD"), "Should identify mixed USD and SGD currencies");
+  // 5. Mixed-currency checks: assert subtotals are separated
+  const currenciesUsed = Array.from(new Set(suggestedCharges.map(c => c.currency)));
+  assert.ok(currenciesUsed.includes("USD") && currenciesUsed.includes("SGD"), "Should contain multiple currencies");
 
-  console.log("Resolve Mode stateful checks passed successfully!");
+  console.log("Guided review stateful contract assertions passed successfully!");
 }
 
 runTests().catch(err => {

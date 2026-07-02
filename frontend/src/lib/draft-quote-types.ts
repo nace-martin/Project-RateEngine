@@ -11,7 +11,7 @@ export interface Evidence {
     extraction_note: string | null;
 }
 
-export type DraftChargeStatus = 'suggested' | 'needs_review' | 'unclassified' | 'ignored' | 'accepted_by_user';
+export type DraftChargeStatus = 'suggested' | 'needs_review' | 'unclassified' | 'ignored' | 'accepted_by_user' | 'pending_product_code';
 
 export interface DraftCharge {
     id: string;
