@@ -4,6 +4,7 @@ import { API_BASE_URL } from './config';
 import { getJson, sendJson } from './api/shared';
 import { mapQuoteDetailToComputeResult } from './quote-detail-mapping';
 import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
+import { DraftQuote } from './draft-quote-types';
 import {
   LoginData,
   User,
@@ -782,6 +783,27 @@ export async function getSpotEnvelope(id: string): Promise<SpotPricingEnvelope> 
 
   throw lastError || new Error('Failed to get SPE.');
 }
+
+/**
+ * Fetch Draft Quote contract payload for an existing SPOT envelope.
+ */
+export async function getDraftQuote(id: string): Promise<DraftQuote> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${id}/draft-quote/`;
+  const authToken = resolveAuthToken();
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Token ${authToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to fetch draft quote: ${detail}`);
+  }
+
+  return response.json();
+}
+
 
 /**
  * Submit Sales acknowledgement for SPE.
