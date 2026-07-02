@@ -133,23 +133,37 @@ export function ExceptionWorkspace() {
 
     return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-6 font-sans">
+            {/* Prototype warning banner */}
+            <div className="mb-6 bg-amber-950/40 border border-amber-900/60 rounded-xl p-4 flex items-center gap-3 text-amber-200">
+                <AlertCircle className="h-5 w-5 text-amber-400 shrink-0" />
+                <div className="text-sm">
+                    <span className="font-bold">Prototype Only</span> — Running with mock data. Changes made here are local to your browser session and will not persist to the database.
+                </div>
+            </div>
+
             {/* Top Workspace Header */}
             <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-800 pb-5">
                 <div>
                     <div className="flex items-center gap-2 mb-1">
                         <Sparkles className="h-5 w-5 text-indigo-400" />
-                        <span className="text-xs uppercase tracking-wider font-semibold text-indigo-400">Intake Assistant</span>
+                        <span className="text-xs uppercase tracking-wider font-semibold text-indigo-400">Intake Assistant (Prototype)</span>
                     </div>
                     <h1 className="text-2xl font-bold text-slate-50">{draftQuote.quote_summary}</h1>
                     <p className="text-sm text-slate-400 mt-1">Contract Version: {draftQuote.contract_version} | Supplier: {draftQuote.supplier_context.supplier_name}</p>
                 </div>
-                <div className="flex items-center gap-3">
-                    <button className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition font-medium text-sm">
-                        Reset Draft
-                    </button>
-                    <button className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition font-semibold text-sm shadow-lg shadow-indigo-900/30 flex items-center gap-2">
-                        <CheckCircle className="h-4 w-4" /> Accept and Sync to V4
-                    </button>
+                <div className="flex flex-col items-end gap-1.5">
+                    <div className="flex items-center gap-3">
+                        <button className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition font-medium text-sm">
+                            Reset Draft
+                        </button>
+                        <button 
+                            onClick={() => alert("Prototype: Accepted locally. Database persistence and pricing engine sync are not available in this mockup.")}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition font-semibold text-sm shadow-lg shadow-indigo-900/30 flex items-center gap-2"
+                        >
+                            <CheckCircle className="h-4 w-4" /> Prototype: Accept Locally
+                        </button>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-medium">Sync not available in this prototype</span>
                 </div>
             </div>
 
