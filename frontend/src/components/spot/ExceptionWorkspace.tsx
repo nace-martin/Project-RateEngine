@@ -1,31 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, ShieldAlert, FileText } from "lucide-react";
+import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
 import { hardCaseAirImportData } from "../../data/hardCaseAirImport";
 import { DraftCharge, DraftChargeStatus, Evidence } from "../../lib/draft-quote-types";
 
-// Friendly display name helper for statuses
-function friendlyStatus(status: string): string {
-    switch (status) {
-        case "accepted_by_user":
-            return "Accepted";
-        case "suggested":
-            return "Suggested";
-        case "needs_review":
-            return "Needs Review";
-        case "unclassified":
-            return "Unknown Charge";
-        case "ignored":
-            return "Ignored";
-        case "pending_product_code":
-            return "Pending Product Code Approval";
-        default:
-            return status;
-    }
-}
-
-// Humanized rate parser helper
+// Helper to convert rate specs into human-friendly text
 function humanizeRate(rate: number | null, unit: string | null, label: string): string {
     if (label.includes("Min") && rate) {
         return `Minimum USD 230.00 or USD ${rate.toFixed(2)} per ${unit || "kg"}`;
@@ -45,41 +25,61 @@ function humanizeRate(rate: number | null, unit: string | null, label: string): 
     return "Flat fee";
 }
 
-interface ResolveIssue {
-    id: string;
-    type: "review_item" | "unknown_charge";
-    title: string;
-    problem: string;
-    charge?: DraftCharge;
-    itemDetails?: {
-        id: string;
-        raw_text: string;
-        evidence: Evidence | null;
-        review_reason: string;
+function friendlyStatus(status: string): string {
+    switch (status) {
+        case "accepted_by_user": return "Accepted";
+        case "suggested": return "Suggested";
+        case "ignored": return "Ignored";
+        case "pending_product_code": return "Pending Product Code";
+        case "needs_review": return "Needs Attention";
+        case "unclassified":
+        case "unclassified_item": return "Unknown Charge";
+        default: return status;
+    }
+}
+
+// Stateful Decision type for Reopen/Undo logging
+interface Decision {
+    id: string; // charge id or item id
+    type: "map" | "request" | "ignore" | "accept" | "add";
+    description: string;
+    originalState: {
+        suggestedCharges: DraftCharge[];
+        reviewQueue: Array<{ id: string; type: string; message: string }>;
+        unclassifiedItems: Array<{ id: string; raw_text: string; evidence: Evidence | null; review_reason: string }>;
+        ignoredItems: Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>;
     };
 }
 
 export function ExceptionWorkspace() {
-    // Single source of truth state for mock data
-    const [draftQuote, setDraftQuote] = useState(hardCaseAirImportData);
-    
-    // Accordion UI toggles
+    // Single state containers for mock database updates
+    const [draftQuote] = useState(hardCaseAirImportData);
+    const [explainTotals, setExplainTotals] = useState(false);
+    const [suggestedCharges, setSuggestedCharges] = useState(hardCaseAirImportData.suggested_charges);
+    const [reviewQueue, setReviewQueue] = useState(hardCaseAirImportData.review_queue);
+    const [unclassifiedItems, setUnclassifiedItems] = useState(hardCaseAirImportData.unclassified_items);
+    const [ignoredItems, setIgnoredItems] = useState<Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>>([]);
+    const [decisions, setDecisions] = useState<Decision[]>([]);
+
+    // Guided resolving workflow states
+    const [activeIssueId, setActiveIssueId] = useState<string | null>("chg-002");
+    const [selectedActionType, setSelectedActionType] = useState<string | null>(null);
+    const [showHelpText, setShowHelpText] = useState(false);
+
+    // Accordions
     const [showSuggested, setShowSuggested] = useState(false);
     const [showTerms, setShowTerms] = useState(false);
     const [showTotalsPanel, setShowTotalsPanel] = useState(false);
-    const [explainTotals, setExplainTotals] = useState(false);
 
-    // Resolution mode workflow states
-    const [activeIssueIndex, setActiveIssueIndex] = useState(0);
-    const [selectedActionType, setSelectedActionType] = useState<string | null>(null);
-
-    // Request new ProductCode modal/inline form fields
+    // Request new ProductCode fields
     const [reqLabel, setReqLabel] = useState("");
     const [reqSource, setReqSource] = useState("");
     const [reqCurrency, setReqCurrency] = useState("");
     const [reqAmount, setReqAmount] = useState("");
 
-    // Add Unknown Charge inline form fields
+    // Add Unknown Charge wizard fields
+    const [unknownStep, setUnknownStep] = useState(1);
+    const [unknownClassification, setUnknownClassification] = useState<string | null>(null);
     const [addName, setAddName] = useState("");
     const [addBucket, setAddBucket] = useState("origin_charges");
     const [addCurrency, setAddCurrency] = useState("SGD");
@@ -87,43 +87,52 @@ export function ExceptionWorkspace() {
     const [addUnit, setAddUnit] = useState("set");
     const [addProductCode, setAddProductCode] = useState("");
 
-    // Prototype override toggle
+    // Action message alert banner
+    const [actionMessage, setActionMessage] = useState<string | null>(null);
+    
+    // Prototype override
     const [prototypeOverride, setPrototypeOverride] = useState(false);
 
-    // Dynamic resolution queue matching (only unresolved items from reviewQueue + unclassifiedItems)
-    const combinedUnresolved: ResolveIssue[] = [
-        ...draftQuote.review_queue.map(item => ({
-            id: item.id,
-            type: "review_item" as const,
-            title: item.id === "chg-002" ? "Fuel Surcharge" : "Security Charge",
-            problem: item.id === "chg-002" 
-                ? "No matching ProductCode found in RateEngine." 
-                : "Currency was inherited from shipment context and needs validation.",
-            charge: draftQuote.suggested_charges.find(c => c.id === item.id)
-        })),
-        ...draftQuote.unclassified_items.map(item => ({
-            id: item.id,
-            type: "unknown_charge" as const,
-            title: "Unknown Charge Block",
-            problem: "Commercial text block extracted from quote document could not be safely mapped to a standard charge line.",
-            itemDetails: item
-        }))
-    ];
+    // Save snapshot state helper for Undos
+    const captureSnapshot = (id: string, type: "map" | "request" | "ignore" | "accept" | "add", desc: string) => {
+        const snapshot: Decision = {
+            id,
+            type,
+            description: desc,
+            originalState: {
+                suggestedCharges: JSON.parse(JSON.stringify(suggestedCharges)),
+                reviewQueue: JSON.parse(JSON.stringify(reviewQueue)),
+                unclassifiedItems: JSON.parse(JSON.stringify(unclassifiedItems)),
+                ignoredItems: JSON.parse(JSON.stringify(ignoredItems))
+            }
+        };
+        setDecisions(prev => [...prev.filter(d => d.id !== id), snapshot]);
+    };
 
-    const currentIssue = combinedUnresolved[activeIssueIndex] || null;
+    // Undo action decision helper
+    const handleUndoDecision = (id: string) => {
+        const targetDecision = decisions.find(d => d.id === id);
+        if (targetDecision) {
+            setSuggestedCharges(targetDecision.originalState.suggestedCharges);
+            setReviewQueue(targetDecision.originalState.reviewQueue);
+            setUnclassifiedItems(targetDecision.originalState.unclassifiedItems);
+            setIgnoredItems(targetDecision.originalState.ignoredItems);
+            setDecisions(prev => prev.filter(d => d.id !== id));
+            setActionMessage(`Undone decision for ${targetDecision.description}.`);
+            setActiveIssueId(id);
+            setSelectedActionType(null);
+            setUnknownStep(1);
+        }
+    };
 
-    // Actions
-    const handleMapProductCode = (chargeId: string, productCode: string) => {
-        setDraftQuote(prev => {
-            const updated = prev.suggested_charges.map(c => 
-                c.id === chargeId ? { ...c, suggested_product_code: productCode, status: "accepted_by_user" as DraftChargeStatus } : c
-            );
-            return {
-                ...prev,
-                suggested_charges: updated,
-                review_queue: prev.review_queue.filter(q => q.id !== chargeId)
-            };
-        });
+    // Action execution helpers
+    const handleMapProductCode = (chargeId: string, productCode: string, displayLabel: string) => {
+        captureSnapshot(chargeId, "map", `Mapped ${displayLabel} to billing code ${productCode}`);
+        setSuggestedCharges(prev =>
+            prev.map(c => (c.id === chargeId ? { ...c, suggested_product_code: productCode, status: "accepted_by_user" as DraftChargeStatus } : c))
+        );
+        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
+        setActionMessage(`${displayLabel} mapped to billing code ${productCode}. Resolved and included in draft.`);
         setSelectedActionType(null);
     };
 
@@ -136,62 +145,59 @@ export function ExceptionWorkspace() {
     };
 
     const handleSubmitProductCodeRequest = (chargeId: string) => {
-        setDraftQuote(prev => {
-            const updated = prev.suggested_charges.map(c => 
-                c.id === chargeId ? { ...c, status: "pending_product_code" as DraftChargeStatus } : c
-            );
-            return {
-                ...prev,
-                suggested_charges: updated,
-                review_queue: prev.review_queue.filter(q => q.id !== chargeId)
-            };
-        });
+        captureSnapshot(chargeId, "request", `Requested new billing code for ${reqLabel}`);
+        setSuggestedCharges(prev =>
+            prev.map(c => (c.id === chargeId ? { ...c, status: "pending_product_code" as DraftChargeStatus } : c))
+        );
+        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
+        setActionMessage(`New ProductCode request created for ${reqLabel}. Resolved locally and pending approval.`);
         setSelectedActionType(null);
-        alert(`Product code request submitted locally for ${reqLabel}. This charge is now pending code approval.`);
+    };
+
+    const handleAcceptSuggestedMapping = (chargeId: string, displayLabel: string, suggestedCode: string) => {
+        captureSnapshot(chargeId, "accept", `Accepted code ${suggestedCode} for ${displayLabel}`);
+        setSuggestedCharges(prev =>
+            prev.map(c => (c.id === chargeId ? { ...c, status: "accepted_by_user" as DraftChargeStatus } : c))
+        );
+        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
+        setActionMessage(`Accepted suggested mapping ${suggestedCode} for ${displayLabel}.`);
+        setSelectedActionType(null);
     };
 
     const handleIgnoreCharge = (chargeId: string, charge: DraftCharge) => {
-        setDraftQuote(prev => {
-            const updatedSuggested = prev.suggested_charges.map(c => 
-                c.id === chargeId ? { ...c, status: "ignored" as DraftChargeStatus, include_in_totals: false } : c
-            );
-            const updatedIgnored = [
-                ...prev.ignored_items,
-                {
-                    id: chargeId,
-                    raw_text: charge.raw_label,
-                    ignored_reason: "Operator chose to exclude this charge line during review",
-                    evidence: charge.evidence
-                }
-            ];
-            return {
-                ...prev,
-                suggested_charges: updatedSuggested,
-                ignored_items: updatedIgnored,
-                review_queue: prev.review_queue.filter(q => q.id !== chargeId)
-            };
-        });
+        captureSnapshot(chargeId, "ignore", `Ignored ${charge.display_label}`);
+        setSuggestedCharges(prev =>
+            prev.map(c => (c.id === chargeId ? { ...c, status: "ignored" as DraftChargeStatus, include_in_totals: false } : c))
+        );
+        setIgnoredItems(prev => [
+            ...prev,
+            {
+                id: chargeId,
+                raw_text: charge.raw_label,
+                ignored_reason: "Ignored by operator during quote review",
+                evidence: charge.evidence
+            }
+        ]);
+        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
+        setActionMessage(`${charge.display_label} ignored and excluded from totals.`);
         setSelectedActionType(null);
     };
 
     const handleIgnoreUnknownCharge = (itemId: string, rawText: string) => {
-        setDraftQuote(prev => {
-            const updatedIgnored = [
-                ...prev.ignored_items,
-                {
-                    id: itemId,
-                    raw_text: rawText,
-                    ignored_reason: "Operator marked unknown charge text block as non-commercial text",
-                    evidence: prev.unclassified_items.find(i => i.id === itemId)?.evidence || null
-                }
-            ];
-            return {
-                ...prev,
-                ignored_items: updatedIgnored,
-                unclassified_items: prev.unclassified_items.filter(i => i.id !== itemId)
-            };
-        });
+        captureSnapshot(itemId, "ignore", "Ignored unknown text block");
+        setIgnoredItems(prev => [
+            ...prev,
+            {
+                id: itemId,
+                raw_text: rawText,
+                ignored_reason: "Operator ignored text block as non-commercial text",
+                evidence: unclassifiedItems.find(i => i.id === itemId)?.evidence || null
+            }
+        ]);
+        setUnclassifiedItems(prev => prev.filter(i => i.id !== itemId));
+        setActionMessage(`Ignored unknown text block. Excluded from draft.`);
         setSelectedActionType(null);
+        setUnknownStep(1);
     };
 
     const handleAddUnknownAsCharge = (itemId: string) => {
@@ -216,133 +222,182 @@ export function ExceptionWorkspace() {
             conditions: [],
             warnings: [],
             review_reason: null,
-            evidence: draftQuote.unclassified_items.find(i => i.id === itemId)?.evidence || null,
+            evidence: unclassifiedItems.find(i => i.id === itemId)?.evidence || null,
             similarity_group_id: null,
             correction_actions: []
         };
 
-        setDraftQuote(prev => {
-            const updatedSuggested = [...prev.suggested_charges, newCharge];
-            const updatedQueue = [...prev.review_queue];
-            if (!addProductCode) {
-                updatedQueue.push({
+        captureSnapshot(itemId, "add", `Added unknown block as charge ${addName}`);
+        setSuggestedCharges(prev => [...prev, newCharge]);
+        setUnclassifiedItems(prev => prev.filter(i => i.id !== itemId));
+        
+        if (!addProductCode) {
+            setReviewQueue(prev => [
+                ...prev,
+                {
                     id: newChargeId,
                     type: "charge_needs_review",
                     message: "Newly added charge line requires a valid ProductCode mapping."
-                });
-            }
-            return {
-                ...prev,
-                suggested_charges: updatedSuggested,
-                review_queue: updatedQueue,
-                unclassified_items: prev.unclassified_items.filter(i => i.id !== itemId)
-            };
-        });
+                }
+            ]);
+        }
 
+        setActionMessage(`Unknown block added as draft charge line: "${addName}".`);
         setSelectedActionType(null);
-        alert(`Successfully added unknown charge block as "${addName}".`);
+        setUnknownStep(1);
     };
 
     const toggleIncludeInTotals = (chargeId: string) => {
-        setDraftQuote(prev => {
-            const updated = prev.suggested_charges.map(c => 
-                c.id === chargeId ? { ...c, include_in_totals: !c.include_in_totals } : c
-            );
-            return {
-                ...prev,
-                suggested_charges: updated
-            };
-        });
+        setSuggestedCharges(prev =>
+            prev.map(c => (c.id === chargeId ? { ...c, include_in_totals: !c.include_in_totals } : c))
+        );
     };
 
-    // Calculate totals dynamically split by currency
-    const activeCharges = draftQuote.suggested_charges.filter(c => c.include_in_totals && c.status !== "ignored");
+    // Calculate dynamic lists matching live decisions
+    const combinedUnresolved = [
+        ...reviewQueue.map(item => {
+            const charge = suggestedCharges.find(c => c.id === item.id);
+            return {
+                id: item.id,
+                type: "review_item",
+                title: charge?.display_label || "Needs Review",
+                problem: item.id === "chg-002"
+                    ? "No approved ProductCode mapping found in RateEngine."
+                    : "Currency was inherited from shipment context and requires validation.",
+                evidence: charge?.evidence,
+                charge
+            };
+        }),
+        ...unclassifiedItems.map(item => ({
+            id: item.id,
+            type: "unknown_charge",
+            title: "Unknown Charge Block",
+            problem: "Commercial text block extracted from quote document could not be safely mapped to a standard charge line.",
+            evidence: item.evidence,
+            itemDetails: item
+        }))
+    ];
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const currentIssue = (combinedUnresolved.find(i => i.id === activeIssueId) || combinedUnresolved[0] || null) as any;
+
+    // Calculate totals split by currency
+    const activeCharges = suggestedCharges.filter(c => c.include_in_totals && c.status !== "ignored");
     const uniqueCurrencies = Array.from(new Set(activeCharges.map(c => c.currency)));
     const subtotals = uniqueCurrencies.reduce((acc, curr) => {
         acc[curr] = activeCharges.filter(c => c.currency === curr).reduce((sum, c) => sum + c.amount, 0);
         return acc;
     }, {} as Record<string, number>);
 
-    // Checklist statuses
+    // Checklist validators
     const checklistIssuesResolved = combinedUnresolved.length === 0;
-    const checklistNoUnknown = draftQuote.unclassified_items.length === 0;
-    const checklistProductCodesVerified = draftQuote.suggested_charges
+    const checklistNoUnknown = unclassifiedItems.length === 0;
+    const checklistProductCodesVerified = suggestedCharges
         .filter(c => c.include_in_totals && c.status !== "ignored")
-        .every(c => c.suggested_product_code !== null && c.status !== ("pending_product_code" as DraftChargeStatus));
-    
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .every(c => c.suggested_product_code !== null && c.status !== ("pending_product_code" as any));
+
     const canFinishReview = checklistIssuesResolved && checklistNoUnknown && checklistProductCodesVerified;
 
+    // Direct Next-Step instructions guidance
+    let nextStepGuidance = "Review the remaining commercial term before finishing.";
+    if (combinedUnresolved.length > 0) {
+        const first = combinedUnresolved[0];
+        if (first.type === "review_item") {
+            nextStepGuidance = `Next step: Choose a ProductCode for ${first.title}.`;
+        } else {
+            nextStepGuidance = `Next step: Decide whether this unknown text is a real charge.`;
+        }
+    }
+
     return (
-        <div className="min-h-screen bg-slate-955 text-slate-100 p-6 font-sans">
+        <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
             <div className="max-w-4xl mx-auto flex flex-col gap-6">
-                
-                {/* Header Summary */}
-                <div className="bg-slate-905 border border-slate-800 rounded-2xl p-6 shadow-xl flex justify-between items-center">
+
+                {/* Brand Header */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
-                        <h1 className="text-xl font-bold text-slate-50">Review Workspace</h1>
-                        <p className="text-sm text-slate-400 mt-1">Guided exception workflow for operators</p>
+                        <div className="text-xs uppercase tracking-wider font-bold text-indigo-400 mb-1">Express Freight Management</div>
+                        <h1 className="text-xl font-bold text-slate-50">SPOT Draft Quote Review</h1>
+                        <p className="text-sm text-slate-400 mt-0.5">{hardCaseAirImportData.quote_summary}</p>
                     </div>
-                    <div className="text-right">
-                        <span className="text-xs text-slate-500 block">Remaining Items</span>
-                        <span className="text-lg font-bold text-amber-400">{combinedUnresolved.length} issues left</span>
+                    <div className="bg-slate-950 border border-slate-800 px-4 py-2.5 rounded-xl shrink-0 text-center sm:text-right">
+                        <span className="text-xs text-slate-500 block">Remaining Blockers</span>
+                        <span className="text-lg font-bold text-amber-400">{combinedUnresolved.length} Issues Left</span>
                     </div>
                 </div>
 
-                {/* 1. Resolve Mode Card */}
+                {/* "What should I do next?" banner */}
+                <div className="bg-indigo-950/20 border border-indigo-900/60 rounded-xl p-4 flex items-center gap-3 text-xs text-indigo-300">
+                    <Info className="h-5 w-5 text-indigo-400 shrink-0" />
+                    <div>
+                        <span className="font-bold block">Current Task</span>
+                        <span>{nextStepGuidance}</span>
+                    </div>
+                </div>
+
+                {/* Live Action Message Confirmations */}
+                {actionMessage && (
+                    <div className="bg-emerald-950/40 border border-emerald-900/60 text-emerald-300 p-4 rounded-xl text-xs flex justify-between items-center">
+                        <span>{actionMessage}</span>
+                        <button onClick={() => setActionMessage(null)} className="text-emerald-500 hover:text-emerald-300 font-bold">Dismiss</button>
+                    </div>
+                )}
+
+                {/* Main Guided resolutions Panel */}
                 {currentIssue ? (
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg">
-                        <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
-                            <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
-                                Issue {activeIssueIndex + 1} of {combinedUnresolved.length}
-                            </span>
-                            <div className="flex gap-1.5">
-                                <button
-                                    disabled={activeIssueIndex === 0}
-                                    onClick={() => { setActiveIssueIndex(prev => prev - 1); setSelectedActionType(null); }}
-                                    className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded text-xs text-slate-400 disabled:opacity-40"
-                                >
-                                    Previous
-                                </button>
-                                <button
-                                    disabled={activeIssueIndex >= combinedUnresolved.length - 1}
-                                    onClick={() => { setActiveIssueIndex(prev => prev + 1); setSelectedActionType(null); }}
-                                    className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded text-xs text-slate-400 disabled:opacity-40"
-                                >
-                                    Next
-                                </button>
+                        
+                        {/* Title Row */}
+                        <div className="flex justify-between items-center pb-3 border-b border-slate-800 mb-4">
+                            <div>
+                                <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider block">Resolve Mode</span>
+                                <h2 className="text-lg font-bold text-slate-50 mt-0.5">{currentIssue.title}</h2>
                             </div>
+                            <span className="text-[10px] text-amber-400 font-semibold bg-amber-950/40 px-2.5 py-1 rounded border border-amber-900/40">
+                                Needs Attention
+                            </span>
                         </div>
 
-                        <h2 className="text-lg font-bold text-slate-50 mb-1">{currentIssue.title}</h2>
+                        {/* Collapsible Guidance Drawer */}
+                        <div className="mb-4">
+                            <button 
+                                onClick={() => setShowHelpText(!showHelpText)} 
+                                className="text-xs text-indigo-400 font-semibold hover:underline flex items-center gap-1"
+                            >
+                                {showHelpText ? "Hide explanation" : "Why am I seeing this?"}
+                            </button>
+                            {showHelpText && (
+                                <div className="mt-2 bg-slate-950 border border-slate-850 rounded-xl p-3.5 text-xs text-slate-300 leading-relaxed">
+                                    {currentIssue.type === "review_item" ? (
+                                        "RateEngine extracted this charge from the supplier quote, but it could not safely match a billing code. Choosing the correct billing code ensures accurate reporting, margins, and customer invoicing."
+                                    ) : (
+                                        "The quote contains commercial-looking text blocks that did not match standard layout definitions. Decide whether this represents a real charge, a conditions note, or should be ignored."
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
                         <p className="text-xs text-slate-400 mb-4">{currentIssue.problem}</p>
 
-                        {/* Evidence Display (Contextual) */}
-                        {currentIssue.type === "review_item" && currentIssue.charge && (
-                            <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl mb-6">
-                                <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Source Quote Evidence</div>
-                                <p className="text-sm font-mono text-slate-200 italic mb-2">
-                                    &quot;{currentIssue.charge.evidence?.source_text || currentIssue.charge.raw_label}&quot;
+                        {/* Matched Evidence context */}
+                        {currentIssue.evidence && (
+                            <div className="bg-slate-950 border border-slate-855 rounded-xl p-4 mb-6">
+                                <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Source Quote Text</div>
+                                <p className="text-sm font-mono text-slate-200 italic mb-1.5">
+                                    &quot;{currentIssue.evidence.source_text}&quot;
                                 </p>
                                 <span className="text-xs text-slate-400">
-                                    Detected amount: {currentIssue.charge.currency} {currentIssue.charge.amount}
+                                    Document Location: page {currentIssue.evidence.page || 1} ({currentIssue.evidence.document_reference || "attachment"})
                                 </span>
                             </div>
                         )}
 
-                        {currentIssue.type === "unknown_charge" && currentIssue.itemDetails && (
-                            <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl mb-6">
-                                <div className="text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">Extracted Text block</div>
-                                <p className="text-sm font-mono text-slate-200 italic">
-                                    &quot;{currentIssue.itemDetails.raw_text}&quot;
-                                </p>
-                            </div>
-                        )}
-
-                        {/* Guided Actions */}
+                        {/* Guided workflows */}
                         {selectedActionType === null ? (
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-col gap-4">
                                 {currentIssue.type === "review_item" && currentIssue.charge ? (
-                                    <>
+                                    <div className="flex flex-wrap gap-2">
                                         <button
                                             onClick={() => setSelectedActionType("map_existing")}
                                             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
@@ -355,49 +410,135 @@ export function ExceptionWorkspace() {
                                         >
                                             Request New ProductCode
                                         </button>
+                                        {currentIssue.charge.suggested_product_code && (
+                                            <button
+                                                onClick={() => handleAcceptSuggestedMapping(currentIssue.id, currentIssue.title, currentIssue.charge!.suggested_product_code!)}
+                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Accept Suggested Mapping ({currentIssue.charge.suggested_product_code})
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => handleIgnoreCharge(currentIssue.id, currentIssue.charge!)}
                                             className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
                                         >
-                                            Ignore Charge
-                                        </button>
-                                    </>
-                                ) : currentIssue.itemDetails ? (
-                                    <>
-                                        <button
-                                            onClick={() => setSelectedActionType("add_charge")}
-                                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
-                                        >
-                                            Add as Charge
-                                        </button>
-                                        <button
-                                            onClick={() => setSelectedActionType("map_existing")}
-                                            className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition"
-                                        >
-                                            Map to Existing ProductCode
-                                        </button>
-                                        <button
-                                            onClick={() => handleIgnoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
-                                            className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
-                                        >
                                             Ignore as Non-Commercial
                                         </button>
-                                    </>
+                                    </div>
+                                ) : currentIssue.itemDetails ? (
+                                    /* Unknown Charge Guided flow wizard */
+                                    <div className="flex flex-col gap-4">
+                                        {unknownStep === 1 ? (
+                                            <div className="flex flex-col gap-2.5">
+                                                <div className="text-xs font-semibold text-slate-300">Step 1: What is this text block?</div>
+                                                <div className="flex flex-col sm:flex-row gap-2">
+                                                    <button
+                                                        onClick={() => { setUnknownClassification("charge"); setUnknownStep(2); }}
+                                                        className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs font-semibold text-slate-200 text-left grow"
+                                                    >
+                                                        A real charge line
+                                                    </button>
+                                                    <button
+                                                        onClick={() => { setUnknownClassification("note"); setUnknownStep(2); }}
+                                                        className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs font-semibold text-slate-200 text-left grow"
+                                                    >
+                                                        A notes annotation or cargo condition
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleIgnoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
+                                                        className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-red-900 hover:text-red-400 rounded-lg text-xs font-semibold text-red-400 text-left grow"
+                                                    >
+                                                        Not relevant (Ignore)
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : unknownStep === 2 ? (
+                                            <div className="flex flex-col gap-3">
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-400">
+                                                    <button onClick={() => setUnknownStep(1)} className="hover:underline flex items-center gap-0.5 text-indigo-400 font-semibold">
+                                                        <ArrowLeft className="h-3.5 w-3.5" /> Back
+                                                    </button>
+                                                    <span>| Classification: {unknownClassification}</span>
+                                                </div>
+                                                
+                                                {unknownClassification === "charge" ? (
+                                                    <div className="flex flex-col gap-2.5">
+                                                        <div className="text-xs font-semibold text-slate-300">Step 2: How should it be mapped?</div>
+                                                        <div className="flex flex-col sm:flex-row gap-2">
+                                                            <button
+                                                                onClick={() => { setSelectedActionType("map_existing"); }}
+                                                                className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
+                                                            >
+                                                                Map to an existing billing code
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setReqLabel("Unknown Charge Item");
+                                                                    setReqSource(currentIssue.itemDetails!.raw_text);
+                                                                    setReqCurrency("SGD");
+                                                                    setReqAmount("0");
+                                                                    setSelectedActionType("request_product_code");
+                                                                }}
+                                                                className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
+                                                            >
+                                                                Request new billing code
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setAddName("New Charge");
+                                                                    setAddAmount("0");
+                                                                    setSelectedActionType("add_charge");
+                                                                }}
+                                                                className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
+                                                            >
+                                                                Add manually as draft charge line
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex flex-col gap-2.5">
+                                                        <div className="text-xs font-semibold text-slate-300">Step 2: Handle condition note</div>
+                                                        <p className="text-xs text-slate-400">Notes can be ignored in quote calculations but are preserved in commercial terms logs.</p>
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => {
+                                                                    captureSnapshot(currentIssue.id, "accept", `Accepted condition note: ${currentIssue.itemDetails!.raw_text}`);
+                                                                    setUnclassifiedItems(prev => prev.filter(i => i.id !== currentIssue.id));
+                                                                    setActionMessage("Note resolved and archived in quote details.");
+                                                                    setUnknownStep(1);
+                                                                }}
+                                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-xs text-white font-semibold"
+                                                            >
+                                                                Approve & File Note
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleIgnoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
+                                                                className="px-4 py-2 bg-slate-950 border border-slate-850 hover:border-slate-700 rounded text-xs text-slate-400"
+                                                            >
+                                                                Ignore Note
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : null}
+                                    </div>
                                 ) : null}
                             </div>
                         ) : selectedActionType === "map_existing" ? (
                             <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
-                                <h3 className="text-xs uppercase font-bold text-indigo-400">Select Existing Billing Code</h3>
+                                <h3 className="text-xs uppercase font-bold text-indigo-400">Map to Existing ProductCode</h3>
+                                <p className="text-xs text-slate-400">Choose this if the billing code already exists in EFM RateEngine catalog.</p>
                                 <div className="flex gap-2">
                                     <select
                                         onChange={e => {
                                             if (e.target.value) {
-                                                handleMapProductCode(currentIssue.id, e.target.value);
+                                                handleMapProductCode(currentIssue.id, e.target.value, currentIssue.title);
                                             }
                                         }}
                                         className="text-xs bg-slate-900 border border-slate-800 rounded p-2 text-slate-200 grow"
                                     >
-                                        <option value="">-- Choose Approved Billing Code --</option>
+                                        <option value="">-- Choose Billing Code --</option>
                                         <option value="AF-FREIGHT">AF-FREIGHT (Air Freight Linehaul)</option>
                                         <option value="AF-FUEL">AF-FUEL (Fuel Surcharge)</option>
                                         <option value="AF-SEC">AF-SEC (Security Charge)</option>
@@ -414,13 +555,14 @@ export function ExceptionWorkspace() {
                         ) : selectedActionType === "request_product_code" ? (
                             <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
                                 <h3 className="text-xs uppercase font-bold text-indigo-400">Request New ProductCode</h3>
+                                <p className="text-xs text-slate-400">Choose this if the charge is legitimate but the code is missing from the master EFM database.</p>
                                 <div className="grid grid-cols-2 gap-3 text-xs">
                                     <div>
-                                        <label className="text-slate-500 block mb-1">Charge Label</label>
+                                        <label className="text-slate-500 block mb-1">Charge Name</label>
                                         <input type="text" value={reqLabel} onChange={e => setReqLabel(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
                                     </div>
                                     <div>
-                                        <label className="text-slate-500 block mb-1">Source Text</label>
+                                        <label className="text-slate-500 block mb-1">Quote Extracted Text</label>
                                         <input type="text" value={reqSource} onChange={e => setReqSource(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
                                     </div>
                                     <div>
@@ -449,14 +591,14 @@ export function ExceptionWorkspace() {
                             </div>
                         ) : selectedActionType === "add_charge" ? (
                             <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
-                                <h3 className="text-xs uppercase font-bold text-indigo-400">Add Unknown Block as Charge Line</h3>
+                                <h3 className="text-xs uppercase font-bold text-indigo-400">Add manually as draft charge line</h3>
                                 <div className="grid grid-cols-2 gap-3 text-xs">
                                     <div>
                                         <label className="text-slate-500 block mb-1">Charge Name</label>
                                         <input type="text" value={addName} onChange={e => setAddName(e.target.value)} placeholder="e.g. Handling Fee" className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
                                     </div>
                                     <div>
-                                        <label className="text-slate-500 block mb-1">Bucket</label>
+                                        <label className="text-slate-500 block mb-1">Section Bucket</label>
                                         <select value={addBucket} onChange={e => setAddBucket(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5">
                                             <option value="origin_charges">Origin Charges</option>
                                             <option value="destination_charges">Destination Charges</option>
@@ -472,12 +614,12 @@ export function ExceptionWorkspace() {
                                         <input type="text" value={addAmount} onChange={e => setAddAmount(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
                                     </div>
                                     <div>
-                                        <label className="text-slate-500 block mb-1">Unit</label>
+                                        <label className="text-slate-500 block mb-1">Unit Spec</label>
                                         <input type="text" value={addUnit} onChange={e => setAddUnit(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
                                     </div>
                                     <div>
-                                        <label className="text-slate-500 block mb-1">Product Code (Optional)</label>
-                                        <input type="text" value={addProductCode} onChange={e => setAddProductCode(e.target.value)} placeholder="Map directly to code if known" className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
+                                        <label className="text-slate-500 block mb-1">Mapping Code (Optional)</label>
+                                        <input type="text" value={addProductCode} onChange={e => setAddProductCode(e.target.value)} placeholder="Approved ProductCode" className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
                                     </div>
                                 </div>
                                 <div className="flex gap-2 justify-end mt-2">
@@ -503,12 +645,67 @@ export function ExceptionWorkspace() {
                         <CheckCircle className="h-10 w-10 text-emerald-400" />
                         <div>
                             <h2 className="text-base font-bold text-slate-50">All Issues Resolved</h2>
-                            <p className="text-xs text-slate-400 mt-1">Review validation checks below and complete the final checklist.</p>
+                            <p className="text-xs text-slate-400 mt-1">Checklist checks are verified. You can finalize review below.</p>
                         </div>
                     </div>
                 )}
 
-                {/* 2. Suggested Charges Accordion */}
+                {/* "Still Needs Attention" block list matches checklist issues */}
+                {combinedUnresolved.length > 0 && (
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Still Needs Attention</h2>
+                        <div className="flex flex-col gap-2.5">
+                            {combinedUnresolved.map(item => (
+                                <div key={item.id} className="bg-slate-950 border border-slate-850 rounded-xl p-3 flex justify-between items-center text-xs">
+                                    <div>
+                                        <strong className="block text-slate-200">{item.title}</strong>
+                                        <span className="text-slate-400 mt-0.5 block">{item.problem}</span>
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setActiveIssueId(item.id);
+                                            setSelectedActionType(null);
+                                            setUnknownStep(1);
+                                        }}
+                                        className="px-2.5 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-900 text-indigo-300 hover:text-white rounded font-semibold transition"
+                                    >
+                                        Resolve Now
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* decisions Log / Review Decisions Panel */}
+                {decisions.length > 0 && (
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Review Decisions</h2>
+                        <div className="flex flex-col gap-2 text-xs">
+                            {decisions.map(d => (
+                                <div key={d.id} className="bg-slate-955 border border-slate-850 p-2.5 rounded-lg flex justify-between items-center">
+                                    <span className="text-slate-300">✓ {d.description}</span>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => handleUndoDecision(d.id)}
+                                            className="text-xs text-indigo-400 font-semibold hover:underline"
+                                        >
+                                            {d.type === "map" ? "Edit Mapping" : d.type === "request" ? "Edit Request" : "Reopen"}
+                                        </button>
+                                        <button
+                                            onClick={() => handleUndoDecision(d.id)}
+                                            className="text-xs text-slate-500 font-semibold hover:underline"
+                                        >
+                                            Undo
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Suggested Charges Accordion */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
                     <button
                         onClick={() => setShowSuggested(!showSuggested)}
@@ -516,7 +713,7 @@ export function ExceptionWorkspace() {
                     >
                         <div className="flex items-center gap-2">
                             <CheckCircle className="h-5 w-5 text-indigo-400" />
-                            <span>Suggested Charges ({draftQuote.suggested_charges.length})</span>
+                            <span>Suggested Charges ({suggestedCharges.length})</span>
                         </div>
                         {showSuggested ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
                     </button>
@@ -524,7 +721,7 @@ export function ExceptionWorkspace() {
                     {showSuggested && (
                         <div className="border-t border-slate-800 p-5 bg-slate-900/40">
                             <div className="divide-y divide-slate-800/60 text-sm">
-                                {draftQuote.suggested_charges.map(charge => (
+                                {suggestedCharges.map(charge => (
                                     <div key={charge.id} className="py-3 flex items-center justify-between gap-4">
                                         <div className="flex items-center gap-3">
                                             <input
@@ -545,8 +742,9 @@ export function ExceptionWorkspace() {
                                             <span className="font-bold text-slate-100">{charge.currency} {Number(charge.amount).toFixed(2)}</span>
                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                                                 charge.status === "accepted_by_user" ? "bg-emerald-950/40 text-emerald-400 border border-emerald-900/60" :
-                                                charge.status === "suggested" ? "bg-slate-800 text-slate-300 border border-slate-700" :
+                                                charge.status === "suggested" ? "bg-slate-805 text-slate-300 border border-slate-700" :
                                                 charge.status === "ignored" ? "bg-red-950/40 text-red-400 border border-red-900/40" :
+                                                charge.status === "pending_product_code" ? "bg-indigo-950/40 text-indigo-400 border border-indigo-900/60" :
                                                 "bg-amber-950/40 text-amber-300 border border-amber-900/60"
                                             }`}>
                                                 {friendlyStatus(charge.status)}
@@ -559,7 +757,7 @@ export function ExceptionWorkspace() {
                     )}
                 </div>
 
-                {/* 3. Commercial Terms Accordion */}
+                {/* Commercial Terms Accordion */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
                     <button
                         onClick={() => setShowTerms(!showTerms)}
@@ -589,7 +787,7 @@ export function ExceptionWorkspace() {
                     )}
                 </div>
 
-                {/* 4. Totals & Currencies Accordion */}
+                {/* Totals split display warnings */}
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
                     <button
                         onClick={() => setShowTotalsPanel(!showTotalsPanel)}
@@ -605,7 +803,7 @@ export function ExceptionWorkspace() {
                     {showTotalsPanel && (
                         <div className="border-t border-slate-800 p-5 bg-slate-900/40 flex flex-col gap-4">
                             {uniqueCurrencies.length > 1 ? (
-                                <div className="bg-amber-950/20 border border-amber-900/60 rounded-xl p-4 flex flex-col gap-2">
+                                <div className="bg-amber-955 border border-amber-900/60 rounded-xl p-4 flex flex-col gap-2">
                                     <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
                                         <AlertCircle className="h-4 w-4" />
                                         <span>Totals Need Review</span>
@@ -662,48 +860,72 @@ export function ExceptionWorkspace() {
                     )}
                 </div>
 
-                {/* 5. Ignored Items section */}
-                {draftQuote.ignored_items.length > 0 && (
+                {/* Muted Ignored Items */}
+                {ignoredItems.length > 0 && (
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-                        <h2 className="text-base font-bold text-slate-400 mb-3">Ignored Items</h2>
-                        <div className="flex flex-col gap-3">
-                            {draftQuote.ignored_items.map(item => (
-                                <div key={item.id} className="bg-slate-950 border border-slate-850 rounded-xl p-3 text-xs flex flex-col gap-1.5">
-                                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Reason: {item.ignored_reason}</span>
-                                    <p className="text-slate-400 italic font-mono bg-slate-950 p-2 rounded">
-                                        &quot;{item.raw_text}&quot;
-                                    </p>
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Ignored Items</h2>
+                        <div className="flex flex-col gap-2.5">
+                            {ignoredItems.map(item => (
+                                <div key={item.id} className="bg-slate-950 border border-slate-850 rounded-xl p-3 text-xs flex justify-between items-center">
+                                    <div>
+                                        <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Reason: {item.ignored_reason}</span>
+                                        <p className="text-slate-400 italic font-mono mt-1">&quot;{item.raw_text}&quot;</p>
+                                    </div>
+                                    <button
+                                        onClick={() => handleUndoDecision(item.id)}
+                                        className="text-xs text-indigo-400 font-semibold hover:underline"
+                                    >
+                                        Reopen
+                                    </button>
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
 
-                {/* 6. Finish Review & CTA Bar */}
+                {/* Final Checklist Review */}
                 <div className="mt-4 flex flex-col items-center gap-4 border-t border-slate-800 pt-6">
                     
-                    {/* Resolution Checklist */}
-                    <div className="w-full bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs flex flex-col gap-2">
-                        <h3 className="font-bold text-slate-300 uppercase tracking-wider mb-2">Final Review Checklist</h3>
-                        <div className="flex items-center justify-between">
-                            <span className="text-slate-400">All review items resolved:</span>
+                    <div className="w-full bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs flex flex-col gap-2.5">
+                        <h3 className="font-bold text-slate-300 uppercase tracking-wider mb-1">Final Review Checklist</h3>
+                        
+                        <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                            <div>
+                                <span className="text-slate-200 block font-semibold">All review items resolved</span>
+                                <span className="text-slate-400 text-[10px]">{checklistIssuesResolved ? "Complete" : `${combinedUnresolved.length} charges still need action.`}</span>
+                            </div>
                             <span className={checklistIssuesResolved ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                                {checklistIssuesResolved ? "Verified" : "Pending"}
+                                {checklistIssuesResolved ? "Complete" : "Pending"}
                             </span>
                         </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-slate-400">No unknown commercial charges remain:</span>
+                        
+                        <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                            <div>
+                                <span className="text-slate-200 block font-semibold">No unknown commercial charges remain</span>
+                                <span className="text-slate-400 text-[10px]">{checklistNoUnknown ? "Complete" : "Unmapped extracted charge block exists."}</span>
+                            </div>
                             <span className={checklistNoUnknown ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                                {checklistNoUnknown ? "Verified" : "Pending"}
+                                {checklistNoUnknown ? "Complete" : "Pending"}
                             </span>
                         </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-slate-400">No included charge is missing a ProductCode mapping:</span>
+
+                        <div className="flex items-center justify-between pb-2">
+                            <div>
+                                <span className="text-slate-200 block font-semibold">No included charge is missing a ProductCode mapping</span>
+                                <span className="text-slate-400 text-[10px]">{checklistProductCodesVerified ? "Complete" : "Include charge has no mapped billing code."}</span>
+                            </div>
                             <span className={checklistProductCodesVerified ? "text-emerald-400 font-semibold" : "text-amber-400"}>
-                                {checklistProductCodesVerified ? "Verified" : "Pending"}
+                                {checklistProductCodesVerified ? "Complete" : "Pending"}
                             </span>
                         </div>
                     </div>
+
+                    {!canFinishReview && !prototypeOverride && (
+                        <div className="w-full bg-red-950/20 border border-red-900/60 rounded-xl p-4 text-xs text-red-200">
+                            <span className="font-bold block mb-1">Finish Review unavailable</span>
+                            <span>Resolve all pending issues and verify ProductCode mappings to complete review.</span>
+                        </div>
+                    )}
 
                     <div className="w-full flex flex-col sm:flex-row justify-between items-center gap-4">
                         <div className="flex items-center gap-2 text-xs">
@@ -721,7 +943,7 @@ export function ExceptionWorkspace() {
 
                         <button
                             disabled={!canFinishReview && !prototypeOverride}
-                            onClick={() => alert("Review Complete! Suggestions accepted and finalized locally.")}
+                            onClick={() => alert("Review Complete! The quote suggestions have been finalized locally.")}
                             className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
                         >
                             Finish Review
