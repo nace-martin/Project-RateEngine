@@ -118,3 +118,27 @@ class DraftQuoteContractTests(SimpleTestCase):
         charge_ids = {c.id for c in charges_in_group}
         self.assertIn("chg-002", charge_ids)
         self.assertIn("chg-003", charge_ids)
+
+    def test_workflow_validation_data_adequacy(self):
+        """Confirm hard-case fixture contains enough correction_actions / similarity_group_id / review_queue data for workflow validation."""
+        schema = DraftQuoteSchema(**self.raw_data)
+        
+        # Verify review queue contains items requiring manual actions
+        self.assertTrue(len(schema.review_queue) >= 3)
+        review_types = {item.get("type") for item in schema.review_queue}
+        self.assertIn("charge_needs_review", review_types)
+        self.assertIn("unclassified_item", review_types)
+        
+        # Verify correction actions are mapped for those items
+        self.assertTrue(len(schema.correction_actions) >= 3)
+        action_types = {action.get("action_type") for action in schema.correction_actions}
+        self.assertIn("RESOLVE_PRODUCT_CODE", action_types)
+        self.assertIn("CONFIRM_INHERITED_CURRENCY", action_types)
+        self.assertIn("CLASSIFY_ITEM", action_types)
+
+        # Verify similarity group exists on the two target review charges
+        charges_with_group = [
+            c for c in schema.suggested_charges if c.similarity_group_id == "sim-surcharges"
+        ]
+        self.assertEqual(len(charges_with_group), 2)
+
