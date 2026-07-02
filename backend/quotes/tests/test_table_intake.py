@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
 from quotes.services.table_diagnostics import (
     detect_probable_table_blocks,
@@ -116,7 +116,12 @@ def test_parse_table_text_to_intermediate():
     assert "airline or customs" in add.raw_notes.lower()
 
 
-def test_table_intake_produces_normalized_candidates():
+@patch("quotes.ai_intake_service.get_gemini_client")
+def test_table_intake_produces_normalized_candidates(mock_get_client):
+    # Mock client generate_content to raise Exception to force fallback pipeline
+    mock_model = mock_get_client.return_value.GenerativeModel.return_value
+    mock_model.generate_content.side_effect = Exception("API offline mock")
+
     # We call parse_rate_quote_text directly with the rate sheet text
     from quotes.ai_intake_service import parse_rate_quote_text
     
@@ -185,8 +190,13 @@ def test_table_intake_produces_normalized_candidates():
 
 @pytest.mark.django_db
 @patch("quotes.ai_intake_service.parse_rate_quote_text")
-def test_table_intake_to_spe_charge_lines_mapping(mock_parse):
+@patch("quotes.ai_intake_service.get_gemini_client")
+def test_table_intake_to_spe_charge_lines_mapping(mock_get_client, mock_parse):
+    # Ensure genai is not None so ReplyAnalysisService tries to run AI
+    mock_get_client.return_value = MagicMock()
+    
     from quotes.spot_services import ReplyAnalysisService
+
     from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB
     from quotes.reply_schemas import AssertionCategory
     from quotes.ai_intake_schemas import SpotChargeLine, QuoteInputPayload
