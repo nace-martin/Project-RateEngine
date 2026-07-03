@@ -3309,6 +3309,60 @@ class SpotEnvelopeDraftQuoteAPIView(APIView):
             )
 
 
+class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
+    """
+    POST /api/v3/spot/envelopes/<id>/draft-quote/resolve/
+
+    Validates operator decisions against the DraftQuoteResolveSchema and returns DraftQuoteResolveResponseSchema.
+    Currently returns 501 Not Implemented upon successful validation.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, envelope_id):
+        # Existing SPOT envelope access check / IDOR pattern
+        spe_db = _get_spe_or_404(
+            request.user,
+            envelope_id,
+            _spe_queryset(),
+        )
+
+        from pydantic import ValidationError
+        from quotes.contracts.draft_quote_contract import DraftQuoteResolveSchema, DraftQuoteResolveResponseSchema
+        import json
+
+        try:
+            # Parse request payload using DraftQuoteResolveSchema
+            payload = DraftQuoteResolveSchema(**request.data)
+        except ValidationError as err:
+            # Return validation errors in 400 Bad Request
+            errors = [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in err.errors()]
+            return Response(
+                {
+                    "error": "Validation failed",
+                    "details": errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Build DraftQuoteResolveResponseSchema with status="not_implemented"
+        response_payload = DraftQuoteResolveResponseSchema(
+            status="not_implemented",
+            idempotency_key=payload.idempotency_key,
+            applied_decisions=[],
+            rejected_decisions=[],
+            validation_errors=[],
+            unresolved_items_remaining=None,
+            envelope_id=spe_db.id,
+            message="Contract defined, but database persistence logic is not implemented."
+        )
+
+        return Response(
+            response_payload.model_dump(mode="json"),
+            status=status.HTTP_501_NOT_IMPLEMENTED
+        )
+
+
+
 
 
 
