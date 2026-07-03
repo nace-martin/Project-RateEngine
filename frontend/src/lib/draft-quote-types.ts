@@ -22,7 +22,7 @@ export interface DraftCharge {
     product_code_conflict: boolean;
     approved_product_code?: string | null;
     approved_product_code_id?: number | null;
-    product_code_request_id?: string | null;
+    product_code_request_id?: number | null;
     bucket: string; // airfreight, origin_charges, destination_charges, unclassified
     currency: string;
     amount: number;
@@ -122,4 +122,39 @@ export interface DraftQuote {
         historical_override_rules?: Record<string, unknown>;
         [key: string]: unknown;
     };
+}
+
+export interface AuditMetadata {
+    user_id: number;
+    timestamp: string;
+}
+
+export interface DecisionItem {
+    decision_id: string;
+    type: string;
+    target_id: string;
+    details: Record<string, unknown>;
+    audit_metadata: AuditMetadata;
+}
+
+export interface DraftQuoteResolvePayload {
+    idempotency_key: string;
+    decisions: DecisionItem[];
+}
+
+export interface DecisionResult {
+    decision_id: string;
+    target_id: string;
+    type: string;
+    status: 'applied' | 'rejected' | 'skipped';
+    message: string;
+    error_code?: string | null;
+}
+
+export interface DraftQuoteResolveResponse {
+    envelope_id: string;
+    status: 'accepted' | 'partially_accepted' | 'rejected';
+    message: string;
+    applied_decisions: DecisionResult[];
+    rejected_decisions: DecisionResult[];
 }

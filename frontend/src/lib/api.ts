@@ -4,7 +4,7 @@ import { API_BASE_URL } from './config';
 import { getJson, sendJson } from './api/shared';
 import { mapQuoteDetailToComputeResult } from './quote-detail-mapping';
 import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
-import { DraftQuote } from './draft-quote-types';
+import { DraftQuote, DraftQuoteResolvePayload, DraftQuoteResolveResponse } from './draft-quote-types';
 import {
   LoginData,
   User,
@@ -810,8 +810,8 @@ export async function getDraftQuote(id: string): Promise<DraftQuote> {
  */
 export async function resolveDraftQuoteDecisions(
   envelopeId: string,
-  payload: { idempotency_key: string; decisions: any[] }
-): Promise<any> {
+  payload: DraftQuoteResolvePayload
+): Promise<DraftQuoteResolveResponse> {
   const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/draft-quote/resolve/`;
   const response = await fetch(url, {
     method: 'POST',
@@ -827,7 +827,7 @@ export async function resolveDraftQuoteDecisions(
     throw new Error(`Failed to resolve draft quote decisions: ${detail}`);
   }
 
-  return response.json();
+  return response.json() as Promise<DraftQuoteResolveResponse>;
 }
 
 

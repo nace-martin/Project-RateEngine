@@ -120,7 +120,7 @@ def apply_draft_quote_decisions(
                 response_status = "skipped"
                 message_val = "ProductCode request created and pending admin review."
             elif decision_type == "use_approved_product_code":
-                from pricing_v4.models import ProductCodeCreationRequest, ProductCode
+                from pricing_v4.models import ProductCodeCreationRequest
 
                 # Extract details
                 req_id = dec_item.details.get("product_code_request_id")
