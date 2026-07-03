@@ -31,42 +31,41 @@ def apply_draft_quote_decisions(
             
             # 1. Attempt to find target SPEChargeLineDB record if applicable
             charge_line = None
-            if decision_type in ["accept_suggestion", "ignore", "edit_charge", "map_to_product_code"]:
-                try:
-                    target_uuid = uuid.UUID(target_id)
-                    charge_line = envelope.charge_lines.filter(id=target_uuid).first()
-                except (ValueError, TypeError):
-                    charge_line = None
+            try:
+                target_uuid = uuid.UUID(target_id)
+                charge_line = envelope.charge_lines.filter(id=target_uuid).first()
+            except (ValueError, TypeError):
+                charge_line = None
                 
-                if not charge_line:
-                    # Unknown target_id returns rejected/skipped result
-                    err_result = DecisionResultSchema(
-                        decision_id=dec_item.decision_id,
-                        target_id=target_id,
-                        type=decision_type,
-                        status="rejected",
-                        message="Target charge line ID not found in this envelope.",
-                        error_code="TARGET_NOT_FOUND"
-                    )
-                    rejected.append(err_result)
-                    
-                    # Persist the rejected decision for audit trail
-                    DraftQuoteDecisionDB.objects.create(
-                        envelope=envelope,
-                        idempotency_key=payload.idempotency_key,
-                        decision_id=dec_item.decision_id,
-                        decision_type=decision_type,
-                        target_id=target_id,
-                        details_json=dec_item.details,
-                        client_audit_metadata_json=dec_item.audit_metadata.model_dump(),
-                        server_user=user,
-                        status="rejected",
-                        error_code="TARGET_NOT_FOUND",
-                        message="Target charge line ID not found in this envelope."
-                    )
-                    continue
+            if not charge_line and decision_type in ["accept_suggestion", "ignore", "edit_charge", "map_to_product_code"]:
+                # Unknown target_id returns rejected/skipped result
+                err_result = DecisionResultSchema(
+                    decision_id=dec_item.decision_id,
+                    target_id=target_id,
+                    type=decision_type,
+                    status="rejected",
+                    message="Target charge line ID not found in this envelope.",
+                    error_code="TARGET_NOT_FOUND"
+                )
+                rejected.append(err_result)
+                
+                # Persist the rejected decision for audit trail
+                DraftQuoteDecisionDB.objects.create(
+                    envelope=envelope,
+                    idempotency_key=payload.idempotency_key,
+                    decision_id=dec_item.decision_id,
+                    decision_type=decision_type,
+                    target_id=target_id,
+                    details_json=dec_item.details,
+                    client_audit_metadata_json=dec_item.audit_metadata.model_dump(),
+                    server_user=user,
+                    status="rejected",
+                    error_code="TARGET_NOT_FOUND",
+                    message="Target charge line ID not found in this envelope."
+                )
+                continue
 
-            # 3. Apply changes to DB for low-risk types if not already mutated
+            # 2. Apply changes to DB for low-risk types if not already mutated
             status_val = "accepted"
             message_val = "Decision persisted and applied successfully."
             error_code_val = None
@@ -86,7 +85,41 @@ def apply_draft_quote_decisions(
                 else:
                     charge_line.exclude_from_totals = True
                     charge_line.save()
-            elif decision_type in ["edit_charge", "map_to_product_code", "request_product_code", "classify_unclassified"]:
+            elif decision_type == "request_product_code":
+                from pricing_v4.models import ProductCodeCreationRequest
+                
+                # Extract details
+                proposed_code = dec_item.details.get("proposed_code", "")
+                description = dec_item.details.get("description", "")
+                category = dec_item.details.get("category", "")
+                reason = dec_item.details.get("reason", "")
+                
+                source_label = description
+                if charge_line:
+                    source_label = charge_line.source_label or charge_line.description
+                
+                # Create pending ProductCodeCreationRequest
+                pc_request = ProductCodeCreationRequest.objects.create(
+                    source_label=source_label,
+                    suggested_name=proposed_code,
+                    suggested_bucket=category,
+                    suggested_basis="FLAT",
+                    suggested_reason=reason,
+                    source_envelope=envelope,
+                    source_charge_line=charge_line,
+                    source_quote=envelope.quote if hasattr(envelope, 'quote') else None,
+                    source_context_json=dec_item.details,
+                    created_by=user,
+                    status=ProductCodeCreationRequest.STATUS_PENDING
+                )
+                
+                # Store the request ID in details for later lookup
+                dec_item.details["product_code_request_id"] = pc_request.id
+                
+                status_val = "skipped"
+                response_status = "skipped"
+                message_val = "ProductCode request created and pending admin review."
+            elif decision_type in ["edit_charge", "map_to_product_code", "classify_unclassified"]:
                 # High-risk skipped decisions must remain status='skipped'
                 status_val = "skipped"
                 response_status = "skipped"
