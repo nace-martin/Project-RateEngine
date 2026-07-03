@@ -76,6 +76,30 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
         else:
             primary_currency = "USD"
 
+    # Fetch pending ProductCodeCreationRequests for this envelope
+    from pricing_v4.models import ProductCodeCreationRequest
+    from quotes.spot_models import DraftQuoteDecisionDB
+
+    # Get all pending creation requests for this envelope
+    pending_request_ids = {
+        str(rid) for rid in ProductCodeCreationRequest.objects.filter(
+            source_envelope=spe_db,
+            status=ProductCodeCreationRequest.STATUS_PENDING
+        ).values_list('id', flat=True)
+    }
+
+    # Retrieve all request_product_code decisions that link to a pending creation request
+    decisions_with_pending_req = DraftQuoteDecisionDB.objects.filter(
+        envelope=spe_db,
+        decision_type="request_product_code"
+    )
+
+    pending_targets = {}
+    for dec in decisions_with_pending_req:
+        req_id = dec.details_json.get("product_code_request_id")
+        if req_id and str(req_id) in pending_request_ids:
+            pending_targets[dec.target_id] = dec.details_json.get("proposed_code")
+
     # 5. Suggested Charges
     suggested_charges = []
     for line in spe_db.charge_lines.all():
@@ -131,6 +155,14 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
             if status == "needs_review" and not review_reason:
                 review_reason = "Currency inheritance warning: verify if currency is correct."
 
+        # Check if there is a pending ProductCode request for this charge line
+        pending_proposed_code = pending_targets.get(str(line.id))
+        correction_actions = []
+        if pending_proposed_code:
+            line_warnings.append(f"Pending ProductCode Creation Request: proposed code '{pending_proposed_code}'.")
+            review_reason = f"ProductCode creation request '{pending_proposed_code}' is pending admin approval."
+            correction_actions = ["PENDING_ADMIN_REVIEW"]
+
         # Evidence text must not be empty if status is 'suggested'
         source_text = line.source_excerpt or line.source_label or ""
         if not source_text and status == "suggested":
@@ -171,7 +203,7 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
             "review_reason": review_reason,
             "evidence": evidence,
             "similarity_group_id": line.rule_meta.get('similarity_group_id') if isinstance(line.rule_meta, dict) else None,
-            "correction_actions": []
+            "correction_actions": correction_actions
         })
 
     # 6. Commercial Terms
@@ -202,11 +234,17 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
             for item in raw_unclassified:
                 if isinstance(item, dict):
                     unclass_id = item.get("id") or f"unclass-{len(unclassified_items)}"
+                    pending_proposed_code = pending_targets.get(str(unclass_id))
+                    
+                    item_review_reason = item.get("review_reason") or "Unclassified commercial-looking item requires operator classification"
+                    if pending_proposed_code:
+                        item_review_reason = f"ProductCode creation request '{pending_proposed_code}' is pending admin approval."
+                        
                     unclassified_items.append({
                         "id": str(unclass_id),
                         "raw_text": item.get("raw_text") or item.get("text") or "Unclassified line",
                         "evidence": item.get("evidence"),
-                        "review_reason": item.get("review_reason") or "Unclassified commercial-looking item requires operator classification"
+                        "review_reason": item_review_reason
                     })
             # Collect ignored items
             raw_ignored = batch.analysis_summary_json.get('ignored_items') or []

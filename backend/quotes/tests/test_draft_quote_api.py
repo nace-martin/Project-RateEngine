@@ -456,6 +456,64 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     ignored_charge = next(c for c in read_schema.suggested_charges if c.id == str(line_ignore.id))
     assert ignored_charge.status == "ignored"
 
+    # Test ProductCodeRequest creation (Phase 8D.12A)
+    payload_pc_req = {
+        "idempotency_key": "4c9b2520-22c5-4309-88cc-51e6b3648614",
+        "decisions": [
+            {
+                "decision_id": "dec-006",
+                "type": "request_product_code",
+                "target_id": str(line_edit.id),
+                "details": {
+                    "proposed_code": "AF-FUEL-NEW",
+                    "description": "Fuel Surcharge - special import surcharge",
+                    "category": "airfreight",
+                    "domain": "IMPORT",
+                    "reason": "New airline carrier fee added for fuel"
+                },
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            }
+        ]
+    }
+    res_pc = client.post(url, payload_pc_req, format="json")
+    assert res_pc.status_code == 200
+    resp_pc = DraftQuoteResolveResponseSchema(**res_pc.data)
+    assert resp_pc.status == "accepted"
+    # Result must be skipped
+    assert resp_pc.applied_decisions[0].status == "skipped"
+    assert "pending admin review" in resp_pc.applied_decisions[0].message
+    
+    # Assert that one ProductCodeCreationRequest is created with PENDING status
+    from pricing_v4.models import ProductCodeCreationRequest
+    req_objs = ProductCodeCreationRequest.objects.filter(source_envelope=envelope)
+    assert req_objs.count() == 1
+    req_obj = req_objs.first()
+    assert req_obj.suggested_name == "AF-FUEL-NEW"
+    assert req_obj.status == ProductCodeCreationRequest.STATUS_PENDING
+    assert req_obj.source_charge_line == line_edit
+    assert req_obj.created_by == user
+
+    # Assert that retry with same idempotency_key does not create a duplicate ProductCodeCreationRequest
+    res_retry_pc = client.post(url, payload_pc_req, format="json")
+    assert res_retry_pc.status_code == 200
+    assert ProductCodeCreationRequest.objects.filter(source_envelope=envelope).count() == 1
+
+    # Assert that high-risk skipped decisions remain skipped on retry
+    resp_retry_pc = DraftQuoteResolveResponseSchema(**res_retry_pc.data)
+    assert resp_retry_pc.applied_decisions[0].status == "skipped"
+
+    # Assert that Read API reflects the pending state correctly
+    res_read_pending = client.get(f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/")
+    assert res_read_pending.status_code == 200
+    read_data = DraftQuoteSchema(**res_read_pending.data)
+    edit_charge = next(c for c in read_data.suggested_charges if c.id == str(line_edit.id))
+    assert edit_charge.correction_actions == ["PENDING_ADMIN_REVIEW"]
+    assert any("Pending ProductCode Creation Request" in w for w in edit_charge.warnings)
+
+
     # 9. Same idempotency_key on a different envelope must not return decisions from another envelope (isolated namespaces)
     envelope_2 = SpotPricingEnvelopeDB.objects.create(
         status=SpotPricingEnvelopeDB.Status.DRAFT,
