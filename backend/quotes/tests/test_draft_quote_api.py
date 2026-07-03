@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB, SPESourceBatchDB
 from pricing_v4.models import ProductCode
-from quotes.contracts.draft_quote_contract import DraftQuoteSchema
+from quotes.contracts.draft_quote_contract import DraftQuoteSchema, DraftQuoteResolveResponseSchema
 
 pytestmark = pytest.mark.django_db
 
@@ -196,3 +196,72 @@ def test_draft_quote_comprehensive_read_cases(transactional_db):
     client_other.force_authenticate(user=other_user)
     response_other = client_other.get(url)
     assert response_other.status_code == 404
+
+
+def test_draft_quote_resolve_endpoint(transactional_db):
+    user = _mk_user("test_sales_resolve", "sales")
+    envelope = SpotPricingEnvelopeDB.objects.create(
+        status=SpotPricingEnvelopeDB.Status.DRAFT,
+        shipment_context_json={},
+        shipment_context_hash="mock_hash_value",
+        expires_at=timezone.now() + timezone.timedelta(days=7),
+        created_by=user
+    )
+
+    client = APIClient()
+    url = f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/resolve/"
+
+    # 1. Auth required
+    res_unauth = client.post(url, {}, format="json")
+    assert res_unauth.status_code == 401
+
+    client.force_authenticate(user=user)
+
+    # 2. Invalid payload (missing idempotency_key) returns 400
+    res_bad = client.post(url, {"decisions": []}, format="json")
+    assert res_bad.status_code == 400
+    assert any("idempotency_key" in str(detail) for detail in res_bad.data["details"])
+
+    # 3. Invalid idempotency UUID returns 400
+    res_bad_uuid = client.post(url, {
+        "idempotency_key": "not-a-uuid",
+        "decisions": []
+    }, format="json")
+    assert res_bad_uuid.status_code == 400
+
+    # 4. Valid resolve payload returns 501 with DraftQuoteResolveResponseSchema
+    valid_payload = {
+        "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+        "decisions": [
+            {
+                "decision_id": "dec-001",
+                "type": "accept_suggestion",
+                "target_id": "chg-001",
+                "details": {},
+                "audit_metadata": {
+                    "user_id": 1,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            }
+        ]
+    }
+    res_valid = client.post(url, valid_payload, format="json")
+    assert res_valid.status_code == 501
+    
+    resp_schema = DraftQuoteResolveResponseSchema(**res_valid.data)
+    assert resp_schema.status == "not_implemented"
+    assert str(resp_schema.idempotency_key) == "8e9b2520-22c5-4309-88cc-51e6b3648612"
+    assert str(resp_schema.envelope_id) == str(envelope.id)
+
+    # 5. Non-existent envelope returns 404
+    url_404 = f"/api/v3/spot/envelopes/{uuid.uuid4()}/draft-quote/resolve/"
+    res_404 = client.post(url_404, valid_payload, format="json")
+    assert res_404.status_code == 404
+
+    # 6. User without access returns 404
+    other_user = _mk_user("other_sales_resolve", "sales")
+    client_other = APIClient()
+    client_other.force_authenticate(user=other_user)
+    res_other = client_other.post(url, valid_payload, format="json")
+    assert res_other.status_code == 404
+
