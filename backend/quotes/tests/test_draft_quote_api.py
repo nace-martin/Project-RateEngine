@@ -335,17 +335,20 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert applied_map["dec-002"].status == "applied"
     assert applied_map["dec-003"].status == "skipped"  # edit_charge is persisted but not applied yet
 
-    # Verify decision is persisted in DB
+    # Verify decision is persisted in DB with correct status
     from quotes.spot_models import DraftQuoteDecisionDB
     db_record_1 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-001")
     assert db_record_1.decision_type == "accept_suggestion"
     assert db_record_1.server_user == user
+    assert db_record_1.status == "accepted"
 
     db_record_2 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-002")
     assert db_record_2.decision_type == "ignore"
+    assert db_record_2.status == "accepted"
 
     db_record_3 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-003")
     assert db_record_3.decision_type == "edit_charge"
+    assert db_record_3.status == "skipped"  # High-risk stored as skipped
 
     # Verify charge lines were actually updated for low-risk decisions
     line_suggested.refresh_from_db()
@@ -370,10 +373,40 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert "Idempotent resolution" in resp_retry_schema.message
     assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 3
 
+    # Assert skipped status remains skipped on retry
+    retry_applied_map = {d.decision_id: d for d in resp_retry_schema.applied_decisions}
+    assert retry_applied_map["dec-003"].status == "skipped"
+
     # Assert charge line metadata remains untouched
     line_suggested.refresh_from_db()
     assert line_suggested.manual_resolution_at == original_at
     assert line_suggested.manual_resolution_by == original_user
+
+    # Test that a new idempotency key with same target/type creates a new DraftQuoteDecisionDB record but does not overwrite metadata
+    payload_new_key = {
+        "idempotency_key": "9f9b2520-22c5-4309-88cc-51e6b3648613",
+        "decisions": [
+            {
+                "decision_id": "dec-005",
+                "type": "accept_suggestion",
+                "target_id": str(line_suggested.id),
+                "details": {},
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            }
+        ]
+    }
+    res_new_key = client.post(url, payload_new_key, format="json")
+    assert res_new_key.status_code == 200
+    # Confirms it created a new DraftQuoteDecisionDB record (now 4 total for envelope)
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 4
+    # Confirms it did not overwrite resolution timestamp/operator
+    line_suggested.refresh_from_db()
+    assert line_suggested.manual_resolution_at == original_at
+    assert line_suggested.manual_resolution_by == original_user
+
 
 
     # 5. Non-existent envelope returns 404

@@ -66,44 +66,29 @@ def apply_draft_quote_decisions(
                     )
                     continue
 
-            # 2. Check if this decision was already processed/applied for this envelope
-            # (Provides protection against duplicate application in retry flows)
-            already_applied = DraftQuoteDecisionDB.objects.filter(
-                envelope=envelope,
-                target_id=target_id,
-                decision_type=decision_type,
-                status="accepted"
-            ).exists()
-
-            if already_applied:
-                # Retrieve the existing result status
-                applied.append(
-                    DecisionResultSchema(
-                        decision_id=dec_item.decision_id,
-                        target_id=target_id,
-                        type=decision_type,
-                        status="applied",
-                        message="Decision was already applied previously."
-                    )
-                )
-                continue
-
-            # 3. Apply changes to DB for low-risk types
+            # 3. Apply changes to DB for low-risk types if not already mutated
             status_val = "accepted"
             message_val = "Decision persisted and applied successfully."
             error_code_val = None
             response_status = "applied"
 
             if decision_type == "accept_suggestion" and charge_line:
-                charge_line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
-                charge_line.manual_resolution_by = user
-                charge_line.manual_resolution_at = timezone.now()
-                charge_line.save()
+                if charge_line.manual_resolution_status == SPEChargeLineDB.ManualResolutionStatus.RESOLVED:
+                    message_val = "Decision logged. Target was already resolved in a prior transaction."
+                else:
+                    charge_line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+                    charge_line.manual_resolution_by = user
+                    charge_line.manual_resolution_at = timezone.now()
+                    charge_line.save()
             elif decision_type == "ignore" and charge_line:
-                charge_line.exclude_from_totals = True
-                charge_line.save()
+                if charge_line.exclude_from_totals:
+                    message_val = "Decision logged. Target was already ignored in a prior transaction."
+                else:
+                    charge_line.exclude_from_totals = True
+                    charge_line.save()
             elif decision_type in ["edit_charge", "map_to_product_code", "request_product_code", "classify_unclassified"]:
-                # Persisted but not applied yet
+                # High-risk skipped decisions must remain status='skipped'
+                status_val = "skipped"
                 response_status = "skipped"
                 message_val = "Decision persisted but database side-effects are pending implementation."
             
