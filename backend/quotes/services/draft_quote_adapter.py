@@ -76,29 +76,40 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
         else:
             primary_currency = "USD"
 
-    # Fetch pending ProductCodeCreationRequests for this envelope
+    # Fetch ProductCodeCreationRequests for this envelope to map review status
     from pricing_v4.models import ProductCodeCreationRequest
     from quotes.spot_models import DraftQuoteDecisionDB
 
-    # Get all pending creation requests for this envelope
-    pending_request_ids = {
-        str(rid) for rid in ProductCodeCreationRequest.objects.filter(
-            source_envelope=spe_db,
-            status=ProductCodeCreationRequest.STATUS_PENDING
-        ).values_list('id', flat=True)
+    # Map request ID -> request object
+    envelope_requests = {
+        str(req.id): req for req in ProductCodeCreationRequest.objects.filter(source_envelope=spe_db)
     }
 
-    # Retrieve all request_product_code decisions that link to a pending creation request
-    decisions_with_pending_req = DraftQuoteDecisionDB.objects.filter(
+    # Retrieve all request_product_code decisions for target mapping
+    decisions_with_req = DraftQuoteDecisionDB.objects.filter(
         envelope=spe_db,
         decision_type="request_product_code"
     )
 
     pending_targets = {}
-    for dec in decisions_with_pending_req:
+    approved_targets = {}
+    rejected_targets = {}
+
+    for dec in decisions_with_req:
         req_id = dec.details_json.get("product_code_request_id")
-        if req_id and str(req_id) in pending_request_ids:
-            pending_targets[dec.target_id] = dec.details_json.get("proposed_code")
+        if req_id and str(req_id) in envelope_requests:
+            req_obj = envelope_requests[str(req_id)]
+            # Derive status directly from ProductCodeCreationRequest.status
+            if req_obj.status == ProductCodeCreationRequest.STATUS_PENDING:
+                pending_targets[dec.target_id] = req_obj.suggested_name
+            elif req_obj.status == ProductCodeCreationRequest.STATUS_APPROVED:
+                approved_code = req_obj.approved_product_code.code if req_obj.approved_product_code else req_obj.suggested_name
+                approved_targets[dec.target_id] = approved_code
+            elif req_obj.status == ProductCodeCreationRequest.STATUS_REJECTED:
+                rejected_targets[dec.target_id] = {
+                    "proposed_code": req_obj.suggested_name,
+                    "reason": req_obj.rejection_reason or "No reason provided."
+                }
 
     # 5. Suggested Charges
     suggested_charges = []
@@ -155,13 +166,24 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
             if status == "needs_review" and not review_reason:
                 review_reason = "Currency inheritance warning: verify if currency is correct."
 
-        # Check if there is a pending ProductCode request for this charge line
+        # Check if there is a ProductCode request for this charge line and map state
         pending_proposed_code = pending_targets.get(str(line.id))
+        approved_proposed_code = approved_targets.get(str(line.id))
+        rejected_info = rejected_targets.get(str(line.id))
+
         correction_actions = []
         if pending_proposed_code:
             line_warnings.append(f"Pending ProductCode Creation Request: proposed code '{pending_proposed_code}'.")
             review_reason = f"ProductCode creation request '{pending_proposed_code}' is pending admin approval."
             correction_actions = ["PENDING_ADMIN_REVIEW"]
+        elif approved_proposed_code:
+            line_warnings.append(f"ProductCode Creation Request Approved: '{approved_proposed_code}' is available to apply.")
+            review_reason = f"ProductCode creation request approved: '{approved_proposed_code}' is available to apply."
+            correction_actions = ["APPROVED_PRODUCTCODE_AVAILABLE"]
+        elif rejected_info:
+            line_warnings.append(f"ProductCode Creation Request Rejected: '{rejected_info['proposed_code']}'. Reason: {rejected_info['reason']}")
+            review_reason = f"ProductCode creation request rejected: {rejected_info['reason']}"
+            correction_actions = ["PRODUCTCODE_REJECTED"]
 
         # Evidence text must not be empty if status is 'suggested'
         source_text = line.source_excerpt or line.source_label or ""
@@ -235,10 +257,16 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
                 if isinstance(item, dict):
                     unclass_id = item.get("id") or f"unclass-{len(unclassified_items)}"
                     pending_proposed_code = pending_targets.get(str(unclass_id))
+                    approved_proposed_code = approved_targets.get(str(unclass_id))
+                    rejected_info = rejected_targets.get(str(unclass_id))
                     
                     item_review_reason = item.get("review_reason") or "Unclassified commercial-looking item requires operator classification"
                     if pending_proposed_code:
                         item_review_reason = f"ProductCode creation request '{pending_proposed_code}' is pending admin approval."
+                    elif approved_proposed_code:
+                        item_review_reason = f"ProductCode creation request approved: '{approved_proposed_code}' is available to apply."
+                    elif rejected_info:
+                        item_review_reason = f"ProductCode creation request rejected: {rejected_info['reason']}"
                         
                     unclassified_items.append({
                         "id": str(unclass_id),

@@ -513,6 +513,43 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert edit_charge.correction_actions == ["PENDING_ADMIN_REVIEW"]
     assert any("Pending ProductCode Creation Request" in w for w in edit_charge.warnings)
 
+    # Set request to APPROVED and verify it surfaces correctly (Phase 8D.12B)
+    from pricing_v4.models import ProductCode
+    pc_approved = ProductCode.objects.create(
+        id=9999,
+        code="AF-APPROVED-NEW",
+        description="Approved Surcharge",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_SURCHARGE,
+        is_gst_applicable=False,
+        gl_revenue_code="4000",
+        gl_cost_code="5000",
+        default_unit=ProductCode.UNIT_SHIPMENT
+    )
+    req_obj.status = ProductCodeCreationRequest.STATUS_APPROVED
+    req_obj.approved_product_code = pc_approved
+    req_obj.save()
+
+    res_read_approved = client.get(f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/")
+    assert res_read_approved.status_code == 200
+    read_data_approved = DraftQuoteSchema(**res_read_approved.data)
+    approved_charge = next(c for c in read_data_approved.suggested_charges if c.id == str(line_edit.id))
+    assert approved_charge.correction_actions == ["APPROVED_PRODUCTCODE_AVAILABLE"]
+    assert any("ProductCode Creation Request Approved" in w for w in approved_charge.warnings)
+
+    # Set request to REJECTED and verify it surfaces correctly (Phase 8D.12B)
+    req_obj.status = ProductCodeCreationRequest.STATUS_REJECTED
+    req_obj.rejection_reason = "Duplicate of existing code AF-FUEL."
+    req_obj.save()
+
+    res_read_rejected = client.get(f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/")
+    assert res_read_rejected.status_code == 200
+    read_data_rejected = DraftQuoteSchema(**res_read_rejected.data)
+    rejected_charge = next(c for c in read_data_rejected.suggested_charges if c.id == str(line_edit.id))
+    assert rejected_charge.correction_actions == ["PRODUCTCODE_REJECTED"]
+    assert any("ProductCode Creation Request Rejected" in w for w in rejected_charge.warnings)
+    assert "Duplicate of existing code AF-FUEL." in rejected_charge.review_reason
+
 
     # 9. Same idempotency_key on a different envelope must not return decisions from another envelope (isolated namespaces)
     envelope_2 = SpotPricingEnvelopeDB.objects.create(
