@@ -3357,7 +3357,7 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
         )
 
         return Response(
-            json.loads(response_payload.model_dump_json()),
+            response_payload.model_dump(mode="json"),
             status=status.HTTP_501_NOT_IMPLEMENTED
         )
 
