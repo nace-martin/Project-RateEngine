@@ -359,13 +359,22 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     line_edit.refresh_from_db()
     assert float(line_edit.amount) == 200.00
 
-    # Verify idempotency retry doesn't re-apply or duplicate records
+    # Verify idempotency retry doesn't re-apply, duplicate records, or overwrite metadata
+    original_at = line_suggested.manual_resolution_at
+    original_user = line_suggested.manual_resolution_by
+
     res_retry = client.post(url, valid_payload, format="json")
     assert res_retry.status_code == 200
     resp_retry_schema = DraftQuoteResolveResponseSchema(**res_retry.data)
     assert resp_retry_schema.status == "accepted"
     assert "Idempotent resolution" in resp_retry_schema.message
     assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 3
+
+    # Assert charge line metadata remains untouched
+    line_suggested.refresh_from_db()
+    assert line_suggested.manual_resolution_at == original_at
+    assert line_suggested.manual_resolution_by == original_user
+
 
     # 5. Non-existent envelope returns 404
     url_404 = f"/api/v3/spot/envelopes/{uuid.uuid4()}/draft-quote/resolve/"
