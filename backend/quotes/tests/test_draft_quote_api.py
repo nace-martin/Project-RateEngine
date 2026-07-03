@@ -229,7 +229,7 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     }, format="json")
     assert res_bad_uuid.status_code == 400
 
-    # 4. Valid resolve payload returns 501 with DraftQuoteResolveResponseSchema
+    # 4. Valid resolve payload returns 200 and persists decision
     valid_payload = {
         "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
         "decisions": [
@@ -239,19 +239,39 @@ def test_draft_quote_resolve_endpoint(transactional_db):
                 "target_id": "chg-001",
                 "details": {},
                 "audit_metadata": {
-                    "user_id": 1,
+                    "user_id": 999,  # Client-side user ID to verify server ignores it
                     "timestamp": "2026-07-03T00:00:00Z"
                 }
             }
         ]
     }
     res_valid = client.post(url, valid_payload, format="json")
-    assert res_valid.status_code == 501
+    assert res_valid.status_code == 200
     
     resp_schema = DraftQuoteResolveResponseSchema(**res_valid.data)
-    assert resp_schema.status == "not_implemented"
+    assert resp_schema.status == "accepted"
     assert str(resp_schema.idempotency_key) == "8e9b2520-22c5-4309-88cc-51e6b3648612"
     assert str(resp_schema.envelope_id) == str(envelope.id)
+    assert len(resp_schema.applied_decisions) == 1
+    assert resp_schema.applied_decisions[0].decision_id == "dec-001"
+
+    # Verify decision is persisted in DB
+    from quotes.spot_models import DraftQuoteDecisionDB
+    db_record = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-001")
+    assert db_record.decision_type == "accept_suggestion"
+    assert db_record.target_id == "chg-001"
+    assert db_record.server_user == user  # Verify backend derived user
+    assert db_record.client_audit_metadata_json["user_id"] == 999  # Verify original telemetry stored
+
+    # Verify idempotency: resubmitting exact same request returns same response
+    res_retry = client.post(url, valid_payload, format="json")
+    assert res_retry.status_code == 200
+    resp_retry_schema = DraftQuoteResolveResponseSchema(**res_retry.data)
+    assert resp_retry_schema.status == "accepted"
+    assert "Idempotent resolution" in resp_retry_schema.message
+
+    # Ensure no duplicate records created in DB
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 1
 
     # 5. Non-existent envelope returns 404
     url_404 = f"/api/v3/spot/envelopes/{uuid.uuid4()}/draft-quote/resolve/"
@@ -264,4 +284,28 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     client_other.force_authenticate(user=other_user)
     res_other = client_other.post(url, valid_payload, format="json")
     assert res_other.status_code == 404
+
+    # 7. Verify no side-effects (no charge lines mutated, no catalog changes)
+    assert SPEChargeLineDB.objects.filter(envelope=envelope).count() == 0
+    assert ProductCode.objects.filter(code="AF-FUEL").count() == 0
+
+    # 8. Same idempotency_key on a different envelope must not return decisions from another envelope (isolated namespaces)
+    envelope_2 = SpotPricingEnvelopeDB.objects.create(
+        status=SpotPricingEnvelopeDB.Status.DRAFT,
+        shipment_context_json={},
+        shipment_context_hash="mock_hash_value_2",
+        expires_at=timezone.now() + timezone.timedelta(days=7),
+        created_by=user
+    )
+    url_2 = f"/api/v3/spot/envelopes/{envelope_2.id}/draft-quote/resolve/"
+    res_diff_env = client.post(url_2, valid_payload, format="json")
+    assert res_diff_env.status_code == 200
+    resp_diff_schema = DraftQuoteResolveResponseSchema(**res_diff_env.data)
+    assert resp_diff_schema.status == "accepted"
+    assert "Operator decisions" in resp_diff_schema.message
+    assert str(resp_diff_schema.envelope_id) == str(envelope_2.id)
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope_2).count() == 1
+    assert DraftQuoteDecisionDB.objects.filter(idempotency_key="8e9b2520-22c5-4309-88cc-51e6b3648612").count() == 2
+
+
 

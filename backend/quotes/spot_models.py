@@ -907,4 +907,50 @@ class SpotTemplateValidationSnapshot(models.Model):
         return f"Snapshot ({self.trigger}) for SPE-{str(self.envelope_id)[:8]} - Status: {self.validation_status} ({self.created_at})"
 
 
+class DraftQuoteDecisionDB(models.Model):
+    """
+    ORM model to persist operator decisions from the Exception Workspace.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    envelope = models.ForeignKey(
+        'SpotPricingEnvelopeDB',
+        on_delete=models.CASCADE,
+        related_name='draft_quote_decisions'
+    )
+    idempotency_key = models.UUIDField(db_index=True)
+    decision_id = models.CharField(max_length=255)
+    decision_type = models.CharField(max_length=100)
+    target_id = models.CharField(max_length=255, db_index=True)
+    details_json = models.JSONField(default=dict)
+    client_audit_metadata_json = models.JSONField(default=dict)
+    
+    server_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='+'
+    )
+    server_created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    status = models.CharField(max_length=50)  # accepted/stored/rejected/skipped
+    error_code = models.CharField(max_length=100, null=True, blank=True)
+    message = models.TextField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'draft_quote_decisions'
+        ordering = ['server_created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['envelope', 'idempotency_key', 'decision_id'],
+                name='unique_envelope_idempotency_decision'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['envelope', 'target_id'], name='idx_spe_dec_envelope_target'),
+        ]
+
+    def __str__(self):
+        return f"Decision {self.decision_id} ({self.decision_type}) for SPE-{str(self.envelope_id)[:8]} by User {self.server_user_id}"
+
+
+
 
