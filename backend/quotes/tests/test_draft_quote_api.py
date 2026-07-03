@@ -207,6 +207,59 @@ def test_draft_quote_resolve_endpoint(transactional_db):
         expires_at=timezone.now() + timezone.timedelta(days=7),
         created_by=user
     )
+    
+    # Create a batch
+    batch = SPESourceBatchDB.objects.create(
+        envelope=envelope,
+        source_kind=SPESourceBatchDB.SourceKind.AGENT,
+        source_type=SPESourceBatchDB.SourceType.PDF,
+        label="Resolve Batch",
+        file_name="resolve_test.pdf"
+    )
+
+    # Create real charge lines (with valid auto UUIDs)
+    line_suggested = SPEChargeLineDB.objects.create(
+        envelope=envelope,
+        source_batch=batch,
+        code="AF-FREIGHT",
+        description="Suggested Freight Surcharge",
+        amount=500.00,
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.PER_KG,
+        bucket=SPEChargeLineDB.Bucket.AIRFREIGHT,
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        entered_at=timezone.now(),
+        source_reference="resolve_test.pdf"
+    )
+
+    line_ignore = SPEChargeLineDB.objects.create(
+        envelope=envelope,
+        source_batch=batch,
+        code="OTHER_TAX",
+        description="Ignore tax line",
+        amount=50.00,
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.FLAT,
+        bucket=SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        exclude_from_totals=False,
+        entered_at=timezone.now(),
+        source_reference="resolve_test.pdf"
+    )
+
+    line_edit = SPEChargeLineDB.objects.create(
+        envelope=envelope,
+        source_batch=batch,
+        code="AF-FUEL",
+        description="Fuel Surcharge to edit",
+        amount=200.00,
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.PER_KG,
+        bucket=SPEChargeLineDB.Bucket.AIRFREIGHT,
+        normalization_status=SPEChargeLineDB.NormalizationStatus.AMBIGUOUS,
+        entered_at=timezone.now(),
+        source_reference="resolve_test.pdf"
+    )
 
     client = APIClient()
     url = f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/resolve/"
@@ -229,17 +282,40 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     }, format="json")
     assert res_bad_uuid.status_code == 400
 
-    # 4. Valid resolve payload returns 200 and persists decision
+    # 4. Valid resolve payload (low-risk and unimplemented ones)
     valid_payload = {
         "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
         "decisions": [
             {
                 "decision_id": "dec-001",
                 "type": "accept_suggestion",
-                "target_id": "chg-001",
+                "target_id": str(line_suggested.id),
                 "details": {},
                 "audit_metadata": {
-                    "user_id": 999,  # Client-side user ID to verify server ignores it
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            },
+            {
+                "decision_id": "dec-002",
+                "type": "ignore",
+                "target_id": str(line_ignore.id),
+                "details": {"reason": "Non-commercial line item"},
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            },
+            {
+                "decision_id": "dec-003",
+                "type": "edit_charge",
+                "target_id": str(line_edit.id),
+                "details": {
+                    "original_values": {"amount": 200.00, "currency": "USD"},
+                    "updated_values": {"amount": 250.00, "currency": "USD"}
+                },
+                "audit_metadata": {
+                    "user_id": 999,
                     "timestamp": "2026-07-03T00:00:00Z"
                 }
             }
@@ -249,29 +325,89 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert res_valid.status_code == 200
     
     resp_schema = DraftQuoteResolveResponseSchema(**res_valid.data)
-    assert resp_schema.status == "accepted"
+    assert resp_schema.status == "accepted"  # All decisions stored successfully
     assert str(resp_schema.idempotency_key) == "8e9b2520-22c5-4309-88cc-51e6b3648612"
     assert str(resp_schema.envelope_id) == str(envelope.id)
-    assert len(resp_schema.applied_decisions) == 1
-    assert resp_schema.applied_decisions[0].decision_id == "dec-001"
+    
+    # Check decision results
+    applied_map = {d.decision_id: d for d in resp_schema.applied_decisions}
+    assert applied_map["dec-001"].status == "applied"
+    assert applied_map["dec-002"].status == "applied"
+    assert applied_map["dec-003"].status == "skipped"  # edit_charge is persisted but not applied yet
 
-    # Verify decision is persisted in DB
+    # Verify decision is persisted in DB with correct status
     from quotes.spot_models import DraftQuoteDecisionDB
-    db_record = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-001")
-    assert db_record.decision_type == "accept_suggestion"
-    assert db_record.target_id == "chg-001"
-    assert db_record.server_user == user  # Verify backend derived user
-    assert db_record.client_audit_metadata_json["user_id"] == 999  # Verify original telemetry stored
+    db_record_1 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-001")
+    assert db_record_1.decision_type == "accept_suggestion"
+    assert db_record_1.server_user == user
+    assert db_record_1.status == "accepted"
 
-    # Verify idempotency: resubmitting exact same request returns same response
+    db_record_2 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-002")
+    assert db_record_2.decision_type == "ignore"
+    assert db_record_2.status == "accepted"
+
+    db_record_3 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-003")
+    assert db_record_3.decision_type == "edit_charge"
+    assert db_record_3.status == "skipped"  # High-risk stored as skipped
+
+    # Verify charge lines were actually updated for low-risk decisions
+    line_suggested.refresh_from_db()
+    assert line_suggested.manual_resolution_status == SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+    assert line_suggested.manual_resolution_by == user
+
+    line_ignore.refresh_from_db()
+    assert line_ignore.exclude_from_totals is True
+
+    # Verify charge line for edit_charge was NOT mutated yet (guardrail check)
+    line_edit.refresh_from_db()
+    assert float(line_edit.amount) == 200.00
+
+    # Verify idempotency retry doesn't re-apply, duplicate records, or overwrite metadata
+    original_at = line_suggested.manual_resolution_at
+    original_user = line_suggested.manual_resolution_by
+
     res_retry = client.post(url, valid_payload, format="json")
     assert res_retry.status_code == 200
     resp_retry_schema = DraftQuoteResolveResponseSchema(**res_retry.data)
     assert resp_retry_schema.status == "accepted"
     assert "Idempotent resolution" in resp_retry_schema.message
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 3
 
-    # Ensure no duplicate records created in DB
-    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 1
+    # Assert skipped status remains skipped on retry
+    retry_applied_map = {d.decision_id: d for d in resp_retry_schema.applied_decisions}
+    assert retry_applied_map["dec-003"].status == "skipped"
+
+    # Assert charge line metadata remains untouched
+    line_suggested.refresh_from_db()
+    assert line_suggested.manual_resolution_at == original_at
+    assert line_suggested.manual_resolution_by == original_user
+
+    # Test that a new idempotency key with same target/type creates a new DraftQuoteDecisionDB record but does not overwrite metadata
+    payload_new_key = {
+        "idempotency_key": "9f9b2520-22c5-4309-88cc-51e6b3648613",
+        "decisions": [
+            {
+                "decision_id": "dec-005",
+                "type": "accept_suggestion",
+                "target_id": str(line_suggested.id),
+                "details": {},
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            }
+        ]
+    }
+    res_new_key = client.post(url, payload_new_key, format="json")
+    assert res_new_key.status_code == 200
+    # Confirms it created a new DraftQuoteDecisionDB record (now 4 total for envelope)
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 4
+    # Confirms it did not overwrite resolution timestamp/operator
+    line_suggested.refresh_from_db()
+    assert line_suggested.manual_resolution_at == original_at
+    assert line_suggested.manual_resolution_by == original_user
+
+
 
     # 5. Non-existent envelope returns 404
     url_404 = f"/api/v3/spot/envelopes/{uuid.uuid4()}/draft-quote/resolve/"
@@ -285,11 +421,42 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     res_other = client_other.post(url, valid_payload, format="json")
     assert res_other.status_code == 404
 
-    # 7. Verify no side-effects (no charge lines mutated, no catalog changes)
-    assert SPEChargeLineDB.objects.filter(envelope=envelope).count() == 0
-    assert ProductCode.objects.filter(code="AF-FUEL").count() == 0
+    # 7. Unknown target_id returns rejected/skipped status
+    payload_bad_target = {
+        "idempotency_key": "c33f27f0-0fa4-46b5-88f5-9610f607ad77",
+        "decisions": [
+            {
+                "decision_id": "dec-004",
+                "type": "accept_suggestion",
+                "target_id": str(uuid.uuid4()),
+                "details": {},
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            }
+        ]
+    }
+    res_bad_target = client.post(url, payload_bad_target, format="json")
+    assert res_bad_target.status_code == 200  # Stored successfully as rejected
+    resp_bad_target_schema = DraftQuoteResolveResponseSchema(**res_bad_target.data)
+    assert resp_bad_target_schema.status == "rejected"
+    assert len(resp_bad_target_schema.rejected_decisions) == 1
+    assert resp_bad_target_schema.rejected_decisions[0].error_code == "TARGET_NOT_FOUND"
 
-    # 8. Same idempotency_key on a different envelope must not return decisions from another envelope (isolated namespaces)
+    # 8. Verify read API reflects ignored line and resolved line correctly
+    url_read = f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/"
+    res_read = client.get(url_read)
+    assert res_read.status_code == 200
+    read_schema = DraftQuoteSchema(**res_read.data)
+    
+    freight_charge = next(c for c in read_schema.suggested_charges if c.id == str(line_suggested.id))
+    assert freight_charge.status == "accepted_by_user"
+
+    ignored_charge = next(c for c in read_schema.suggested_charges if c.id == str(line_ignore.id))
+    assert ignored_charge.status == "ignored"
+
+    # 9. Same idempotency_key on a different envelope must not return decisions from another envelope (isolated namespaces)
     envelope_2 = SpotPricingEnvelopeDB.objects.create(
         status=SpotPricingEnvelopeDB.Status.DRAFT,
         shipment_context_json={},
@@ -297,15 +464,104 @@ def test_draft_quote_resolve_endpoint(transactional_db):
         expires_at=timezone.now() + timezone.timedelta(days=7),
         created_by=user
     )
+    batch_2 = SPESourceBatchDB.objects.create(
+        envelope=envelope_2,
+        source_kind=SPESourceBatchDB.SourceKind.AGENT,
+        source_type=SPESourceBatchDB.SourceType.PDF,
+        label="Resolve Batch 2",
+        file_name="resolve_test_2.pdf"
+    )
+    line_suggested_2 = SPEChargeLineDB.objects.create(
+        envelope=envelope_2,
+        source_batch=batch_2,
+        code="AF-FREIGHT",
+        description="Suggested Freight Surcharge",
+        amount=500.00,
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.PER_KG,
+        bucket=SPEChargeLineDB.Bucket.AIRFREIGHT,
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        entered_at=timezone.now(),
+        source_reference="resolve_test_2.pdf"
+    )
+    line_ignore_2 = SPEChargeLineDB.objects.create(
+        envelope=envelope_2,
+        source_batch=batch_2,
+        code="OTHER_TAX",
+        description="Ignore tax line",
+        amount=50.00,
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.FLAT,
+        bucket=SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+        normalization_status=SPEChargeLineDB.NormalizationStatus.MATCHED,
+        exclude_from_totals=False,
+        entered_at=timezone.now(),
+        source_reference="resolve_test_2.pdf"
+    )
+    line_edit_2 = SPEChargeLineDB.objects.create(
+        envelope=envelope_2,
+        source_batch=batch_2,
+        code="AF-FUEL",
+        description="Fuel Surcharge to edit",
+        amount=200.00,
+        currency="USD",
+        unit=SPEChargeLineDB.Unit.PER_KG,
+        bucket=SPEChargeLineDB.Bucket.AIRFREIGHT,
+        normalization_status=SPEChargeLineDB.NormalizationStatus.AMBIGUOUS,
+        entered_at=timezone.now(),
+        source_reference="resolve_test_2.pdf"
+    )
+
+    payload_env_2 = {
+        "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",  # Same idempotency key!
+        "decisions": [
+            {
+                "decision_id": "dec-001",
+                "type": "accept_suggestion",
+                "target_id": str(line_suggested_2.id),
+                "details": {},
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            },
+            {
+                "decision_id": "dec-002",
+                "type": "ignore",
+                "target_id": str(line_ignore_2.id),
+                "details": {"reason": "Non-commercial line item"},
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            },
+            {
+                "decision_id": "dec-003",
+                "type": "edit_charge",
+                "target_id": str(line_edit_2.id),
+                "details": {
+                    "original_values": {"amount": 200.00, "currency": "USD"},
+                    "updated_values": {"amount": 250.00, "currency": "USD"}
+                },
+                "audit_metadata": {
+                    "user_id": 999,
+                    "timestamp": "2026-07-03T00:00:00Z"
+                }
+            }
+        ]
+    }
+
     url_2 = f"/api/v3/spot/envelopes/{envelope_2.id}/draft-quote/resolve/"
-    res_diff_env = client.post(url_2, valid_payload, format="json")
+    res_diff_env = client.post(url_2, payload_env_2, format="json")
     assert res_diff_env.status_code == 200
     resp_diff_schema = DraftQuoteResolveResponseSchema(**res_diff_env.data)
     assert resp_diff_schema.status == "accepted"
     assert "Operator decisions" in resp_diff_schema.message
     assert str(resp_diff_schema.envelope_id) == str(envelope_2.id)
-    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope_2).count() == 1
-    assert DraftQuoteDecisionDB.objects.filter(idempotency_key="8e9b2520-22c5-4309-88cc-51e6b3648612").count() == 2
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope_2).count() == 3
+    assert DraftQuoteDecisionDB.objects.filter(idempotency_key="8e9b2520-22c5-4309-88cc-51e6b3648612").count() == 6
+
+
 
 
 
