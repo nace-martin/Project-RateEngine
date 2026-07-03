@@ -124,7 +124,7 @@ export default function ExceptionWorkspaceLivePage() {
 
   return (
     <div className="w-full min-h-screen bg-slate-950">
-      <ExceptionWorkspace initialData={data} isLive={true} />
+      <ExceptionWorkspace initialData={data} isLive={true} envelopeId={speId} />
     </div>
   );
 }

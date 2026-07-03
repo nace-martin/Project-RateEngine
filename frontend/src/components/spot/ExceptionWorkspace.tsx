@@ -51,7 +51,7 @@ interface Decision {
     };
 }
 
-export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive = false }: { initialData?: DraftQuote; isLive?: boolean }) {
+export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive = false, envelopeId }: { initialData?: DraftQuote; isLive?: boolean; envelopeId?: string }) {
     // Single state containers for mock database updates
     const [draftQuote] = useState(initialData);
     const [explainTotals, setExplainTotals] = useState(false);
@@ -123,6 +123,57 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
             setSelectedActionType(null);
             setUnknownStep(1);
         }
+    };
+
+    const handleUseApprovedProductCode = async (chargeId: string, charge: DraftCharge) => {
+        const reqId = charge.product_code_request_id;
+        const pcId = charge.approved_product_code_id;
+        const code = charge.approved_product_code || charge.suggested_product_code || "";
+
+        if (!reqId || !pcId) {
+            setActionMessage("Missing approved ProductCode request metadata.");
+            return;
+        }
+
+        const decisionId = `dec-${Date.now()}`;
+        const newDecisionItem = {
+            decision_id: decisionId,
+            type: "use_approved_product_code",
+            target_id: chargeId,
+            details: {
+                product_code_request_id: Number(reqId),
+                product_code_id: Number(pcId)
+            },
+            audit_metadata: {
+                user_id: 1,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+        if (isLive && envelopeId) {
+            try {
+                const { resolveDraftQuoteDecisions } = await import("../../lib/api");
+                const payload = {
+                    idempotency_key: crypto.randomUUID ? crypto.randomUUID() : "3b128522-a89e-4055-bf51-199eecc5628b",
+                    decisions: [newDecisionItem]
+                };
+                await resolveDraftQuoteDecisions(envelopeId, payload);
+            } catch (err) {
+                console.error("Failed to submit resolve decision:", err);
+                const errMsg = err instanceof Error ? err.message : String(err);
+                setActionMessage(`API error resolving mapping: ${errMsg}`);
+                return;
+            }
+        }
+
+        // Apply locally
+        captureSnapshot(chargeId, "map", `Used approved billing code ${code} for ${charge.display_label}`);
+        setSuggestedCharges(prev =>
+            prev.map(c => (c.id === chargeId ? { ...c, suggested_product_code: code, status: "accepted_by_user" as DraftChargeStatus } : c))
+        );
+        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
+        setActionMessage(`Approved billing code ${code} applied successfully to ${charge.display_label}.`);
+        setSelectedActionType(null);
     };
 
     // Action execution helpers
@@ -402,33 +453,58 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                         {selectedActionType === null ? (
                             <div className="flex flex-col gap-4">
                                 {currentIssue.type === "review_item" && currentIssue.charge ? (
-                                    <div className="flex flex-wrap gap-2">
-                                        <button
-                                            onClick={() => setSelectedActionType("map_existing")}
-                                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
-                                        >
-                                            Map to Existing ProductCode
-                                        </button>
-                                        <button
-                                            onClick={() => handleOpenRequestProductCode(currentIssue.charge!)}
-                                            className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition"
-                                        >
-                                            Request New ProductCode
-                                        </button>
-                                        {currentIssue.charge.suggested_product_code && (
-                                            <button
-                                                onClick={() => handleAcceptSuggestedMapping(currentIssue.id, currentIssue.title, currentIssue.charge!.suggested_product_code!)}
-                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
-                                            >
-                                                Accept Suggested Mapping ({currentIssue.charge.suggested_product_code})
-                                            </button>
+                                    <div className="flex flex-col gap-4">
+                                        {currentIssue.charge.correction_actions?.includes("APPROVED_PRODUCTCODE_AVAILABLE") && (
+                                            <div className="bg-emerald-950/20 border border-emerald-900/60 p-4 rounded-xl text-xs flex flex-col gap-2 mb-2">
+                                                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                                                    <CheckCircle className="w-4 h-4" />
+                                                    <span>ProductCode Request Approved!</span>
+                                                </div>
+                                                <p className="text-slate-300">
+                                                    The requested billing code <strong className="font-mono text-indigo-300 bg-slate-950 px-1.5 py-0.5 rounded">{currentIssue.charge.approved_product_code}</strong> has been approved by admin. You can directly map and consume this approval.
+                                                </p>
+                                                <div className="text-[10px] text-slate-500 font-mono">
+                                                    Request Context ID: {currentIssue.charge.product_code_request_id}
+                                                </div>
+                                                <div className="mt-2">
+                                                    <button
+                                                        onClick={() => handleUseApprovedProductCode(currentIssue.id, currentIssue.charge!)}
+                                                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition text-xs"
+                                                    >
+                                                        Use Approved ProductCode ({currentIssue.charge.approved_product_code})
+                                                    </button>
+                                                </div>
+                                            </div>
                                         )}
-                                        <button
-                                            onClick={() => handleIgnoreCharge(currentIssue.id, currentIssue.charge!)}
-                                            className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
-                                        >
-                                            Ignore as Non-Commercial
-                                        </button>
+
+                                        <div className="flex flex-wrap gap-2">
+                                            <button
+                                                onClick={() => setSelectedActionType("map_existing")}
+                                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Map to Existing ProductCode
+                                            </button>
+                                            <button
+                                                onClick={() => handleOpenRequestProductCode(currentIssue.charge!)}
+                                                className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Request New ProductCode
+                                            </button>
+                                            {currentIssue.charge.suggested_product_code && !currentIssue.charge.correction_actions?.includes("APPROVED_PRODUCTCODE_AVAILABLE") && (
+                                                <button
+                                                    onClick={() => handleAcceptSuggestedMapping(currentIssue.id, currentIssue.title, currentIssue.charge!.suggested_product_code!)}
+                                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
+                                                >
+                                                    Accept Suggested Mapping ({currentIssue.charge.suggested_product_code})
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => handleIgnoreCharge(currentIssue.id, currentIssue.charge!)}
+                                                className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
+                                            >
+                                                Ignore as Non-Commercial
+                                            </button>
+                                        </div>
                                     </div>
                                 ) : currentIssue.itemDetails ? (
                                     /* Unknown Charge Guided flow wizard */

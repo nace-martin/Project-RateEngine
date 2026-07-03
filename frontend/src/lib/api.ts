@@ -806,6 +806,32 @@ export async function getDraftQuote(id: string): Promise<DraftQuote> {
 
 
 /**
+ * Submit operator decisions to resolve exceptions for a draft quote.
+ */
+export async function resolveDraftQuoteDecisions(
+  envelopeId: string,
+  payload: { idempotency_key: string; decisions: any[] }
+): Promise<any> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/draft-quote/resolve/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to resolve draft quote decisions: ${detail}`);
+  }
+
+  return response.json();
+}
+
+
+/**
  * Submit Sales acknowledgement for SPE.
  */
 export async function acknowledgeSpotEnvelope(
