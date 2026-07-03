@@ -3404,31 +3404,9 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
                 status=status.HTTP_200_OK
             )
 
-        # 2. Persist new decisions atomically
-        applied = []
-        with transaction.atomic():
-            for dec_item in payload.decisions:
-                dec_record = DraftQuoteDecisionDB.objects.create(
-                    envelope=spe_db,
-                    idempotency_key=payload.idempotency_key,
-                    decision_id=dec_item.decision_id,
-                    decision_type=dec_item.type,
-                    target_id=dec_item.target_id,
-                    details_json=dec_item.details,
-                    client_audit_metadata_json=dec_item.audit_metadata.model_dump(),
-                    server_user=request.user,
-                    status="accepted",
-                    message="Decision validated and persisted successfully."
-                )
-                applied.append(
-                    DecisionResultSchema(
-                        decision_id=dec_record.decision_id,
-                        target_id=dec_record.target_id,
-                        type=dec_record.decision_type,
-                        status="applied",
-                        message="Decision applied successfully"
-                    )
-                )
+        # 2. Persist and apply new decisions atomically using resolve service
+        from quotes.services.draft_quote_resolve_service import apply_draft_quote_decisions
+        applied, rejected = apply_draft_quote_decisions(spe_db, payload, request.user)
 
         # Compute remaining unresolved items dynamically
         try:
@@ -3438,15 +3416,23 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
         except Exception:
             remaining_count = 0
 
+        # Calculate overall resolution status based on decisions outcomes
+        overall_status = "accepted"
+        if rejected:
+            if applied:
+                overall_status = "partially_accepted"
+            else:
+                overall_status = "rejected"
+
         response_payload = DraftQuoteResolveResponseSchema(
-            status="accepted",
+            status=overall_status,
             idempotency_key=payload.idempotency_key,
             applied_decisions=applied,
-            rejected_decisions=[],
+            rejected_decisions=rejected,
             validation_errors=[],
             unresolved_items_remaining=remaining_count,
             envelope_id=spe_db.id,
-            message="Operator decisions validated and persisted successfully."
+            message="Operator decisions processed and persisted successfully."
         )
 
         return Response(
