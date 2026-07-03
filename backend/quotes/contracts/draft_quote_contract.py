@@ -124,3 +124,89 @@ class DraftQuoteSchema(BaseModel):
                 raise ValueError(f"Unclassified item {item.id} is not present in the review_queue.")
 
         return self
+
+
+class AuditMetadataSchema(BaseModel):
+    user_id: int = Field(..., description="ID of the user making the decision")
+    timestamp: str = Field(..., description="ISO timestamp of when decision was recorded")
+
+
+class MapToProductCodeDetails(BaseModel):
+    product_code: str = Field(..., description="Master catalog product code string")
+
+
+class RequestProductCodeDetails(BaseModel):
+    proposed_code: str = Field(..., description="Proposed code string")
+    description: str = Field(..., description="Proposed code description")
+    category: str = Field(..., description="Target category (freight, etc.)")
+    domain: str = Field(..., description="Target domain (IMPORT, EXPORT, DOMESTIC)")
+    reason: str = Field(..., description="Operator justification for request")
+
+
+class IgnoreDetails(BaseModel):
+    reason: str = Field(..., description="Reason why item is ignored (must not be empty)")
+
+
+class ChargeValuesSchema(BaseModel):
+    amount: Decimal = Field(..., description="Monetary amount value")
+    currency: str = Field(..., description="3-letter currency code")
+    rate: Optional[Decimal] = Field(None, description="Monetary rate per unit")
+    unit: Optional[str] = Field(None, description="Charge unit basis")
+
+
+class EditChargeDetails(BaseModel):
+    original_values: ChargeValuesSchema = Field(..., description="Original field values")
+    updated_values: ChargeValuesSchema = Field(..., description="Updated field values")
+
+
+class ClassifyUnclassifiedDetails(BaseModel):
+    bucket: str = Field(..., description="Target bucket for classification")
+    display_label: str = Field(..., description="Display label for the new charge line")
+    product_code: str = Field(..., description="Target product code for classification")
+    amount: Decimal = Field(..., description="Parsed amount")
+    currency: str = Field(..., description="3-letter currency code")
+    rate: Optional[Decimal] = Field(None, description="Parsed rate")
+    unit: Optional[str] = Field(None, description="Parsed unit")
+    minimum_charge: Optional[Decimal] = Field(None, description="Parsed minimum limit")
+
+
+class DecisionItemSchema(BaseModel):
+    decision_id: str = Field(..., description="Stable client decision ID")
+    type: str = Field(..., description="Decision action type")
+    target_id: str = Field(..., description="Target charge or unclassified block ID")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Action-specific options")
+    audit_metadata: AuditMetadataSchema = Field(..., description="Operator audit trail metadata")
+
+    @model_validator(mode="after")
+    def validate_details_by_type(self) -> DecisionItemSchema:
+        valid_types = {
+            "accept_suggestion",
+            "map_to_product_code",
+            "request_product_code",
+            "ignore",
+            "edit_charge",
+            "classify_unclassified",
+        }
+        if self.type not in valid_types:
+            raise ValueError(f"Invalid decision type: {self.type}")
+
+        if self.type == "map_to_product_code":
+            MapToProductCodeDetails(**self.details)
+        elif self.type == "request_product_code":
+            RequestProductCodeDetails(**self.details)
+        elif self.type == "ignore":
+            IgnoreDetails(**self.details)
+            if not self.details.get("reason") or not str(self.details["reason"]).strip():
+                raise ValueError("Ignored decisions must carry a non-empty reason.")
+        elif self.type == "edit_charge":
+            EditChargeDetails(**self.details)
+        elif self.type == "classify_unclassified":
+            ClassifyUnclassifiedDetails(**self.details)
+        
+        return self
+
+
+class DraftQuoteResolveSchema(BaseModel):
+    idempotency_key: str = Field(..., description="UUID token ensuring transaction idempotency")
+    decisions: List[DecisionItemSchema] = Field(default_factory=list, description="List of operator decisions")
+

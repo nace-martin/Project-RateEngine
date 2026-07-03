@@ -1,0 +1,97 @@
+{
+  "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+  "decisions": [
+    {
+      "decision_id": "dec-001",
+      "type": "accept_suggestion",
+      "target_id": "chg-001",
+      "details": {},
+      "audit_metadata": {
+        "user_id": 1,
+        "timestamp": "2026-07-03T00:00:00Z"
+      }
+    },
+    {
+      "decision_id": "dec-002",
+      "type": "map_to_product_code",
+      "target_id": "chg-002",
+      "details": {
+        "product_code": "AF-FUEL"
+      },
+      "audit_metadata": {
+        "user_id": 1,
+        "timestamp": "2026-07-03T00:00:05Z"
+      }
+    },
+    {
+      "decision_id": "dec-003",
+      "type": "request_product_code",
+      "target_id": "chg-003",
+      "details": {
+        "proposed_code": "AF-WAR",
+        "description": "War risk surcharge for cargo transiting combat area",
+        "category": "freight",
+        "domain": "IMPORT",
+        "reason": "War surcharge is not in catalog"
+      },
+      "audit_metadata": {
+        "user_id": 1,
+        "timestamp": "2026-07-03T00:00:10Z"
+      }
+    },
+    {
+      "decision_id": "dec-004",
+      "type": "ignore",
+      "target_id": "chg-004",
+      "details": {
+        "reason": "Boilerplate clause - non commercial disclaimer text block"
+      },
+      "audit_metadata": {
+        "user_id": 1,
+        "timestamp": "2026-07-03T00:00:15Z"
+      }
+    },
+    {
+      "decision_id": "dec-005",
+      "type": "edit_charge",
+      "target_id": "chg-005",
+      "details": {
+        "original_values": {
+          "amount": 250.00,
+          "currency": "SGD",
+          "rate": 1.25,
+          "unit": "per_kg"
+        },
+        "updated_values": {
+          "amount": 300.00,
+          "currency": "USD",
+          "rate": 1.50,
+          "unit": "per_kg"
+        }
+      },
+      "audit_metadata": {
+        "user_id": 1,
+        "timestamp": "2026-07-03T00:00:20Z"
+      }
+    },
+    {
+      "decision_id": "dec-006",
+      "type": "classify_unclassified",
+      "target_id": "unclass-001",
+      "details": {
+        "bucket": "origin_charges",
+        "display_label": "Local Handling",
+        "product_code": "AF-HAND",
+        "amount": 120.00,
+        "currency": "SGD",
+        "rate": 120.00,
+        "unit": "flat",
+        "minimum_charge": 120.00
+      },
+      "audit_metadata": {
+        "user_id": 1,
+        "timestamp": "2026-07-03T00:00:25Z"
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import json
 import os
 from django.test import SimpleTestCase
 from pydantic import ValidationError
-from quotes.contracts.draft_quote_contract import DraftQuoteSchema, DraftChargeSchema, IgnoredItemSchema
+from quotes.contracts.draft_quote_contract import DraftQuoteSchema, DraftChargeSchema, IgnoredItemSchema, DraftQuoteResolveSchema
 
 
 
@@ -16,6 +16,15 @@ class DraftQuoteContractTests(SimpleTestCase):
         )
         with open(self.fixture_path, "r") as f:
             self.raw_data = json.load(f)
+
+        self.resolve_fixture_path = os.path.join(
+            os.path.dirname(__file__),
+            "fixtures",
+            "draft_quote_contract",
+            "hard_case_resolve_submission.json"
+        )
+        with open(self.resolve_fixture_path, "r") as f:
+            self.resolve_raw_data = json.load(f)
 
     def test_mock_payload_validates_successfully(self):
         """Verify the hard-case mock payload successfully validates against the contract schema."""
@@ -141,4 +150,41 @@ class DraftQuoteContractTests(SimpleTestCase):
             c for c in schema.suggested_charges if c.similarity_group_id == "sim-surcharges"
         ]
         self.assertEqual(len(charges_with_group), 2)
+
+    def test_mock_resolve_payload_validates_successfully(self):
+        """Verify that the hard-case resolve submission payload validates against DraftQuoteResolveSchema."""
+        schema = DraftQuoteResolveSchema(**self.resolve_raw_data)
+        self.assertEqual(schema.idempotency_key, "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(len(schema.decisions), 6)
+        
+        decisions_by_type = {d.type: d for d in schema.decisions}
+        self.assertIn("accept_suggestion", decisions_by_type)
+        self.assertIn("map_to_product_code", decisions_by_type)
+        self.assertIn("request_product_code", decisions_by_type)
+        self.assertIn("ignore", decisions_by_type)
+        self.assertIn("edit_charge", decisions_by_type)
+        self.assertIn("classify_unclassified", decisions_by_type)
+
+    def test_resolve_validation_rules_reject_invalid_payloads(self):
+        """Verify resolve validation schema rejects invalid decision type or details."""
+        # 1. Invalid decision type
+        bad_type_data = json.loads(json.dumps(self.resolve_raw_data))
+        bad_type_data["decisions"][0]["type"] = "delete_everything"
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveSchema(**bad_type_data)
+
+        # 2. Ignore decision missing required 'reason'
+        bad_ignore_data = json.loads(json.dumps(self.resolve_raw_data))
+        ignore_decision = next(d for d in bad_ignore_data["decisions"] if d["type"] == "ignore")
+        ignore_decision["details"]["reason"] = "   "
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveSchema(**bad_ignore_data)
+
+        # 3. Edit charge missing original/updated values fields
+        bad_edit_data = json.loads(json.dumps(self.resolve_raw_data))
+        edit_decision = next(d for d in bad_edit_data["decisions"] if d["type"] == "edit_charge")
+        edit_decision["details"]["updated_values"] = {}
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveSchema(**bad_edit_data)
+
 
