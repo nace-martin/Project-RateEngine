@@ -289,4 +289,23 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert SPEChargeLineDB.objects.filter(envelope=envelope).count() == 0
     assert ProductCode.objects.filter(code="AF-FUEL").count() == 0
 
+    # 8. Same idempotency_key on a different envelope must not return decisions from another envelope (isolated namespaces)
+    envelope_2 = SpotPricingEnvelopeDB.objects.create(
+        status=SpotPricingEnvelopeDB.Status.DRAFT,
+        shipment_context_json={},
+        shipment_context_hash="mock_hash_value_2",
+        expires_at=timezone.now() + timezone.timedelta(days=7),
+        created_by=user
+    )
+    url_2 = f"/api/v3/spot/envelopes/{envelope_2.id}/draft-quote/resolve/"
+    res_diff_env = client.post(url_2, valid_payload, format="json")
+    assert res_diff_env.status_code == 200
+    resp_diff_schema = DraftQuoteResolveResponseSchema(**res_diff_env.data)
+    assert resp_diff_schema.status == "accepted"
+    assert "Operator decisions" in resp_diff_schema.message
+    assert str(resp_diff_schema.envelope_id) == str(envelope_2.id)
+    assert DraftQuoteDecisionDB.objects.filter(envelope=envelope_2).count() == 1
+    assert DraftQuoteDecisionDB.objects.filter(idempotency_key="8e9b2520-22c5-4309-88cc-51e6b3648612").count() == 2
+
+
 
