@@ -37,7 +37,7 @@ def apply_draft_quote_decisions(
             except (ValueError, TypeError):
                 charge_line = None
                 
-            if not charge_line and decision_type in ["accept_suggestion", "ignore", "edit_charge", "map_to_product_code"]:
+            if not charge_line and decision_type in ["accept_suggestion", "ignore", "edit_charge", "map_to_product_code", "use_approved_product_code"]:
                 # Unknown target_id returns rejected/skipped result
                 err_result = DecisionResultSchema(
                     decision_id=dec_item.decision_id,
@@ -119,6 +119,64 @@ def apply_draft_quote_decisions(
                 status_val = "skipped"
                 response_status = "skipped"
                 message_val = "ProductCode request created and pending admin review."
+            elif decision_type == "use_approved_product_code":
+                from pricing_v4.models import ProductCodeCreationRequest
+
+                # Extract details
+                req_id = dec_item.details.get("product_code_request_id")
+                pc_id = dec_item.details.get("product_code_id")
+
+                pc_request = None
+                if req_id:
+                    try:
+                        pc_request = ProductCodeCreationRequest.objects.filter(id=req_id).first()
+                    except (ValueError, TypeError):
+                        pass
+
+                if not pc_request:
+                    status_val = "rejected"
+                    response_status = "rejected"
+                    error_code_val = "REQUEST_NOT_FOUND"
+                    message_val = f"ProductCodeCreationRequest with ID {req_id} not found."
+                elif str(pc_request.source_envelope_id) != str(envelope.id):
+                    status_val = "rejected"
+                    response_status = "rejected"
+                    error_code_val = "INVALID_REQUEST_SOURCE"
+                    message_val = "ProductCodeCreationRequest does not belong to the same envelope."
+                elif charge_line and pc_request.source_charge_line_id and str(pc_request.source_charge_line_id) != str(charge_line.id):
+                    status_val = "rejected"
+                    response_status = "rejected"
+                    error_code_val = "INVALID_REQUEST_SOURCE"
+                    message_val = "ProductCodeCreationRequest does not belong to the same charge line."
+                elif pc_request.status != ProductCodeCreationRequest.STATUS_APPROVED:
+                    status_val = "rejected"
+                    response_status = "rejected"
+                    error_code_val = "REQUEST_NOT_APPROVED"
+                    message_val = f"ProductCodeCreationRequest status is {pc_request.status}, must be APPROVED."
+                elif not pc_request.approved_product_code_id:
+                    status_val = "rejected"
+                    response_status = "rejected"
+                    error_code_val = "MISSING_APPROVED_PRODUCT_CODE"
+                    message_val = "ProductCodeCreationRequest does not have an approved product code."
+                elif pc_id and int(pc_id) != pc_request.approved_product_code_id:
+                    status_val = "rejected"
+                    response_status = "rejected"
+                    error_code_val = "PRODUCT_CODE_MISMATCH"
+                    message_val = f"Provided product_code_id {pc_id} does not match approved ProductCode ID {pc_request.approved_product_code_id}."
+                else:
+                    if charge_line:
+                        if charge_line.manual_resolution_status == SPEChargeLineDB.ManualResolutionStatus.RESOLVED and charge_line.manual_resolved_product_code_id == pc_request.approved_product_code_id:
+                            message_val = "Decision logged. Target was already resolved with the approved ProductCode."
+                        else:
+                            charge_line.manual_resolved_product_code = pc_request.approved_product_code
+                            charge_line.manual_resolution_status = SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+                            charge_line.manual_resolution_by = user
+                            charge_line.manual_resolution_at = timezone.now()
+                            charge_line.save()
+                            message_val = "Approved ProductCode applied successfully."
+                    else:
+                        message_val = "Approved ProductCode validated, but target charge line was not found."
+
             elif decision_type in ["edit_charge", "map_to_product_code", "classify_unclassified"]:
                 # High-risk skipped decisions must remain status='skipped'
                 status_val = "skipped"
@@ -146,7 +204,8 @@ def apply_draft_quote_decisions(
                     target_id=target_id,
                     type=decision_type,
                     status=response_status,
-                    message=message_val
+                    message=message_val,
+                    error_code=error_code_val
                 )
             )
 

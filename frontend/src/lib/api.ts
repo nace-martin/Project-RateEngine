@@ -4,7 +4,7 @@ import { API_BASE_URL } from './config';
 import { getJson, sendJson } from './api/shared';
 import { mapQuoteDetailToComputeResult } from './quote-detail-mapping';
 import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
-import { DraftQuote } from './draft-quote-types';
+import { DraftQuote, DraftQuoteResolvePayload, DraftQuoteResolveResponse } from './draft-quote-types';
 import {
   LoginData,
   User,
@@ -802,6 +802,32 @@ export async function getDraftQuote(id: string): Promise<DraftQuote> {
   }
 
   return response.json();
+}
+
+
+/**
+ * Submit operator decisions to resolve exceptions for a draft quote.
+ */
+export async function resolveDraftQuoteDecisions(
+  envelopeId: string,
+  payload: DraftQuoteResolvePayload
+): Promise<DraftQuoteResolveResponse> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/draft-quote/resolve/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await parseErrorResponse(response);
+    throw new Error(`Failed to resolve draft quote decisions: ${detail}`);
+  }
+
+  return response.json() as Promise<DraftQuoteResolveResponse>;
 }
 
 

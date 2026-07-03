@@ -657,6 +657,169 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert DraftQuoteDecisionDB.objects.filter(idempotency_key="8e9b2520-22c5-4309-88cc-51e6b3648612").count() == 6
 
 
+@pytest.mark.django_db
+def test_resolve_use_approved_product_code():
+    from pricing_v4.models import ProductCodeCreationRequest, ProductCode
+    from quotes.spot_models import SpotPricingEnvelopeDB, SPEChargeLineDB, DraftQuoteDecisionDB
+    from quotes.contracts.draft_quote_contract import DraftQuoteResolveResponseSchema
+    from rest_framework.test import APIClient
+    from django.contrib.auth import get_user_model
+    import uuid
+
+    User = get_user_model()
+    user = User.objects.create_user(username="test_operator", password="password")
+    
+    envelope = SpotPricingEnvelopeDB.objects.create(
+        status=SpotPricingEnvelopeDB.Status.DRAFT,
+        shipment_context_json={
+            "origin_code": "SIN",
+            "destination_code": "POM",
+            "mode": "AIR",
+            "pieces": 3,
+            "actual_weight_kg": 150.0,
+            "chargeable_weight_kg": 200.0,
+            "commodity": "GCR",
+            "origin_country": "SG",
+            "destination_country": "PG",
+            "supplier_name": "Qantas Air Cargo"
+        },
+        shipment_context_hash="mock_hash_value_approved",
+        expires_at=timezone.now() + timezone.timedelta(days=7),
+        created_by=user
+    )
+    
+    charge_line = SPEChargeLineDB.objects.create(
+        envelope=envelope,
+        code="TEST-CHARGE",
+        description="Test Charge Line",
+        amount=100.00,
+        currency="USD",
+        unit="flat",
+        bucket="origin_charges",
+        entered_at=timezone.now()
+    )
+
+    product_code = ProductCode.objects.create(
+        id=9999,
+        code="APPROVED-PC-9999",
+        description="Approved Product Code",
+        domain=ProductCode.DOMAIN_IMPORT,
+        category=ProductCode.CATEGORY_SURCHARGE,
+        is_gst_applicable=False,
+        gl_revenue_code="4000",
+        gl_cost_code="5000",
+        default_unit=ProductCode.UNIT_SHIPMENT
+    )
+
+    # 1. Approved request setup
+    req_approved = ProductCodeCreationRequest.objects.create(
+        source_label="Test Charge Line",
+        suggested_name="TEST-CHARGE",
+        suggested_bucket="origin_charges",
+        suggested_basis="FLAT",
+        source_envelope=envelope,
+        source_charge_line=charge_line,
+        status=ProductCodeCreationRequest.STATUS_APPROVED,
+        approved_product_code=product_code,
+        created_by=user
+    )
+
+    # 2. Pending request setup
+    req_pending = ProductCodeCreationRequest.objects.create(
+        source_label="Test Charge Line 2",
+        suggested_name="TEST-CHARGE-2",
+        suggested_bucket="origin_charges",
+        suggested_basis="FLAT",
+        source_envelope=envelope,
+        source_charge_line=charge_line,
+        status=ProductCodeCreationRequest.STATUS_PENDING,
+        created_by=user
+    )
+
+    # 3. Rejected request setup
+    req_rejected = ProductCodeCreationRequest.objects.create(
+        source_label="Test Charge Line 3",
+        suggested_name="TEST-CHARGE-3",
+        suggested_bucket="origin_charges",
+        suggested_basis="FLAT",
+        source_envelope=envelope,
+        source_charge_line=charge_line,
+        status=ProductCodeCreationRequest.STATUS_REJECTED,
+        created_by=user
+    )
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    url = f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/resolve/"
+
+    # Test pending request cannot be consumed
+    payload_pending = {
+        "idempotency_key": str(uuid.uuid4()),
+        "decisions": [{
+            "decision_id": "dec-pending",
+            "type": "use_approved_product_code",
+            "target_id": str(charge_line.id),
+            "details": {
+                "product_code_request_id": str(req_pending.id),
+                "product_code_id": product_code.id
+            },
+            "audit_metadata": {"user_id": user.id, "timestamp": "2026-07-03T00:00:00Z"}
+        }]
+    }
+    res = client.post(url, payload_pending, format="json")
+    assert res.status_code == 200
+    assert res.data["applied_decisions"][0]["error_code"] == "REQUEST_NOT_APPROVED"
+
+    # Test rejected request cannot be consumed
+    payload_rejected = {
+        "idempotency_key": str(uuid.uuid4()),
+        "decisions": [{
+            "decision_id": "dec-rejected",
+            "type": "use_approved_product_code",
+            "target_id": str(charge_line.id),
+            "details": {
+                "product_code_request_id": str(req_rejected.id),
+                "product_code_id": product_code.id
+            },
+            "audit_metadata": {"user_id": user.id, "timestamp": "2026-07-03T00:00:00Z"}
+        }]
+    }
+    res = client.post(url, payload_rejected, format="json")
+    assert res.status_code == 200
+    assert res.data["applied_decisions"][0]["error_code"] == "REQUEST_NOT_APPROVED"
+
+    # Test approved request can be consumed
+    ik = str(uuid.uuid4())
+    payload_approved = {
+        "idempotency_key": ik,
+        "decisions": [{
+            "decision_id": "dec-approved",
+            "type": "use_approved_product_code",
+            "target_id": str(charge_line.id),
+            "details": {
+                "product_code_request_id": str(req_approved.id),
+                "product_code_id": product_code.id
+            },
+            "audit_metadata": {"user_id": user.id, "timestamp": "2026-07-03T00:00:00Z"}
+        }]
+    }
+    res = client.post(url, payload_approved, format="json")
+    assert res.status_code == 200
+    assert len(res.data["applied_decisions"]) == 1
+    assert res.data["applied_decisions"][0]["status"] == "applied"
+
+    # Verify database updates
+    charge_line.refresh_from_db()
+    assert charge_line.manual_resolved_product_code == product_code
+    assert charge_line.manual_resolution_status == SPEChargeLineDB.ManualResolutionStatus.RESOLVED
+
+    # Test idempotent replay returns cached decision and does not mutate twice
+    res_replay = client.post(url, payload_approved, format="json")
+    assert res_replay.status_code == 200
+    assert "retrieved from database history" in res_replay.data["message"]
+
+
+
 
 
 

@@ -24,6 +24,9 @@ class DraftChargeSchema(BaseModel):
     raw_label: str = Field(..., description="Raw text label from document")
     suggested_product_code: Optional[str] = Field(None, description="Inferred ERP product code")
     product_code_conflict: bool = Field(False, description="True if product code mapping is ambiguous")
+    approved_product_code: Optional[str] = Field(None, description="Approved ProductCode code from request")
+    approved_product_code_id: Optional[int] = Field(None, description="Approved ProductCode ID from request")
+    product_code_request_id: Optional[int] = Field(None, description="ID of the approved ProductCodeCreationRequest")
     bucket: str = Field(..., description="Category bucket: airfreight, origin_charges, destination_charges, or other/unclassified")
     currency: str = Field(..., description="3-letter currency code (e.g., USD)")
     amount: Decimal = Field(..., description="Charge monetary amount")
@@ -144,6 +147,11 @@ class RequestProductCodeDetails(BaseModel):
     reason: str = Field(..., description="Operator justification for request")
 
 
+class UseApprovedProductCodeDetails(BaseModel):
+    product_code_request_id: int = Field(..., description="ID of the approved ProductCodeCreationRequest")
+    product_code_id: int = Field(..., description="ID of the approved ProductCode")
+
+
 class IgnoreDetails(BaseModel):
     reason: str = Field(..., description="Reason why item is ignored (must not be empty)")
 
@@ -187,6 +195,7 @@ class DecisionItemSchema(BaseModel):
             "ignore",
             "edit_charge",
             "classify_unclassified",
+            "use_approved_product_code",
         }
         if self.type not in valid_types:
             raise ValueError(f"Invalid decision type: {self.type}")
@@ -195,6 +204,8 @@ class DecisionItemSchema(BaseModel):
             MapToProductCodeDetails(**self.details)
         elif self.type == "request_product_code":
             RequestProductCodeDetails(**self.details)
+        elif self.type == "use_approved_product_code":
+            UseApprovedProductCodeDetails(**self.details)
         elif self.type == "ignore":
             IgnoreDetails(**self.details)
             if not self.details.get("reason") or not str(self.details["reason"]).strip():
