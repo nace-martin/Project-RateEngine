@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -207,6 +208,41 @@ class DecisionItemSchema(BaseModel):
 
 
 class DraftQuoteResolveSchema(BaseModel):
-    idempotency_key: str = Field(..., description="UUID token ensuring transaction idempotency")
+    idempotency_key: UUID = Field(..., description="UUID token ensuring transaction idempotency")
     decisions: List[DecisionItemSchema] = Field(default_factory=list, description="List of operator decisions")
+
+
+class DecisionResultSchema(BaseModel):
+    decision_id: str = Field(..., description="Client decision ID reference")
+    target_id: str = Field(..., description="Target charge or unclassified block ID")
+    type: str = Field(..., description="Decision action type")
+    status: str = Field(..., description="Application status: applied, rejected, skipped")
+    message: str = Field(..., description="Descriptive status note")
+    error_code: Optional[str] = Field(None, description="Optional programmatic error code")
+
+    @model_validator(mode="after")
+    def validate_result_status(self) -> DecisionResultSchema:
+        valid_statuses = {"applied", "rejected", "skipped"}
+        if self.status not in valid_statuses:
+            raise ValueError(f"Invalid result status: {self.status}")
+        return self
+
+
+class DraftQuoteResolveResponseSchema(BaseModel):
+    status: str = Field(..., description="Overall resolve status: accepted, partially_accepted, rejected, not_implemented")
+    idempotency_key: UUID = Field(..., description="The transaction idempotency key")
+    applied_decisions: List[DecisionResultSchema] = Field(default_factory=list, description="List of successfully applied decisions")
+    rejected_decisions: List[DecisionResultSchema] = Field(default_factory=list, description="List of rejected decisions")
+    validation_errors: List[str] = Field(default_factory=list, description="Validations/errors preventing apply")
+    unresolved_items_remaining: Optional[int] = Field(None, description="Count of remaining blocker items needing attention")
+    envelope_id: Optional[UUID] = Field(None, description="Target SPOT envelope ID")
+    message: str = Field(..., description="Overall summary status message")
+
+    @model_validator(mode="after")
+    def validate_response_status(self) -> DraftQuoteResolveResponseSchema:
+        valid_statuses = {"accepted", "partially_accepted", "rejected", "not_implemented"}
+        if self.status not in valid_statuses:
+            raise ValueError(f"Invalid response status: {self.status}")
+        return self
+
 

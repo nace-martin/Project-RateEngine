@@ -2,7 +2,10 @@ import json
 import os
 from django.test import SimpleTestCase
 from pydantic import ValidationError
-from quotes.contracts.draft_quote_contract import DraftQuoteSchema, DraftChargeSchema, IgnoredItemSchema, DraftQuoteResolveSchema
+from quotes.contracts.draft_quote_contract import (
+    DraftQuoteSchema, DraftChargeSchema, IgnoredItemSchema,
+    DraftQuoteResolveSchema, DraftQuoteResolveResponseSchema
+)
 
 
 
@@ -154,7 +157,7 @@ class DraftQuoteContractTests(SimpleTestCase):
     def test_mock_resolve_payload_validates_successfully(self):
         """Verify that the hard-case resolve submission payload validates against DraftQuoteResolveSchema."""
         schema = DraftQuoteResolveSchema(**self.resolve_raw_data)
-        self.assertEqual(schema.idempotency_key, "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(str(schema.idempotency_key), "8e9b2520-22c5-4309-88cc-51e6b3648612")
         self.assertEqual(len(schema.decisions), 6)
         
         decisions_by_type = {d.type: d for d in schema.decisions}
@@ -186,5 +189,45 @@ class DraftQuoteContractTests(SimpleTestCase):
         edit_decision["details"]["updated_values"] = {}
         with self.assertRaises(ValidationError):
             DraftQuoteResolveSchema(**bad_edit_data)
+
+    def test_resolve_response_payload_validation(self):
+        """Verify DraftQuoteResolveResponseSchema correctly validates a valid response payload."""
+        response_payload = {
+            "status": "accepted",
+            "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+            "applied_decisions": [
+                {
+                    "decision_id": "dec-001",
+                    "target_id": "chg-001",
+                    "type": "accept_suggestion",
+                    "status": "applied",
+                    "message": "Suggestion applied successfully"
+                }
+            ],
+            "rejected_decisions": [],
+            "validation_errors": [],
+            "unresolved_items_remaining": 0,
+            "envelope_id": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+            "message": "Resolution applied"
+        }
+        schema = DraftQuoteResolveResponseSchema(**response_payload)
+        self.assertEqual(schema.status, "accepted")
+        self.assertEqual(str(schema.idempotency_key), "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(str(schema.envelope_id), "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(len(schema.applied_decisions), 1)
+
+    def test_resolve_response_rejects_invalid_status(self):
+        """Verify DraftQuoteResolveResponseSchema raises ValidationError on invalid status."""
+        response_payload = {
+            "status": "fully_verified_by_operator",  # invalid status
+            "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+            "applied_decisions": [],
+            "rejected_decisions": [],
+            "validation_errors": [],
+            "message": "Resolution applied"
+        }
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveResponseSchema(**response_payload)
+
 
 

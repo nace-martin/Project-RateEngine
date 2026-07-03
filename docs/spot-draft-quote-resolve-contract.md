@@ -94,3 +94,49 @@ Maps an unclassified block of text to a structured charge line.
   * `rate`: Inferred rate (optional).
   * `unit`: Inferred unit type (optional).
   * `minimum_charge`: Inferred minimum limit (optional).
+
+---
+
+## Audit Metadata Security
+The `audit_metadata` field included in the request is treated as client-side telemetry only. For security and database integrity, the backend implementation MUST derive the trusted operator ID and timestamp directly from the authenticated session and server system clock, rather than relying on client-supplied values.
+
+---
+
+## Resolve Response Contract
+Submitting the resolve payload returns a structured response matching the `DraftQuoteResolveResponseSchema` schema.
+
+```json
+{
+  "status": "accepted",
+  "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+  "applied_decisions": [
+    {
+      "decision_id": "dec-001",
+      "target_id": "chg-001",
+      "type": "accept_suggestion",
+      "status": "applied",
+      "message": "Charge suggestion accepted successfully."
+    }
+  ],
+  "rejected_decisions": [],
+  "validation_errors": [],
+  "unresolved_items_remaining": 0,
+  "envelope_id": "11985474-06c3-4d76-8805-3e28c464bfeb",
+  "message": "Resolution applied. Draft Quote successfully updated."
+}
+```
+
+### Response Schema Definition:
+* **`status`**: Overall status indicator. One of:
+  * `"accepted"`: All decisions applied.
+  * `"partially_accepted"`: Some decisions applied, others rejected or skipped.
+  * `"rejected"`: Payload validation failed, or key decisions rejected.
+  * `"not_implemented"`: Server-side endpoint is visible but persistence logic is pending (default/current behavior).
+* **`idempotency_key`**: Re-emitted idempotency UUID of the request.
+* **`applied_decisions`**: Array of decisions successfully committed to the database.
+* **`rejected_decisions`**: Array of decisions rejected by the server along with error reasons.
+* **`validation_errors`**: Top-level errors blocking complete application (e.g. invalid idempotency keys, unmapped critical entities).
+* **`unresolved_items_remaining`**: Count of remaining review items left in the envelope's queue.
+* **`envelope_id`**: The target SPOT envelope ID.
+* **`message`**: Readable status message.
+
