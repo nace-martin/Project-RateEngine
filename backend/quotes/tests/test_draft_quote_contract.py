@@ -2,7 +2,10 @@ import json
 import os
 from django.test import SimpleTestCase
 from pydantic import ValidationError
-from quotes.contracts.draft_quote_contract import DraftQuoteSchema, DraftChargeSchema, IgnoredItemSchema
+from quotes.contracts.draft_quote_contract import (
+    DraftQuoteSchema, DraftChargeSchema, IgnoredItemSchema,
+    DraftQuoteResolveSchema, DraftQuoteResolveResponseSchema
+)
 
 
 
@@ -16,6 +19,15 @@ class DraftQuoteContractTests(SimpleTestCase):
         )
         with open(self.fixture_path, "r") as f:
             self.raw_data = json.load(f)
+
+        self.resolve_fixture_path = os.path.join(
+            os.path.dirname(__file__),
+            "fixtures",
+            "draft_quote_contract",
+            "hard_case_resolve_submission.json"
+        )
+        with open(self.resolve_fixture_path, "r") as f:
+            self.resolve_raw_data = json.load(f)
 
     def test_mock_payload_validates_successfully(self):
         """Verify the hard-case mock payload successfully validates against the contract schema."""
@@ -141,4 +153,81 @@ class DraftQuoteContractTests(SimpleTestCase):
             c for c in schema.suggested_charges if c.similarity_group_id == "sim-surcharges"
         ]
         self.assertEqual(len(charges_with_group), 2)
+
+    def test_mock_resolve_payload_validates_successfully(self):
+        """Verify that the hard-case resolve submission payload validates against DraftQuoteResolveSchema."""
+        schema = DraftQuoteResolveSchema(**self.resolve_raw_data)
+        self.assertEqual(str(schema.idempotency_key), "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(len(schema.decisions), 6)
+        
+        decisions_by_type = {d.type: d for d in schema.decisions}
+        self.assertIn("accept_suggestion", decisions_by_type)
+        self.assertIn("map_to_product_code", decisions_by_type)
+        self.assertIn("request_product_code", decisions_by_type)
+        self.assertIn("ignore", decisions_by_type)
+        self.assertIn("edit_charge", decisions_by_type)
+        self.assertIn("classify_unclassified", decisions_by_type)
+
+    def test_resolve_validation_rules_reject_invalid_payloads(self):
+        """Verify resolve validation schema rejects invalid decision type or details."""
+        # 1. Invalid decision type
+        bad_type_data = json.loads(json.dumps(self.resolve_raw_data))
+        bad_type_data["decisions"][0]["type"] = "delete_everything"
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveSchema(**bad_type_data)
+
+        # 2. Ignore decision missing required 'reason'
+        bad_ignore_data = json.loads(json.dumps(self.resolve_raw_data))
+        ignore_decision = next(d for d in bad_ignore_data["decisions"] if d["type"] == "ignore")
+        ignore_decision["details"]["reason"] = "   "
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveSchema(**bad_ignore_data)
+
+        # 3. Edit charge missing original/updated values fields
+        bad_edit_data = json.loads(json.dumps(self.resolve_raw_data))
+        edit_decision = next(d for d in bad_edit_data["decisions"] if d["type"] == "edit_charge")
+        edit_decision["details"]["updated_values"] = {}
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveSchema(**bad_edit_data)
+
+    def test_resolve_response_payload_validation(self):
+        """Verify DraftQuoteResolveResponseSchema correctly validates a valid response payload."""
+        response_payload = {
+            "status": "accepted",
+            "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+            "applied_decisions": [
+                {
+                    "decision_id": "dec-001",
+                    "target_id": "chg-001",
+                    "type": "accept_suggestion",
+                    "status": "applied",
+                    "message": "Suggestion applied successfully"
+                }
+            ],
+            "rejected_decisions": [],
+            "validation_errors": [],
+            "unresolved_items_remaining": 0,
+            "envelope_id": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+            "message": "Resolution applied"
+        }
+        schema = DraftQuoteResolveResponseSchema(**response_payload)
+        self.assertEqual(schema.status, "accepted")
+        self.assertEqual(str(schema.idempotency_key), "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(str(schema.envelope_id), "8e9b2520-22c5-4309-88cc-51e6b3648612")
+        self.assertEqual(len(schema.applied_decisions), 1)
+
+    def test_resolve_response_rejects_invalid_status(self):
+        """Verify DraftQuoteResolveResponseSchema raises ValidationError on invalid status."""
+        response_payload = {
+            "status": "fully_verified_by_operator",  # invalid status
+            "idempotency_key": "8e9b2520-22c5-4309-88cc-51e6b3648612",
+            "applied_decisions": [],
+            "rejected_decisions": [],
+            "validation_errors": [],
+            "message": "Resolution applied"
+        }
+        with self.assertRaises(ValidationError):
+            DraftQuoteResolveResponseSchema(**response_payload)
+
+
 
