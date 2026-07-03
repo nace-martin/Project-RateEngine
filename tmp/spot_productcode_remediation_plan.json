@@ -1,0 +1,1173 @@
+﻿{
+  "plan": {
+    "APPLY_APPROVED_REQUEST": [
+      {
+        "action_required": "APPLY_APPROVED_REQUEST",
+        "affected_charge_line_ids": [
+          "1041e707-3785-4dec-9b9a-d48750229db5",
+          "1187f552-15db-45f5-8c87-a49845fb8513",
+          "1c9ac48c-7121-49b7-81b6-8858aaa720cc",
+          "1ca827a0-915f-42e8-b9d4-e92fff046a7b",
+          "2621a1b9-c8f0-403f-b001-b46379b5e4da"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": {
+          "approved_product_code_id": 1000,
+          "request_id": 1,
+          "source_label": "admin fee",
+          "status": "APPROVED",
+          "suggested_name": "Admin Fee"
+        },
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 5,
+            "label": "Admin Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "DOCUMENTATION",
+          "code": "EXP-ADMIN-FEE",
+          "default_unit": "SHIPMENT",
+          "description": "Admin Fee",
+          "domain": "EXPORT",
+          "id": 1000
+        },
+        "normalized_label": "admin fee",
+        "occurrence_count": 5,
+        "reason": "Approved ProductCode request exists; charge lines still need explicit manual application.",
+        "recommended_product_code_code": "EXP-ADMIN-FEE",
+        "recommended_product_code_description": "Admin Fee",
+        "recommended_product_code_id": 1000
+      }
+    ],
+    "APPLY_EXISTING_PRODUCT_CODE": [
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "0bd6f969-fafd-43dc-81a7-159145fd1bd8",
+          "13703c30-d5c4-4490-9401-2b67b5c4db4f",
+          "31df5cd9-fc80-4e16-86e0-c71df3c401ee",
+          "633d35ab-a299-4d82-9bf4-bdf70a68fa6a",
+          "9364700e-4be4-4834-8053-2114d52346a4",
+          "99ad254d-8bea-4dab-a71e-975bd8a54882",
+          "e1abcf40-8cfc-4f8e-ad06-307c984d32a4"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 7,
+            "label": "Fuel Surcharge"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "SURCHARGE",
+          "code": "DOM-FSC",
+          "default_unit": "PER_KG",
+          "description": "Fuel Surcharge",
+          "domain": "DOMESTIC",
+          "id": 3030
+        },
+        "normalized_label": "fuel surcharge",
+        "occurrence_count": 7,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "DOM-FSC",
+        "recommended_product_code_description": "Fuel Surcharge",
+        "recommended_product_code_id": 3030
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "48c4547e-da54-4500-b83a-f156b6be05ca",
+          "70702f29-6abb-4416-a39c-49008981a63b",
+          "a40e6c01-49b9-4790-8e4c-d33ee696e37a",
+          "d18da4e8-3d94-44f3-8688-28aedd596566",
+          "e752647e-f924-442a-a979-ac8a82b4da4c"
+        ],
+        "affected_envelope_ids": [
+          "2e8bf722-cca6-49a8-aac6-333469ad4797",
+          "3def6934-468c-46ae-b316-99a1392d2be2",
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6",
+          "cd49a6ec-74f7-40d4-baf2-d9380cbe9ff7"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 5,
+            "label": "Pickup Charge"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "CARTAGE",
+          "code": "DOM-PICKUP",
+          "default_unit": "PER_KG",
+          "description": "Pickup / Collection",
+          "domain": "DOMESTIC",
+          "id": 3050
+        },
+        "normalized_label": "pickup charge",
+        "occurrence_count": 5,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "IMP-PICKUP",
+        "recommended_product_code_description": "Pick-Up Fee (Origin)",
+        "recommended_product_code_id": 2050
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "18482690-884f-4727-87b5-20453aeaccc7",
+          "1d24fc43-5edb-414c-b4bd-235b0bc1b230",
+          "d0f716f1-f268-4a8b-978a-1701eb6f62be",
+          "f5d2aa2e-2af0-4c11-9a75-ab57aaa7d1c4"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "AWB Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "DOCUMENTATION",
+          "code": "DOM-AWB",
+          "default_unit": "FLAT",
+          "description": "AWB Fee",
+          "domain": "DOMESTIC",
+          "id": 3012
+        },
+        "normalized_label": "awb fee",
+        "occurrence_count": 4,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "EXP-AWB",
+        "recommended_product_code_description": "Export AWB Fee",
+        "recommended_product_code_id": 1011
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "12167b1e-b2b2-4704-b2d4-d5b1fa313d3d",
+          "144ce455-65d3-4a7a-b09f-c9ef708f62c3",
+          "339fae32-ea2a-4759-97a6-acd1f8fdb1b6",
+          "911d51ec-2878-4da6-9f7b-dde7d4549502"
+        ],
+        "affected_envelope_ids": [
+          "2e8bf722-cca6-49a8-aac6-333469ad4797",
+          "3def6934-468c-46ae-b316-99a1392d2be2",
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "Customs Clearance"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "CLEARANCE",
+          "code": "EXP-CLEAR",
+          "default_unit": "SHIPMENT",
+          "description": "Export Customs Clearance",
+          "domain": "EXPORT",
+          "id": 1020
+        },
+        "normalized_label": "customs clearance",
+        "occurrence_count": 4,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "EXP-CLEAR",
+        "recommended_product_code_description": "Export Customs Clearance",
+        "recommended_product_code_id": 1020
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "3974d699-2e19-47bd-a760-0887d3489442",
+          "724e7744-f748-4eb1-890d-af13a46beae7",
+          "89b4bea9-2936-4735-a452-1631538013a7",
+          "e18bcfa8-f163-40fc-9368-496f7a36ca81"
+        ],
+        "affected_envelope_ids": [
+          "2e8bf722-cca6-49a8-aac6-333469ad4797",
+          "3def6934-468c-46ae-b316-99a1392d2be2",
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6",
+          "cd49a6ec-74f7-40d4-baf2-d9380cbe9ff7"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "Handling Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "HANDLING",
+          "code": "DOM-DG-HANDLING",
+          "default_unit": "FLAT",
+          "description": "DG Handling Fee",
+          "domain": "DOMESTIC",
+          "id": 3021
+        },
+        "normalized_label": "handling fee",
+        "occurrence_count": 4,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "EXP-HANDLE",
+        "recommended_product_code_description": "Export Handling Fee",
+        "recommended_product_code_id": 1032
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "54ac2796-2e53-40d9-857d-18963c452639",
+          "d11dbcdb-6c6d-4c64-bf83-c822fcf17464",
+          "f19af6d5-fea6-4ef7-a651-9158a78d2001"
+        ],
+        "affected_envelope_ids": [
+          "2e8bf722-cca6-49a8-aac6-333469ad4797",
+          "3def6934-468c-46ae-b316-99a1392d2be2",
+          "cd49a6ec-74f7-40d4-baf2-d9380cbe9ff7"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 3,
+            "label": "Export License"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "REGULATORY",
+          "code": "EXP-PRM-ORIGIN",
+          "default_unit": "SHIPMENT",
+          "description": "Export Origin Permit / License",
+          "domain": "EXPORT",
+          "id": 1900
+        },
+        "normalized_label": "export license",
+        "occurrence_count": 3,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "IMP-PRM-ORIGIN",
+        "recommended_product_code_description": "Import Origin Permit / License",
+        "recommended_product_code_id": 2000
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "020f80b7-d0f7-46c4-b5b9-db667094b131",
+          "3f14112c-355d-4d40-9e9b-3937e9565ea8"
+        ],
+        "affected_envelope_ids": [
+          "4f79d878-11eb-4f1b-9c4e-4d73463ab985",
+          "52888afd-deb1-4958-a7a0-6f94d35af8e9"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 2,
+            "label": "Import Origin Customs Clearance"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "CLEARANCE",
+          "code": "IMP-CUS-CLR-ORIGIN",
+          "default_unit": "SHIPMENT",
+          "description": "Import Origin Customs Clearance",
+          "domain": "IMPORT",
+          "id": 2002
+        },
+        "normalized_label": "import origin customs clearance",
+        "occurrence_count": 2,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "IMP-CUS-CLR-ORIGIN",
+        "recommended_product_code_description": "Import Origin Customs Clearance",
+        "recommended_product_code_id": 2002
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "c1e16ada-ecd4-4ab8-ace2-c74fd3ac6d10"
+        ],
+        "affected_envelope_ids": [
+          "3def6934-468c-46ae-b316-99a1392d2be2"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "Air Freight"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "FREIGHT",
+          "code": "DOM-FRT-AIR",
+          "default_unit": "PER_KG",
+          "description": "Domestic Air Freight",
+          "domain": "DOMESTIC",
+          "id": 3001
+        },
+        "normalized_label": "air freight",
+        "occurrence_count": 1,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "EXP-FRT-AIR",
+        "recommended_product_code_description": "Export Air Freight",
+        "recommended_product_code_id": 1001
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "080eba73-bb19-4bc4-ba51-d9e57d04eca4"
+        ],
+        "affected_envelope_ids": [
+          "3def6934-468c-46ae-b316-99a1392d2be2"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "Documentation Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "DOCUMENTATION",
+          "code": "DOM-DOC",
+          "default_unit": "FLAT",
+          "description": "Documentation Fee",
+          "domain": "DOMESTIC",
+          "id": 3010
+        },
+        "normalized_label": "documentation fee",
+        "occurrence_count": 1,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "EXP-DOC",
+        "recommended_product_code_description": "Export Documentation Fee",
+        "recommended_product_code_id": 1010
+      },
+      {
+        "action_required": "APPLY_EXISTING_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "fba6762a-0103-45df-a54a-bb5f577ec4fb"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044"
+        ],
+        "approved_request_match": null,
+        "confidence": "HIGH",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "Security Screening"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "SECURITY",
+          "code": "DOM-SECURITY",
+          "default_unit": "PER_KG",
+          "description": "Security Surcharge",
+          "domain": "DOMESTIC",
+          "id": 3020
+        },
+        "normalized_label": "security screening",
+        "occurrence_count": 1,
+        "reason": "Existing alias or ProductCode match is available for this unresolved label.",
+        "recommended_product_code_code": "EXP-SCREEN",
+        "recommended_product_code_description": "Export Security Screening",
+        "recommended_product_code_id": 1040
+      }
+    ],
+    "CREATE_ALIAS_MAPPING": [
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "03461a15-d3f0-4ca8-b091-04c1a303425e",
+          "79b7ecf2-1d33-47ea-821b-3c0dca2fdb92",
+          "80552b0d-a4bc-4ea1-aba1-871b30e26019",
+          "90415de8-f352-4614-a7b2-99acb7be3359",
+          "9fb504a4-7229-46ff-be19-27c7ea01be88",
+          "ad6f89cc-1a44-4085-85fd-23029bed0002",
+          "ca01f91e-a264-4646-bbe2-8bc8fe30a0cd",
+          "fa54163f-47a6-43d8-9276-f52a3f642ca5"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "76939d1d-3e54-4add-97ad-0f89c97f580c",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 8,
+            "label": "Compliance Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "compliance fee",
+        "occurrence_count": 8,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "0cc1b6fa-d3db-4ebf-ab72-57e0bf1d0bbc",
+          "14de77f5-23d2-415c-9c50-d7e9d619d078",
+          "9a752e09-63de-4870-a827-5c60856244d9",
+          "bd79529e-84f9-4f57-8bcf-154e19014351",
+          "e09e606f-50cc-46b7-b311-8340dc53e92b",
+          "ea2c9331-de9d-4fd5-9b93-6666061082a2",
+          "ef9ce4ef-0c0f-4645-a92e-8f7d41ee9142"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "76939d1d-3e54-4add-97ad-0f89c97f580c",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 7,
+            "label": "EDI Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "edi fee",
+        "occurrence_count": 7,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "4ce0d7d2-9bee-47c6-b0bd-93fca2c1d3f3",
+          "7ea5e29f-e5ee-4b17-b015-0d4638676cad",
+          "87f1f93e-24c5-4ee7-95bb-1a808faad77c",
+          "a0f38777-5db4-4221-937d-57b64e17a871",
+          "df3e00a5-b47e-479d-a19c-19d588d07fbe",
+          "f81ef676-cf1c-47d1-9531-cf6b48612678"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "36f27e36-b9f4-4540-8aa1-3579a14da02e",
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6",
+          "76939d1d-3e54-4add-97ad-0f89c97f580c",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 6,
+            "label": "Terminal Handling Charge"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "TERMINAL",
+          "code": "DOM-TERMINAL",
+          "default_unit": "FLAT",
+          "description": "Terminal Fee",
+          "domain": "DOMESTIC",
+          "id": 3011
+        },
+        "normalized_label": "terminal handling charge",
+        "occurrence_count": 6,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "DOM-TERMINAL",
+        "recommended_product_code_description": "Terminal Fee",
+        "recommended_product_code_id": 3011
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "87b2e5b3-31cd-4212-bd11-d71a81efa049",
+          "424f1277-603e-4160-9cae-9de84d5b6082",
+          "6f3412f2-ab30-475a-8772-0f551521f68e",
+          "8e72722b-162a-4c6b-b5ba-ec53739109eb"
+        ],
+        "affected_envelope_ids": [
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 3,
+            "label": "Airfreight AKL \u2013 POM via PX(BNE)"
+          },
+          {
+            "count": 1,
+            "label": "Airfreight AKL \n\u2013 POM via PX(BNE)"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "airfreight akl \u2013 pom via px(bne)",
+        "occurrence_count": 4,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "0595e0e2-7a8b-44dc-84b5-e8c3f00a8ede",
+          "144a8a57-ac02-4a9f-bdc9-15eecb584df4",
+          "3a4b7757-53ee-49d9-8bf8-94beb20f6c0a",
+          "85006a5c-2be3-4e94-8076-970d0588bc30"
+        ],
+        "affected_envelope_ids": [
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "Pick Up - metro area"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "CARTAGE",
+          "code": "DOM-PICKUP",
+          "default_unit": "PER_KG",
+          "description": "Pickup / Collection",
+          "domain": "DOMESTIC",
+          "id": 3050
+        },
+        "normalized_label": "pick up - metro area",
+        "occurrence_count": 4,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "DOM-PICKUP",
+        "recommended_product_code_description": "Pickup / Collection",
+        "recommended_product_code_id": 3050
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "31314c73-f6a1-4c03-98e6-05d961d88865",
+          "83ae963f-8139-45c0-983e-61f1b882a8f4",
+          "952b433a-7cdd-470b-8d57-0fa1034adf9c",
+          "b4be9d69-8a95-4e23-b300-c71c3c4a89d9"
+        ],
+        "affected_envelope_ids": [
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "PX AWB FEE"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "px awb fee",
+        "occurrence_count": 4,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "211fa184-5dbe-4442-8f26-7371ecee3a53",
+          "4b30ca31-675b-4cea-9f9c-7816a129764a",
+          "9c544555-6781-48ab-b3b0-30dc4231ca16",
+          "fb5a626d-35b2-4caf-bc8d-3562cbd1233a"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "76939d1d-3e54-4add-97ad-0f89c97f580c",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "Security Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "SECURITY",
+          "code": "DOM-SECURITY",
+          "default_unit": "PER_KG",
+          "description": "Security Surcharge",
+          "domain": "DOMESTIC",
+          "id": 3020
+        },
+        "normalized_label": "security fee",
+        "occurrence_count": 4,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "DOM-SECURITY",
+        "recommended_product_code_description": "Security Surcharge",
+        "recommended_product_code_id": 3020
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "09079310-fc00-44be-bf8e-9f7f6f0b9b12",
+          "6c8e5e96-8e62-4bc6-8361-d8688b24e2a2",
+          "902800d2-a641-44c4-9060-6ef95d84cf8a",
+          "e2d68a41-ce00-4cf9-acff-3622ab3f01d6"
+        ],
+        "affected_envelope_ids": [
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "Terminal Handling Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "TERMINAL",
+          "code": "DOM-TERMINAL",
+          "default_unit": "FLAT",
+          "description": "Terminal Fee",
+          "domain": "DOMESTIC",
+          "id": 3011
+        },
+        "normalized_label": "terminal handling fee",
+        "occurrence_count": 4,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "DOM-TERMINAL",
+        "recommended_product_code_description": "Terminal Fee",
+        "recommended_product_code_id": 3011
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "8b62bf1c-e92d-4c71-a191-f4ee33df7de7",
+          "9b512506-2349-4978-94b5-8592d108a520",
+          "c1243cc8-8be9-4f43-9aed-c9fef4c6098e",
+          "f9a1aaf3-b2cb-477b-861e-ffcf7d41d5d7"
+        ],
+        "affected_envelope_ids": [
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 4,
+            "label": "X-ray*"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "SCREENING",
+          "code": "IMP-SCREEN-ORIGIN",
+          "default_unit": "KG",
+          "description": "X-Ray Screen Fee (Origin)",
+          "domain": "IMPORT",
+          "id": 2040
+        },
+        "normalized_label": "x-ray*",
+        "occurrence_count": 4,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "IMP-SCREEN-ORIGIN",
+        "recommended_product_code_description": "X-Ray Screen Fee (Origin)",
+        "recommended_product_code_id": 2040
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "296d89a1-9e4c-44ef-9368-b7d1f9ce7f58",
+          "960e216c-9482-4f3c-a168-7186286b197b",
+          "e506eeb6-58c9-45ed-a801-564fdea26700"
+        ],
+        "affected_envelope_ids": [
+          "0d53248e-9ea1-45b9-9bff-694bbc052538",
+          "4f79d878-11eb-4f1b-9c4e-4d73463ab985",
+          "52888afd-deb1-4958-a7a0-6f94d35af8e9"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 3,
+            "label": "Cargo Terminal Operator Fee (Origin)"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "HANDLING",
+          "code": "IMP-CTO-ORIGIN",
+          "default_unit": "KG",
+          "description": "Cargo Terminal Operator Fee (Origin)",
+          "domain": "IMPORT",
+          "id": 2030
+        },
+        "normalized_label": "cargo terminal operator fee (origin)",
+        "occurrence_count": 3,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "IMP-CTO-ORIGIN",
+        "recommended_product_code_description": "Cargo Terminal Operator Fee (Origin)",
+        "recommended_product_code_id": 2030
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "4768659e-c317-45e5-a6fa-62b6c9e72e49",
+          "4fa67783-5a15-49dd-bc06-174552583540",
+          "e7cec14f-4143-491a-95fc-cc961fcbd057"
+        ],
+        "affected_envelope_ids": [
+          "0d53248e-9ea1-45b9-9bff-694bbc052538",
+          "4f79d878-11eb-4f1b-9c4e-4d73463ab985",
+          "52888afd-deb1-4958-a7a0-6f94d35af8e9"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 3,
+            "label": "Import Air Freight"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "FREIGHT",
+          "code": "IMP-FRT-AIR",
+          "default_unit": "KG",
+          "description": "Import Air Freight",
+          "domain": "IMPORT",
+          "id": 2001
+        },
+        "normalized_label": "import air freight",
+        "occurrence_count": 3,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "IMP-FRT-AIR",
+        "recommended_product_code_description": "Import Air Freight",
+        "recommended_product_code_id": 2001
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "88c44e4e-add8-40e0-97fc-370c261dd5a7",
+          "a5dfe646-d356-41e3-9170-1900907bf3ca",
+          "f8f60850-6e43-4210-9d0f-54038fa689e6"
+        ],
+        "affected_envelope_ids": [
+          "0d53248e-9ea1-45b9-9bff-694bbc052538",
+          "4f79d878-11eb-4f1b-9c4e-4d73463ab985",
+          "52888afd-deb1-4958-a7a0-6f94d35af8e9"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 3,
+            "label": "Import Documentation Fee (Origin)"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "DOCUMENTATION",
+          "code": "IMP-DOC-ORIGIN",
+          "default_unit": "SHIPMENT",
+          "description": "Import Documentation Fee (Origin)",
+          "domain": "IMPORT",
+          "id": 2010
+        },
+        "normalized_label": "import documentation fee (origin)",
+        "occurrence_count": 3,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "IMP-DOC-ORIGIN",
+        "recommended_product_code_description": "Import Documentation Fee (Origin)",
+        "recommended_product_code_id": 2010
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "9010b28e-b3a2-481c-a6ae-c6122e35c7f9",
+          "a136ac00-367e-41b1-a8a3-63822be2b94f",
+          "ef0f3f9d-4b1a-4471-8573-98c9b7caafef"
+        ],
+        "affected_envelope_ids": [
+          "0d53248e-9ea1-45b9-9bff-694bbc052538",
+          "4f79d878-11eb-4f1b-9c4e-4d73463ab985",
+          "52888afd-deb1-4958-a7a0-6f94d35af8e9"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 3,
+            "label": "Pick-Up Fee (Origin)"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "CARTAGE",
+          "code": "IMP-PICKUP",
+          "default_unit": "KG",
+          "description": "Pick-Up Fee (Origin)",
+          "domain": "IMPORT",
+          "id": 2050
+        },
+        "normalized_label": "pick-up fee (origin)",
+        "occurrence_count": 3,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "IMP-PICKUP",
+        "recommended_product_code_description": "Pick-Up Fee (Origin)",
+        "recommended_product_code_id": 2050
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "4fb7196d-2479-4b17-9adf-8abd41119630",
+          "7b7f3b08-abbd-4615-9793-e5bf9e8f55a0"
+        ],
+        "affected_envelope_ids": [
+          "4f79d878-11eb-4f1b-9c4e-4d73463ab985",
+          "52888afd-deb1-4958-a7a0-6f94d35af8e9"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 2,
+            "label": "Import Origin Permit / License"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "REGULATORY",
+          "code": "IMP-PRM-ORIGIN",
+          "default_unit": "SHIPMENT",
+          "description": "Import Origin Permit / License",
+          "domain": "IMPORT",
+          "id": 2000
+        },
+        "normalized_label": "import origin permit / license",
+        "occurrence_count": 2,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "IMP-PRM-ORIGIN",
+        "recommended_product_code_description": "Import Origin Permit / License",
+        "recommended_product_code_id": 2000
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "b2f31d70-2e17-4617-a8c4-31aae4f5f0e0"
+        ],
+        "affected_envelope_ids": [
+          "36f27e36-b9f4-4540-8aa1-3579a14da02e"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "FSC"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "SURCHARGE",
+          "code": "DOM-FSC",
+          "default_unit": "PER_KG",
+          "description": "Fuel Surcharge",
+          "domain": "DOMESTIC",
+          "id": 3030
+        },
+        "normalized_label": "fsc",
+        "occurrence_count": 1,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "DOM-FSC",
+        "recommended_product_code_description": "Fuel Surcharge",
+        "recommended_product_code_id": 3030
+      },
+      {
+        "action_required": "CREATE_ALIAS_MAPPING",
+        "affected_charge_line_ids": [
+          "2aa1c3a5-e7e7-44f3-beec-943a0eafb09d"
+        ],
+        "affected_envelope_ids": [
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "Permit Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "REGULATORY",
+          "code": "EXP-PRM-ORIGIN",
+          "default_unit": "SHIPMENT",
+          "description": "Export Origin Permit / License",
+          "domain": "EXPORT",
+          "id": 1900
+        },
+        "normalized_label": "permit fee",
+        "occurrence_count": 1,
+        "reason": "Catalogue or canonical hint exists, but this source label still needs an explicit alias decision.",
+        "recommended_product_code_code": "EXP-PRM-ORIGIN",
+        "recommended_product_code_description": "Export Origin Permit / License",
+        "recommended_product_code_id": 1900
+      }
+    ],
+    "CREATE_NEW_PRODUCT_CODE": [
+      {
+        "action_required": "CREATE_NEW_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "00d93337-85c2-44ed-b868-4a7dab1e644d",
+          "3af9591a-9106-4442-bda1-9c321ec3b5c4",
+          "831411fb-5c7b-438d-ad07-d6d10b83658b",
+          "8d9043af-cb90-4b7d-9452-3a888863743c",
+          "9678188d-de4f-4728-8c7d-2b383f24d412",
+          "b67cd5e0-b11e-4a2f-b682-23f00744a3e2",
+          "c75a4bfe-144d-4f6d-b5e0-29e4501b9f6d"
+        ],
+        "affected_envelope_ids": [
+          "0521a5a1-1728-44cf-b58e-e3b528ccc044",
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "76939d1d-3e54-4add-97ad-0f89c97f580c",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad",
+          "ee56a130-06d3-4b04-9f02-4111fa038c80"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 7,
+            "label": "Air Transfer Fee"
+          }
+        ],
+        "existing_product_code_match": {
+          "category": "FREIGHT",
+          "code": "DOM-FRT-AIR",
+          "default_unit": "PER_KG",
+          "description": "Domestic Air Freight",
+          "domain": "DOMESTIC",
+          "id": 3001
+        },
+        "normalized_label": "air transfer fee",
+        "occurrence_count": 7,
+        "reason": "No safe existing ProductCode mapping was found for a repeated or requested unresolved label.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "CREATE_NEW_PRODUCT_CODE",
+        "affected_charge_line_ids": [
+          "0692cbfc-ab6a-4e5d-8105-5d7fc041b8d7",
+          "273f455c-b1d1-4fb9-9832-50bf5b7e2b38",
+          "546fe21d-ee90-4499-a48a-40db4b5a8d29",
+          "614ad229-e842-4c70-88b4-c60dbf75eaa5",
+          "7bb5a643-a09a-4b11-9330-294f86efe36c"
+        ],
+        "affected_envelope_ids": [
+          "1dcf487f-b6c4-4edf-ba72-9c7b86e480a0",
+          "303287ed-357c-4c19-88a1-000b6886a26f",
+          "5f849bc2-b647-42dd-9254-b8e204034bfc",
+          "a1229a95-dbcb-4e27-80fd-9b72427de1ad"
+        ],
+        "approved_request_match": null,
+        "confidence": "MEDIUM",
+        "display_source_labels_seen": [
+          {
+            "count": 5,
+            "label": "Airport Security Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "airport security fee",
+        "occurrence_count": 5,
+        "reason": "No safe existing ProductCode mapping was found for a repeated or requested unresolved label.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      }
+    ],
+    "MANUAL_REVIEW": [
+      {
+        "action_required": "MANUAL_REVIEW",
+        "affected_charge_line_ids": [
+          "0cfb6f04-a10c-497f-af28-bbf05a033010"
+        ],
+        "affected_envelope_ids": [
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6"
+        ],
+        "approved_request_match": null,
+        "confidence": "LOW",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "CMD Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "cmd fee",
+        "occurrence_count": 1,
+        "reason": "Label is too broad or source-specific for a bulk mapping recommendation.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "MANUAL_REVIEW",
+        "affected_charge_line_ids": [
+          "3c3a5efa-aaaf-4606-afc9-edf6a0d32cd0"
+        ],
+        "affected_envelope_ids": [
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6"
+        ],
+        "approved_request_match": null,
+        "confidence": "LOW",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "DNATA Imp Processing Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "dnata imp processing fee",
+        "occurrence_count": 1,
+        "reason": "Label is too broad or source-specific for a bulk mapping recommendation.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "MANUAL_REVIEW",
+        "affected_charge_line_ids": [
+          "620eacef-8997-4fbc-bc82-8a4f9c971f5b"
+        ],
+        "affected_envelope_ids": [
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6"
+        ],
+        "approved_request_match": null,
+        "confidence": "LOW",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "Labour Charge"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "labour charge",
+        "occurrence_count": 1,
+        "reason": "Label is too broad or source-specific for a bulk mapping recommendation.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "MANUAL_REVIEW",
+        "affected_charge_line_ids": [
+          "c2962b89-1c6a-44be-a7bc-19915d75afba"
+        ],
+        "affected_envelope_ids": [
+          "489e98da-cdd4-4f2e-8361-f26d73da89c6"
+        ],
+        "approved_request_match": null,
+        "confidence": "LOW",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "Service Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "service fee",
+        "occurrence_count": 1,
+        "reason": "Label is too broad or source-specific for a bulk mapping recommendation.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      },
+      {
+        "action_required": "MANUAL_REVIEW",
+        "affected_charge_line_ids": [
+          "5f0278fa-98c6-48a7-9bb1-42d58da65d0b"
+        ],
+        "affected_envelope_ids": [
+          "36f27e36-b9f4-4540-8aa1-3579a14da02e"
+        ],
+        "approved_request_match": null,
+        "confidence": "LOW",
+        "display_source_labels_seen": [
+          {
+            "count": 1,
+            "label": "X-Ray Scanning Fee"
+          }
+        ],
+        "existing_product_code_match": null,
+        "normalized_label": "x-ray scanning fee",
+        "occurrence_count": 1,
+        "reason": "Label is too broad or source-specific for a bulk mapping recommendation.",
+        "recommended_product_code_code": "",
+        "recommended_product_code_description": "",
+        "recommended_product_code_id": null
+      }
+    ]
+  },
+  "readiness_status": "NOT_READY_FOR_LAUNCH",
+  "summary": {
+    "action_group_counts": {
+      "APPLY_APPROVED_REQUEST": 1,
+      "APPLY_EXISTING_PRODUCT_CODE": 10,
+      "CREATE_ALIAS_MAPPING": 16,
+      "CREATE_NEW_PRODUCT_CODE": 2,
+      "MANUAL_REVIEW": 5
+    },
+    "unique_unresolved_labels": 34,
+    "unresolved_charge_lines": 115,
+    "writes_performed": false
+  }
+}

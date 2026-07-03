@@ -3327,7 +3327,14 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
         )
 
         from pydantic import ValidationError
-        from quotes.contracts.draft_quote_contract import DraftQuoteResolveSchema, DraftQuoteResolveResponseSchema
+        from quotes.contracts.draft_quote_contract import (
+            DraftQuoteResolveSchema,
+            DraftQuoteResolveResponseSchema,
+            DecisionResultSchema
+        )
+        from quotes.spot_models import DraftQuoteDecisionDB
+        from quotes.services.draft_quote_adapter import get_validated_draft_quote
+        from django.db import transaction
         import json
 
         try:
@@ -3344,21 +3351,107 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Build DraftQuoteResolveResponseSchema with status="not_implemented"
+        # 1. Idempotency Check: search for existing decisions with same envelope and key
+        existing_decisions = DraftQuoteDecisionDB.objects.filter(
+            envelope=spe_db,
+            idempotency_key=payload.idempotency_key
+        ).order_by('server_created_at')
+
+        if existing_decisions.exists():
+            applied = []
+            rejected = []
+            for dec in existing_decisions:
+                # Map DB status (accepted/stored/applied) to Response status (applied/rejected/skipped)
+                resp_status = "applied"
+                if dec.status == "rejected":
+                    resp_status = "rejected"
+                elif dec.status == "skipped":
+                    resp_status = "skipped"
+
+                result_schema = DecisionResultSchema(
+                    decision_id=dec.decision_id,
+                    target_id=dec.target_id,
+                    type=dec.decision_type,
+                    status=resp_status,
+                    message=dec.message or "",
+                    error_code=dec.error_code
+                )
+                if resp_status == "rejected":
+                    rejected.append(result_schema)
+                else:
+                    applied.append(result_schema)
+
+            # Compute remaining unresolved items dynamically
+            try:
+                draft_quote = get_validated_draft_quote(spe_db)
+                resolved_targets = {dec.target_id for dec in existing_decisions}
+                remaining_count = sum(1 for item in draft_quote.review_queue if item.get("id") not in resolved_targets)
+            except Exception:
+                remaining_count = 0
+
+            response_payload = DraftQuoteResolveResponseSchema(
+                status="accepted" if not rejected else "partially_accepted",
+                idempotency_key=payload.idempotency_key,
+                applied_decisions=applied,
+                rejected_decisions=rejected,
+                validation_errors=[],
+                unresolved_items_remaining=remaining_count,
+                envelope_id=spe_db.id,
+                message="Idempotent resolution retrieved from database history."
+            )
+            return Response(
+                response_payload.model_dump(mode="json"),
+                status=status.HTTP_200_OK
+            )
+
+        # 2. Persist new decisions atomically
+        applied = []
+        with transaction.atomic():
+            for dec_item in payload.decisions:
+                dec_record = DraftQuoteDecisionDB.objects.create(
+                    envelope=spe_db,
+                    idempotency_key=payload.idempotency_key,
+                    decision_id=dec_item.decision_id,
+                    decision_type=dec_item.type,
+                    target_id=dec_item.target_id,
+                    details_json=dec_item.details,
+                    client_audit_metadata_json=dec_item.audit_metadata.model_dump(),
+                    server_user=request.user,
+                    status="accepted",
+                    message="Decision validated and persisted successfully."
+                )
+                applied.append(
+                    DecisionResultSchema(
+                        decision_id=dec_record.decision_id,
+                        target_id=dec_record.target_id,
+                        type=dec_record.decision_type,
+                        status="applied",
+                        message="Decision applied successfully"
+                    )
+                )
+
+        # Compute remaining unresolved items dynamically
+        try:
+            draft_quote = get_validated_draft_quote(spe_db)
+            resolved_targets = {dec.target_id for dec in payload.decisions}
+            remaining_count = sum(1 for item in draft_quote.review_queue if item.get("id") not in resolved_targets)
+        except Exception:
+            remaining_count = 0
+
         response_payload = DraftQuoteResolveResponseSchema(
-            status="not_implemented",
+            status="accepted",
             idempotency_key=payload.idempotency_key,
-            applied_decisions=[],
+            applied_decisions=applied,
             rejected_decisions=[],
             validation_errors=[],
-            unresolved_items_remaining=None,
+            unresolved_items_remaining=remaining_count,
             envelope_id=spe_db.id,
-            message="Contract defined, but database persistence logic is not implemented."
+            message="Operator decisions validated and persisted successfully."
         )
 
         return Response(
             response_payload.model_dump(mode="json"),
-            status=status.HTTP_501_NOT_IMPLEMENTED
+            status=status.HTTP_200_OK
         )
 
 
