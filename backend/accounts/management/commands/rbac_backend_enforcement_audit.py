@@ -1,24 +1,6 @@
 import json
+import inspect
 from django.core.management.base import BaseCommand
-from django.apps import apps
-from django.db import models
-from django.contrib.auth import get_user_model
-from django.urls import get_resolver
-from django.urls.resolvers import RoutePattern
-
-from accounts.scope import (
-    scoped_queryset_for_user,
-    scoped_q_for_user,
-    get_effective_user_scope,
-    resolve_create_scope_for_user
-)
-from accounts.models import CustomUser, UserMembership
-from parties.models import Organization, Branch, Department, OperatingEntity
-from crm.models import Opportunity, Interaction, Task
-from quotes.models import Quote, SpotPricingEnvelopeDB
-from quotes.selectors import get_quotes_for_user, get_spes_for_user
-from django.conf import settings
-from django.urls import include, path, re_path
 
 
 class Command(BaseCommand):
@@ -85,239 +67,78 @@ class Command(BaseCommand):
         """Perform detailed audit of each sensitive endpoint by inspecting actual view/queryset/permission behavior"""
         endpoints = []
 
+        def inspected(endpoint, model, view_class_path, details):
+            list_scoped = self._inspect_view_queryset(view_class_path)
+            object_validation = self._inspect_get_object_method(view_class_path)
+            role_validation = self._inspect_permission_classes(view_class_path)
+            return {
+                'endpoint': endpoint,
+                'model': model,
+                'list_scoped': list_scoped,
+                'object_validation': object_validation,
+                'role_validation': role_validation,
+                'status': 'SECURE' if (list_scoped and object_validation and role_validation) else 'NEEDS_TEST',
+                'details': details,
+            }
+
+        def asserted(endpoint, model, details, status='NEEDS_TEST'):
+            return {
+                'endpoint': endpoint,
+                'model': model,
+                'list_scoped': 'ASSERTED',
+                'object_validation': 'ASSERTED',
+                'role_validation': 'ASSERTED',
+                'status': status,
+                'details': details,
+            }
+
         # CRM Endpoints - Check actual implementations
         endpoints.extend([
-            {
-                'endpoint': 'CRM_Companies',
-                'model': 'parties.Company',
-                'list_scoped': self._inspect_view_queryset('parties.views.CustomerV3ViewSet'),
-                'object_validation': self._inspect_get_object_method('parties.views.CustomerV3ViewSet'),
-                'role_validation': self._inspect_permission_classes('parties.views.CustomerV3ViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('parties.views.CustomerV3ViewSet') and
-                                       self._inspect_get_object_method('parties.views.CustomerV3ViewSet') and
-                                       self._inspect_permission_classes('parties.views.CustomerV3ViewSet')) else 'INSECURE',
-                'details': 'Companies endpoint uses scoped_queryset_for_user and proper object-level validation'
-            },
-            {
-                'endpoint': 'CRM_Contacts',
-                'model': 'parties.Contact',
-                'list_scoped': self._inspect_view_queryset('crm.views.ContactViewSet'),
-                'object_validation': self._inspect_get_object_method('crm.views.ContactViewSet'),
-                'role_validation': self._inspect_permission_classes('crm.views.ContactViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('crm.views.ContactViewSet') and
-                                       self._inspect_get_object_method('crm.views.ContactViewSet') and
-                                       self._inspect_permission_classes('crm.views.ContactViewSet')) else 'INSECURE',
-                'details': 'Contacts endpoint uses scoped_queryset_for_user and proper object-level validation'
-            },
-            {
-                'endpoint': 'CRM_Opportunities',
-                'model': 'crm.Opportunity',
-                'list_scoped': self._inspect_view_queryset('crm.views.OpportunityViewSet'),
-                'object_validation': self._inspect_get_object_method('crm.views.OpportunityViewSet'),
-                'role_validation': self._inspect_permission_classes('crm.views.OpportunityViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('crm.views.OpportunityViewSet') and
-                                       self._inspect_get_object_method('crm.views.OpportunityViewSet') and
-                                       self._inspect_permission_classes('crm.views.OpportunityViewSet')) else 'INSECURE',
-                'details': 'Opportunities endpoint uses scoped_queryset_for_user and proper object-level validation'
-            },
-            {
-                'endpoint': 'CRM_Interactions',
-                'model': 'crm.Interaction',
-                'list_scoped': self._inspect_view_queryset('crm.views.InteractionViewSet'),
-                'object_validation': self._inspect_get_object_method('crm.views.InteractionViewSet'),
-                'role_validation': self._inspect_permission_classes('crm.views.InteractionViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('crm.views.InteractionViewSet') and
-                                       self._inspect_get_object_method('crm.views.InteractionViewSet') and
-                                       self._inspect_permission_classes('crm.views.InteractionViewSet')) else 'INSECURE',
-                'details': 'Interactions endpoint uses scoped_queryset_for_user and proper object-level validation'
-            },
-            {
-                'endpoint': 'CRM_Tasks',
-                'model': 'crm.Task',
-                'list_scoped': self._inspect_view_queryset('crm.views.TaskViewSet'),
-                'object_validation': self._inspect_get_object_method('crm.views.TaskViewSet'),
-                'role_validation': self._inspect_permission_classes('crm.views.TaskViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('crm.views.TaskViewSet') and
-                                       self._inspect_get_object_method('crm.views.TaskViewSet') and
-                                       self._inspect_permission_classes('crm.views.TaskViewSet')) else 'INSECURE',
-                'details': 'Tasks endpoint uses scoped_queryset_for_user and proper object-level validation'
-            }
+            inspected('CRM_Companies', 'parties.Company', 'parties.views.CustomerV3ViewSet', 'Companies endpoint inspected for scoped queryset, object lookup, and permissions'),
+            asserted('CRM_Contacts', 'parties.Contact', 'Contacts are exposed as a company-nested list; retrieve endpoint is not inspectable in this audit', 'NOT_INSPECTABLE'),
+            inspected('CRM_Opportunities', 'crm.Opportunity', 'crm.views.OpportunityViewSet', 'Opportunities endpoint inspected for scoped queryset, object lookup, and permissions'),
+            inspected('CRM_Interactions', 'crm.Interaction', 'crm.views.InteractionViewSet', 'Interactions endpoint inspected for scoped queryset, object lookup, and permissions'),
+            inspected('CRM_Tasks', 'crm.Task', 'crm.views.TaskViewSet', 'Tasks endpoint inspected for scoped queryset, object lookup, and permissions'),
         ])
 
         # Quote Endpoints
         endpoints.extend([
-            {
-                'endpoint': 'Quotes_List',
-                'model': 'quotes.Quote',
-                'list_scoped': self._inspect_view_queryset('quotes.views.lifecycle.QuoteV3ViewSet'),
-                'object_validation': self._inspect_get_object_method('quotes.views.lifecycle.QuoteV3ViewSet'),
-                'role_validation': self._inspect_permission_classes('quotes.views.lifecycle.QuoteV3ViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('quotes.views.lifecycle.QuoteV3ViewSet') and
-                                       self._inspect_get_object_method('quotes.views.lifecycle.QuoteV3ViewSet') and
-                                       self._inspect_permission_classes('quotes.views.lifecycle.QuoteV3ViewSet')) else 'INSECURE',
-                'details': 'Quote list endpoint uses get_quotes_for_user which enforces RBAC'
-            },
-            {
-                'endpoint': 'Quotes_Detail',
-                'model': 'quotes.Quote',
-                'list_scoped': self._inspect_view_queryset('quotes.views.lifecycle.QuoteV3ViewSet'),
-                'object_validation': self._inspect_get_object_method('quotes.views.lifecycle.QuoteV3ViewSet'),
-                'role_validation': self._inspect_permission_classes('quotes.views.lifecycle.QuoteV3ViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('quotes.views.lifecycle.QuoteV3ViewSet') and
-                                       self._inspect_get_object_method('quotes.views.lifecycle.QuoteV3ViewSet') and
-                                       self._inspect_permission_classes('quotes.views.lifecycle.QuoteV3ViewSet')) else 'INSECURE',
-                'details': 'Quote detail endpoint uses get_quote_for_user which enforces RBAC'
-            },
-            {
-                'endpoint': 'Draft_Quote_Read',
-                'model': 'quotes.Quote',
-                'list_scoped': True,  # Assuming this is handled by underlying mechanisms
-                'object_validation': True,  # Assuming this is handled by underlying mechanisms
-                'role_validation': True,  # Assuming this is handled by underlying mechanisms
-                'status': 'SECURE',
-                'details': 'Draft quote read endpoint uses proper object-level validation via get_quote_for_user'
-            },
-            {
-                'endpoint': 'Draft_Quote_Resolve',
-                'model': 'quotes.Quote',
-                'list_scoped': True,  # Assuming this is handled by underlying mechanisms
-                'object_validation': True,  # Assuming this is handled by underlying mechanisms
-                'role_validation': True,  # Assuming this is handled by underlying mechanisms
-                'status': 'SECURE',
-                'details': 'Draft quote resolve endpoint uses proper object validation via SPOT envelope checks'
-            }
+            inspected('Quotes_List', 'quotes.Quote', 'quotes.views.lifecycle.QuoteV3ViewSet', 'Quote viewset inspected for get_quotes_for_user/get_quote_for_user and permissions'),
+            inspected('Quotes_Detail', 'quotes.Quote', 'quotes.views.lifecycle.QuoteV3ViewSet', 'Quote viewset inspected for get_quotes_for_user/get_quote_for_user and permissions'),
+            inspected('Draft_Quote_Read', 'quotes.SpotPricingEnvelopeDB', 'quotes.spot_views.SpotEnvelopeDraftQuoteAPIView', 'Draft quote read inspected for SPE object lookup and permissions'),
+            inspected('Draft_Quote_Resolve', 'quotes.SpotPricingEnvelopeDB', 'quotes.spot_views.SpotEnvelopeDraftQuoteResolveAPIView', 'Draft quote resolve inspected for SPE object lookup and permissions'),
         ])
 
         # SPOT Envelope Endpoints
         endpoints.extend([
-            {
-                'endpoint': 'SPOT_Envelopes_List',
-                'model': 'quotes.SpotPricingEnvelopeDB',
-                'list_scoped': self._inspect_view_queryset('quotes.views.spot_views.SpotPricingEnvelopeViewSet'),
-                'object_validation': self._inspect_get_object_method('quotes.views.spot_views.SpotPricingEnvelopeViewSet'),
-                'role_validation': self._inspect_permission_classes('quotes.views.spot_views.SpotPricingEnvelopeViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('quotes.views.spot_views.SpotPricingEnvelopeViewSet') and
-                                       self._inspect_get_object_method('quotes.views.spot_views.SpotPricingEnvelopeViewSet') and
-                                       self._inspect_permission_classes('quotes.views.spot_views.SpotPricingEnvelopeViewSet')) else 'INSECURE',
-                'details': 'SPOT envelope list uses get_spes_for_user which enforces RBAC'
-            },
-            {
-                'endpoint': 'SPOT_Envelopes_Detail',
-                'model': 'quotes.SpotPricingEnvelopeDB',
-                'list_scoped': self._inspect_view_queryset('quotes.views.spot_views.SpotPricingEnvelopeViewSet'),
-                'object_validation': self._inspect_get_object_method('quotes.views.spot_views.SpotPricingEnvelopeViewSet'),
-                'role_validation': self._inspect_permission_classes('quotes.views.spot_views.SpotPricingEnvelopeViewSet'),
-                'status': 'SECURE' if (self._inspect_view_queryset('quotes.views.spot_views.SpotPricingEnvelopeViewSet') and
-                                       self._inspect_get_object_method('quotes.views.spot_views.SpotPricingEnvelopeViewSet') and
-                                       self._inspect_permission_classes('quotes.views.spot_views.SpotPricingEnvelopeViewSet')) else 'INSECURE',
-                'details': 'SPOT envelope detail uses _get_spe_or_404 which enforces RBAC'
-            }
+            inspected('SPOT_Envelopes_List', 'quotes.SpotPricingEnvelopeDB', 'quotes.spot_views.SpotEnvelopeListCreateAPIView', 'SPOT envelope list/create inspected for scoped SPE queryset and permissions'),
+            inspected('SPOT_Envelopes_Detail', 'quotes.SpotPricingEnvelopeDB', 'quotes.spot_views.SpotEnvelopeDetailAPIView', 'SPOT envelope detail inspected for SPE object lookup and permissions'),
         ])
 
         # ProductCode Endpoints
         endpoints.extend([
-            {
-                'endpoint': 'ProductCode_Requests',
-                'model': 'pricing_v4.ProductCodeCreationRequest',
-                'list_scoped': True,  # Assuming standard implementation
-                'object_validation': True,  # Assuming standard implementation
-                'role_validation': True,  # Assuming standard implementation
-                'status': 'SECURE',
-                'details': 'ProductCode requests use proper role and scope validation'
-            },
-            {
-                'endpoint': 'ProductCode_Review',
-                'model': 'pricing_v4.ProductCodeCreationRequest',
-                'list_scoped': True,  # Assuming standard implementation
-                'object_validation': True,  # Assuming standard implementation
-                'role_validation': True,  # Assuming standard implementation
-                'status': 'SECURE',
-                'details': 'ProductCode review uses proper admin role validation'
-            }
+            asserted('ProductCode_Requests', 'pricing_v4.ProductCodeCreationRequest', 'ProductCode request coverage requires API tests; audit does not prove scope from static assumptions'),
+            asserted('ProductCode_Review', 'pricing_v4.ProductCodeCreationRequest', 'ProductCode review coverage requires API tests; audit does not prove role/scope from static assumptions'),
         ])
 
         # Manager/Admin Override Endpoints
         endpoints.extend([
-            {
-                'endpoint': 'Manager_Override',
-                'model': 'accounts.UserMembership',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Manager override functionality properly validates elevated permissions'
-            },
-            {
-                'endpoint': 'Admin_Override',
-                'model': 'accounts.UserMembership',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Admin override functionality properly validates elevated permissions'
-            }
+            asserted('Manager_Override', 'accounts.UserMembership', 'Manager override is asserted by role behavior and must be backed by API tests'),
+            asserted('Admin_Override', 'accounts.UserMembership', 'Admin override is asserted by role behavior and must be backed by API tests'),
         ])
 
         # Cross-Scope Endpoints
         endpoints.extend([
-            {
-                'endpoint': 'Cross_Organization_Access',
-                'model': 'parties.Organization',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Cross-organization access properly restricted by scoped_queryset_for_user'
-            },
-            {
-                'endpoint': 'Cross_OperatingEntity_Access',
-                'model': 'parties.OperatingEntity',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Cross-operating entity access properly restricted by scoped_queryset_for_user'
-            },
-            {
-                'endpoint': 'Cross_Branch_Access',
-                'model': 'parties.Branch',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Cross-branch access properly restricted by scoped_queryset_for_user'
-            },
-            {
-                'endpoint': 'Cross_Department_Access',
-                'model': 'parties.Department',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Cross-department access properly restricted by scoped_queryset_for_user'
-            }
+            asserted('Cross_Organization_Access', 'parties.Organization', 'Cross-organization behavior is asserted and needs API tests'),
+            asserted('Cross_OperatingEntity_Access', 'parties.OperatingEntity', 'Cross-operating entity behavior is asserted and needs API tests'),
+            asserted('Cross_Branch_Access', 'parties.Branch', 'Cross-branch behavior is asserted and needs API tests'),
+            asserted('Cross_Department_Access', 'parties.Department', 'Cross-department behavior is asserted and needs API tests'),
         ])
 
         # Anonymous and ID Guessing Endpoints
         endpoints.extend([
-            {
-                'endpoint': 'ID_Guessing_Protection',
-                'model': 'Various',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'ID guessing returns 404 to prevent object existence disclosure'
-            },
-            {
-                'endpoint': 'Anonymous_Access',
-                'model': 'Various',
-                'list_scoped': True,  # Standard implementation
-                'object_validation': True,  # Standard implementation
-                'role_validation': True,  # Standard implementation
-                'status': 'SECURE',
-                'details': 'Anonymous access properly blocked by IsAuthenticated permission'
-            }
+            asserted('ID_Guessing_Protection', 'Various', 'ID guessing behavior must be proven by API tests'),
+            asserted('Anonymous_Access', 'Various', 'Anonymous access behavior must be proven by API tests'),
         ])
 
         return endpoints
@@ -329,11 +150,15 @@ class Command(BaseCommand):
             module = __import__(module_path, fromlist=[class_name])
             view_class = getattr(module, class_name)
 
-            # Check if get_queryset method exists and calls scope functions
             if hasattr(view_class, 'get_queryset'):
-                # This is a simplified check - in reality we'd need more sophisticated analysis
-                # For now, we'll assume that if the view exists, it's properly implemented
-                return True
+                source = inspect.getsource(view_class.get_queryset)
+            else:
+                source = inspect.getsource(view_class)
+            return any(token in source for token in (
+                'scoped_queryset_for_user',
+                'get_quotes_for_user',
+                'get_spes_for_user',
+            ))
         except (ImportError, AttributeError):
             pass
         return False
@@ -345,10 +170,14 @@ class Command(BaseCommand):
             module = __import__(module_path, fromlist=[class_name])
             view_class = getattr(module, class_name)
 
-            # Check if get_object method is overridden for object-level validation
-            if hasattr(view_class, 'get_object'):
-                # Check if it's different from the default DRF implementation
-                return True
+            source = inspect.getsource(view_class)
+            return any(token in source for token in (
+                'get_quote_for_user',
+                'get_spes_for_user',
+                '_get_spe_or_404',
+                'self.get_queryset()',
+                'filter_queryset(self.get_queryset())',
+            ))
         except (ImportError, AttributeError):
             pass
         return False
@@ -360,9 +189,8 @@ class Command(BaseCommand):
             module = __import__(module_path, fromlist=[class_name])
             view_class = getattr(module, class_name)
 
-            # Check if permission_classes are defined
-            if hasattr(view_class, 'permission_classes'):
-                return True
+            permission_classes = getattr(view_class, 'permission_classes', None)
+            return bool(permission_classes)
         except (ImportError, AttributeError):
             pass
         return False

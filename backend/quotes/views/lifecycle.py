@@ -1,4 +1,5 @@
 import logging
+import copy
 from datetime import date
 from decimal import Decimal
 from dataclasses import replace
@@ -189,10 +190,11 @@ def _build_quote_input_from_payload(payload: dict):
     # 3. Classifies Shipment Type (requires helper)
     # 4. Builds QuoteInput (requires helper)
     
-    # We can import QuoteComputeV3APIView inside the function, or move the helpers to a common `utils.py`.
+    # We can import `QuoteComputeV3APIView` inside the function, or move the helpers to a common `utils.py`.
     # For now, let's import the view class locally to access its static/class methods (though they are instance methods).
-    # Actually, _classify_shipment_type was a standalone function in `views.py`.
-    # Let's import it from calculation.
+    # Actually, `_classify_shipment_type` was a standalone function in `views.py`.
+    # Let's import it from `calculation`.
+    
     from .calculation import _classify_shipment_type, QuoteComputeV3APIView
     from quotes.schemas import QuoteComputeRequest
     from core.models import Location
@@ -227,7 +229,7 @@ def _build_quote_input_from_payload(payload: dict):
     
     # We need an instance to call _build_quote_input... or make it static.
     # It accesses `self._location_to_ref`.
-    # This is a bit messy. Refactoring _build_quote_input to a standalone function/service would be better.
+    # This is a bit messy. Refactoring `_build_quote_input` to a standalone function/service would be better.
     # But sticking to "Refactor = Move files" first:
     compute_view = QuoteComputeV3APIView()
     quote_input = compute_view._build_quote_input(
@@ -305,12 +307,11 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         )
 
     def get_object(self):
-        """
-        Override to ensure object-level access control using secure selector
-        """
-        # Use the secure selector that enforces RBAC
-        quote_id = self.kwargs[self.lookup_field]
-        return get_quote_for_user(self.request.user, quote_id, self.filter_queryset(self.get_queryset()))
+        return get_quote_for_user(
+            self.request.user,
+            self.kwargs[self.lookup_field],
+            self.filter_queryset(self.get_queryset()),
+        )
 
     def destroy(self, request, *args, **kwargs):
         """
@@ -325,7 +326,7 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    def retrieve(self, request, *args, **kwargs):
+    def retrieve(self, request, *args, **KWARGS):
         """
         Custom retrieve to ensure we always fetch the 'latest_version'.
         """
@@ -405,7 +406,6 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         latest quote version (which is now produced by the V4 engine).
         """
         quote = self.get_object()
-
         latest_version = quote.versions.order_by('-version_number').first()
         if not latest_version:
             return Response(
@@ -413,10 +413,95 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        result = build_quote_result_from_quote(quote, latest_version)
-        serializer = CanonicalQuoteResultSerializer(result)
-        # Return with quote_result key to match expected API contract
-        return Response({'quote_result': serializer.data})
+        totals = getattr(latest_version, 'totals', None)
+        lines = list(latest_version.lines.select_related('service_component').all())
+        display_currency = (
+            getattr(quote, 'output_currency', None)
+            or getattr(totals, 'total_sell_fcy_currency', None)
+            or 'PGK'
+        )
+
+        exchange_rates: dict[str, str] = {}
+        sell_lines: list[dict[str, Any]] = []
+        for line in lines:
+            sc = getattr(line, 'service_component', None)
+            component_code = getattr(sc, 'code', None) or 'MANUAL'
+            leg = getattr(line, 'leg', None) or getattr(sc, 'leg', None) or 'MAIN'
+            sell_currency = line.sell_fcy_currency or display_currency or 'PGK'
+            if str(sell_currency).upper() != 'PGK':
+                line_gst_amount = (line.sell_fcy_incl_gst - line.sell_fcy).quantize(Decimal('0.01'))
+            else:
+                line_gst_amount = (line.sell_pgk_incl_gst - line.sell_pgk).quantize(Decimal('0.01'))
+            if line.exchange_rate and sell_currency and sell_currency.upper() != 'PGK':
+                exchange_rates[f"{sell_currency.upper()}/PGK"] = str(line.exchange_rate)
+
+            sell_lines.append({
+                'id': str(line.id),
+                'line_type': 'COMPONENT',
+                'component': component_code,
+                'description': line.cost_source_description or getattr(sc, 'description', '') or 'Charge',
+                'leg': leg,
+                'cost_pgk': str(line.cost_pgk),
+                'sell_pgk': str(line.sell_pgk),
+                'sell_pgk_incl_gst': str(line.sell_pgk_incl_gst),
+                'gst_amount': str(line_gst_amount),
+                'sell_fcy': str(line.sell_fcy),
+                'sell_fcy_incl_gst': str(line.sell_fcy_incl_gst),
+                'sell_currency': sell_currency,
+                'margin_percent': None,
+                'exchange_rate': str(line.exchange_rate or Decimal('1')),
+                'source': line.cost_source or 'stored_quote',
+                'is_rate_missing': bool(line.is_rate_missing),
+                'is_informational': bool(getattr(line, 'is_informational', False)),
+            })
+
+        notes: list[str] = []
+        if totals and totals.notes:
+            notes.append(str(totals.notes))
+        if totals and totals.has_missing_rates and not notes:
+            notes.append("Quote contains missing rates and may be incomplete.")
+
+        payload = {
+            'quote_id': str(quote.id),
+            'quote_number': quote.quote_number,
+            'buy_lines': [],
+            'sell_lines': sell_lines,
+            'totals': {
+                'total_sell_ex_gst': (
+                    str(totals.total_sell_fcy if display_currency != 'PGK' else totals.total_sell_pgk)
+                    if totals else '0.00'
+                ),
+                'cost_pgk': str(totals.total_cost_pgk if totals else Decimal('0.00')),
+                'sell_pgk': str(totals.total_sell_pgk if totals else Decimal('0.00')),
+                'sell_pgk_incl_gst': str(totals.total_sell_pgk_incl_gst if totals else Decimal('0.00')),
+                'gst_amount': (
+                    str(
+                        (totals.total_sell_fcy_incl_gst - totals.total_sell_fcy).quantize(Decimal('0.01'))
+                        if str(display_currency).upper() != 'PGK'
+                        else (totals.total_sell_pgk_incl_gst - totals.total_sell_pgk).quantize(Decimal('0.01'))
+                    )
+                    if totals else '0.00'
+                ),
+                'caf_pgk': '0.00',
+                'currency': display_currency,
+                'total_sell_fcy': str(totals.total_sell_fcy if totals else Decimal('0.00')),
+                'total_sell_fcy_incl_gst': str(totals.total_sell_fcy_incl_gst if totals else Decimal('0.00')),
+                'total_quote_amount': (
+                    str(totals.total_sell_fcy_incl_gst if str(display_currency).upper() != 'PGK' else totals.total_sell_pgk_incl_gst)
+                    if totals else '0.00'
+                ),
+                'total_sell_fcy_currency': str(totals.total_sell_fcy_currency if totals else display_currency),
+            },
+            'exchange_rates': exchange_rates,
+            'computation_date': latest_version.created_at.isoformat() if latest_version.created_at else timezone.now().isoformat(),
+            'routing': None,
+            'notes': notes,
+            'quote_result': CanonicalQuoteResultSerializer(
+                build_quote_result_from_quote(quote, latest_version),
+                context={'request': request}
+            ).data,
+        }
+        return Response(payload)
 
 
 class QuoteTransitionAPIView(APIView):
@@ -521,35 +606,259 @@ class QuoteTransitionAPIView(APIView):
         return Response({
             'quote_id': str(quote.id),
             'status': quote.status,
-            'status_display': quote.get_status_display(),
+            'is_archived': quote.is_archived,
+            'action': action,
+            'transitioned_at': timezone.now().isoformat(),
+            'transitioned_by': request.user.username,
         })
 
 
 class QuoteCloneAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
+    """
+    POST: Clone a FINALIZED or SENT quote to create a new DRAFT quote.
+    """
+    permission_classes = [CanEditQuotes]  # Sales/Manager/Admin can clone
+    
     def post(self, request, quote_id):
-        from .services import clone_quote
+        # Get source quote
         # SECURITY FIX: Enforce IDOR protection
-        original_quote = get_quote_for_user(request.user, quote_id)
+        source_quote = get_quote_for_user(request.user, quote_id)
         
-        cloned_quote = clone_quote(original_quote, request.user)
-        serializer = QuoteModelSerializerV3(cloned_quote, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # Validate source quote status.
+        # Keep in sync with frontend Clone button visibility rules.
+        allowed_statuses = [Quote.Status.FINALIZED, Quote.Status.SENT, Quote.Status.EXPIRED]
+        if source_quote.status not in allowed_statuses:
+            return Response(
+                {'detail': f'Cannot clone quote with status "{source_quote.status}". Only FINALIZED, SENT, or EXPIRED quotes can be cloned.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with transaction.atomic():
+            source_latest_version = source_quote.versions.order_by('-version_number').first()
+            clone_payload = copy.deepcopy(
+                (source_latest_version.payload_json if source_latest_version else None)
+                or source_quote.request_details_json
+                or {}
+            )
+
+            # Create new draft with currently supported Quote fields only.
+            new_quote = Quote.objects.create(
+                customer=source_quote.customer,
+                contact=source_quote.contact,
+                mode=source_quote.mode,
+                shipment_type=source_quote.shipment_type,
+                service_scope=source_quote.service_scope,
+                incoterm=source_quote.incoterm,
+                payment_term=source_quote.payment_term,
+                commodity_code=source_quote.commodity_code,
+                output_currency=source_quote.output_currency,
+                origin_location=source_quote.origin_location,
+                destination_location=source_quote.destination_location,
+                is_dangerous_goods=source_quote.is_dangerous_goods,
+                # Draft clones must not carry source quote expiry.
+                valid_until=None,
+                policy=source_quote.policy,
+                fx_snapshot=source_quote.fx_snapshot,
+                request_details_json=clone_payload,
+                status=Quote.Status.DRAFT,  # New quote starts as DRAFT
+                created_by=request.user,
+                organization=getattr(request.user, 'organization', None) or source_quote.organization,
+                # Note: quote_number is auto-generated on save
+            )
+
+            # Seed baseline version so cloned quotes always have editable payload context.
+            new_version = QuoteVersion.objects.create(
+                quote=new_quote,
+                version_number=1,
+                payload_json=clone_payload,
+                policy=(source_latest_version.policy if source_latest_version else source_quote.policy),
+                fx_snapshot=(source_latest_version.fx_snapshot if source_latest_version else source_quote.fx_snapshot),
+                status=Quote.Status.DRAFT,
+                reason=f"Cloned from {source_quote.quote_number}",
+                created_by=request.user,
+                engine_version=(source_latest_version.engine_version if source_latest_version else 'V4'),
+            )
+
+            spot_charges_copied = 0
+            if source_latest_version:
+                source_lines = list(source_latest_version.lines.select_related('service_component').all())
+                cloned_lines = []
+                for line in source_lines:
+                    if line.service_component and line.service_component.code.startswith('SPOT'):
+                        spot_charges_copied += 1
+                    cloned_lines.append(QuoteLine(
+                        quote_version=new_version,
+                        service_component=line.service_component,
+                        cost_pgk=line.cost_pgk,
+                        cost_fcy=line.cost_fcy,
+                        cost_fcy_currency=line.cost_fcy_currency,
+                        sell_pgk=line.sell_pgk,
+                        sell_pgk_incl_gst=line.sell_pgk_incl_gst,
+                        sell_fcy=line.sell_fcy,
+                        sell_fcy_incl_gst=line.sell_fcy_incl_gst,
+                        sell_fcy_currency=line.sell_fcy_currency,
+                        exchange_rate=line.exchange_rate,
+                        leg=line.leg,
+                        bucket=line.bucket,
+                        cost_source=line.cost_source,
+                        cost_source_description=line.cost_source_description,
+                        is_rate_missing=line.is_rate_missing,
+                        is_informational=line.is_informational,
+                        conditional=line.conditional,
+                        gst_category=line.gst_category,
+                        gst_rate=line.gst_rate,
+                        gst_amount=line.gst_amount,
+                        product_code=line.product_code,
+                        component=line.component,
+                        basis=line.basis,
+                        rule_family=line.rule_family,
+                        service_family=line.service_family,
+                        unit_type=line.unit_type,
+                        rate=line.rate,
+                        rate_source=line.rate_source,
+                        canonical_cost_source=line.canonical_cost_source,
+                        is_spot_sourced=line.is_spot_sourced,
+                        is_manual_override=line.is_manual_override,
+                        calculation_notes=line.calculation_notes,
+                    ))
+                if cloned_lines:
+                    QuoteLine.objects.bulk_create(cloned_lines)
+
+                source_totals = getattr(source_latest_version, 'totals', None)
+                if source_totals:
+                    QuoteTotal.objects.create(
+                        quote_version=new_version,
+                        total_cost_pgk=source_totals.total_cost_pgk,
+                        total_sell_pgk=source_totals.total_sell_pgk,
+                        total_sell_pgk_incl_gst=source_totals.total_sell_pgk_incl_gst,
+                        total_sell_fcy=source_totals.total_sell_fcy,
+                        total_sell_fcy_incl_gst=source_totals.total_sell_fcy_incl_gst,
+                        total_sell_fcy_currency=source_totals.total_sell_fcy_currency,
+                        has_missing_rates=source_totals.has_missing_rates,
+                        notes=source_totals.notes,
+                        engine_version=source_totals.engine_version,
+                        service_notes=source_totals.service_notes,
+                        customer_notes=source_totals.customer_notes,
+                        internal_notes=source_totals.internal_notes,
+                        warnings_json=source_totals.warnings_json,
+                        audit_metadata_json=source_totals.audit_metadata_json,
+                    )
+                else:
+                    QuoteTotal.objects.create(
+                        quote_version=new_version,
+                        total_sell_fcy_currency=new_quote.output_currency or 'PGK',
+                        notes='Cloned without source totals; baseline totals initialized.',
+                        service_notes='Cloned without source totals; baseline totals initialized.',
+                    )
+            else:
+                QuoteTotal.objects.create(
+                    quote_version=new_version,
+                    total_sell_fcy_currency=new_quote.output_currency or 'PGK',
+                    notes='Cloned baseline version from request payload.',
+                    service_notes='Cloned baseline version from request payload.',
+                )
+
+            new_quote.latest_version = new_version
+            
+            logger.info(f"Quote {source_quote.quote_number} cloned to {new_quote.quote_number} by {request.user}")
+        
+        return Response({
+            'id': str(new_quote.id),
+            'quote_number': new_quote.quote_number,
+            'status': new_quote.status,
+            'cloned_from': {
+                'id': str(source_quote.id),
+                'quote_number': source_quote.quote_number,
+            },
+            'spot_charges_copied': spot_charges_copied,
+            'created_at': new_quote.created_at.isoformat(),
+        }, status=status.HTTP_201_CREATED)
 
 
 class QuoteVersionCreateAPIView(APIView):
-    permission_classes = [CanEditQuotes]
+    permission_classes = [IsAuthenticated]
 
-    def post(self, request, quote_id):
-        from .services import create_quote_version
+    def post(self, request, *args, **kwargs):
+        """
+        Creates a new QuoteVersion by re-running the PricingServiceV4Adapter with manual overrides.
+        """
+        quote_id = self.kwargs.get("quote_id")
         # SECURITY FIX: Enforce IDOR protection
-        quote = get_quote_for_user(request.user, quote_id)
+        original_quote = get_quote_for_user(request.user, quote_id)
         
+        # Block version creation for locked quotes (FINALIZED or SENT)
+        from quotes.state_machine import is_quote_editable
+        if not is_quote_editable(original_quote):
+            return Response(
+                {"detail": f"Cannot create new version. Quote is {original_quote.status} and locked for editing."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        # 1. Load original payload
+        original_payload = original_quote.request_details_json
+        if not original_payload:
+            return Response({"detail": "Original quote payload is missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Rebuild the QuoteInput
         try:
-            version = create_quote_version(quote, request.data, request.user)
-            serializer = QuoteModelSerializerV3(version.quote, context={'request': request})
-            return Response(serializer.data)
+            quote_input, _ = _build_quote_input_from_payload(original_payload)
         except Exception as e:
-            # SECURITY FIX: Don't expose internal exception details to users
-            return Response({'error': 'An error occurred processing your request'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": f"Error building input: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Parse & Merge Manual Overrides
+        # Validate incoming data
+        serializer = ManualChargeSerializer(data=request.data.get("charges", []), many=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Start with existing overrides
+        current_overrides = {
+            str(o.service_component_id): o for o in (quote_input.overrides or [])
+        }
+
+        # Add or update with the new overrides from the request
+        for charge in serializer.validated_data:
+            new_override = ManualOverride(
+                service_component_id=charge["service_component_id"].id,
+                cost_fcy=charge["cost_fcy"],
+                currency=charge["currency"].upper(),
+                unit=charge["unit"],
+                min_charge_fcy=charge.get("min_charge_fcy") or Decimal("0.0"),
+                valid_until=charge.get("valid_until")
+            )
+            current_overrides[str(new_override.service_component_id)] = new_override
+        
+        # Create a new QuoteInput with the updated overrides list
+        final_overrides = list(current_overrides.values())
+        quote_input = replace(quote_input, overrides=final_overrides)
+
+        # 4. Run the REAL Pricing Engine
+        try:
+            service = PricingServiceV4Adapter(quote_input)
+            charges = service.calculate_charges()
+        except Exception as e:
+            logger.error(f"Pricing engine failed: {e}", exc_info=True)
+            return Response({"detail": "Pricing engine failed while creating a new quote version."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 5. Save Result as New Version
+        new_version = _create_quote_version_from_service(
+            quote=original_quote,
+            payload=original_payload, # We reuse original payload structure
+            charges=charges,
+            service=service,
+            user=request.user
+        )
+        
+        # Update the payload on the quote itself so next time we have these overrides
+        updated_payload = copy.deepcopy(original_payload)
+        updated_payload['overrides'] = _serialize_overrides_for_payload(quote_input.overrides)
+        original_quote.request_details_json = updated_payload
+        original_quote.save(update_fields=['request_details_json'])
+        
+        original_quote.latest_version = new_version
+
+        # 6. Return Response
+        return Response(
+            QuoteModelSerializerV3(original_quote, context={'request': request}).data, 
+            status=status.HTTP_201_CREATED
+        )

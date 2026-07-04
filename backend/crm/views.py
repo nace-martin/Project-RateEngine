@@ -7,9 +7,6 @@ from accounts.scope import scoped_queryset_for_user
 from .models import Interaction, Opportunity, Task
 from .serializers import InteractionSerializer, OpportunitySerializer, TaskSerializer
 from .services import mark_opportunity_lost, mark_opportunity_won
-
-# Add object-level permission check
-from django.core.exceptions import PermissionDenied
 from django.http import Http404
 
 
@@ -49,18 +46,13 @@ class OpportunityViewSet(viewsets.ModelViewSet):
         return queryset.order_by("-updated_at", "-created_at")
 
     def get_object(self):
-        """
-        Override to ensure object-level access control
-        """
         queryset = self.filter_queryset(self.get_queryset())
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
         try:
-            obj = queryset.get(**filter_kwargs)
+            return queryset.get(**filter_kwargs)
         except Opportunity.DoesNotExist:
-            # Raise 404 to avoid leaking object existence
             raise Http404("No Opportunity matches the given query.")
-        return obj
 
     def perform_create(self, serializer):
         owner = serializer.validated_data.get("owner") or self.request.user
@@ -68,7 +60,7 @@ class OpportunityViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def mark_qualified(self, request, pk=None):
-        opportunity = self.get_object()  # Uses secure get_object
+        opportunity = self.get_object()
         opportunity.status = Opportunity.Status.QUALIFIED
         opportunity.lost_reason = ""
         opportunity.save(update_fields=["status", "lost_reason", "updated_at"])
@@ -77,7 +69,7 @@ class OpportunityViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def mark_won(self, request, pk=None):
-        opportunity = self.get_object()  # Uses secure get_object
+        opportunity = self.get_object()
         opportunity = mark_opportunity_won(
             opportunity,
             actor=request.user,
@@ -95,7 +87,7 @@ class OpportunityViewSet(viewsets.ModelViewSet):
                 {"lost_reason": ["Lost reason is required."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        opportunity = self.get_object()  # Uses secure get_object
+        opportunity = self.get_object()
         opportunity = mark_opportunity_lost(opportunity, actor=request.user, reason=lost_reason)
         serializer = self.get_serializer(opportunity)
         return Response(serializer.data)
@@ -117,18 +109,13 @@ class InteractionViewSet(viewsets.ModelViewSet):
         return queryset.order_by("-created_at")
 
     def get_object(self):
-        """
-        Override to ensure object-level access control
-        """
         queryset = self.filter_queryset(self.get_queryset())
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
         try:
-            obj = queryset.get(**filter_kwargs)
+            return queryset.get(**filter_kwargs)
         except Interaction.DoesNotExist:
-            # Raise 404 to avoid leaking object existence
             raise Http404("No Interaction matches the given query.")
-        return obj
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
@@ -159,18 +146,13 @@ class TaskViewSet(viewsets.ModelViewSet):
         return queryset.order_by("due_date", "-created_at")
 
     def get_object(self):
-        """
-        Override to ensure object-level access control
-        """
         queryset = self.filter_queryset(self.get_queryset())
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
         try:
-            obj = queryset.get(**filter_kwargs)
+            return queryset.get(**filter_kwargs)
         except Task.DoesNotExist:
-            # Raise 404 to avoid leaking object existence
             raise Http404("No Task matches the given query.")
-        return obj
 
     def perform_create(self, serializer):
         owner = serializer.validated_data.get("owner") or self.request.user
@@ -178,7 +160,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
-        task = self.get_object()  # Uses secure get_object
+        task = self.get_object()
         if task.status == Task.Status.COMPLETED:
             serializer = self.get_serializer(task)
             return Response(serializer.data)

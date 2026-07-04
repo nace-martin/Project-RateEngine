@@ -122,19 +122,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
-    'corsheaders',
-    'django_filters',
     'accounts',
     'core',
     'parties',
-    'crm',
-    'quotes',
-    'pricing_v4',
-    'services',
-    'ratecards',
     'shipments',
+    'quotes',
+    'crm',
+    'ratecards',
+    'services',
+    'pricing_v4',  # Greenfield pricing engine
 ]
 
 MIDDLEWARE = [
@@ -413,3 +412,87 @@ _spot_non_png = os.environ.get('SPOT_ALLOWED_NON_PNG_LANES', '')
 SPOT_ALLOWED_NON_PNG_LANES = [
     lane.strip().upper() for lane in _spot_non_png.split(',') if lane.strip()
 ]
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+# Structured logging for production environments (outputs to console for containers)
+
+# Google Cloud Operations Configuration
+GCP_PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', '')
+APP_VERSION = os.environ.get('APP_VERSION', '1.0.0')
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'json': {
+            '()': 'core.logging_utils.GCPJSONFormatter',
+            'format': '%(levelname)s %(asctime)s %(module)s %(request_id)s %(trace_id)s %(user_id)s %(message)s',
+        },
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+        'request_context': {
+            '()': 'core.middleware.RequestContextFilter',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple' if DEBUG else 'json',
+            'filters': ['request_context'],
+        },
+    },
+    'loggers': {
+        # Django's default logger
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        # Django request logging (4xx and 5xx errors)
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # Dev server access logs
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Security-related logs
+        'django.security': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # Application-specific loggers
+        'accounts': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'quotes': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'pricing_v4': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.environ.get('LOG_LEVEL', 'INFO'),
+    },
+}
+
+SPOT_VALIDATION_METRICS_ENABLED = True
+
