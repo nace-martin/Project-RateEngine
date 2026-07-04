@@ -122,18 +122,19 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'corsheaders',
     'rest_framework',
     'rest_framework.authtoken',
+    'corsheaders',
+    'django_filters',
     'accounts',
     'core',
     'parties',
-    'shipments',
-    'quotes',
     'crm',
-    'ratecards',
+    'quotes',
+    'pricing_v4',
     'services',
-    'pricing_v4',  # Greenfield pricing engine
+    'ratecards',
+    'shipments',
 ]
 
 MIDDLEWARE = [

@@ -1,5 +1,4 @@
 import logging
-import copy
 from datetime import date
 from decimal import Decimal
 from dataclasses import replace
@@ -190,11 +189,10 @@ def _build_quote_input_from_payload(payload: dict):
     # 3. Classifies Shipment Type (requires helper)
     # 4. Builds QuoteInput (requires helper)
     
-    # We can import [QuoteComputeV3APIView](file://c:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\views\calculation.py#L85-L702) inside the function, or move the helpers to a common `utils.py`.
+    # We can import QuoteComputeV3APIView inside the function, or move the helpers to a common `utils.py`.
     # For now, let's import the view class locally to access its static/class methods (though they are instance methods).
-    # Actually, [_classify_shipment_type](file://c:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\views\calculation.py#L61-L82) was a standalone function in `views.py`.
-    # Let's import it from [calculation](file://c:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\views\calculation.py#L0-L0).
-    
+    # Actually, _classify_shipment_type was a standalone function in `views.py`.
+    # Let's import it from calculation.
     from .calculation import _classify_shipment_type, QuoteComputeV3APIView
     from quotes.schemas import QuoteComputeRequest
     from core.models import Location
@@ -229,7 +227,7 @@ def _build_quote_input_from_payload(payload: dict):
     
     # We need an instance to call _build_quote_input... or make it static.
     # It accesses `self._location_to_ref`.
-    # This is a bit messy. Refactoring [_build_quote_input](file://c:\Users\commercial.manager\dev\Project-RateEngine\backend\quotes\views\calculation.py#L321-L368) to a standalone function/service would be better.
+    # This is a bit messy. Refactoring _build_quote_input to a standalone function/service would be better.
     # But sticking to "Refactor = Move files" first:
     compute_view = QuoteComputeV3APIView()
     quote_input = compute_view._build_quote_input(
@@ -327,7 +325,7 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    def retrieve(self, request, *args, **KWARGS):
+    def retrieve(self, request, *args, **kwargs):
         """
         Custom retrieve to ensure we always fetch the 'latest_version'.
         """
@@ -552,4 +550,5 @@ class QuoteVersionCreateAPIView(APIView):
             serializer = QuoteModelSerializerV3(version.quote, context={'request': request})
             return Response(serializer.data)
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            # SECURITY FIX: Don't expose internal exception details to users
+            return Response({'error': 'An error occurred processing your request'}, status=status.HTTP_400_BAD_REQUEST)
