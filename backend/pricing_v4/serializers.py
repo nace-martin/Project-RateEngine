@@ -605,10 +605,22 @@ class ProductCodeCreationRequestSerializer(serializers.ModelSerializer):
         if source_charge_line is not None:
             if source_envelope is None:
                 attrs['source_envelope'] = source_charge_line.envelope
+                source_envelope = attrs['source_envelope']
             elif source_charge_line.envelope_id != source_envelope.id:
                 raise serializers.ValidationError(
                     {'source_charge_line': 'source_charge_line must belong to source_envelope.'}
                 )
+        if source_envelope is not None:
+            request = self.context.get('request')
+            if request is not None:
+                from quotes.selectors import get_spes_for_user
+                from quotes.spot_models import SpotPricingEnvelopeDB
+
+                if not get_spes_for_user(
+                    request.user,
+                    SpotPricingEnvelopeDB.objects.filter(id=source_envelope.id),
+                ).exists():
+                    raise serializers.ValidationError({'source_envelope': 'Invalid pk.'})
         return attrs
 
     class Meta:

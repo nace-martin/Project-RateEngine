@@ -2845,6 +2845,57 @@ Remaining follow-up blockers before claiming backend enforcement complete:
 - Keep `rbac_backend_enforcement_audit --format json` as `NOT_READY` until the
   remaining rows are no longer security blockers.
 
+#### Phase 11B - Backend Enforcement Audit Blockers Closed
+
+Date: 2026-07-05
+
+Branch: `rbac-close-backend-enforcement-audit`
+
+Scope: backend RBAC enforcement audit closure only. No frontend, pricing,
+parser, ProductCode workflow, quote/SPOT calculation, historical Quote/SPOT
+mutation, or migration changes.
+
+Final coverage matrix:
+
+| Area | Coverage | Audit status |
+| --- | --- | --- |
+| Company list/retrieve | Scoped queryset/object inspection plus API cross-scope tests | `INSPECTED` |
+| Nested company contacts list | API cross-scope test; standalone contact retrieve route does not exist | `NOT_APPLICABLE` |
+| Opportunity list/retrieve | Scoped queryset/object inspection plus API cross-scope tests | `INSPECTED` |
+| Interaction list/retrieve | Scoped queryset/object inspection plus API cross-scope tests | `INSPECTED` |
+| Task list/retrieve | Scoped queryset/object inspection plus API cross-scope tests | `INSPECTED` |
+| Quote list/retrieve | `get_quotes_for_user`/`get_quote_for_user` inspection plus API tests | `INSPECTED` |
+| SPOT envelope list/detail/PATCH | Scoped SPE inspection plus API read/write cross-scope tests | `INSPECTED`/`TESTED` |
+| Draft Quote read/resolve | API cross-scope tests | `TESTED` |
+| ProductCode request create | API role test and source SPE scope validation | `TESTED` |
+| ProductCode review/admin actions | API admin-only approve coverage | `TESTED` |
+| Anonymous blocked | API unauthenticated access tests | `TESTED` |
+| ID guessing blocked | API object-id guessing tests across customer, CRM, quote, SPOT, and draft quote routes | `TESTED` |
+| Manager same-scope override | API same-scope manager quote access test | `TESTED` |
+| Admin cross-scope override | API cross-scope admin quote access test | `TESTED` |
+| Cross OperatingEntity denial | API cross-scope object tests | `TESTED` |
+| Cross Branch denial | API cross-scope object tests | `TESTED` |
+| Cross Department denial | API cross-scope object tests | `TESTED` |
+
+Remaining limitations:
+
+- Contacts are exposed through the scoped company contacts list. There is no
+  standalone contact retrieve route in the current API, so the audit reports
+  this as `NOT_APPLICABLE`, not `INSPECTED` or `TESTED`.
+- The audit is `READY` only when no rows are `BLOCKED`. Assumptions are not
+  counted as secure evidence.
+
+Manual test checklist:
+
+- Run `python backend/manage.py rbac_backend_enforcement_audit --format json`
+  and confirm `summary.status` is `READY`.
+- Confirm `findings.gaps_found` is empty.
+- Confirm audit rows use only `INSPECTED`, `TESTED`, and `NOT_APPLICABLE`.
+- Exercise a sales user against another branch/department/operating entity
+  object ID and confirm the API returns 404 without revealing existence.
+- Exercise an admin user against the same cross-scope quote and confirm access
+  is allowed.
+
 #### Phase 10A - Corrected Organization Hierarchy Redesign Audit
 
 Date: 2026-06-28

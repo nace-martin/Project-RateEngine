@@ -277,6 +277,20 @@ class RBACBackendEnforcementAPITest(APITestCase):
             ).status_code,
             status.HTTP_201_CREATED,
         )
+        self.assertEqual(
+            self.client.post(
+                create_url,
+                {
+                    "source_label": "Other branch fee",
+                    "suggested_name": "Other Branch Fee",
+                    "suggested_bucket": "HANDLING",
+                    "suggested_basis": "SHIPMENT",
+                    "source_envelope": str(self.other_spe.id),
+                },
+                format="json",
+            ).status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
         self.assertEqual(self.client.post(approve_url, {}, format="json").status_code, status.HTTP_403_FORBIDDEN)
         product = ProductCode.objects.create(
             id=987654,
@@ -321,3 +335,17 @@ class RBACBackendEnforcementAPITest(APITestCase):
         ]:
             kwargs = {"envelope_id": obj.pk} if endpoint == "quotes:spot-envelope-detail" else {"pk": obj.pk}
             self.assertEqual(self.client.get(reverse(endpoint, kwargs=kwargs)).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_id_guessing_blocked(self):
+        self._login(self.sales)
+        guessed_urls = [
+            reverse("parties:customer-v3-detail", kwargs={"pk": self.other_company.pk}),
+            reverse("crm:opportunity-detail", kwargs={"pk": self.other_opportunity.pk}),
+            reverse("crm:interaction-detail", kwargs={"pk": self.other_interaction.pk}),
+            reverse("crm:task-detail", kwargs={"pk": self.other_task.pk}),
+            reverse("quotes:quote-v3-detail", kwargs={"pk": self.other_quote.pk}),
+            reverse("quotes:spot-envelope-detail", kwargs={"envelope_id": self.other_spe.pk}),
+            reverse("quotes:spot-envelope-draft-quote", kwargs={"envelope_id": self.other_spe.pk}),
+        ]
+        for url in guessed_urls:
+            self.assertEqual(self.client.get(url).status_code, status.HTTP_404_NOT_FOUND)
