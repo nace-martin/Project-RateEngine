@@ -2801,6 +2801,50 @@ Final enforcement sign-off:
   `rbac_enforcement_readiness_report` remain intentionally unprotected after
   Phase 9D and this UI sign-off.
 
+#### Phase 11A - Initial Backend Enforcement Audit and Object Checks
+
+Date: 2026-07-04
+
+Branch: `rbac-backend-enforcement-hardening`
+
+Scope: partial backend hardening only. This PR adds the
+`rbac_backend_enforcement_audit` command, object-level `get_object` hardening
+for selected customer/CRM/quote viewsets, and API regression tests for the
+covered cross-scope paths.
+
+This is not a final backend enforcement cutover. The audit intentionally reports
+`NOT_READY` while any security item is assumed, not inspectable, or still needs
+dedicated API proof. `SECURE` means the audit found inspectable scoped queryset,
+object lookup, and permission evidence. `ASSERTED`, `NEEDS_TEST`, and
+`NOT_INSPECTABLE` are follow-up blockers, not completion claims.
+
+Covered in this PR:
+
+- Company list/retrieve cross-scope behavior.
+- Nested company contact list cross-scope behavior. There is no standalone
+  contact retrieve route in the current API, so contact retrieve is not claimed.
+- Opportunity, interaction, and task list/retrieve cross-scope behavior.
+- Quote list/retrieve cross-scope behavior.
+- SPOT envelope list/detail/PATCH cross-scope behavior.
+- Draft Quote read/resolve cross-scope behavior.
+- ProductCode request create versus review role behavior.
+- Anonymous access blocking.
+- Manager same-scope access and admin cross-scope override.
+- Cross operating entity, branch, and department denial via scoped records.
+
+Remaining follow-up blockers before claiming backend enforcement complete:
+
+- Convert every `NEEDS_TEST`, `ASSERTED`, and `NOT_INSPECTABLE` audit row into
+  either an inspectable static check or a dedicated API test that the audit can
+  reference.
+- Add or explicitly decline standalone contact retrieve coverage, because the
+  current API exposes contacts through the scoped company contact list.
+- Decide whether SPOT detail, Draft Quote, ProductCode, manager/admin override,
+  anonymous access, ID guessing, and cross-scope matrix rows should be promoted
+  by test evidence or remain listed as blockers.
+- Keep `rbac_backend_enforcement_audit --format json` as `NOT_READY` until the
+  remaining rows are no longer security blockers.
+
 #### Phase 10A - Corrected Organization Hierarchy Redesign Audit
 
 Date: 2026-06-28
