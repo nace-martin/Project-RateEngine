@@ -415,7 +415,8 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
 
         result = build_quote_result_from_quote(quote, latest_version)
         serializer = CanonicalQuoteResultSerializer(result)
-        return Response(serializer.data)
+        # Return with quote_result key to match expected API contract
+        return Response({'quote_result': serializer.data})
 
 
 class QuoteTransitionAPIView(APIView):

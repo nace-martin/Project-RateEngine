@@ -1,2 +1,2 @@
 action_required,normalized_label,source_labels_seen,occurrence_count,affected_charge_line_ids,affected_envelope_ids,recommended_product_code_id,recommended_product_code_code,recommended_product_code_description,confidence,reason
-MANUAL_REVIEW,unknown local fee,Unknown Local Fee (1),1,f26bbd4e-7e6b-4108-ba71-e5b79b74f248,42c40ed9-0a0e-449a-856c-28532738755f,,,,LOW,Label is too broad or source-specific for a bulk mapping recommendation.
+MANUAL_REVIEW,unknown local fee,Unknown Local Fee (1),1,e02969e5-8027-4680-815a-fabe51eb390c,b988daa0-c7d6-429c-81eb-ecf32a24092b,,,,LOW,Label is too broad or source-specific for a bulk mapping recommendation.

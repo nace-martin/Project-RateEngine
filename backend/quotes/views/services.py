@@ -24,6 +24,8 @@ from ratecards.models import PartnerRateCard
 from accounts.permissions import QuoteAccessPermission
 from accounts.permissions import IsAdmin, IsManagerOrAdmin
 from quotes.selectors import get_quote_for_user
+from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
+from pricing_v4.adapter import PricingServiceV4Adapter
 
 logger = logging.getLogger(__name__)
 
@@ -401,24 +403,162 @@ class StationListAPIView(APIView):
             })
         return Response(data)
 
+
+def clone_quote(original_quote, user):
+    """
+    Clone a quote with all its versions, lines, and totals.
+    Only allowed for DRAFT quotes.
+    """
+    if original_quote.status != Quote.Status.DRAFT:
+        raise ValidationError(f'Cannot clone quote with status "{original_quote.status}". Only DRAFT quotes can be cloned.')
+
+    # Create new quote
+    cloned_quote = Quote.objects.create(
+        customer=original_quote.customer,
+        contact=original_quote.contact,
+        opportunity=original_quote.opportunity,
+        mode=original_quote.mode,
+        service_scope=original_quote.service_scope,
+        shipment_type=original_quote.shipment_type,
+        origin_location=original_quote.origin_location,
+        destination_location=original_quote.destination_location,
+        payment_term=original_quote.payment_term,
+        buy_currency=original_quote.buy_currency,
+        agent=original_quote.agent,
+        carrier=original_quote.carrier,
+        status=Quote.Status.DRAFT,
+        created_by=user,
+        request_details_json=original_quote.request_details_json.copy() if original_quote.request_details_json else {}
+    )
+
+    # Copy all versions
+    for original_version in original_quote.versions.all():
+        new_version = QuoteVersion.objects.create(
+            quote=cloned_quote,
+            version_number=original_version.version_number,
+            payload_json=original_version.payload_json,
+            policy=original_version.policy,
+            fx_snapshot=original_version.fx_snapshot,
+            status=original_version.status,
+            reason=original_version.reason,
+            created_by=user,
+            engine_version=original_version.engine_version
+        )
+
+        # Copy all lines for this version
+        for original_line in original_version.lines.all():
+            QuoteLine.objects.create(
+                quote_version=new_version,
+                service_component=original_line.service_component,
+                cost_pgk=original_line.cost_pgk,
+                cost_fcy=original_line.cost_fcy,
+                cost_fcy_currency=original_line.cost_fcy_currency,
+                sell_pgk=original_line.sell_pgk,
+                sell_pgk_incl_gst=original_line.sell_pgk_incl_gst,
+                sell_fcy=original_line.sell_fcy,
+                sell_fcy_incl_gst=original_line.sell_fcy_incl_gst,
+                sell_fcy_currency=original_line.sell_fcy_currency,
+                exchange_rate=original_line.exchange_rate,
+                cost_source=original_line.cost_source,
+                cost_source_description=original_line.cost_source_description,
+                is_rate_missing=original_line.is_rate_missing,
+                leg=original_line.leg,
+                bucket=original_line.bucket,
+                gst_category=original_line.gst_category,
+                gst_rate=original_line.gst_rate,
+                gst_amount=original_line.gst_amount,
+                product_code=original_line.product_code,
+                component=original_line.component,
+                basis=original_line.basis,
+                rule_family=original_line.rule_family,
+                service_family=original_line.service_family,
+                unit_type=original_line.unit_type,
+                rate=original_line.rate,
+                rate_source=original_line.rate_source,
+                canonical_cost_source=original_line.canonical_cost_source,
+                is_spot_sourced=original_line.is_spot_sourced,
+                is_manual_override=original_line.is_manual_override,
+                calculation_notes=original_line.calculation_notes,
+            )
+
+        # Copy totals for this version
+        original_totals = getattr(original_version, 'totals', None)
+        if original_totals:
+            QuoteTotal.objects.create(
+                quote_version=new_version,
+                total_cost_pgk=original_totals.total_cost_pgk,
+                total_sell_pgk=original_totals.total_sell_pgk,
+                total_sell_pgk_incl_gst=original_totals.total_sell_pgk_incl_gst,
+                total_sell_fcy=original_totals.total_sell_fcy,
+                total_sell_fcy_incl_gst=original_totals.total_sell_fcy_incl_gst,
+                total_sell_fcy_currency=original_totals.total_sell_fcy_currency,
+                has_missing_rates=original_totals.has_missing_rates,
+                notes=original_totals.notes,
+                engine_version=original_totals.engine_version,
+                service_notes=original_totals.service_notes,
+                customer_notes=original_totals.customer_notes,
+                internal_notes=original_totals.internal_notes,
+                warnings_json=original_totals.warnings_json,
+                audit_metadata_json=original_totals.audit_metadata_json,
+            )
+
+    # Update the latest version reference
+    latest_version = cloned_quote.versions.order_by('-version_number').first()
+    cloned_quote.latest_version = latest_version
+    cloned_quote.save(update_fields=['latest_version'])
+
+    return cloned_quote
+
+
+def create_quote_version(quote, payload, user):
+    """
+    Create a new version of a quote based on the given payload.
+    This function creates a new version by re-running the calculation with the new payload.
+    """
+    from quotes.models import QuoteVersion
+    from django.utils import timezone
+
+    latest_version = quote.versions.order_by('-version_number').first()
+    new_version_number = (latest_version.version_number if latest_version else 0) + 1
+
+    # Create new version with the new payload
+    new_version = QuoteVersion.objects.create(
+        quote=quote,
+        version_number=new_version_number,
+        payload_json=payload,
+        policy={},  # Default empty policy
+        fx_snapshot={},  # Default empty fx snapshot
+        status=Quote.Status.DRAFT,  # Default to draft
+        reason="Manual version created",
+        created_by=user,
+        engine_version='V4'  # Default to V4
+    )
+
+    # Update the latest version reference
+    quote.latest_version = new_version
+    quote.save(update_fields=['latest_version'])
+
+    return new_version
+
+
 class QuotePDFAPIView(APIView):
     """
     GET: Generate and return a PDF for a quote.
-    
+
     Returns:
     - PDF binary with appropriate headers for download
     - Includes DRAFT watermark for non-finalized quotes
     """
     permission_classes = [QuoteAccessPermission]  # Same as view quote permission
-    
+
     def get(self, request, quote_id):
         from django.http import HttpResponse
         from quotes.pdf_service import generate_quote_pdf, QuotePDFGenerationError
-        
+
         # Get quote to validate access and get quote number
         # SECURITY FIX: Enforce IDOR protection
         quote = get_quote_for_user(request.user, quote_id)
-        
+
         try:
             # Optional: Allow specifying version number via query param
             version_number = request.query_params.get('version')
@@ -441,19 +581,19 @@ class QuotePDFAPIView(APIView):
 
             # Generate PDF
             pdf_bytes = generate_quote_pdf(str(quote_id), version_number, summary_only=summary_only)
-            
+
             # Build filename
             suffix = "-summary" if summary_only else ""
             filename = f"{quote.quote_number}{suffix}.pdf"
-            
+
             # Return PDF response
             response = HttpResponse(pdf_bytes, content_type='application/pdf')
             response['Content-Disposition'] = f'attachment; filename="{filename}"'
             response['Content-Length'] = len(pdf_bytes)
-            
+
             logger.info(f"PDF downloaded for quote {quote.quote_number} by {request.user}")
             return response
-            
+
         except QuotePDFGenerationError as e:
             logger.error(f"PDF generation failed for quote {quote_id}: {e}")
             return Response(
