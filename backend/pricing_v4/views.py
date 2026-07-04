@@ -1207,6 +1207,7 @@ class ProductCodeCreationRequestViewSet(
         
         if matched:
             from quotes.spot_models import SPEChargeLineDB, SpotPricingEnvelopeDB
+            from quotes.selectors import get_spes_for_user
 
             update_fields = []
             source_envelope_id = request.data.get('source_envelope')
@@ -1224,11 +1225,22 @@ class ProductCodeCreationRequestViewSet(
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 source_envelope_id = str(source_line.envelope_id)
-            elif source_envelope_id:
-                if not SpotPricingEnvelopeDB.objects.filter(id=source_envelope_id).exists():
+                if not get_spes_for_user(
+                    request.user,
+                    SpotPricingEnvelopeDB.objects.filter(id=source_line.envelope_id),
+                ).exists():
                     return Response(
-                        {"source_envelope": ["Invalid pk."]},
-                        status=status.HTTP_400_BAD_REQUEST,
+                        {"detail": "Not found."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+            elif source_envelope_id:
+                if not get_spes_for_user(
+                    request.user,
+                    SpotPricingEnvelopeDB.objects.filter(id=source_envelope_id),
+                ).exists():
+                    return Response(
+                        {"detail": "Not found."},
+                        status=status.HTTP_404_NOT_FOUND,
                     )
             if source_envelope_id and not matched.source_envelope_id:
                 matched.source_envelope_id = source_envelope_id

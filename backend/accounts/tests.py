@@ -893,3 +893,18 @@ class RBACFoundationSeedTests(TestCase):
             {'can_view_buy_charges', 'can_view_margins'},
         )
         self.assertEqual(me_data['organization']['branding']['display_name'], 'Express Freight Management')
+
+
+class RBACBackendEnforcementAuditCommandTests(TestCase):
+    def test_audit_reports_ready_without_assumed_security_statuses(self):
+        output = StringIO()
+        call_command('rbac_backend_enforcement_audit', '--format', 'json', stdout=output)
+        payload = json.loads(output.getvalue())
+        statuses = {
+            item['status']
+            for item in payload['findings']['detailed_endpoint_audit']
+        }
+
+        self.assertEqual(payload['summary']['status'], 'READY')
+        self.assertEqual(payload['summary']['gaps_count'], 0)
+        self.assertFalse({'ASSERTED', 'NEEDS_TEST', 'NOT_INSPECTABLE', 'SECURE', 'BLOCKED'} & statuses)
