@@ -105,6 +105,15 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
             )
         )
 
+    def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        try:
+            return queryset.get(**filter_kwargs)
+        except Company.DoesNotExist:
+            raise Http404("No Company matches the given query.")
+
     def perform_create(self, serializer):
         scope_values = populate_missing_scope_values({}, user=self.request.user)
         serializer.save(is_customer=True, **scope_values)

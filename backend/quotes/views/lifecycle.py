@@ -306,6 +306,13 @@ class QuoteV3ViewSet(viewsets.ModelViewSet):
             'versions__totals'
         )
 
+    def get_object(self):
+        return get_quote_for_user(
+            self.request.user,
+            self.kwargs[self.lookup_field],
+            self.filter_queryset(self.get_queryset()),
+        )
+
     def destroy(self, request, *args, **kwargs):
         """
         Delete a quote. Only allowed if the quote implies DRAFT status.

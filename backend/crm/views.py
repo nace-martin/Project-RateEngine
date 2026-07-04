@@ -7,6 +7,7 @@ from accounts.scope import scoped_queryset_for_user
 from .models import Interaction, Opportunity, Task
 from .serializers import InteractionSerializer, OpportunitySerializer, TaskSerializer
 from .services import mark_opportunity_lost, mark_opportunity_won
+from django.http import Http404
 
 
 class CrmWritePermission(permissions.BasePermission):
@@ -43,6 +44,15 @@ class OpportunityViewSet(viewsets.ModelViewSet):
         if priority:
             queryset = queryset.filter(priority=priority.upper())
         return queryset.order_by("-updated_at", "-created_at")
+
+    def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        try:
+            return queryset.get(**filter_kwargs)
+        except Opportunity.DoesNotExist:
+            raise Http404("No Opportunity matches the given query.")
 
     def perform_create(self, serializer):
         owner = serializer.validated_data.get("owner") or self.request.user
@@ -98,6 +108,15 @@ class InteractionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(opportunity_id=opportunity)
         return queryset.order_by("-created_at")
 
+    def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        try:
+            return queryset.get(**filter_kwargs)
+        except Interaction.DoesNotExist:
+            raise Http404("No Interaction matches the given query.")
+
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
 
@@ -125,6 +144,15 @@ class TaskViewSet(viewsets.ModelViewSet):
         if opportunity:
             queryset = queryset.filter(opportunity_id=opportunity)
         return queryset.order_by("due_date", "-created_at")
+
+    def get_object(self):
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+        try:
+            return queryset.get(**filter_kwargs)
+        except Task.DoesNotExist:
+            raise Http404("No Task matches the given query.")
 
     def perform_create(self, serializer):
         owner = serializer.validated_data.get("owner") or self.request.user
