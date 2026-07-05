@@ -17,6 +17,11 @@ import {
     canEditQuotes,
     canFinalizeQuotes,
     canUseAIIntake,
+    canUseSpotWorkspace,
+    canRequestProductCodes,
+    canReviewProductCodes,
+    canViewCRM,
+    canEditCRM,
     canEditRateCards,
     canEditFXRates,
     canManageUsers,
@@ -35,6 +40,11 @@ interface UsePermissionsReturn {
     canEditQuotes: boolean;
     canFinalizeQuotes: boolean;
     canUseAIIntake: boolean;
+    canUseSpotWorkspace: boolean;
+    canRequestProductCodes: boolean;
+    canReviewProductCodes: boolean;
+    canViewCRM: boolean;
+    canEditCRM: boolean;
     canEditRateCards: boolean;
     canEditFXRates: boolean;
     canManageUsers: boolean;
@@ -62,6 +72,11 @@ export function usePermissions(): UsePermissionsReturn {
         canEditQuotes: canEditQuotes(role),
         canFinalizeQuotes: canFinalizeQuotes(role),
         canUseAIIntake: canUseAIIntake(role),
+        canUseSpotWorkspace: canUseSpotWorkspace(role),
+        canRequestProductCodes: canRequestProductCodes(role),
+        canReviewProductCodes: canReviewProductCodes(role),
+        canViewCRM: canViewCRM(role),
+        canEditCRM: canEditCRM(role),
         canEditRateCards: canEditRateCards(role),
         canEditFXRates: canEditFXRates(role),
         canManageUsers: canManageUsers(role),

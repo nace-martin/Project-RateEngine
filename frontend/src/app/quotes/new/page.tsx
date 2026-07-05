@@ -26,6 +26,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -44,6 +45,7 @@ const resolveLocationParam = async (value: string | null): Promise<LocationSearc
 
 function NewQuoteContent() {
   const { user } = useAuth();
+  const { canEditQuotes } = usePermissions();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -109,6 +111,20 @@ function NewQuoteContent() {
   useUnsavedChangesGuard(isFormDirty);
   const returnTo = useReturnTo();
   const pageCopy = getNewQuoteCopy(user?.role as "admin" | "manager" | "sales" | "finance" | undefined);
+
+  if (!canEditQuotes) {
+    return (
+      <div className="container mx-auto max-w-3xl p-4">
+        <PageBackButton fallbackHref="/quotes" returnTo="/quotes" className="mb-4 -ml-2 gap-2 px-2 text-slate-600 hover:text-slate-900" />
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-6">
+          <h1 className="text-lg font-semibold text-amber-950">Access Denied</h1>
+          <p className="mt-2 text-sm text-amber-900">
+            You do not have permission to create quotes.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const confirmLeave = async () => {
     if (!isFormDirty) {

@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 
 export default function ProductCodeRequestsPage() {
-  const { isAdmin } = usePermissions();
+  const { canReviewProductCodes } = usePermissions();
 
   const [requests, setRequests] = useState<ProductCodeRequestResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,10 +84,10 @@ export default function ProductCodeRequestsPage() {
   }, [statusFilter]);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (canReviewProductCodes) {
       void fetchRequests();
     }
-  }, [isAdmin, fetchRequests]);
+  }, [canReviewProductCodes, fetchRequests]);
 
   // Load product codes for linking
   const loadProductCodes = async () => {
@@ -352,7 +352,7 @@ export default function ProductCodeRequestsPage() {
     }
   };
 
-  if (!isAdmin) {
+  if (!canReviewProductCodes) {
     return (
       <StandardPageContainer>
         <PageHeader

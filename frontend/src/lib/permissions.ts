@@ -27,6 +27,11 @@ export const PERMISSIONS = {
     EDIT_RATE_CARDS: 'edit_rate_cards',
     EDIT_FX_RATES: 'edit_fx_rates',
     USE_AI_INTAKE: 'use_ai_intake',
+    USE_SPOT_WORKSPACE: 'use_spot_workspace',
+    REQUEST_PRODUCT_CODES: 'request_product_codes',
+    REVIEW_PRODUCT_CODES: 'review_product_codes',
+    VIEW_CRM: 'view_crm',
+    EDIT_CRM: 'edit_crm',
     MANAGE_USERS: 'manage_users',
     SYSTEM_SETTINGS: 'system_settings',
     VIEW_AUDIT_LOGS: 'view_audit_logs',
@@ -47,6 +52,11 @@ const PERMISSION_MATRIX: Record<Permission, Role[]> = {
     [PERMISSIONS.EDIT_RATE_CARDS]: [ROLES.MANAGER, ROLES.ADMIN],
     [PERMISSIONS.EDIT_FX_RATES]: [ROLES.FINANCE, ROLES.ADMIN],
     [PERMISSIONS.USE_AI_INTAKE]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
+    [PERMISSIONS.USE_SPOT_WORKSPACE]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
+    [PERMISSIONS.REQUEST_PRODUCT_CODES]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
+    [PERMISSIONS.REVIEW_PRODUCT_CODES]: [ROLES.ADMIN],
+    [PERMISSIONS.VIEW_CRM]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
+    [PERMISSIONS.EDIT_CRM]: [ROLES.SALES, ROLES.MANAGER, ROLES.ADMIN],
     [PERMISSIONS.MANAGE_USERS]: [ROLES.MANAGER, ROLES.ADMIN],
     [PERMISSIONS.SYSTEM_SETTINGS]: [ROLES.ADMIN],
     [PERMISSIONS.VIEW_AUDIT_LOGS]: [ROLES.MANAGER, ROLES.FINANCE, ROLES.ADMIN],
@@ -94,6 +104,26 @@ export function canFinalizeQuotes(role: string | undefined): boolean {
  */
 export function canUseAIIntake(role: string | undefined): boolean {
     return hasPermission(role, PERMISSIONS.USE_AI_INTAKE);
+}
+
+export function canUseSpotWorkspace(role: string | undefined): boolean {
+    return hasPermission(role, PERMISSIONS.USE_SPOT_WORKSPACE);
+}
+
+export function canRequestProductCodes(role: string | undefined): boolean {
+    return hasPermission(role, PERMISSIONS.REQUEST_PRODUCT_CODES);
+}
+
+export function canReviewProductCodes(role: string | undefined): boolean {
+    return hasPermission(role, PERMISSIONS.REVIEW_PRODUCT_CODES);
+}
+
+export function canViewCRM(role: string | undefined): boolean {
+    return hasPermission(role, PERMISSIONS.VIEW_CRM);
+}
+
+export function canEditCRM(role: string | undefined): boolean {
+    return hasPermission(role, PERMISSIONS.EDIT_CRM);
 }
 
 /**

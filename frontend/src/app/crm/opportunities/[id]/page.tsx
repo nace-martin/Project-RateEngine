@@ -43,6 +43,7 @@ import {
 } from '@/lib/api/crm';
 import type { CompanySearchResult, Interaction, Opportunity, Task, V3QuoteComputeResponse } from '@/lib/types';
 import { useToast } from '@/context/toast-context';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const interactionLabels: Record<string, string> = {
   CALL: 'Call',
@@ -134,6 +135,7 @@ function TimelineItem({ interaction }: { interaction: Interaction }) {
 export default function OpportunityDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
+  const { canEditCRM, canEditQuotes } = usePermissions();
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -310,20 +312,22 @@ export default function OpportunityDetailPage() {
               <Button variant="outline" asChild>
                 <Link href="/crm/opportunities">Browse All</Link>
               </Button>
-              {opportunity && !isClosed && (
+              {canEditCRM && opportunity && !isClosed && (
                 <>
                   <Button variant="outline" asChild>
                     <Link href={`/crm/opportunities/${opportunity.id}/edit`}>Edit</Link>
                   </Button>
-                  <Button asChild>
-                    <Link href={createQuoteHref}>
-                      <PlusCircle className="mr-2 h-4 w-4" />
-                      Create Quote
-                    </Link>
-                  </Button>
+                  {canEditQuotes ? (
+                    <Button asChild>
+                      <Link href={createQuoteHref}>
+                        <PlusCircle className="mr-2 h-4 w-4" />
+                        Create Quote
+                      </Link>
+                    </Button>
+                  ) : null}
                 </>
               )}
-              {opportunity && (
+              {canEditCRM && opportunity && (
                 <Button type="button" onClick={() => setQuickLogOpen(true)}>
                   Log Activity
                 </Button>
@@ -345,7 +349,7 @@ export default function OpportunityDetailPage() {
         ) : opportunity ? (
           <>
             <div className="mb-6 flex flex-wrap gap-2">
-              {!isClosed && (
+              {canEditCRM && !isClosed && (
                 <>
                   {opportunity.status === 'NEW' && (
                     <Button variant="outline" size="sm" onClick={handleMarkQualified} disabled={Boolean(actionLoading)}>
@@ -358,9 +362,11 @@ export default function OpportunityDetailPage() {
                   <Button variant="outline" size="sm" onClick={() => setLostDialogOpen(true)} disabled={Boolean(actionLoading)} className="text-red-700 hover:text-red-800 hover:bg-red-50">
                     {actionLoading === 'lost' ? 'Saving...' : 'Mark Lost'}
                   </Button>
-                  <Button size="sm" asChild>
-                    <Link href={createQuoteHref}>Create Quote</Link>
-                  </Button>
+                  {canEditQuotes ? (
+                    <Button size="sm" asChild>
+                      <Link href={createQuoteHref}>Create Quote</Link>
+                    </Button>
+                  ) : null}
                 </>
               )}
             </div>
@@ -481,9 +487,11 @@ export default function OpportunityDetailPage() {
                       <CardTitle className="text-lg">Tasks</CardTitle>
                       <CardDescription>Basic tasks linked to this opportunity.</CardDescription>
                     </div>
-                    <Button type="button" variant="outline" size="sm" onClick={openCreateTaskDialog}>
-                      Create Task
-                    </Button>
+                    {canEditCRM ? (
+                      <Button type="button" variant="outline" size="sm" onClick={openCreateTaskDialog}>
+                        Create Task
+                      </Button>
+                    ) : null}
                   </CardHeader>
                   <CardContent className="px-6 pb-6 pt-2">
                     {tasks.length === 0 ? (
@@ -514,7 +522,7 @@ export default function OpportunityDetailPage() {
                                 <TableCell>{formatDate(task.due_date)}</TableCell>
                                 <TableCell>{task.status}</TableCell>
                                 <TableCell className="text-right">
-                                  {task.status === 'PENDING' ? (
+                                  {canEditCRM && task.status === 'PENDING' ? (
                                     <div className="flex justify-end gap-2">
                                       <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
                                         Edit

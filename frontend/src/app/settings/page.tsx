@@ -9,7 +9,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { getAdminHubCopy } from '@/lib/page-copy';
 
 export default function SettingsPage() {
-  const { canEditRateCards, isFinance, isAdmin } = usePermissions();
+  const { canEditRateCards, canReviewProductCodes, isFinance, isAdmin } = usePermissions();
   const pageCopy = getAdminHubCopy();
 
   if (!isAdmin) {
@@ -116,7 +116,7 @@ export default function SettingsPage() {
           </Card>
         )}
 
-        {isAdmin && (
+        {canReviewProductCodes && (
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -136,7 +136,7 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {!showPricingEngine && !canEditRateCards && !showBranding && !showUsers && (
+      {!showPricingEngine && !canEditRateCards && !showBranding && !showUsers && !canReviewProductCodes && (
         <Card className="border-slate-200 shadow-sm">
           <CardContent className="px-6 py-5 text-sm text-muted-foreground">
             No administrative modules are available for your role.

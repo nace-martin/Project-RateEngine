@@ -11,9 +11,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { getOpportunity } from '@/lib/api/crm';
 import type { Opportunity } from '@/lib/types';
+import { usePermissions } from '@/hooks/usePermissions';
 
 export default function EditOpportunityPage() {
   const params = useParams<{ id: string }>();
+  const { canEditCRM } = usePermissions();
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +65,13 @@ export default function EditOpportunityPage() {
           </div>
         ) : null}
 
-        {loading ? (
+        {!canEditCRM ? (
+          <Card className="border-amber-200 bg-amber-50 shadow-sm">
+            <CardContent className="p-6 text-sm text-amber-900">
+              You do not have permission to edit CRM opportunities.
+            </CardContent>
+          </Card>
+        ) : loading ? (
           <Card className="border-slate-200 shadow-sm">
             <CardContent className="p-6 text-sm text-muted-foreground">Loading opportunity...</CardContent>
           </Card>

@@ -47,9 +47,11 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export default function QuoteDetailPage() {
   const { user } = useAuth();
+  const { canEditQuotes, canUseSpotWorkspace } = usePermissions();
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
@@ -108,12 +110,12 @@ export default function QuoteDetailPage() {
   }, [id, user]);
 
   useEffect(() => {
-    if (!spotWorkflowHref || redirectingSpotRef.current) {
+    if (!canUseSpotWorkspace || !spotWorkflowHref || redirectingSpotRef.current) {
       return;
     }
     redirectingSpotRef.current = true;
     router.replace(spotWorkflowHref);
-  }, [router, spotWorkflowHref]);
+  }, [canUseSpotWorkspace, router, spotWorkflowHref]);
 
   useEffect(() => {
     if (!quote) {
@@ -330,7 +332,7 @@ export default function QuoteDetailPage() {
     }
   };
 
-  if (spotWorkflowHref) {
+  if (spotWorkflowHref && canUseSpotWorkspace) {
     return (
       <div className="container mx-auto max-w-3xl p-6">
         <Card className="border-slate-200">
@@ -406,7 +408,7 @@ export default function QuoteDetailPage() {
         </div>
         <div className="flex items-center gap-3">
           {/* Only show Back to Edit for editable quotes */}
-          {(!isArchived && (effectiveStatus === "DRAFT" || effectiveStatus === "INCOMPLETE")) && (
+          {canEditQuotes && !isArchived && (effectiveStatus === "DRAFT" || effectiveStatus === "INCOMPLETE") && (
             <Button
               variant="outline"
               onClick={() => router.push(buildQuoteEditHref(quote))}
@@ -416,15 +418,17 @@ export default function QuoteDetailPage() {
               Back to Edit
             </Button>
           )}
-          <QuoteStatusActions
-            quoteId={quote.id}
-            status={quote.status}
-            validUntil={quote.valid_until}
-            hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
-            onStatusChange={() => {
-              getQuoteV3(id).then((data) => setQuote(data));
-            }}
-          />
+          {canEditQuotes ? (
+            <QuoteStatusActions
+              quoteId={quote.id}
+              status={quote.status}
+              validUntil={quote.valid_until}
+              hasMissingRates={quote.latest_version?.totals?.has_missing_rates || false}
+              onStatusChange={() => {
+                getQuoteV3(id).then((data) => setQuote(data));
+              }}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -447,7 +451,7 @@ export default function QuoteDetailPage() {
         {isIncomplete ? (
           spotTriggerChecking || !spotTriggerChecked ? (
             <SpotTriggerCheckingCard quote={quote} />
-          ) : isSpotRequired ? (
+          ) : canEditQuotes && canUseSpotWorkspace && isSpotRequired ? (
             <SpotWorkflowRequiredCard
               quote={quote}
               spotLaunching={spotLaunching}
@@ -455,13 +459,19 @@ export default function QuoteDetailPage() {
               onLaunchSpot={handleLaunchSpotWorkflow}
               onReturnToEdit={() => router.push(`/quotes/${quote.id}/edit`)}
             />
-          ) : (
+          ) : canEditQuotes ? (
             <IncompleteQuoteCard
               quote={quote}
               triggerCheckError={spotTriggerCheckError}
               onRetryCheck={handleRetrySpotTriggerCheck}
               onReturnToEdit={() => router.push(`/quotes/${quote.id}/edit`)}
             />
+          ) : (
+            <Card className="border-slate-200 bg-slate-50/60">
+              <CardContent className="p-6 text-sm text-muted-foreground">
+                This quote is incomplete and cannot be edited by your current role.
+              </CardContent>
+            </Card>
           )
         ) : (
           /* Full-width Layout for Finalized Quotes */
@@ -478,6 +488,7 @@ export default function QuoteDetailPage() {
         displayCurrency={displayCurrency}
         displayAmount={displayAmount}
         canDownloadPDF={canDownloadPDF}
+        canEditQuote={canEditQuotes}
         pdfDownloading={pdfDownloading}
         onDownloadPDF={handleDownloadPDF}
         onEditQuote={() => router.push(buildQuoteEditHref(quote))}
