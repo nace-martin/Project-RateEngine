@@ -33,6 +33,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from django.shortcuts import get_object_or_404
 
+from accounts.permissions import CanUseSpotWorkspace, CanEditQuotes
 from core.security import validate_pdf_upload
 from core.business_rules import classify_png_shipment
 from pricing_v4.models import ChargeAlias, ProductCode
@@ -3286,7 +3287,7 @@ class SpotEnvelopeDraftQuoteAPIView(APIView):
 
     Get unified draft quote payload for the exception workspace, validated against the DraftQuoteSchema.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanUseSpotWorkspace]
 
     def get(self, request, envelope_id):
         spe_db = _get_spe_or_404(
@@ -3314,9 +3315,8 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
     POST /api/v3/spot/envelopes/<id>/draft-quote/resolve/
 
     Validates operator decisions against the DraftQuoteResolveSchema and returns DraftQuoteResolveResponseSchema.
-    Currently returns 501 Not Implemented upon successful validation.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanEditQuotes]
 
     def post(self, request, envelope_id):
         # Existing SPOT envelope access check / IDOR pattern
