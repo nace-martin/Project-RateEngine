@@ -157,21 +157,6 @@ class CanUseAIIntake(BasePermission):
         )
 
 
-class CanUseSpotWorkspace(BasePermission):
-    """
-    Allows access to users who can use the SPOT workspace.
-    Includes: Sales, Manager, Admin
-    Excludes: Finance
-    """
-    message = "You do not have permission to use the SPOT workspace."
-    
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated and
-            request.user.can_use_spot_workspace
-        )
-
-
 class CanManageUsers(BasePermission):
     """
     Allows access to users who can manage other users.

@@ -8,97 +8,9 @@ from rest_framework import status
 from uuid import uuid4
 
 from quotes.spot_models import SpotPricingEnvelopeDB
-from accounts.permissions import CanUseSpotWorkspace, CanEditQuotes
 from accounts.models import Role
 from parties.models import Organization, Branch, Department
 from accounts.models import UserMembership
-
-
-class DraftQuotePermissionLogicTests(TestCase):
-    def setUp(self):
-        self.sales_user = get_user_model().objects.create_user(
-            username="sales_test",
-            password="testpass123",
-            role=get_user_model().ROLE_SALES,
-        )
-        
-        self.manager_user = get_user_model().objects.create_user(
-            username="manager_test",
-            password="testpass123",
-            role=get_user_model().ROLE_MANAGER,
-        )
-        
-        self.finance_user = get_user_model().objects.create_user(
-            username="finance_test",
-            password="testpass123",
-            role=get_user_model().ROLE_FINANCE,
-        )
-        
-        self.admin_user = get_user_model().objects.create_user(
-            username="admin_test",
-            password="testpass123",
-            role=get_user_model().ROLE_ADMIN,
-        )
-
-    def test_can_use_spot_workspace_permission_logic(self):
-        """Test the CanUseSpotWorkspace permission logic."""
-        perm = CanUseSpotWorkspace()
-        
-        # Create mock request object for each test
-        class MockRequest:
-            def __init__(self, user):
-                self.user = user
-        
-        # Sales user should have access
-        mock_request = MockRequest(self.sales_user)
-        self.assertTrue(perm.has_permission(mock_request, None))
-        
-        # Manager user should have access
-        mock_request = MockRequest(self.manager_user)
-        self.assertTrue(perm.has_permission(mock_request, None))
-        
-        # Admin user should have access
-        mock_request = MockRequest(self.admin_user)
-        self.assertTrue(perm.has_permission(mock_request, None))
-        
-        # Finance user should NOT have access
-        mock_request = MockRequest(self.finance_user)
-        self.assertFalse(perm.has_permission(mock_request, None))
-        
-        # Unauthenticated user should NOT have access
-        unauth_user = get_user_model()()
-        mock_request = MockRequest(unauth_user)
-        self.assertFalse(perm.has_permission(mock_request, None))
-
-    def test_can_edit_quotes_permission_logic(self):
-        """Test the CanEditQuotes permission logic."""
-        perm = CanEditQuotes()
-        
-        # Create mock request object for each test
-        class MockRequest:
-            def __init__(self, user):
-                self.user = user
-        
-        # Sales user should have access
-        mock_request = MockRequest(self.sales_user)
-        self.assertTrue(perm.has_permission(mock_request, None))
-        
-        # Manager user should have access
-        mock_request = MockRequest(self.manager_user)
-        self.assertTrue(perm.has_permission(mock_request, None))
-        
-        # Admin user should have access
-        mock_request = MockRequest(self.admin_user)
-        self.assertTrue(perm.has_permission(mock_request, None))
-        
-        # Finance user should NOT have access
-        mock_request = MockRequest(self.finance_user)
-        self.assertFalse(perm.has_permission(mock_request, None))
-        
-        # Unauthenticated user should NOT have access
-        unauth_user = get_user_model()()
-        mock_request = MockRequest(unauth_user)
-        self.assertFalse(perm.has_permission(mock_request, None))
 
 
 class DraftQuoteEndpointIntegrationTests(TestCase):

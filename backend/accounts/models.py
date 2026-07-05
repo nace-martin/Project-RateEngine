@@ -138,11 +138,6 @@ class CustomUser(AbstractUser):
         return self.role in [self.ROLE_SALES, self.ROLE_MANAGER, self.ROLE_ADMIN]
     
     @property
-    def can_use_spot_workspace(self) -> bool:
-        """Sales, Manager, and Admin can use the SPOT workspace."""
-        return self.role in [self.ROLE_SALES, self.ROLE_MANAGER, self.ROLE_ADMIN]
-
-    @property
     def can_manage_users(self) -> bool:
         """Manager and Admin can manage users."""
         return self.role in [self.ROLE_MANAGER, self.ROLE_ADMIN]

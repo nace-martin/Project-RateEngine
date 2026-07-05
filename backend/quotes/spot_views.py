@@ -33,7 +33,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from django.shortcuts import get_object_or_404
 
-from accounts.permissions import CanUseSpotWorkspace, CanEditQuotes
+from accounts.permissions import CanUseAIIntake, CanEditQuotes
 from core.security import validate_pdf_upload
 from core.business_rules import classify_png_shipment
 from pricing_v4.models import ChargeAlias, ProductCode
@@ -3287,7 +3287,7 @@ class SpotEnvelopeDraftQuoteAPIView(APIView):
 
     Get unified draft quote payload for the exception workspace, validated against the DraftQuoteSchema.
     """
-    permission_classes = [IsAuthenticated, CanUseSpotWorkspace]
+    permission_classes = [IsAuthenticated, CanUseAIIntake]
 
     def get(self, request, envelope_id):
         spe_db = _get_spe_or_404(
