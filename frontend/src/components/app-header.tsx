@@ -29,7 +29,7 @@ export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const { canEditRateCards, canEditFXRates, canEditQuotes, role, isAdmin, isFinance, isManager } = usePermissions();
+  const { canEditRateCards, canEditFXRates, canEditQuotes, canViewCRM, canReviewProductCodes, role, isAdmin, isManager } = usePermissions();
   const [open, setOpen] = useState(false);
   const brandName = user?.organization?.branding?.display_name || user?.organization?.name || 'RateEngine';
   const brandLogoUrl = user?.organization?.branding?.logo_url || null;
@@ -46,8 +46,7 @@ export default function AppHeader() {
     { href: '/quotes', label: 'Quotes', icon: FileText },
   ];
 
-  // Customers - only for non-Finance roles
-  if (!isFinance) {
+  if (canViewCRM) {
     navItems.push({ href: '/customers', label: 'Customers', icon: Users });
     navItems.push({ href: '/crm', label: 'CRM', icon: FileText });
   }
@@ -73,6 +72,10 @@ export default function AppHeader() {
   // Admin hub
   if (isAdmin) {
     moreItems.push({ href: '/settings', label: 'Admin Hub', icon: Settings });
+  }
+
+  if (canReviewProductCodes) {
+    moreItems.push({ href: '/settings/product-code-requests', label: 'ProductCode Governance', icon: Database });
   }
 
   // User Management (Manager/Admin only)

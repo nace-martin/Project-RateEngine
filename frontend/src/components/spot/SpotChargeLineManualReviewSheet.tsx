@@ -54,7 +54,7 @@ export function SpotChargeLineManualReviewSheet({
     saveError = null,
     onSave,
 }: SpotChargeLineManualReviewSheetProps) {
-    const { isAdmin } = usePermissions();
+    const { canRequestProductCodes, canReviewProductCodes } = usePermissions();
 
     const [productCodes, setProductCodes] = useState<ProductCodeOption[]>([]);
     const [loadingProducts, setLoadingProducts] = useState(false);
@@ -154,6 +154,10 @@ export function SpotChargeLineManualReviewSheet({
     );
 
     const handleSubmitRequest = async () => {
+        if (!canRequestProductCodes) {
+            setRequestErrorMessage("You do not have permission to request ProductCodes.");
+            return;
+        }
         setIsSubmittingRequest(true);
         setRequestErrorMessage(null);
         setRequestSuccessMessage(null);
@@ -364,7 +368,7 @@ export function SpotChargeLineManualReviewSheet({
                                             Resolve now with an existing ProductCode instead
                                         </Button>
 
-                                        {isAdmin && (
+                                        {canReviewProductCodes && (
                                             <Button
                                                 type="button"
                                                 variant="outline"
@@ -389,7 +393,11 @@ export function SpotChargeLineManualReviewSheet({
                                     </Alert>
                                 ) : null}
 
-                                {!showRequestForm ? (
+                                {!canRequestProductCodes ? (
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-600">
+                                        ProductCode requests are not available for your role.
+                                    </div>
+                                ) : !showRequestForm ? (
                                     <div className="pt-2">
                                         <Button
                                             type="button"

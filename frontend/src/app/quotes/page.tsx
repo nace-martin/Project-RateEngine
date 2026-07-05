@@ -25,7 +25,7 @@ import { UnifiedQuote, formatCurrency, formatRoute, formatDate, getWeight, getCu
 
 export default function QuotesPage() {
   const { user } = useAuth();
-  const { isFinance } = usePermissions();
+  const { isFinance, canEditQuotes, canFinalizeQuotes, canUseSpotWorkspace } = usePermissions();
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
@@ -248,7 +248,7 @@ export default function QuotesPage() {
       cell: (item: UnifiedQuote) => (
         <div className="flex items-center gap-2">
           {getStatusBadge(item)}
-          {item.type === "STANDARD" && item.rawStatus === "SENT" && (
+          {canFinalizeQuotes && item.type === "STANDARD" && item.rawStatus === "SENT" && (
             <select
               defaultValue=""
               disabled={statusUpdatingId === item.id}
@@ -287,7 +287,7 @@ export default function QuotesPage() {
       header: "",
       cell: (item: UnifiedQuote) => (
         <div className="flex items-center justify-end gap-2">
-          {["DRAFT", "draft"].includes(item.rawStatus) && (
+          {canEditQuotes && ["DRAFT", "draft"].includes(item.rawStatus) && (
             <Button
               variant="outline"
               size="sm"
@@ -303,16 +303,18 @@ export default function QuotesPage() {
               Delete
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            asChild
-            className="w-20 border-slate-200 hover:bg-slate-50 text-slate-700 h-8"
-          >
-            <Link href={item.actionLink}>
-              {["DRAFT", "draft"].includes(item.rawStatus) ? "Resume" : "View"}
-            </Link>
-          </Button>
+          {item.type !== "SPOT_DRAFT" || canUseSpotWorkspace ? (
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+              className="w-20 border-slate-200 hover:bg-slate-50 text-slate-700 h-8"
+            >
+              <Link href={item.actionLink}>
+                {canEditQuotes && ["DRAFT", "draft"].includes(item.rawStatus) ? "Resume" : "View"}
+              </Link>
+            </Button>
+          ) : null}
         </div>
       ),
       className: "text-right min-w-[120px]",
@@ -388,8 +390,8 @@ export default function QuotesPage() {
                 title="No quotes found"
                 description={searchQuery ? "No quotes match your search criteria." : "You haven't created any quotes yet."}
                 icon={FileText}
-                actionLabel={searchQuery ? "Clear Search" : "Create New Quote"}
-                onAction={searchQuery ? () => setSearchQuery("") : () => router.push("/quotes/new?returnTo=%2Fquotes")}
+                actionLabel={searchQuery ? "Clear Search" : canEditQuotes ? "Create New Quote" : undefined}
+                onAction={searchQuery ? () => setSearchQuery("") : canEditQuotes ? () => router.push("/quotes/new?returnTo=%2Fquotes") : undefined}
                 className="py-12 border-none"
               />
             }

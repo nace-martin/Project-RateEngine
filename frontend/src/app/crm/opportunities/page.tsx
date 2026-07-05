@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table';
 import { listOpportunities } from '@/lib/api/crm';
 import type { Opportunity } from '@/lib/types';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const statusOptions = ['NEW', 'QUALIFIED', 'QUOTED', 'WON', 'LOST'];
 const serviceTypeOptions = ['AIR', 'SEA', 'CUSTOMS', 'DOMESTIC', 'MULTIMODAL'];
@@ -61,6 +62,7 @@ function statusBadgeVariant(status: string) {
 
 export default function OpportunityListPage() {
   const router = useRouter();
+  const { canEditCRM } = usePermissions();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,11 +132,11 @@ export default function OpportunityListPage() {
         <PageHeader
           title="Opportunities"
           description="Review active and closed CRM opportunities by account, status, and service type."
-          actions={
+          actions={canEditCRM ? (
             <Button asChild>
               <Link href="/crm/opportunities/new">New Opportunity</Link>
             </Button>
-          }
+          ) : null}
         />
 
         <CrmSubNav />

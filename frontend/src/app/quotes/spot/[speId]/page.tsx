@@ -50,6 +50,7 @@ import {
 import PageBackButton from "@/components/navigation/PageBackButton";
 import PageCancelButton from "@/components/navigation/PageCancelButton";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { usePermissions } from "@/hooks/usePermissions";
 
 type Step = "intake" | "review";
 type DisplayStep = Step | "confirm";
@@ -128,6 +129,7 @@ export default function SpotRateEntryPage() {
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { canEditQuotes, canUseSpotWorkspace } = usePermissions();
 
     const speId = params.speId as string;
     const isNew = speId === "new";
@@ -720,7 +722,16 @@ export default function SpotRateEntryPage() {
         unresolvedReviewIssueCount,
         unresolvedReviewIssueLabels: reviewLines.affected.map((line) => line.label),
     });
-    const quoteSubmitDisabled = Boolean(quoteSubmitDisabledReason);
+    const quoteActionDisabledReason = !canEditQuotes
+        ? "You do not have permission to create or update quotes."
+        : !canUseSpotWorkspace
+            ? "You do not have permission to use the SPOT workspace."
+            : quoteSubmitDisabledReason;
+    const canMutateSpotWorkspace = canEditQuotes && canUseSpotWorkspace;
+    const accessError = state.error || finalizeError;
+    const isAccessError = Boolean(accessError && /permission|not available|not found|forbidden|403|404/i.test(accessError));
+    const effectiveSubmitDisabledReason = quoteActionDisabledReason;
+    const effectiveSubmitDisabled = Boolean(effectiveSubmitDisabledReason);
     const hasReviewActions =
         importedReviewCounts.unmapped > 0 ||
         importedReviewCounts.lowConfidence > 0 ||
@@ -733,8 +744,8 @@ export default function SpotRateEntryPage() {
         charges: Array<Omit<SPEChargeLine, 'id'> & { charge_line_id?: string }>
     ) => {
         if (state.spe) {
-            if (quoteSubmitDisabledReason) {
-                setFinalizeError(quoteSubmitDisabledReason);
+            if (effectiveSubmitDisabledReason) {
+                setFinalizeError(effectiveSubmitDisabledReason);
                 return;
             }
 
@@ -841,6 +852,10 @@ export default function SpotRateEntryPage() {
     );
 
     const handleReviewLine = useCallback((line: ImportedReviewLine) => {
+        if (!canMutateSpotWorkspace) {
+            setFinalizeError("You do not have permission to resolve SPOT review items.");
+            return;
+        }
         if (!line.chargeLineId) return;
         setReviewMode("allCharges");
         setActiveReviewRequest({
@@ -848,15 +863,19 @@ export default function SpotRateEntryPage() {
             openManualReview: line.canReviewInSheet,
             requestKey: Date.now(),
         });
-    }, []);
+    }, [canMutateSpotWorkspace]);
     const handleConditionalDecision = useCallback(async (
         line: ImportedReviewLine,
         action: "KEEP" | "REMOVE"
     ) => {
+        if (!canMutateSpotWorkspace) {
+            setFinalizeError("You do not have permission to resolve SPOT review items.");
+            return;
+        }
         if (!line.chargeLineId) return;
         await actions.resolveConditionalChargeLine(line.chargeLineId, action);
         setActiveIssueDetails(null);
-    }, [actions]);
+    }, [actions, canMutateSpotWorkspace]);
     const toggleIssueDetails = useCallback((key: string) => {
         void key;
     }, []);
@@ -1009,8 +1028,13 @@ export default function SpotRateEntryPage() {
 
             {/* Error display */}
             {(state.error || finalizeError) && (
-                <div className="mb-6 rounded-md border border-red-200 bg-red-50 p-4">
-                    <p className="text-sm font-medium text-red-800">{state.error || finalizeError}</p>
+                <div className={`mb-6 rounded-md border p-4 ${isAccessError ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
+                    <p className={`text-sm font-medium ${isAccessError ? "text-amber-900" : "text-red-800"}`}>
+                        {isAccessError ? "This SPOT workspace is not available to your current role or scope." : state.error || finalizeError}
+                    </p>
+                    {isAccessError && accessError ? (
+                        <p className="mt-1 text-sm text-amber-800">{accessError}</p>
+                    ) : null}
                     {state.quoteResult?.has_missing_rates && (
                         <div className="mt-2 text-sm text-red-700">
                             {formatMissingComponents(state.quoteResult.missing_components)?.length ? (
@@ -1239,7 +1263,7 @@ export default function SpotRateEntryPage() {
                                                                                     type="button"
                                                                                     size="sm"
                                                                                     onClick={() => void handleConditionalDecision(line, "KEEP")}
-                                                                                    disabled={!line.chargeLineId || state.isLoading}
+                                                                                    disabled={!canMutateSpotWorkspace || !line.chargeLineId || state.isLoading}
                                                                                 >
                                                                                     Accept Conditional
                                                                                 </Button>
@@ -1248,7 +1272,7 @@ export default function SpotRateEntryPage() {
                                                                                     variant="outline"
                                                                                     size="sm"
                                                                                     onClick={() => void handleConditionalDecision(line, "REMOVE")}
-                                                                                    disabled={!line.chargeLineId || state.isLoading}
+                                                                                    disabled={!canMutateSpotWorkspace || !line.chargeLineId || state.isLoading}
                                                                                 >
                                                                                     Remove from Quote
                                                                                 </Button>
@@ -1259,7 +1283,7 @@ export default function SpotRateEntryPage() {
                                                                                 type="button"
                                                                                 size="sm"
                                                                                 onClick={() => handleReviewLine(line)}
-                                                                                disabled={!line.chargeLineId || state.isLoading}
+                                                                                disabled={!canMutateSpotWorkspace || !line.chargeLineId || state.isLoading}
                                                                             >
                                                                                 Resolve ProductCode
                                                                             </Button>
@@ -1331,11 +1355,11 @@ export default function SpotRateEntryPage() {
                                             serviceScope={serviceScope}
                                             missingComponents={missingComponents}
                                             submitLabel="Create Quote"
-                                            submitDisabled={quoteSubmitDisabled}
-                                            submitDisabledReason={quoteSubmitDisabledReason}
+                                            submitDisabled={effectiveSubmitDisabled}
+                                            submitDisabledReason={effectiveSubmitDisabledReason}
                                             allowEmptySubmit={Boolean(state.spe?.can_proceed)}
-                                            onSaveDraft={handleSaveDraft}
-                                            onManualResolveChargeLine={actions.manuallyResolveChargeLine}
+                                            onSaveDraft={canMutateSpotWorkspace ? handleSaveDraft : undefined}
+                                            onManualResolveChargeLine={canMutateSpotWorkspace ? actions.manuallyResolveChargeLine : undefined}
                                             productCodeDomain={resolvedShipmentType}
                                             envelopeId={state.spe?.id}
                                             reviewRequest={activeReviewRequest}
@@ -1405,9 +1429,9 @@ export default function SpotRateEntryPage() {
                                                     <span className="text-slate-700">Unresolved: <span className="font-semibold text-slate-900">{unresolvedReviewIssueCount}</span></span>
                                                 </div>
                                             </div>
-                                            {quoteSubmitDisabledReason ? (
+                                            {effectiveSubmitDisabledReason ? (
                                                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                                                    <span className="font-medium">Cannot create quote:</span> {quoteSubmitDisabledReason}
+                                                    <span className="font-medium">Cannot create quote:</span> {effectiveSubmitDisabledReason}
                                                 </div>
                                             ) : (
                                                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
@@ -1517,7 +1541,7 @@ export default function SpotRateEntryPage() {
                                                                     type="button"
                                                                     size="sm"
                                                                     onClick={() => handleReviewLine(line)}
-                                                                    disabled={!line.chargeLineId}
+                                                                    disabled={!canMutateSpotWorkspace || !line.chargeLineId}
                                                                 >
                                                                     Review
                                                                 </Button>
@@ -1650,7 +1674,7 @@ export default function SpotRateEntryPage() {
                     <IssueDetailsSheet
                         open={Boolean(activeIssueDetails)}
                         activeIssueDetails={activeIssueDetails}
-                        isLoading={state.isLoading}
+                        isLoading={state.isLoading || !canMutateSpotWorkspace}
                         onOpenChange={(open) => !open && setActiveIssueDetails(null)}
                         onResolveConditional={handleConditionalDecision}
                         onReviewLine={(line) => {

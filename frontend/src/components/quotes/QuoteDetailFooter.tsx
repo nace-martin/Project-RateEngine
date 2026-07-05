@@ -9,6 +9,7 @@ export interface QuoteDetailFooterProps {
   displayCurrency: string;
   displayAmount: number;
   canDownloadPDF: boolean;
+  canEditQuote: boolean;
   pdfDownloading: boolean;
   onDownloadPDF: () => Promise<void>;
   onEditQuote: () => void;
@@ -21,6 +22,7 @@ export default function QuoteDetailFooter({
   displayCurrency,
   displayAmount,
   canDownloadPDF,
+  canEditQuote,
   pdfDownloading,
   onDownloadPDF,
   onEditQuote,
@@ -71,7 +73,7 @@ export default function QuoteDetailFooter({
               <CheckCircle className="h-4 w-4 text-emerald-600" />
               <span>Quote {effectiveStatus.toLowerCase()}</span>
             </div>
-          ) : effectiveStatus === "DRAFT" ? (
+          ) : canEditQuote && effectiveStatus === "DRAFT" ? (
             <>
               <Button
                 variant="outline"

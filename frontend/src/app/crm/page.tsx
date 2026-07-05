@@ -30,6 +30,7 @@ import {
 } from '@/lib/crm-engagement-health';
 import type { CompanySearchResult, Interaction, Opportunity, Task } from '@/lib/types';
 import { useToast } from '@/context/toast-context';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const openStatuses = new Set(['NEW', 'QUALIFIED', 'QUOTED']);
 const taskOpenStatuses = new Set(['PENDING']);
@@ -138,6 +139,7 @@ function statusBadgeVariant(status: string) {
 
 export default function CrmOverviewPage() {
   const { toast } = useToast();
+  const { canEditCRM, canEditQuotes } = usePermissions();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
@@ -327,14 +329,16 @@ export default function CrmOverviewPage() {
           title="CRM Overview"
           description="Pipeline, follow-ups, and recent CRM activity."
           actions={
-            <>
-              <Button type="button" variant="outline" onClick={() => setQuickLogOpen(true)}>
-                Log Activity
-              </Button>
-              <Button asChild>
-                <Link href="/crm/opportunities/new">New Opportunity</Link>
-              </Button>
-            </>
+            canEditCRM ? (
+              <>
+                <Button type="button" variant="outline" onClick={() => setQuickLogOpen(true)}>
+                  Log Activity
+                </Button>
+                <Button asChild>
+                  <Link href="/crm/opportunities/new">New Opportunity</Link>
+                </Button>
+              </>
+            ) : null
           }
         />
 
@@ -404,11 +408,13 @@ export default function CrmOverviewPage() {
                           <TableCell>{formatDateTime(opportunity.last_activity_at)}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <Button variant="ghost" size="sm" asChild title="Create Quote">
-                                <Link href={`/quotes/new?company=${opportunity.company}&opportunity=${opportunity.id}&service_type=${opportunity.service_type}&origin=${opportunity.origin}&destination=${opportunity.destination}`}>
-                                  <PlusCircle className="h-4 w-4" />
-                                </Link>
-                              </Button>
+                              {canEditQuotes ? (
+                                <Button variant="ghost" size="sm" asChild title="Create Quote">
+                                  <Link href={`/quotes/new?company=${opportunity.company}&opportunity=${opportunity.id}&service_type=${opportunity.service_type}&origin=${opportunity.origin}&destination=${opportunity.destination}`}>
+                                    <PlusCircle className="h-4 w-4" />
+                                  </Link>
+                                </Button>
+                              ) : null}
                               <Button variant="ghost" size="sm" asChild>
                                 <Link href={`/crm/opportunities/${opportunity.id}`}>View</Link>
                               </Button>
@@ -502,20 +508,24 @@ export default function CrmOverviewPage() {
                             <TableCell>{openOpportunityCounts.get(customer.id) || 0}</TableCell>
                             <TableCell className="text-right">
                               <div className="flex flex-wrap justify-end gap-2">
-                                <Button type="button" variant="outline" size="sm" onClick={() => handleOpenLogActivity(customer)}>
-                                  Log Activity
-                                </Button>
+                                {canEditCRM ? (
+                                  <Button type="button" variant="outline" size="sm" onClick={() => handleOpenLogActivity(customer)}>
+                                    Log Activity
+                                  </Button>
+                                ) : null}
                                 <Button asChild variant="outline" size="sm">
                                   <Link href={`/customers/${customer.id}/edit?returnTo=%2Fcrm`}>View Account</Link>
                                 </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openCreateTaskDialog(customer, days)}
-                                >
-                                  Create Task
-                                </Button>
+                                {canEditCRM ? (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openCreateTaskDialog(customer, days)}
+                                  >
+                                    Create Task
+                                  </Button>
+                                ) : null}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -600,17 +610,21 @@ export default function CrmOverviewPage() {
                               </div>
                             </div>
                             <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-                              <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
-                                Edit
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleCompleteTask(task.id)}
-                                disabled={completingTaskIds.has(task.id)}
-                              >
-                                {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
-                              </Button>
+                              {canEditCRM ? (
+                                <>
+                                  <Button variant="outline" size="sm" onClick={() => openEditTaskDialog(task)}>
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleCompleteTask(task.id)}
+                                    disabled={completingTaskIds.has(task.id)}
+                                  >
+                                    {completingTaskIds.has(task.id) ? 'Saving...' : 'Done'}
+                                  </Button>
+                                </>
+                              ) : null}
                               {company ? (
                                 <Button variant="outline" size="sm" asChild>
                                   <Link href={`/customers/${company.id}/edit?returnTo=%2Fcrm`}>View Account</Link>
