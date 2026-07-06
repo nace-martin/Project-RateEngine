@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class EvidenceSchema(BaseModel):
@@ -157,18 +157,34 @@ class IgnoreDetails(BaseModel):
 
 
 class ChargeValuesSchema(BaseModel):
-    amount: Decimal = Field(..., description="Monetary amount value")
-    currency: str = Field(..., description="3-letter currency code")
+    model_config = ConfigDict(extra="allow")
+
+    display_label: Optional[str] = Field(None, description="Human-friendly charge label")
+    description: Optional[str] = Field(None, description="Human-friendly charge description")
+    amount: Optional[Decimal] = Field(None, description="Monetary amount value")
+    currency: Optional[str] = Field(None, description="3-letter currency code")
     rate: Optional[Decimal] = Field(None, description="Monetary rate per unit")
     unit: Optional[str] = Field(None, description="Charge unit basis")
+    calculation_basis: Optional[str] = Field(None, description="Calculation basis")
+    minimum_charge: Optional[Decimal] = Field(None, description="Minimum charge limit")
+    include_in_totals: Optional[bool] = Field(None, description="Whether to include this charge in calculated totals")
+    conditions: Optional[List[str]] = Field(None, description="Charge conditions")
+    notes: Optional[str] = Field(None, description="Charge notes")
 
 
 class EditChargeDetails(BaseModel):
     original_values: ChargeValuesSchema = Field(..., description="Original field values")
     updated_values: ChargeValuesSchema = Field(..., description="Updated field values")
 
+    @model_validator(mode="after")
+    def validate_updated_values(self) -> EditChargeDetails:
+        if not self.updated_values.model_dump(exclude_none=True):
+            raise ValueError("edit_charge requires at least one updated value.")
+        return self
+
 
 class ClassifyUnclassifiedDetails(BaseModel):
+    classification: str = Field("charge", description="charge or ignored")
     bucket: str = Field(..., description="Target bucket for classification")
     display_label: str = Field(..., description="Display label for the new charge line")
     product_code: str = Field(..., description="Target product code for classification")
@@ -177,6 +193,12 @@ class ClassifyUnclassifiedDetails(BaseModel):
     rate: Optional[Decimal] = Field(None, description="Parsed rate")
     unit: Optional[str] = Field(None, description="Parsed unit")
     minimum_charge: Optional[Decimal] = Field(None, description="Parsed minimum limit")
+    reason: Optional[str] = Field(None, description="Operator reason")
+
+
+class IgnoreUnclassifiedDetails(BaseModel):
+    classification: str = Field(..., description="ignored/non-commercial classification")
+    reason: str = Field(..., description="Reason why item is ignored")
 
 
 class DecisionItemSchema(BaseModel):
@@ -213,7 +235,11 @@ class DecisionItemSchema(BaseModel):
         elif self.type == "edit_charge":
             EditChargeDetails(**self.details)
         elif self.type == "classify_unclassified":
-            ClassifyUnclassifiedDetails(**self.details)
+            classification = str(self.details.get("classification") or "charge").lower()
+            if classification in {"ignored", "ignore", "non_commercial", "non-commercial"}:
+                IgnoreUnclassifiedDetails(**self.details)
+            else:
+                ClassifyUnclassifiedDetails(**self.details)
         
         return self
 
