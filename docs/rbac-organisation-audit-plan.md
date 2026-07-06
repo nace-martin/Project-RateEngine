@@ -2896,56 +2896,6 @@ Manual test checklist:
 - Exercise an admin user against the same cross-scope quote and confirm access
   is allowed.
 
-#### Phase 11D - End-to-End RBAC Security/UAT Pass
-
-Date: 2026-07-05
-
-Branch: `rbac-e2e-security-validation`
-
-Scope: validation evidence only. No backend enforcement, frontend permission
-logic, pricing, parser, ProductCode workflow, quote/SPOT calculation,
-historical Quote/SPOT mutation, or migration changes.
-
-Validation matrix:
-
-| Persona / path | Evidence | Result |
-| --- | --- | --- |
-| Sales user | API regression tests prove same-scope access and cross-scope denial across company, CRM, quote, SPOT, draft quote, and ProductCode request paths. Frontend RBAC E2E covers sales user management denial, quote creation access, quote list access, and rate-card edit affordance hiding. | Covered |
-| Manager | API regression tests prove manager same-scope override. Frontend RBAC E2E covers manager user-management, discounts, and management-dashboard affordances. | Covered |
-| Admin | API regression tests prove admin cross-scope override and ProductCode admin review action access. Frontend RBAC E2E covers admin user management, settings, pricing, discounts, and quote list access. | Covered |
-| Read-only / unauthorized role | Backend anonymous blocking is covered by API tests. Frontend Phase 11C added denied states and hidden actions for unauthorized CRM, quote, SPOT, and ProductCode affordances. | Covered by API plus UI implementation evidence; no dedicated read-only browser fixture yet |
-| Direct URL access | Frontend direct-route denial states exist for blocked CRM, quote, SPOT, ProductCode, and settings paths, with backend API authorization as source of truth. | Covered by implementation evidence; repeat in staging with real accounts |
-| API ID guessing | `test_id_guessing_blocked` covers customer, CRM, quote, SPOT, and draft quote object-id guessing. | Covered |
-| Backend audit readiness | `rbac_backend_enforcement_audit --format json` must report `summary.status=READY` with no blocking rows. | Covered by verification |
-
-Manual UAT checklist:
-
-- Sales user: verify `/settings/users` is denied, `/quotes/new` is usable,
-  cross-scope CRM/quote/SPOT/ProductCode object URLs do not expose data, and
-  admin/review actions are absent.
-- Manager: verify same-scope CRM/quote/SPOT work remains usable and
-  cross-branch or cross-department records remain blocked unless the backend
-  scope grants access.
-- Admin: verify cross-scope quote/CRM/SPOT access and ProductCode review/admin
-  actions remain available.
-- Read-only or unauthorized user: verify direct navigation to CRM create/edit,
-  quote create/detail, SPOT workspace, ProductCode review, and settings pages
-  shows a clean denied state or omits restricted actions.
-- API ID guessing: repeat one known cross-scope object ID per company,
-  opportunity, interaction, task, quote, SPOT envelope, and draft quote path and
-  confirm the API returns 404 or 403 without leaking object details.
-
-Remaining risks:
-
-- The local frontend E2E fixtures currently cover admin, manager, and sales;
-  they do not include a dedicated read-only/finance browser persona. Read-only
-  browser UAT should be repeated in staging or against a seeded local account
-  before production enablement.
-- Frontend hiding is only an affordance. Backend API tests and the READY audit
-  remain the security source of truth.
-- Existing Fallow findings are unrelated baseline issues and are not remediated
-  by this validation PR.
-
 #### Phase 10A - Corrected Organization Hierarchy Redesign Audit
 
 Date: 2026-06-28
