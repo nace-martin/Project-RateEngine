@@ -429,7 +429,7 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
         "user_audit_log": spe_db.conditions_json.get('user_audit_log', []) if isinstance(spe_db.conditions_json, dict) else []
     }
 
-    return {
+    payload = {
         "contract_version": "1.0.0",
         "quote_summary": quote_summary,
         "shipment_context": shipment_context,
@@ -445,6 +445,9 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
         "correction_actions": correction_actions,
         "metadata": metadata
     }
+    from quotes.services.draft_quote_review_service import review_session_payload
+    payload["review_session"] = review_session_payload(spe_db, DraftQuoteSchema(**payload))
+    return payload
 
 def get_validated_draft_quote(spe_db: SpotPricingEnvelopeDB) -> DraftQuoteSchema:
     payload = build_draft_quote_payload(spe_db)

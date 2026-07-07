@@ -95,6 +95,20 @@ class TotalsValidationSchema(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="Totals-related warnings")
 
 
+class DraftQuoteReviewSessionSchema(BaseModel):
+    status: str = Field("draft", description="Review status: draft, in_review, finalized")
+    finalized_by: Optional[int] = Field(None, description="User ID that finalized this review")
+    finalized_at: Optional[str] = Field(None, description="ISO timestamp when review was finalized")
+    remaining_blockers: int = Field(0, description="Critical blockers that must be cleared before finalization")
+    available_actions: List[str] = Field(default_factory=list, description="Available review session actions")
+
+    @model_validator(mode="after")
+    def validate_review_status(self) -> DraftQuoteReviewSessionSchema:
+        if self.status not in {"draft", "in_review", "finalized"}:
+            raise ValueError("Review status must be draft, in_review, or finalized.")
+        return self
+
+
 class DraftQuoteSchema(BaseModel):
     contract_version: str = Field(..., description="Version of the draft quote contract")
     quote_summary: str = Field(..., description="Summary overview of the draft quote")
@@ -110,6 +124,7 @@ class DraftQuoteSchema(BaseModel):
     review_queue: List[Dict[str, Any]] = Field(default_factory=list, description="Items queued for manual operator review")
     correction_actions: List[Dict[str, Any]] = Field(default_factory=list, description="Action descriptors to correct validation issues")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata and sender-based memory placeholders")
+    review_session: DraftQuoteReviewSessionSchema = Field(default_factory=DraftQuoteReviewSessionSchema, description="Draft Quote review session state")
 
     @model_validator(mode="after")
     def validate_draft_quote(self) -> DraftQuoteSchema:
@@ -285,5 +300,29 @@ class DraftQuoteResolveResponseSchema(BaseModel):
         if self.status not in valid_statuses:
             raise ValueError(f"Invalid response status: {self.status}")
         return self
+
+
+class DraftQuoteFinalizeSchema(BaseModel):
+    idempotency_key: UUID = Field(..., description="UUID token ensuring finalize idempotency")
+    audit_metadata: Dict[str, Any] = Field(default_factory=dict, description="Operator audit metadata")
+
+
+class DraftQuoteFinalizeResponseSchema(BaseModel):
+    status: str = Field(..., description="accepted or rejected")
+    idempotency_key: UUID = Field(..., description="The finalize idempotency key")
+    envelope_id: UUID = Field(..., description="Target SPOT envelope ID")
+    review_status: str = Field(..., description="Current review status")
+    remaining_blockers: int = Field(..., description="Critical blockers remaining")
+    blockers: List[Dict[str, Any]] = Field(default_factory=list, description="Blocking items preventing finalization")
+    finalized_by: Optional[int] = Field(None, description="User ID that finalized this review")
+    finalized_at: Optional[str] = Field(None, description="ISO timestamp when review was finalized")
+    message: str = Field(..., description="Finalize result message")
+
+
+class DraftQuoteReopenResponseSchema(BaseModel):
+    status: str = Field(..., description="accepted or rejected")
+    envelope_id: UUID = Field(..., description="Target SPOT envelope ID")
+    review_status: str = Field(..., description="Current review status")
+    message: str = Field(..., description="Reopen result message")
 
 

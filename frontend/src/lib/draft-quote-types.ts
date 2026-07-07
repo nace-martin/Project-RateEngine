@@ -126,6 +126,13 @@ export interface DraftQuote {
         historical_override_rules?: Record<string, unknown>;
         [key: string]: unknown;
     };
+    review_session?: {
+        status: 'draft' | 'in_review' | 'finalized';
+        finalized_by: number | null;
+        finalized_at: string | null;
+        remaining_blockers: number;
+        available_actions: string[];
+    };
 }
 
 export interface AuditMetadata {
@@ -161,4 +168,14 @@ export interface DraftQuoteResolveResponse {
     message: string;
     applied_decisions: DecisionResult[];
     rejected_decisions: DecisionResult[];
+}
+
+export interface DraftQuoteFinalizeResponse {
+    envelope_id: string;
+    status: 'accepted' | 'rejected';
+    review_status: 'draft' | 'in_review' | 'finalized';
+    remaining_blockers: number;
+    finalized_by?: number | null;
+    finalized_at?: string | null;
+    message: string;
 }

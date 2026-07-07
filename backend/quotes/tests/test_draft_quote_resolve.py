@@ -24,9 +24,11 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.other_department = Department.objects.create(organization=self.other_org, branch=self.other_branch, code="SEA", name="Sea Freight")
         User = get_user_model()
         self.sales = User.objects.create_user(username="sales_resolve", password="x", role=User.ROLE_SALES)
+        self.manager = User.objects.create_user(username="manager_resolve", password="x", role=User.ROLE_MANAGER)
         self.finance = User.objects.create_user(username="finance_resolve", password="x", role=User.ROLE_FINANCE)
         self.other_sales = User.objects.create_user(username="other_sales_resolve", password="x", role=User.ROLE_SALES)
         self._membership(self.sales, self.org, self.branch, self.department, "sales")
+        self._membership(self.manager, self.org, self.branch, self.department, "manager")
         self._membership(self.finance, self.org, self.branch, self.department, "finance")
         self._membership(self.other_sales, self.other_org, self.other_branch, self.other_department, "sales")
         self.envelope = SpotPricingEnvelopeDB.objects.create(
@@ -137,6 +139,27 @@ class DraftQuoteResolveHighValueTests(TestCase):
         res = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         return next(c for c in res.data["suggested_charges"] if c["id"] == str(self.charge.id))
+
+    def _finalize(self, key=None, user=None):
+        self.client.force_authenticate(user=user or self.sales)
+        return self.client.post(
+            f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/finalize/",
+            {"idempotency_key": str(key or uuid.uuid4()), "audit_metadata": {"user_id": (user or self.sales).id}},
+            format="json",
+        )
+
+    def _reopen(self, user=None):
+        self.client.force_authenticate(user=user or self.manager)
+        return self.client.post(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/reopen/", {}, format="json")
+
+    def _resolve_all_blockers(self):
+        res = self._post([
+            self._decision("map_to_product_code", details={"product_code": self.product_code.code}, decision_id="map-finalize"),
+            self._decision("classify_unclassified", target_id="unclass-1", details={"classification": "ignored", "reason": "Not billable"}, decision_id="ignore-u1"),
+            self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "ignored", "reason": "Greeting"}, decision_id="ignore-u2"),
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"], [])
 
     def test_map_to_product_code_applies_to_charge_line_and_read_queue(self):
         res = self._post([self._decision("map_to_product_code", details={"product_code": self.product_code.code})])
@@ -426,3 +449,81 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.manual_resolved_product_code_id, self.product_code.id)
+
+    def test_finalize_succeeds_when_blockers_resolved_and_read_reflects_state(self):
+        self._resolve_all_blockers()
+        key = uuid.uuid4()
+
+        res = self._finalize(key=key)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], "accepted")
+        self.assertEqual(res.data["review_status"], "finalized")
+        self.assertEqual(res.data["remaining_blockers"], 0)
+        self.assertEqual(res.data["finalized_by"], self.sales.id)
+        self.assertIsNotNone(res.data["finalized_at"])
+
+        self.client.force_authenticate(user=self.sales)
+        read_res = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        self.assertEqual(read_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_res.data["review_session"]["status"], "finalized")
+        self.assertEqual(read_res.data["review_session"]["remaining_blockers"], 0)
+        self.assertEqual(read_res.data["review_session"]["available_actions"], ["reopen"])
+
+    def test_finalize_fails_when_critical_blockers_remain(self):
+        res = self._finalize()
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data["status"], "rejected")
+        self.assertGreaterEqual(res.data["remaining_blockers"], 1)
+        self.assertEqual(res.data["review_status"], "draft")
+
+    def test_finalize_replay_is_idempotent(self):
+        self._resolve_all_blockers()
+        key = uuid.uuid4()
+
+        first = self._finalize(key=key)
+        second = self._finalize(key=key)
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.data["review_status"], "finalized")
+        self.assertEqual(second.data["finalized_at"], first.data["finalized_at"])
+
+    def test_finalized_workspace_blocks_further_resolve_decisions(self):
+        self._resolve_all_blockers()
+        self.assertEqual(self._finalize().status_code, status.HTTP_200_OK)
+
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"amount": "11.00"}}, decision_id="edit-after-final")
+        ])
+
+        self.assertEqual(res.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(res.data["error_code"], "DRAFT_QUOTE_FINALIZED")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.amount, Decimal("10.00"))
+
+    def test_manager_can_reopen_finalized_review_and_resolve_can_continue(self):
+        self._resolve_all_blockers()
+        self.assertEqual(self._finalize().status_code, status.HTTP_200_OK)
+
+        reopen = self._reopen(user=self.manager)
+        self.assertEqual(reopen.status_code, status.HTTP_200_OK)
+        self.assertEqual(reopen.data["review_status"], "in_review")
+
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"amount": "11.00"}}, decision_id="edit-after-reopen")
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+
+    def test_finance_and_cross_scope_users_cannot_finalize_or_reopen(self):
+        self._resolve_all_blockers()
+
+        self.assertEqual(self._finalize(user=self.finance).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn(self._finalize(user=self.other_sales).status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
+
+        self.assertEqual(self._finalize(user=self.sales).status_code, status.HTTP_200_OK)
+        self.assertEqual(self._reopen(user=self.sales).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self._reopen(user=self.finance).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn(self._reopen(user=self.other_sales).status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
