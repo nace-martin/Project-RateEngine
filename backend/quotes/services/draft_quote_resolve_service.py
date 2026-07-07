@@ -1,5 +1,6 @@
 import uuid
 import json
+from decimal import Decimal, InvalidOperation
 from typing import List, Tuple
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -28,12 +29,17 @@ EDITABLE_CHARGE_FIELDS = {
     "rate": "rate",
     "currency": "currency",
     "unit": "unit",
-    "calculation_basis": "calculation_basis",
+    "calculation_basis": "unit_type",
     "minimum_charge": "min_charge",
     "include_in_totals": "include_in_totals",
     "conditions": "note",
     "notes": "note",
 }
+NUMERIC_CHARGE_FIELDS = {"amount", "rate", "minimum_charge"}
+
+
+def _valid_choice_values(choices):
+    return {choice for choice, _ in choices}
 
 
 def _result(decision: DecisionItemSchema, status: str, message: str, error_code: str | None = None):
@@ -123,9 +129,26 @@ def _apply_edit_charge(charge_line, decision, payload, user):
     before = {}
     after = {}
 
-    for public_field in updates:
+    for public_field, value in updates.items():
         if public_field not in EDITABLE_CHARGE_FIELDS:
             return "rejected", f"Field '{public_field}' is not editable.", "INVALID_FIELD"
+        if public_field == "currency":
+            currency = str(value or "").strip().upper()
+            if len(currency) != 3 or not currency.isalpha():
+                return "rejected", "Currency must be a 3-letter ISO code.", "INVALID_CURRENCY"
+            updates[public_field] = currency
+        elif public_field == "unit" and value not in _valid_choice_values(SPEChargeLineDB.Unit.choices):
+            return "rejected", "Unit is not supported for SPOT charge lines.", "INVALID_UNIT"
+        elif public_field == "calculation_basis" and value not in _valid_choice_values(SPEChargeLineDB.UnitType.choices):
+            return "rejected", "Calculation basis is not supported for SPOT charge lines.", "INVALID_CALCULATION_BASIS"
+        elif public_field in NUMERIC_CHARGE_FIELDS:
+            try:
+                numeric_value = Decimal(str(value))
+            except (InvalidOperation, TypeError, ValueError):
+                return "rejected", f"{public_field} must be numeric.", "INVALID_NUMERIC_VALUE"
+            if numeric_value < 0:
+                return "rejected", f"{public_field} cannot be negative.", "NEGATIVE_NUMERIC_VALUE"
+            updates[public_field] = numeric_value
 
     for public_field, value in updates.items():
         model_field = EDITABLE_CHARGE_FIELDS[public_field]

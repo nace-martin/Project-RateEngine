@@ -152,6 +152,46 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.source_excerpt, "DOC FEE USD 10")
 
+    def test_edit_charge_maps_calculation_basis_to_unit_type(self):
+        res = self._post([
+            self._decision(
+                "edit_charge",
+                details={"original_values": {}, "updated_values": {"calculation_basis": SPEChargeLineDB.UnitType.KG}},
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.unit_type, SPEChargeLineDB.UnitType.KG)
+        self.assertIsNone(self.charge.calculation_basis)
+
+    def test_edit_charge_rejects_invalid_currency(self):
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"currency": "USDX"}})
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "INVALID_CURRENCY")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.currency, "USD")
+
+    def test_edit_charge_rejects_invalid_unit(self):
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"unit": "per_container"}})
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "INVALID_UNIT")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.unit, SPEChargeLineDB.Unit.FLAT)
+
+    def test_edit_charge_rejects_negative_numeric_value(self):
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"amount": "-0.01"}})
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "NEGATIVE_NUMERIC_VALUE")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.amount, Decimal("10.00"))
+
     def test_classify_unclassified_as_charge_creates_charge_line(self):
         res = self._post([
             self._decision(
