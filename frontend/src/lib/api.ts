@@ -4,7 +4,7 @@ import { API_BASE_URL } from './config';
 import { getJson, sendJson } from './api/shared';
 import { mapQuoteDetailToComputeResult } from './quote-detail-mapping';
 import { ReplyAnalysisResult, SPEChargeLine, SPEConditions, SPECommodity } from './spot-types';
-import { DraftQuote, DraftQuoteResolvePayload, DraftQuoteResolveResponse } from './draft-quote-types';
+import { DraftQuote, DraftQuoteFinalizeResponse, DraftQuoteResolvePayload, DraftQuoteResolveResponse } from './draft-quote-types';
 import {
   LoginData,
   User,
@@ -828,6 +828,30 @@ export async function resolveDraftQuoteDecisions(
   }
 
   return response.json() as Promise<DraftQuoteResolveResponse>;
+}
+
+export async function finalizeDraftQuoteReview(
+  envelopeId: string,
+  idempotencyKey: string
+): Promise<DraftQuoteFinalizeResponse> {
+  const url = API_BASE_URL + `/api/v3/spot/envelopes/${envelopeId}/draft-quote/finalize/`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Token ${resolveAuthToken()}`,
+    },
+    body: JSON.stringify({
+      idempotency_key: idempotencyKey,
+      audit_metadata: { timestamp: new Date().toISOString() },
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || 'Failed to finalize draft quote review.');
+  }
+  return data as DraftQuoteFinalizeResponse;
 }
 
 

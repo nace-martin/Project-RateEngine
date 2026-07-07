@@ -33,7 +33,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from django.shortcuts import get_object_or_404
 
-from accounts.permissions import CanUseAIIntake, CanEditQuotes
+from accounts.permissions import CanUseAIIntake, CanEditQuotes, CanFinalizeQuotes, IsManagerOrAdmin
 from core.security import validate_pdf_upload
 from core.business_rules import classify_png_shipment
 from pricing_v4.models import ChargeAlias, ProductCode
@@ -3404,6 +3404,13 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
                 status=status.HTTP_200_OK
             )
 
+        from quotes.services.draft_quote_review_service import is_finalized
+        if is_finalized(spe_db):
+            return Response(
+                {"error": "Draft Quote review is finalized and locked.", "error_code": "DRAFT_QUOTE_FINALIZED"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
         # 2. Persist and apply new decisions atomically using resolve service
         from quotes.services.draft_quote_resolve_service import apply_draft_quote_decisions
         applied, rejected = apply_draft_quote_decisions(spe_db, payload, request.user)
@@ -3441,6 +3448,60 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
         )
 
 
+class SpotEnvelopeDraftQuoteFinalizeAPIView(APIView):
+    permission_classes = [IsAuthenticated, CanFinalizeQuotes]
+
+    @transaction.atomic
+    def post(self, request, envelope_id):
+        spe_db = _get_spe_or_404(request.user, envelope_id, _spe_queryset())
+
+        from pydantic import ValidationError
+        from quotes.contracts.draft_quote_contract import DraftQuoteFinalizeSchema, DraftQuoteFinalizeResponseSchema
+        from quotes.services.draft_quote_adapter import get_validated_draft_quote
+        from quotes.services.draft_quote_review_service import finalize_review
+
+        try:
+            payload = DraftQuoteFinalizeSchema(**request.data)
+        except ValidationError as err:
+            return Response(
+                {"error": "Validation failed", "details": [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in err.errors()]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        draft_quote = get_validated_draft_quote(spe_db)
+        accepted, state, blockers = finalize_review(spe_db, draft_quote, request.user, payload.idempotency_key)
+        response_payload = DraftQuoteFinalizeResponseSchema(
+            status="accepted" if accepted else "rejected",
+            idempotency_key=payload.idempotency_key,
+            envelope_id=spe_db.id,
+            review_status=state.get("status", "draft"),
+            remaining_blockers=len(blockers),
+            blockers=blockers,
+            finalized_by=state.get("finalized_by"),
+            finalized_at=state.get("finalized_at"),
+            message="Draft Quote review finalized." if accepted else "Draft Quote review has critical blockers.",
+        )
+        return Response(response_payload.model_dump(mode="json"), status=status.HTTP_200_OK if accepted else status.HTTP_400_BAD_REQUEST)
+
+
+class SpotEnvelopeDraftQuoteReopenAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsManagerOrAdmin]
+
+    @transaction.atomic
+    def post(self, request, envelope_id):
+        spe_db = _get_spe_or_404(request.user, envelope_id, _spe_queryset())
+
+        from quotes.contracts.draft_quote_contract import DraftQuoteReopenResponseSchema
+        from quotes.services.draft_quote_review_service import reopen_review
+
+        state = reopen_review(spe_db, request.user)
+        response_payload = DraftQuoteReopenResponseSchema(
+            status="accepted",
+            envelope_id=spe_db.id,
+            review_status=state.get("status", "in_review"),
+            message="Draft Quote review reopened.",
+        )
+        return Response(response_payload.model_dump(mode="json"), status=status.HTTP_200_OK)
 
 
 

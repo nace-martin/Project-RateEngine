@@ -60,6 +60,13 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     const [unclassifiedItems, setUnclassifiedItems] = useState(initialData.unclassified_items);
     const [ignoredItems, setIgnoredItems] = useState<Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>>(initialData.ignored_items || []);
     const [decisions, setDecisions] = useState<Decision[]>([]);
+    const [reviewSession, setReviewSession] = useState(initialData.review_session || {
+        status: "draft" as const,
+        finalized_by: null,
+        finalized_at: null,
+        remaining_blockers: initialData.review_queue.length,
+        available_actions: [] as string[]
+    });
 
     // Guided resolving workflow states
     const [activeIssueId, setActiveIssueId] = useState<string | null>(initialData.review_queue?.[0]?.id || null);
@@ -132,6 +139,9 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
         details: Record<string, unknown>;
         audit_metadata: { user_id: number; timestamp: string };
     }) => {
+        if (reviewSession.status === "finalized") {
+            throw new Error("Draft Quote review is finalized and locked.");
+        }
         if (!isLive || !envelopeId) {
             return;
         }
@@ -140,6 +150,39 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
             idempotency_key: crypto.randomUUID ? crypto.randomUUID() : "3b128522-a89e-4055-bf51-199eecc5628b",
             decisions: [decisionItem]
         });
+    };
+
+    const handleFinalizeReview = async () => {
+        if (!canFinishReview || reviewSession.status === "finalized") {
+            return;
+        }
+        if (isLive && envelopeId) {
+            try {
+                const { finalizeDraftQuoteReview } = await import("../../lib/api");
+                const result = await finalizeDraftQuoteReview(envelopeId, crypto.randomUUID ? crypto.randomUUID() : "47c7fa2d-8a4f-4cdb-9fbf-a396ed7f7f88");
+                setReviewSession(prev => ({
+                    ...prev,
+                    status: result.review_status,
+                    finalized_by: result.finalized_by ?? null,
+                    finalized_at: result.finalized_at ?? null,
+                    remaining_blockers: result.remaining_blockers,
+                    available_actions: ["reopen"]
+                }));
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                setActionMessage(`API error finalizing review: ${errMsg}`);
+                return;
+            }
+        } else {
+            setReviewSession(prev => ({
+                ...prev,
+                status: "finalized",
+                finalized_at: new Date().toISOString(),
+                remaining_blockers: 0,
+                available_actions: ["reopen"]
+            }));
+        }
+        setActionMessage("Draft Quote review finalized and locked.");
     };
 
     const handleUseApprovedProductCode = async (chargeId: string, charge: DraftCharge) => {
@@ -256,6 +299,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     };
 
     const handleAcceptSuggestedMapping = (chargeId: string, displayLabel: string, suggestedCode: string) => {
+        if (isReviewLocked) return;
         captureSnapshot(chargeId, "accept", `Accepted code ${suggestedCode} for ${displayLabel}`);
         setSuggestedCharges(prev =>
             prev.map(c => (c.id === chargeId ? { ...c, status: "accepted_by_user" as DraftChargeStatus } : c))
@@ -302,6 +346,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     };
 
     const handleIgnoreUnknownCharge = (itemId: string, rawText: string) => {
+        if (isReviewLocked) return;
         captureSnapshot(itemId, "ignore", "Ignored unknown text block");
         setIgnoredItems(prev => [
             ...prev,
@@ -319,6 +364,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     };
 
     const handleAddUnknownAsCharge = (itemId: string) => {
+        if (isReviewLocked) return;
         const newChargeId = `chg-new-${Date.now()}`;
         const newCharge: DraftCharge = {
             id: newChargeId,
@@ -366,6 +412,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     };
 
     const toggleIncludeInTotals = (chargeId: string) => {
+        if (isReviewLocked) return;
         setSuggestedCharges(prev =>
             prev.map(c => (c.id === chargeId ? { ...c, include_in_totals: !c.include_in_totals } : c))
         );
@@ -414,6 +461,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
         .every(c => c.suggested_product_code !== null && c.status !== ("pending_product_code" as any));
 
     const canFinishReview = checklistIssuesResolved && checklistNoUnknown && checklistProductCodesVerified;
+    const isReviewLocked = reviewSession.status === "finalized";
 
     // Direct Next-Step instructions guidance
     let nextStepGuidance = "Review the remaining commercial term before finishing.";
@@ -434,6 +482,13 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                     <div className="bg-yellow-950/40 border border-yellow-900/60 text-yellow-300 p-4 rounded-xl text-xs flex items-center gap-3">
                         <Info className="w-5 h-5 text-yellow-400 shrink-0" />
                         <span className="font-medium">Live draft data loaded. Operator decisions are saved when you apply each action.</span>
+                    </div>
+                )}
+
+                {isReviewLocked && (
+                    <div className="bg-emerald-950/30 border border-emerald-900/60 text-emerald-200 p-4 rounded-xl text-xs flex items-center gap-3">
+                        <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                        <span className="font-medium">Draft Quote review finalized and locked{reviewSession.finalized_at ? ` at ${reviewSession.finalized_at}` : ""}.</span>
                     </div>
                 )}
 
@@ -914,6 +969,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                                                 type="checkbox"
                                                 checked={charge.include_in_totals}
                                                 onChange={() => toggleIncludeInTotals(charge.id)}
+                                                disabled={isReviewLocked}
                                                 className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                                             />
                                             <div>
@@ -1128,11 +1184,11 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                         </div>
 
                         <button
-                            disabled={!canFinishReview && !prototypeOverride}
-                            onClick={() => alert("Review Complete! The quote suggestions have been finalized locally.")}
+                            disabled={isReviewLocked || (!canFinishReview && !prototypeOverride)}
+                            onClick={handleFinalizeReview}
                             className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
                         >
-                            Finish Review
+                            {isReviewLocked ? "Review Finalized" : "Finalize Review"}
                         </button>
                     </div>
                     
