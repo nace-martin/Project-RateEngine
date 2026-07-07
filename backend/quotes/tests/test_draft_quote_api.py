@@ -540,13 +540,24 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     # Set request to REJECTED and verify it surfaces correctly (Phase 8D.12B)
     req_obj.status = ProductCodeCreationRequest.STATUS_REJECTED
     req_obj.rejection_reason = "Duplicate of existing code AF-FUEL."
+    req_obj.rejected_at = timezone.now()
     req_obj.save()
 
     res_read_rejected = client.get(f"/api/v3/spot/envelopes/{envelope.id}/draft-quote/")
     assert res_read_rejected.status_code == 200
     read_data_rejected = DraftQuoteSchema(**res_read_rejected.data)
     rejected_charge = next(c for c in read_data_rejected.suggested_charges if c.id == str(line_edit.id))
-    assert rejected_charge.correction_actions == ["PRODUCTCODE_REJECTED"]
+    assert rejected_charge.correction_actions == [
+        "PRODUCTCODE_REJECTED",
+        "MAP_TO_EXISTING_PRODUCTCODE",
+        "EDIT_AND_RESUBMIT_PRODUCTCODE_REQUEST",
+        "IGNORE_REJECTED_PRODUCTCODE_REQUEST",
+    ]
+    assert rejected_charge.product_code_request_id == req_obj.id
+    assert rejected_charge.rejected_product_code == "AF-FUEL-NEW"
+    assert rejected_charge.rejected_product_code_name == "Fuel Surcharge to edit"
+    assert rejected_charge.product_code_rejection_reason == "Duplicate of existing code AF-FUEL."
+    assert rejected_charge.product_code_rejected_at == req_obj.rejected_at.isoformat()
     assert any("ProductCode Creation Request Rejected" in w for w in rejected_charge.warnings)
     assert "Duplicate of existing code AF-FUEL." in rejected_charge.review_reason
 

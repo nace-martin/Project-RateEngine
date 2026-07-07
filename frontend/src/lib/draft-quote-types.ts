@@ -23,6 +23,10 @@ export interface DraftCharge {
     approved_product_code?: string | null;
     approved_product_code_id?: number | null;
     product_code_request_id?: number | null;
+    rejected_product_code?: string | null;
+    rejected_product_code_name?: string | null;
+    product_code_rejection_reason?: string | null;
+    product_code_rejected_at?: string | null;
     bucket: string; // airfreight, origin_charges, destination_charges, unclassified
     currency: string;
     amount: number;

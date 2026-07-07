@@ -125,6 +125,23 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
         }
     };
 
+    const submitLiveDecision = async (decisionItem: {
+        decision_id: string;
+        type: string;
+        target_id: string;
+        details: Record<string, unknown>;
+        audit_metadata: { user_id: number; timestamp: string };
+    }) => {
+        if (!isLive || !envelopeId) {
+            return;
+        }
+        const { resolveDraftQuoteDecisions } = await import("../../lib/api");
+        await resolveDraftQuoteDecisions(envelopeId, {
+            idempotency_key: crypto.randomUUID ? crypto.randomUUID() : "3b128522-a89e-4055-bf51-199eecc5628b",
+            decisions: [decisionItem]
+        });
+    };
+
     const handleUseApprovedProductCode = async (chargeId: string, charge: DraftCharge) => {
         const reqId = charge.product_code_request_id;
         const pcId = charge.approved_product_code_id;
@@ -150,20 +167,13 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
             }
         };
 
-        if (isLive && envelopeId) {
-            try {
-                const { resolveDraftQuoteDecisions } = await import("../../lib/api");
-                const payload = {
-                    idempotency_key: crypto.randomUUID ? crypto.randomUUID() : "3b128522-a89e-4055-bf51-199eecc5628b",
-                    decisions: [newDecisionItem]
-                };
-                await resolveDraftQuoteDecisions(envelopeId, payload);
-            } catch (err) {
-                console.error("Failed to submit resolve decision:", err);
-                const errMsg = err instanceof Error ? err.message : String(err);
-                setActionMessage(`API error resolving mapping: ${errMsg}`);
-                return;
-            }
+        try {
+            await submitLiveDecision(newDecisionItem);
+        } catch (err) {
+            console.error("Failed to submit resolve decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            setActionMessage(`API error resolving mapping: ${errMsg}`);
+            return;
         }
 
         // Apply locally
@@ -177,7 +187,24 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
     };
 
     // Action execution helpers
-    const handleMapProductCode = (chargeId: string, productCode: string, displayLabel: string) => {
+    const handleMapProductCode = async (chargeId: string, productCode: string, displayLabel: string) => {
+        try {
+            await submitLiveDecision({
+                decision_id: `dec-${Date.now()}`,
+                type: "map_to_product_code",
+                target_id: chargeId,
+                details: { product_code: productCode },
+                audit_metadata: {
+                    user_id: 1,
+                    timestamp: new Date().toISOString()
+                }
+            });
+        } catch (err) {
+            console.error("Failed to submit resolve decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            setActionMessage(`API error resolving mapping: ${errMsg}`);
+            return;
+        }
         captureSnapshot(chargeId, "map", `Mapped ${displayLabel} to billing code ${productCode}`);
         setSuggestedCharges(prev =>
             prev.map(c => (c.id === chargeId ? { ...c, suggested_product_code: productCode, status: "accepted_by_user" as DraftChargeStatus } : c))
@@ -195,7 +222,30 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
         setSelectedActionType("request_product_code");
     };
 
-    const handleSubmitProductCodeRequest = (chargeId: string) => {
+    const handleSubmitProductCodeRequest = async (chargeId: string) => {
+        try {
+            await submitLiveDecision({
+                decision_id: `dec-${Date.now()}`,
+                type: "request_product_code",
+                target_id: chargeId,
+                details: {
+                    proposed_code: reqLabel,
+                    description: reqSource || reqLabel,
+                    category: "destination_charges",
+                    domain: "IMPORT",
+                    reason: "Operator edited and resubmitted ProductCode request"
+                },
+                audit_metadata: {
+                    user_id: 1,
+                    timestamp: new Date().toISOString()
+                }
+            });
+        } catch (err) {
+            console.error("Failed to submit ProductCode request:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            setActionMessage(`API error submitting ProductCode request: ${errMsg}`);
+            return;
+        }
         captureSnapshot(chargeId, "request", `Requested new billing code for ${reqLabel}`);
         setSuggestedCharges(prev =>
             prev.map(c => (c.id === chargeId ? { ...c, status: "pending_product_code" as DraftChargeStatus } : c))
@@ -215,7 +265,24 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
         setSelectedActionType(null);
     };
 
-    const handleIgnoreCharge = (chargeId: string, charge: DraftCharge) => {
+    const handleIgnoreCharge = async (chargeId: string, charge: DraftCharge) => {
+        try {
+            await submitLiveDecision({
+                decision_id: `dec-${Date.now()}`,
+                type: "ignore",
+                target_id: chargeId,
+                details: { reason: "Operator ignored rejected ProductCode blocker as non-commercial" },
+                audit_metadata: {
+                    user_id: 1,
+                    timestamp: new Date().toISOString()
+                }
+            });
+        } catch (err) {
+            console.error("Failed to submit ignore decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            setActionMessage(`API error ignoring charge: ${errMsg}`);
+            return;
+        }
         captureSnapshot(chargeId, "ignore", `Ignored ${charge.display_label}`);
         setSuggestedCharges(prev =>
             prev.map(c => (c.id === chargeId ? { ...c, status: "ignored" as DraftChargeStatus, include_in_totals: false } : c))
@@ -366,7 +433,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                 {isLive && (
                     <div className="bg-yellow-950/40 border border-yellow-900/60 text-yellow-300 p-4 rounded-xl text-xs flex items-center gap-3">
                         <Info className="w-5 h-5 text-yellow-400 shrink-0" />
-                        <span className="font-medium">Live draft data loaded — decisions are not saved yet</span>
+                        <span className="font-medium">Live draft data loaded. Operator decisions are saved when you apply each action.</span>
                     </div>
                 )}
 
@@ -454,6 +521,44 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                             <div className="flex flex-col gap-4">
                                 {currentIssue.type === "review_item" && currentIssue.charge ? (
                                     <div className="flex flex-col gap-4">
+                                        {currentIssue.charge.correction_actions?.includes("PRODUCTCODE_REJECTED") && (
+                                            <div className="bg-red-950/20 border border-red-900/60 p-4 rounded-xl text-xs flex flex-col gap-2 mb-2">
+                                                <div className="flex items-center gap-2 text-red-300 font-bold text-sm">
+                                                    <ShieldAlert className="w-4 h-4" />
+                                                    <span>ProductCode Request Rejected</span>
+                                                </div>
+                                                <p className="text-slate-300">
+                                                    The requested billing code <strong className="font-mono text-red-200 bg-slate-950 px-1.5 py-0.5 rounded">{currentIssue.charge.rejected_product_code || currentIssue.charge.product_code_request_id}</strong> was rejected by admin.
+                                                </p>
+                                                <p className="text-slate-300">
+                                                    Reason: {currentIssue.charge.product_code_rejection_reason || "No rejection reason was provided."}
+                                                </p>
+                                                <div className="text-[10px] text-slate-500 font-mono">
+                                                    Request Context ID: {currentIssue.charge.product_code_request_id}
+                                                    {currentIssue.charge.product_code_rejected_at ? ` | Rejected: ${currentIssue.charge.product_code_rejected_at}` : ""}
+                                                </div>
+                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                    <button
+                                                        onClick={() => setSelectedActionType("map_existing")}
+                                                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold transition text-xs"
+                                                    >
+                                                        Map to existing ProductCode
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleOpenRequestProductCode(currentIssue.charge!)}
+                                                        className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg font-semibold transition text-xs"
+                                                    >
+                                                        Edit and resubmit request
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleIgnoreCharge(currentIssue.id, currentIssue.charge!)}
+                                                        className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-300 rounded-lg font-semibold transition text-xs"
+                                                    >
+                                                        Ignore / exclude
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                         {currentIssue.charge.correction_actions?.includes("APPROVED_PRODUCTCODE_AVAILABLE") && (
                                             <div className="bg-emerald-950/20 border border-emerald-900/60 p-4 rounded-xl text-xs flex flex-col gap-2 mb-2">
                                                 <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
