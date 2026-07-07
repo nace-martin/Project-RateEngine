@@ -3343,6 +3343,16 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
         except ValidationError as err:
             # Return validation errors in 400 Bad Request
             errors = [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in err.errors()]
+            logger.warning(
+                "Draft Quote resolve validation failed for envelope %s. Errors: %s",
+                envelope_id,
+                errors,
+                extra={
+                    "envelope_id": str(envelope_id),
+                    "user_id": request.user.id,
+                    "action": "resolve_validation_failed",
+                }
+            )
             return Response(
                 {
                     "error": "Validation failed",
@@ -3399,6 +3409,18 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
                 envelope_id=spe_db.id,
                 message="Idempotent resolution retrieved from database history."
             )
+            logger.info(
+                "Idempotent resolution retrieved from database history. Envelope ID: %s, Idempotency Key: %s, User: %s",
+                spe_db.id,
+                payload.idempotency_key,
+                request.user.username,
+                extra={
+                    "envelope_id": str(spe_db.id),
+                    "idempotency_key": str(payload.idempotency_key),
+                    "user_id": request.user.id,
+                    "action": "resolve_idempotent",
+                }
+            )
             return Response(
                 response_payload.model_dump(mode="json"),
                 status=status.HTTP_200_OK
@@ -3406,6 +3428,16 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
 
         from quotes.services.draft_quote_review_service import is_finalized
         if is_finalized(spe_db):
+            logger.warning(
+                "Attempted to resolve a finalized/locked Draft Quote. Envelope ID: %s, User: %s",
+                spe_db.id,
+                request.user.username,
+                extra={
+                    "envelope_id": str(spe_db.id),
+                    "user_id": request.user.id,
+                    "action": "resolve_failed_finalized",
+                }
+            )
             return Response(
                 {"error": "Draft Quote review is finalized and locked.", "error_code": "DRAFT_QUOTE_FINALIZED"},
                 status=status.HTTP_409_CONFLICT,
@@ -3430,6 +3462,24 @@ class SpotEnvelopeDraftQuoteResolveAPIView(APIView):
                 overall_status = "partially_accepted"
             else:
                 overall_status = "rejected"
+
+        logger.info(
+            "Processed and persisted operator decisions for Envelope ID: %s. Decisions applied: %d, rejected: %d. Remaining unresolved: %d, User: %s",
+            spe_db.id,
+            len(applied),
+            len(rejected),
+            remaining_count,
+            request.user.username,
+            extra={
+                "envelope_id": str(spe_db.id),
+                "idempotency_key": str(payload.idempotency_key),
+                "user_id": request.user.id,
+                "action": "resolve_processed",
+                "applied_count": len(applied),
+                "rejected_count": len(rejected),
+                "remaining_count": remaining_count,
+            }
+        )
 
         response_payload = DraftQuoteResolveResponseSchema(
             status=overall_status,
@@ -3463,13 +3513,52 @@ class SpotEnvelopeDraftQuoteFinalizeAPIView(APIView):
         try:
             payload = DraftQuoteFinalizeSchema(**request.data)
         except ValidationError as err:
+            errors = [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in err.errors()]
+            logger.warning(
+                "Draft Quote finalize validation failed for Envelope ID: %s. Errors: %s, User: %s",
+                spe_db.id,
+                errors,
+                request.user.username,
+                extra={
+                    "envelope_id": str(spe_db.id),
+                    "user_id": request.user.id,
+                    "action": "finalize_validation_failed",
+                }
+            )
             return Response(
-                {"error": "Validation failed", "details": [f"{'.'.join(str(l) for l in e['loc'])}: {e['msg']}" for e in err.errors()]},
+                {"error": "Validation failed", "details": errors},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         draft_quote = get_validated_draft_quote(spe_db)
         accepted, state, blockers = finalize_review(spe_db, draft_quote, request.user, payload.idempotency_key)
+        if not accepted:
+            logger.warning(
+                "Draft Quote finalize rejected due to %d remaining blockers for Envelope ID: %s. User: %s",
+                len(blockers),
+                spe_db.id,
+                request.user.username,
+                extra={
+                    "envelope_id": str(spe_db.id),
+                    "idempotency_key": str(payload.idempotency_key),
+                    "user_id": request.user.id,
+                    "action": "finalize_rejected_blockers",
+                    "blocker_count": len(blockers),
+                }
+            )
+        else:
+            logger.info(
+                "Draft Quote review finalized for Envelope ID: %s. User: %s",
+                spe_db.id,
+                request.user.username,
+                extra={
+                    "envelope_id": str(spe_db.id),
+                    "idempotency_key": str(payload.idempotency_key),
+                    "user_id": request.user.id,
+                    "action": "finalize_accepted",
+                }
+            )
+
         response_payload = DraftQuoteFinalizeResponseSchema(
             status="accepted" if accepted else "rejected",
             idempotency_key=payload.idempotency_key,
@@ -3495,6 +3584,16 @@ class SpotEnvelopeDraftQuoteReopenAPIView(APIView):
         from quotes.services.draft_quote_review_service import reopen_review
 
         state = reopen_review(spe_db, request.user)
+        logger.info(
+            "Draft Quote review reopened for Envelope ID: %s. User: %s",
+            spe_db.id,
+            request.user.username,
+            extra={
+                "envelope_id": str(spe_db.id),
+                "user_id": request.user.id,
+                "action": "reopen_accepted",
+            }
+        )
         response_payload = DraftQuoteReopenResponseSchema(
             status="accepted",
             envelope_id=spe_db.id,
