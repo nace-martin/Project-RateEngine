@@ -103,6 +103,41 @@ class DraftQuoteResolveHighValueTests(TestCase):
             "audit_metadata": {"user_id": self.sales.id, "timestamp": "2026-07-06T00:00:00Z"},
         }
 
+    def _rejected_product_code_request(self):
+        return ProductCodeCreationRequest.objects.create(
+            source_label="DOC FEE",
+            suggested_name="IMP-DOC-NEW",
+            suggested_bucket="destination_charges",
+            suggested_basis="FLAT",
+            suggested_reason="Supplier added documentation fee",
+            source_envelope=self.envelope,
+            source_charge_line=self.charge,
+            status=ProductCodeCreationRequest.STATUS_REJECTED,
+            rejected_at=timezone.now(),
+            rejection_reason="Duplicate of existing import documentation fee.",
+            created_by=self.sales,
+        )
+
+    def _persist_request_decision(self, request):
+        DraftQuoteDecisionDB.objects.create(
+            envelope=self.envelope,
+            idempotency_key=uuid.uuid4(),
+            decision_id=f"request-{request.id}",
+            decision_type="request_product_code",
+            target_id=str(self.charge.id),
+            details_json={"product_code_request_id": request.id},
+            client_audit_metadata_json={"user_id": self.sales.id, "timestamp": "2026-07-06T00:00:00Z"},
+            server_user=self.sales,
+            status="skipped",
+            message="ProductCode request created and pending admin review.",
+        )
+
+    def _read_charge(self):
+        self.client.force_authenticate(user=self.sales)
+        res = self.client.get(f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        return next(c for c in res.data["suggested_charges"] if c["id"] == str(self.charge.id))
+
     def test_map_to_product_code_applies_to_charge_line_and_read_queue(self):
         res = self._post([self._decision("map_to_product_code", details={"product_code": self.product_code.code})])
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -242,6 +277,102 @@ class DraftQuoteResolveHighValueTests(TestCase):
         self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
         self.batch.refresh_from_db()
         self.assertEqual(self.batch.analysis_summary_json["ignored_items"][0]["raw_text"], "Have a nice day")
+
+    def test_rejected_product_code_request_metadata_appears_in_read_payload(self):
+        rejected_request = self._rejected_product_code_request()
+        self._persist_request_decision(rejected_request)
+
+        charge = self._read_charge()
+
+        self.assertEqual(charge["product_code_request_id"], rejected_request.id)
+        self.assertEqual(charge["rejected_product_code"], "IMP-DOC-NEW")
+        self.assertEqual(charge["rejected_product_code_name"], "DOC FEE")
+        self.assertEqual(charge["product_code_rejection_reason"], "Duplicate of existing import documentation fee.")
+        self.assertEqual(charge["product_code_rejected_at"], rejected_request.rejected_at.isoformat())
+        self.assertEqual(
+            charge["correction_actions"],
+            [
+                "PRODUCTCODE_REJECTED",
+                "MAP_TO_EXISTING_PRODUCTCODE",
+                "EDIT_AND_RESUBMIT_PRODUCTCODE_REQUEST",
+                "IGNORE_REJECTED_PRODUCTCODE_REQUEST",
+            ],
+        )
+
+    def test_map_existing_product_code_after_rejection_resolves_charge(self):
+        rejected_request = self._rejected_product_code_request()
+        self._persist_request_decision(rejected_request)
+
+        res = self._post([
+            self._decision("map_to_product_code", details={"product_code": self.product_code.code}, decision_id="map-after-reject")
+        ])
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.manual_resolved_product_code_id, self.product_code.id)
+        charge = self._read_charge()
+        self.assertEqual(charge["status"], "accepted_by_user")
+        self.assertEqual(charge["correction_actions"], [])
+        self.assertIsNone(charge["product_code_request_id"])
+
+    def test_resubmitting_rejected_product_code_creates_new_pending_request(self):
+        rejected_request = self._rejected_product_code_request()
+        self._persist_request_decision(rejected_request)
+        rejected_snapshot = {
+            "status": rejected_request.status,
+            "rejection_reason": rejected_request.rejection_reason,
+            "rejected_at": rejected_request.rejected_at,
+        }
+
+        res = self._post([
+            self._decision(
+                "request_product_code",
+                details={
+                    "proposed_code": "IMP-DOC-CORRECTED",
+                    "description": "Corrected import documentation fee",
+                    "category": "destination_charges",
+                    "domain": "IMPORT",
+                    "reason": "Corrected after admin rejection",
+                },
+                decision_id="resubmit-rejected",
+            )
+        ])
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "skipped")
+        rejected_request.refresh_from_db()
+        self.assertEqual(rejected_request.status, rejected_snapshot["status"])
+        self.assertEqual(rejected_request.rejection_reason, rejected_snapshot["rejection_reason"])
+        self.assertEqual(rejected_request.rejected_at, rejected_snapshot["rejected_at"])
+        pending = ProductCodeCreationRequest.objects.get(
+            source_envelope=self.envelope,
+            suggested_name="IMP-DOC-CORRECTED",
+        )
+        self.assertEqual(pending.status, ProductCodeCreationRequest.STATUS_PENDING)
+        self.assertEqual(pending.source_charge_line_id, self.charge.id)
+        charge = self._read_charge()
+        self.assertEqual(charge["correction_actions"], ["PENDING_ADMIN_REVIEW"])
+        self.assertEqual(charge["product_code_request_id"], pending.id)
+
+    def test_ignored_rejected_product_code_blocker_is_auditable(self):
+        rejected_request = self._rejected_product_code_request()
+        self._persist_request_decision(rejected_request)
+
+        res = self._post([
+            self._decision("ignore", details={"reason": "Not billable after admin rejection"}, decision_id="ignore-rejected")
+        ])
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertTrue(self.charge.exclude_from_totals)
+        decision = DraftQuoteDecisionDB.objects.get(decision_id="ignore-rejected")
+        self.assertEqual(decision.decision_type, "ignore")
+        self.assertEqual(decision.details_json["reason"], "Not billable after admin rejection")
+        charge = self._read_charge()
+        self.assertEqual(charge["status"], "ignored")
+        self.assertEqual(charge["correction_actions"], [])
 
     def test_finance_and_cross_scope_users_cannot_resolve_high_value_decisions(self):
         decision = self._decision("map_to_product_code", details={"product_code": self.product_code.code})
