@@ -1,0 +1,297 @@
+import uuid
+from decimal import Decimal
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.test import APIClient
+
+from accounts.models import Role, UserMembership
+from parties.models import Branch, Department, Organization
+from pricing_v4.models import ProductCode, ProductCodeCreationRequest
+from quotes.spot_models import DraftQuoteDecisionDB, SPEChargeLineDB, SPESourceBatchDB, SpotPricingEnvelopeDB
+
+
+class DraftQuoteResolveHighValueTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.org = Organization.objects.create(name="Test Org", slug="test-org")
+        self.other_org = Organization.objects.create(name="Other Org", slug="other-org")
+        self.branch = Branch.objects.create(organization=self.org, code="POM", name="Port Moresby")
+        self.other_branch = Branch.objects.create(organization=self.other_org, code="BNE", name="Brisbane")
+        self.department = Department.objects.create(organization=self.org, branch=self.branch, code="AIR", name="Air Freight")
+        self.other_department = Department.objects.create(organization=self.other_org, branch=self.other_branch, code="SEA", name="Sea Freight")
+        User = get_user_model()
+        self.sales = User.objects.create_user(username="sales_resolve", password="x", role=User.ROLE_SALES)
+        self.finance = User.objects.create_user(username="finance_resolve", password="x", role=User.ROLE_FINANCE)
+        self.other_sales = User.objects.create_user(username="other_sales_resolve", password="x", role=User.ROLE_SALES)
+        self._membership(self.sales, self.org, self.branch, self.department, "sales")
+        self._membership(self.finance, self.org, self.branch, self.department, "finance")
+        self._membership(self.other_sales, self.other_org, self.other_branch, self.other_department, "sales")
+        self.envelope = SpotPricingEnvelopeDB.objects.create(
+            status=SpotPricingEnvelopeDB.Status.DRAFT,
+            shipment_context_json={"origin_country": "SG", "destination_country": "PG", "mode": "AIR"},
+            spot_trigger_reason_code="TEST",
+            spot_trigger_reason_text="Test",
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+            organization=self.org,
+            branch=self.branch,
+            department=self.department,
+            owner=self.sales,
+            created_by=self.sales,
+        )
+        self.batch = SPESourceBatchDB.objects.create(
+            envelope=self.envelope,
+            source_kind=SPESourceBatchDB.SourceKind.AGENT,
+            source_type=SPESourceBatchDB.SourceType.TEXT,
+            label="Agent reply",
+            file_name="agent.txt",
+            analysis_summary_json={
+                "unclassified_items": [
+                    {"id": "unclass-1", "raw_text": "Documentation fee USD 25", "evidence": {"source_text": "Documentation fee USD 25"}},
+                    {"id": "unclass-2", "raw_text": "Have a nice day"},
+                ]
+            },
+        )
+        self.product_code = ProductCode.objects.create(
+            id=2001,
+            code="IMP-DOC-FEE",
+            description="Import documentation fee",
+            domain=ProductCode.DOMAIN_IMPORT,
+            category=ProductCode.CATEGORY_DOCUMENTATION,
+            is_gst_applicable=False,
+            gl_revenue_code="4000",
+            gl_cost_code="5000",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+        self.charge = SPEChargeLineDB.objects.create(
+            envelope=self.envelope,
+            source_batch=self.batch,
+            code="RAW-DOC",
+            description="Raw documentation fee",
+            amount=Decimal("10.00"),
+            currency="USD",
+            unit=SPEChargeLineDB.Unit.FLAT,
+            bucket=SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+            normalization_status=SPEChargeLineDB.NormalizationStatus.UNMAPPED,
+            source_label="DOC FEE",
+            source_excerpt="DOC FEE USD 10",
+            source_reference="agent.txt",
+            entered_by=self.sales,
+            entered_at=timezone.now(),
+        )
+
+    def _membership(self, user, organization, branch, department, role_code):
+        role, _ = Role.objects.get_or_create(code=role_code, defaults={"name": role_code.title()})
+        UserMembership.objects.create(user=user, organization=organization, branch=branch, department=department, role=role, is_active=True, is_primary=True)
+
+    def _post(self, decisions, key=None, user=None):
+        self.client.force_authenticate(user=user or self.sales)
+        return self.client.post(
+            f"/api/v3/spot/envelopes/{self.envelope.id}/draft-quote/resolve/",
+            {"idempotency_key": str(key or uuid.uuid4()), "decisions": decisions},
+            format="json",
+        )
+
+    def _decision(self, decision_type, target_id=None, details=None, decision_id="dec-1"):
+        return {
+            "decision_id": decision_id,
+            "type": decision_type,
+            "target_id": str(target_id or self.charge.id),
+            "details": details or {},
+            "audit_metadata": {"user_id": self.sales.id, "timestamp": "2026-07-06T00:00:00Z"},
+        }
+
+    def test_map_to_product_code_applies_to_charge_line_and_read_queue(self):
+        res = self._post([self._decision("map_to_product_code", details={"product_code": self.product_code.code})])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.manual_resolved_product_code_id, self.product_code.id)
+        self.assertEqual(self.charge.manual_resolution_status, SPEChargeLineDB.ManualResolutionStatus.RESOLVED)
+        self.assertEqual(self.charge.source_excerpt, "DOC FEE USD 10")
+        self.assertEqual(res.data["unresolved_items_remaining"], 2)
+
+    def test_map_to_product_code_rejects_invalid_product_code(self):
+        res = self._post([self._decision("map_to_product_code", details={"product_code": "NOPE"})])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "PRODUCT_CODE_NOT_FOUND")
+        self.charge.refresh_from_db()
+        self.assertIsNone(self.charge.manual_resolved_product_code_id)
+
+    def test_map_to_product_code_replay_is_idempotent(self):
+        key = uuid.uuid4()
+        decision = self._decision("map_to_product_code", details={"product_code": self.product_code.code})
+        self._post([decision], key=key)
+        self._post([decision], key=key)
+        self.assertEqual(DraftQuoteDecisionDB.objects.filter(idempotency_key=key).count(), 1)
+
+    def test_edit_charge_updates_allowed_fields_and_preserves_evidence(self):
+        res = self._post([
+            self._decision(
+                "edit_charge",
+                details={"original_values": {}, "updated_values": {"description": "Edited fee", "amount": "12.50", "include_in_totals": False}},
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.description, "Edited fee")
+        self.assertEqual(self.charge.amount, Decimal("12.50"))
+        self.assertTrue(self.charge.exclude_from_totals)
+        self.assertEqual(self.charge.source_label, "DOC FEE")
+        decision = DraftQuoteDecisionDB.objects.get(decision_type="edit_charge")
+        self.assertEqual(decision.details_json["before"]["description"], "Raw documentation fee")
+        self.assertEqual(decision.details_json["after"]["amount"], "12.50")
+
+    def test_edit_charge_rejects_unknown_field(self):
+        res = self._post([self._decision("edit_charge", details={"original_values": {}, "updated_values": {"source_excerpt": "rewrite raw"}})])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "INVALID_FIELD")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.source_excerpt, "DOC FEE USD 10")
+
+    def test_edit_charge_maps_calculation_basis_to_unit_type(self):
+        res = self._post([
+            self._decision(
+                "edit_charge",
+                details={"original_values": {}, "updated_values": {"calculation_basis": SPEChargeLineDB.UnitType.KG}},
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.unit_type, SPEChargeLineDB.UnitType.KG)
+        self.assertIsNone(self.charge.calculation_basis)
+
+    def test_edit_charge_rejects_invalid_currency(self):
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"currency": "USDX"}})
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "INVALID_CURRENCY")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.currency, "USD")
+
+    def test_edit_charge_rejects_invalid_unit(self):
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"unit": "per_container"}})
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "INVALID_UNIT")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.unit, SPEChargeLineDB.Unit.FLAT)
+
+    def test_edit_charge_rejects_negative_numeric_value(self):
+        res = self._post([
+            self._decision("edit_charge", details={"original_values": {}, "updated_values": {"amount": "-0.01"}})
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["rejected_decisions"][0]["error_code"], "NEGATIVE_NUMERIC_VALUE")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.amount, Decimal("10.00"))
+
+    def test_classify_unclassified_as_charge_creates_charge_line(self):
+        res = self._post([
+            self._decision(
+                "classify_unclassified",
+                target_id="unclass-1",
+                details={
+                    "classification": "charge",
+                    "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+                    "display_label": "Documentation fee",
+                    "product_code": self.product_code.code,
+                    "amount": "25.00",
+                    "currency": "USD",
+                    "unit": SPEChargeLineDB.Unit.FLAT,
+                },
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        created = SPEChargeLineDB.objects.get(description="Documentation fee")
+        self.assertEqual(created.manual_resolved_product_code_id, self.product_code.id)
+        self.assertEqual(created.source_excerpt, "Documentation fee USD 25")
+        self.batch.refresh_from_db()
+        self.assertEqual([i["id"] for i in self.batch.analysis_summary_json["unclassified_items"]], ["unclass-2"])
+        self.assertEqual(self.batch.analysis_summary_json["ignored_items"][0]["raw_text"], "Documentation fee USD 25")
+
+    def test_classify_unclassified_without_product_code_is_skipped(self):
+        res = self._post([
+            self._decision(
+                "classify_unclassified",
+                target_id="unclass-1",
+                details={
+                    "classification": "charge",
+                    "bucket": SPEChargeLineDB.Bucket.DESTINATION_CHARGES,
+                    "display_label": "Documentation fee",
+                    "product_code": "MISSING",
+                    "amount": "25.00",
+                    "currency": "USD",
+                },
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "skipped")
+        self.assertEqual(res.data["applied_decisions"][0]["error_code"], "PRODUCT_CODE_REQUIRED")
+
+    def test_classify_unclassified_as_ignored_preserves_text(self):
+        res = self._post([self._decision("classify_unclassified", target_id="unclass-2", details={"classification": "ignored", "reason": "Greeting"})])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.batch.refresh_from_db()
+        self.assertEqual(self.batch.analysis_summary_json["ignored_items"][0]["raw_text"], "Have a nice day")
+
+    def test_finance_and_cross_scope_users_cannot_resolve_high_value_decisions(self):
+        decision = self._decision("map_to_product_code", details={"product_code": self.product_code.code})
+        self.assertEqual(self._post([decision], user=self.finance).status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn(self._post([decision], user=self.other_sales).status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND))
+
+    def test_low_risk_and_product_code_request_flows_still_pass(self):
+        res = self._post([
+            self._decision("accept_suggestion", decision_id="accept"),
+            self._decision("ignore", decision_id="ignore", details={"reason": "Not commercial"}),
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual([d["status"] for d in res.data["applied_decisions"]], ["applied", "applied"])
+
+        request_res = self._post([
+            self._decision(
+                "request_product_code",
+                decision_id="request",
+                details={
+                    "proposed_code": "IMP-NEW",
+                    "description": "New import fee",
+                    "category": "destination_charges",
+                    "domain": "IMPORT",
+                    "reason": "Supplier added new fee",
+                },
+            )
+        ])
+        self.assertEqual(request_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(request_res.data["applied_decisions"][0]["status"], "skipped")
+        self.assertEqual(ProductCodeCreationRequest.objects.filter(source_envelope=self.envelope).count(), 1)
+
+    def test_approved_product_code_consumption_still_passes(self):
+        req = ProductCodeCreationRequest.objects.create(
+            source_label="DOC FEE",
+            suggested_name="IMP-DOC-FEE",
+            suggested_bucket="destination_charges",
+            suggested_basis="FLAT",
+            source_envelope=self.envelope,
+            source_charge_line=self.charge,
+            status=ProductCodeCreationRequest.STATUS_APPROVED,
+            approved_product_code=self.product_code,
+            created_by=self.sales,
+        )
+        res = self._post([
+            self._decision(
+                "use_approved_product_code",
+                details={"product_code_request_id": req.id, "product_code_id": self.product_code.id},
+            )
+        ])
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["applied_decisions"][0]["status"], "applied")
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.manual_resolved_product_code_id, self.product_code.id)

@@ -333,7 +333,7 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     applied_map = {d.decision_id: d for d in resp_schema.applied_decisions}
     assert applied_map["dec-001"].status == "applied"
     assert applied_map["dec-002"].status == "applied"
-    assert applied_map["dec-003"].status == "skipped"  # edit_charge is persisted but not applied yet
+    assert applied_map["dec-003"].status == "applied"
 
     # Verify decision is persisted in DB with correct status
     from quotes.spot_models import DraftQuoteDecisionDB
@@ -348,7 +348,7 @@ def test_draft_quote_resolve_endpoint(transactional_db):
 
     db_record_3 = DraftQuoteDecisionDB.objects.get(envelope=envelope, decision_id="dec-003")
     assert db_record_3.decision_type == "edit_charge"
-    assert db_record_3.status == "skipped"  # High-risk stored as skipped
+    assert db_record_3.status == "accepted"
 
     # Verify charge lines were actually updated for low-risk decisions
     line_suggested.refresh_from_db()
@@ -358,9 +358,9 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     line_ignore.refresh_from_db()
     assert line_ignore.exclude_from_totals is True
 
-    # Verify charge line for edit_charge was NOT mutated yet (guardrail check)
+    # Verify charge line for edit_charge was safely mutated.
     line_edit.refresh_from_db()
-    assert float(line_edit.amount) == 200.00
+    assert float(line_edit.amount) == 250.00
 
     # Verify idempotency retry doesn't re-apply, duplicate records, or overwrite metadata
     original_at = line_suggested.manual_resolution_at
@@ -373,9 +373,9 @@ def test_draft_quote_resolve_endpoint(transactional_db):
     assert "Idempotent resolution" in resp_retry_schema.message
     assert DraftQuoteDecisionDB.objects.filter(envelope=envelope).count() == 3
 
-    # Assert skipped status remains skipped on retry
+    # Assert applied status remains applied on retry
     retry_applied_map = {d.decision_id: d for d in resp_retry_schema.applied_decisions}
-    assert retry_applied_map["dec-003"].status == "skipped"
+    assert retry_applied_map["dec-003"].status == "applied"
 
     # Assert charge line metadata remains untouched
     line_suggested.refresh_from_db()
@@ -768,7 +768,7 @@ def test_resolve_use_approved_product_code():
     }
     res = client.post(url, payload_pending, format="json")
     assert res.status_code == 200
-    assert res.data["applied_decisions"][0]["error_code"] == "REQUEST_NOT_APPROVED"
+    assert res.data["rejected_decisions"][0]["error_code"] == "REQUEST_NOT_APPROVED"
 
     # Test rejected request cannot be consumed
     payload_rejected = {
@@ -786,7 +786,7 @@ def test_resolve_use_approved_product_code():
     }
     res = client.post(url, payload_rejected, format="json")
     assert res.status_code == 200
-    assert res.data["applied_decisions"][0]["error_code"] == "REQUEST_NOT_APPROVED"
+    assert res.data["rejected_decisions"][0]["error_code"] == "REQUEST_NOT_APPROVED"
 
     # Test approved request can be consumed
     ik = str(uuid.uuid4())
