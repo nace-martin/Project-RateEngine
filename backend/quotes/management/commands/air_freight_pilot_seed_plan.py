@@ -3,19 +3,21 @@ import json
 from django.core.management.base import BaseCommand
 
 from quotes.services.air_freight_pilot_seed_plan import (
+    apply_air_freight_pilot_seed_plan,
     build_air_freight_pilot_seed_plan,
     render_air_freight_pilot_seed_plan_text,
 )
 
 
 class Command(BaseCommand):
-    help = "Dry-run-only Air Freight pilot seed plan. This command performs no writes."
+    help = "Air Freight pilot seed plan. Dry-run by default; --apply creates approved records."
 
     def add_arguments(self, parser):
         parser.add_argument("--format", choices=["json", "text"], default="json")
+        parser.add_argument("--apply", action="store_true", help="Create approved missing ProductCodes and ChargeAliases.")
 
     def handle(self, *args, **options):
-        plan = build_air_freight_pilot_seed_plan()
+        plan = apply_air_freight_pilot_seed_plan() if options["apply"] else build_air_freight_pilot_seed_plan()
         if options["format"] == "text":
             self.stdout.write(render_air_freight_pilot_seed_plan_text(plan), ending="")
             return
