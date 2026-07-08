@@ -386,3 +386,99 @@ Recommended Phase 13.1D scope:
 4. Scope ChargeAliases by current model fields such as mode and direction where needed; avoid broad generic aliases for ambiguous labels.
 5. Keep pilot customers and suppliers in a separate anonymized data pack. Do not mix customer/supplier sample data with reference-data seeding.
 6. Treat the LAX airport-backed gap as optional unless the pilot workflow requires an Airport row instead of Location-only coverage.
+
+## 13. Phase 13.1D canonical mapping decisions
+
+Phase 13.1D is a reviewed mapping table only. It does not add seed writes, migrations, frontend changes, production behavior changes, or database mutations.
+
+Inspection sources:
+
+- `python backend/manage.py air_freight_pilot_seed_audit --format json`
+- `pricing_v4.ProductCode` fields: `id`, `code`, `description`, `domain`, `category`, `default_unit`
+- `pricing_v4.ChargeAlias` scope fields: `match_type`, `mode_scope`, `direction_scope`, `product_code`, `is_active`
+- `docs/spot-canonical-charge-architecture.md` for known `FSC` and `Handling` ambiguity
+
+Canonical ProductCode decisions:
+
+| Coverage bucket | Mode | Direction | Decision | ProductCode | Existing id | Rationale |
+| --- | --- | --- | --- | --- | --- | --- |
+| Air Freight | EXPORT | MAIN | Reuse | `EXP-FRT-AIR` | `1001` | Existing export main air freight code. |
+| Air Freight | IMPORT | MAIN | Reuse | `IMP-FRT-AIR` | `2001` | Existing import main air freight code. |
+| Air Freight | DOMESTIC | MAIN | Reuse | `DOM-FRT-AIR` | `3001` | Existing domestic main air freight code. |
+| Fuel surcharge | EXPORT | MAIN | Reuse | `EXP-FSC-AIR` | `1002` | Airline fuel surcharge for export air freight. |
+| Fuel surcharge | EXPORT | ORIGIN | Reuse | `EXP-FSC-PICKUP` | `1060` | Pickup/cartage fuel is separate from airline fuel. |
+| Fuel surcharge | IMPORT | ORIGIN | Reuse | `IMP-FSC-PICKUP` | `2060` | Existing import origin pickup fuel surcharge. |
+| Fuel surcharge | IMPORT | DESTINATION | Reuse | `IMP-FSC-CARTAGE-DEST` | `2080` | Existing import destination cartage fuel surcharge. |
+| Fuel surcharge | DOMESTIC | MAIN | Reuse | `DOM-FSC` | `3030` | Existing domestic fuel surcharge. |
+| Security surcharge / screening | EXPORT | ORIGIN | Reuse | `EXP-SCREEN` | `1040` | Existing export screening code covers security screening. |
+| Security surcharge / screening | IMPORT | ORIGIN | Reuse | `IMP-SEC-ORIGIN` | `2041` | Existing import origin airport security fee. |
+| Security surcharge / screening | DOMESTIC | ORIGIN | Reuse | `DOM-SECURITY` | `3020` | Existing domestic security surcharge. |
+| AWB | EXPORT | ORIGIN | Reuse | `EXP-AWB` | `1011` | Existing export AWB fee. |
+| Documentation | EXPORT | ORIGIN | Reuse | `EXP-DOC` | `1010` | Existing export documentation fee. |
+| AWB | IMPORT | ORIGIN | Reuse | `IMP-AWB-ORIGIN` | `2011` | Existing import origin AWB fee. |
+| Documentation | IMPORT | ORIGIN | Reuse | `IMP-DOC-ORIGIN` | `2010` | Existing import origin documentation fee. |
+| Documentation | IMPORT | DESTINATION | Reuse | `IMP-DOC-DEST` | `2022` | Existing import destination documentation fee. |
+| AWB | DOMESTIC | ORIGIN | Reuse | `DOM-AWB` | `3012` | Existing domestic AWB fee. |
+| Documentation | DOMESTIC | ORIGIN | Reuse | `DOM-DOC` | `3010` | Existing domestic documentation fee. |
+| Customs pass-through | EXPORT | ORIGIN | Reuse | `EXP-CLEAR` | `1020` | Existing export customs clearance. |
+| Customs pass-through | EXPORT | DESTINATION | Reuse | `EXP-CLEAR-DEST` | `1080` | Existing destination clearance for export flow. |
+| Customs pass-through | IMPORT | ORIGIN | Reuse | `IMP-CUS-CLR-ORIGIN` | `2002` | Existing import origin customs clearance. |
+| Customs pass-through | IMPORT | DESTINATION | Reuse | `IMP-CLEAR` | `2020` | Existing import destination customs clearance. |
+| Export handling | EXPORT | ORIGIN | Reuse | `EXP-HANDLE` | `1032` | Existing export handling fee. |
+| Import handling | IMPORT | DESTINATION | Create | `IMP-HANDLE-DEST` | TBD | No import handling ProductCode exists in audit output. |
+| Storage / warehouse | IMPORT | DESTINATION | Create | `IMP-STORAGE-DEST` | TBD | No storage/warehouse ProductCode exists; pilot storage is expected to be destination/local unless business says otherwise. |
+| Miscellaneous recoveries | ANY | ANY | Do not create broad code yet | TBD | TBD | Generic recoveries are too ambiguous for automatic quote mapping without business classification. |
+
+ChargeAlias mapping decisions:
+
+| Raw label | Match type | Mode scope | Direction scope | Decision | Target ProductCode | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `air freight` | EXACT | EXPORT | MAIN | Keep existing | `EXP-FRT-AIR` | Existing alias id `1`; not a conflict when scoped by mode/direction. |
+| `air freight` | EXACT | IMPORT | MAIN | Keep existing | `IMP-FRT-AIR` | Existing alias id `16`; not a conflict when scoped by mode/direction. |
+| `air freight` | EXACT | DOMESTIC | MAIN | Keep existing | `DOM-FRT-AIR` | Existing alias id `33`; not a conflict when scoped by mode/direction. |
+| `freight` | EXACT | EXPORT | MAIN | Create scoped alias | `EXP-FRT-AIR` | Missing common supplier label. |
+| `freight` | EXACT | IMPORT | MAIN | Create scoped alias | `IMP-FRT-AIR` | Missing common supplier label. |
+| `freight` | EXACT | DOMESTIC | MAIN | Create scoped alias | `DOM-FRT-AIR` | Missing common supplier label. |
+| `fsc` | EXACT | ANY | ANY | Do not add more broad aliases | Existing `IMP-FSC-PICKUP` alias must be reviewed | Existing alias id `68` maps broad `fsc` to import pickup fuel and is unsafe for export/domestic contexts. |
+| `fuel surcharge` | EXACT | EXPORT | MAIN | Create scoped alias | `EXP-FSC-AIR` | Needed to avoid using pickup/cartage fuel for airline fuel. |
+| `fuel surcharge` | EXACT | IMPORT | ORIGIN | Create scoped alias | `IMP-FSC-PICKUP` | Only if pilot imports use this phrase for origin pickup fuel. |
+| `fuel surcharge` | EXACT | IMPORT | DESTINATION | Create scoped alias | `IMP-FSC-CARTAGE-DEST` | Only if pilot imports use this phrase for destination cartage fuel. |
+| `fuel surcharge` | EXACT | DOMESTIC | MAIN | Review existing | `DOM-FSC` | Existing alias id `40` is DOMESTIC/ORIGIN; confirm whether MAIN is required. |
+| `security surcharge` | EXACT | EXPORT | ORIGIN | Create scoped alias | `EXP-SCREEN` | Existing coverage is ProductCode-only; alias is missing for export. |
+| `security surcharge` | EXACT | IMPORT | ORIGIN | Create scoped alias | `IMP-SEC-ORIGIN` | Existing coverage is ProductCode-only; alias is missing for import. |
+| `security surcharge` | EXACT | DOMESTIC | ORIGIN | Keep existing | `DOM-SECURITY` | Existing alias id `39`. |
+| `screening` | EXACT | EXPORT | ORIGIN | Create scoped alias | `EXP-SCREEN` | Missing common supplier label. |
+| `screening` | EXACT | IMPORT | ORIGIN | Create scoped alias | `IMP-SEC-ORIGIN` | Use only for origin security screening. |
+| `awb` | EXACT | EXPORT | ORIGIN | Create scoped alias | `EXP-AWB` | Missing common AWB label. |
+| `awb` | EXACT | IMPORT | ORIGIN | Create scoped alias | `IMP-AWB-ORIGIN` | Missing common AWB label. |
+| `awb` | EXACT | DOMESTIC | ORIGIN | Create scoped alias | `DOM-AWB` | Missing common AWB label. |
+| `documentation fee` | EXACT | EXPORT | ORIGIN | Keep existing | `EXP-DOC` | Existing alias id `3`; scoped mapping is valid. |
+| `documentation fee` | EXACT | IMPORT | ORIGIN | Keep existing | `IMP-DOC-ORIGIN` | Existing alias id `18`; scoped mapping is valid. |
+| `documentation fee` | EXACT | IMPORT | DESTINATION | Keep existing | `IMP-DOC-DEST` | Existing alias id `28`; scoped mapping is valid. |
+| `documentation fee` | EXACT | DOMESTIC | ORIGIN | Keep existing | `DOM-DOC` | Existing alias id `35`; scoped mapping is valid. |
+| `terminal fee` | EXACT | EXPORT | ORIGIN | Keep existing | `EXP-TERM` | Existing alias id `8`; Phase 13.1D does not add terminal aliases. |
+| `terminal fee` | EXACT | DOMESTIC | ORIGIN | Keep existing | `DOM-TERMINAL` | Existing alias id `37`; Phase 13.1D does not add terminal aliases. |
+| `handling` | EXACT | EXPORT | ORIGIN | Create scoped alias only if business accepts generic handling | `EXP-HANDLE` | Generic label is ambiguous across origin/destination. |
+| `handling` | EXACT | IMPORT | DESTINATION | Create scoped alias only after new ProductCode approval | `IMP-HANDLE-DEST` | Requires import handling ProductCode first. |
+| `export handling` | EXACT | EXPORT | ORIGIN | Create scoped alias | `EXP-HANDLE` | Missing explicit export handling label. |
+| `import handling` | EXACT | IMPORT | DESTINATION | Create scoped alias after new ProductCode approval | `IMP-HANDLE-DEST` | Requires import handling ProductCode first. |
+| `storage` | EXACT | IMPORT | DESTINATION | Create scoped alias after new ProductCode approval | `IMP-STORAGE-DEST` | Do not create broad storage alias until scope is confirmed. |
+
+Unresolved business questions:
+
+1. Should import handling be destination-only for the pilot, or is an origin import handling ProductCode also required?
+2. Should storage/warehouse be import destination-only, or should export origin and domestic storage codes be created too?
+3. Should miscellaneous recoveries be a real ProductCode, or should miscellaneous labels remain manual-review-only until classified?
+4. Should `fsc` broad `ANY/ANY -> IMP-FSC-PICKUP` be retired, narrowed, or left active for compatibility?
+5. Should domestic `Fuel Surcharge` remain `DOMESTIC/ORIGIN`, or should Phase 13.1E propose a separate `DOMESTIC/MAIN` alias?
+6. Should generic `handling` be seeded at all, or should only explicit `export handling` and `import handling` labels be accepted?
+
+Recommended Phase 13.1E dry-run seed-plan scope:
+
+1. Add a read-only dry-run plan command or report section that outputs the ProductCodes and ChargeAliases it would create, skip, or flag for manual review.
+2. Include create candidates for `IMP-HANDLE-DEST` and `IMP-STORAGE-DEST` only after business confirms description, category, default unit, GST treatment, and GL codes.
+3. Do not create a broad miscellaneous recovery ProductCode in the first dry-run plan; list it as `manual_review_required`.
+4. Plan scoped aliases for `freight`, `fuel surcharge`, `security surcharge`, `screening`, `awb`, `export handling`, `import handling`, and `storage`.
+5. Do not overwrite existing aliases. Report existing scoped aliases as `skip_existing`.
+6. Report broad or ambiguous existing aliases, especially `fsc`, as `conflict_requires_review`.
+7. Keep apply mode out of Phase 13.1E unless a later phase explicitly approves writes.
