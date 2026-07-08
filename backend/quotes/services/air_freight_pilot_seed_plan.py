@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
+
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.utils import IntegrityError
 
 from pricing_v4.models import ChargeAlias, ProductCode
 
@@ -16,8 +21,8 @@ PRODUCT_CODE_CANDIDATES = [
         "is_gst_applicable": True,
         "gst_rate": "0.1000",
         "gst_treatment": ProductCode.GST_TREATMENT_STANDARD,
-        "gl_revenue_code": "TBD-REV",
-        "gl_cost_code": "TBD-COS",
+        "gl_revenue_code": "4400",
+        "gl_cost_code": "5400",
     },
     {
         "id": 2043,
@@ -29,8 +34,8 @@ PRODUCT_CODE_CANDIDATES = [
         "is_gst_applicable": True,
         "gst_rate": "0.1000",
         "gst_treatment": ProductCode.GST_TREATMENT_STANDARD,
-        "gl_revenue_code": "TBD-REV",
-        "gl_cost_code": "TBD-COS",
+        "gl_revenue_code": "4400",
+        "gl_cost_code": "5400",
     },
 ]
 
@@ -57,14 +62,17 @@ BLOCKED_DECISIONS = [
     {
         "item": "misc_recoveries",
         "reason": "Phase 13.1D deferred broad miscellaneous recoveries to manual review.",
+        "apply_scope": False,
     },
     {
         "item": "fsc ANY/ANY",
         "reason": "Broad FSC alias is ambiguous across airline, pickup, cartage, and domestic fuel.",
+        "apply_scope": False,
     },
     {
         "item": "handling generic",
         "reason": "Generic handling is ambiguous across origin and destination handling.",
+        "apply_scope": False,
     },
 ]
 
@@ -79,8 +87,9 @@ def build_air_freight_pilot_seed_plan() -> dict[str, Any]:
     alias_actions = [_alias_action(*row, planned_product_codes) for row in ALIAS_CANDIDATES]
     conflicts = [item for item in product_actions + alias_actions if item["action"] == "conflict"]
     warnings = _placeholder_warnings(product_actions)
+    apply_blockers = _apply_blockers(product_actions, alias_actions, conflicts, warnings)
     plan = {
-        "status": "blocked" if conflicts or BLOCKED_DECISIONS else "ready_for_dry_run_review",
+        "status": "blocked" if apply_blockers else "ready_for_apply",
         "summary": {
             "product_code_create": _count(product_actions, "create"),
             "product_code_reuse": _count(product_actions, "reuse"),
@@ -91,20 +100,76 @@ def build_air_freight_pilot_seed_plan() -> dict[str, Any]:
             "charge_alias_blocked": _count(alias_actions, "blocked"),
             "charge_alias_conflict": _count(alias_actions, "conflict"),
             "blocked_count": len(BLOCKED_DECISIONS) + _count(alias_actions, "blocked"),
+            "apply_blocker_count": len(apply_blockers),
             "warning_count": len(warnings),
         },
         "product_code_actions": product_actions,
         "charge_alias_actions": alias_actions,
         "conflicts": conflicts,
+        "apply_blockers": apply_blockers,
         "blocked": BLOCKED_DECISIONS,
         "warnings": warnings,
         "recommended_next_actions": [
-            "Review GL placeholders and GST treatment before any apply-mode phase.",
-            "Resolve blocked broad aliases before adding any write command.",
-            "Keep Phase 13.1E dry-run only; no seed writes are available.",
+            "Run dry-run first and review product_code_actions, charge_alias_actions, conflicts, and apply_blockers.",
+            "Use --apply only in the approved environment after dry-run output is ready_for_apply.",
+            "Keep miscellaneous recoveries, broad fsc, and generic handling out of apply scope.",
         ],
     }
     return plan
+
+
+def apply_air_freight_pilot_seed_plan() -> dict[str, Any]:
+    plan = build_air_freight_pilot_seed_plan()
+    if plan["apply_blockers"]:
+        return {**plan, "status": "apply_aborted", "applied": _empty_apply_summary("apply blockers present")}
+
+    created_product_codes = []
+    created_charge_aliases = []
+    try:
+        with transaction.atomic():
+            for action in plan["product_code_actions"]:
+                if action["action"] != "create":
+                    continue
+                candidate = action["candidate"]
+                product_code = ProductCode(**{**candidate, "gst_rate": Decimal(candidate["gst_rate"])})
+                product_code.full_clean()
+                product_code.save(force_insert=True)
+                created_product_codes.append(product_code.code)
+
+            for action in plan["charge_alias_actions"]:
+                if action["action"] not in {"create", "create_after_product_code"}:
+                    continue
+                product_code = ProductCode.objects.filter(code=action["product_code"]).first()
+                if not product_code:
+                    raise RuntimeError(f"target ProductCode {action['product_code']} is missing")
+                alias = ChargeAlias(
+                    alias_text=action["alias_text"],
+                    normalized_alias_text=action["normalized_alias_text"],
+                    match_type=action["match_type"],
+                    mode_scope=action["mode_scope"],
+                    direction_scope=action["direction_scope"],
+                    product_code=product_code,
+                    alias_source=ChargeAlias.AliasSource.SEED,
+                    review_status=ChargeAlias.ReviewStatus.APPROVED,
+                    is_active=True,
+                    notes="Phase 13.1H Air Freight pilot seed apply",
+                )
+                alias.full_clean()
+                alias.save(force_insert=True)
+                created_charge_aliases.append(alias.alias_text)
+    except (IntegrityError, RuntimeError, ValidationError) as exc:
+        return {**build_air_freight_pilot_seed_plan(), "status": "apply_aborted", "applied": _empty_apply_summary(str(exc))}
+
+    return {
+        **build_air_freight_pilot_seed_plan(),
+        "status": "applied",
+        "applied": {
+            "product_codes_created": len(created_product_codes),
+            "charge_aliases_created": len(created_charge_aliases),
+            "created_product_codes": created_product_codes,
+            "created_charge_aliases": created_charge_aliases,
+        },
+    }
 
 
 def render_air_freight_pilot_seed_plan_text(plan: dict[str, Any]) -> str:
@@ -114,6 +179,7 @@ def render_air_freight_pilot_seed_plan_text(plan: dict[str, Any]) -> str:
         f"ProductCodes create/reuse/conflict: {summary['product_code_create']}/{summary['product_code_reuse']}/{summary['product_code_conflict']}",
         f"ChargeAliases create/dependent/skip/blocked/conflict: {summary['charge_alias_create']}/{summary['charge_alias_create_after_product_code']}/{summary['charge_alias_skip']}/{summary['charge_alias_blocked']}/{summary['charge_alias_conflict']}",
         f"Blocked: {summary['blocked_count']}",
+        f"Apply blockers: {summary['apply_blocker_count']}",
         f"Warnings: {summary['warning_count']}",
         "",
         "Recommended next actions:",
@@ -127,6 +193,15 @@ def _product_code_action(candidate: dict[str, Any]) -> dict[str, Any]:
     existing_id = ProductCode.objects.filter(id=candidate["id"]).first()
     validation = _validate_product_code_candidate(candidate)
     if existing_code:
+        mismatches = _product_code_mismatches(existing_code, candidate)
+        if mismatches:
+            return {
+                "action": "conflict",
+                "candidate": candidate,
+                "existing_id": existing_code.id,
+                "reason": f"existing ProductCode differs on {', '.join(mismatches)}",
+                "validation": validation,
+            }
         return {"action": "reuse", "candidate": candidate, "existing_id": existing_code.id, "validation": validation}
     if existing_id:
         return {
@@ -172,6 +247,13 @@ def _alias_action(
         product_code=target,
     ).first()
     if exact:
+        if not exact.is_active or exact.review_status != ChargeAlias.ReviewStatus.APPROVED:
+            return {
+                **action,
+                "action": "conflict",
+                "existing_id": exact.id,
+                "reason": "existing scoped alias is not active and approved",
+            }
         return {**action, "action": "skip_existing", "existing_id": exact.id}
 
     conflict = ChargeAlias.objects.filter(
@@ -222,6 +304,50 @@ def _placeholder_warnings(actions: list[dict[str, Any]]) -> list[str]:
         for warning in action["validation"]["warnings"]:
             warnings.append(f"{action['candidate']['code']}: {warning}")
     return warnings
+
+
+def _product_code_mismatches(existing: ProductCode, candidate: dict[str, Any]) -> list[str]:
+    fields = [
+        "id",
+        "description",
+        "domain",
+        "category",
+        "default_unit",
+        "is_gst_applicable",
+        "gst_treatment",
+        "gl_revenue_code",
+        "gl_cost_code",
+    ]
+    mismatches = [field for field in fields if getattr(existing, field) != candidate[field]]
+    if existing.gst_rate != Decimal(candidate["gst_rate"]):
+        mismatches.append("gst_rate")
+    return mismatches
+
+
+def _apply_blockers(
+    product_actions: list[dict[str, Any]],
+    alias_actions: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    blockers = [{"type": "conflict", "item": item} for item in conflicts]
+    for action in product_actions:
+        for error in action["validation"]["errors"]:
+            blockers.append({"type": "validation_error", "product_code": action["candidate"]["code"], "field": error})
+    blockers.extend({"type": "placeholder_gl", "item": warning} for warning in warnings)
+    blockers.extend({"type": "missing_target", "item": item} for item in alias_actions if item["action"] == "blocked")
+    blockers.extend({"type": "blocked_decision", "item": item} for item in BLOCKED_DECISIONS if item.get("apply_scope", True))
+    return blockers
+
+
+def _empty_apply_summary(reason: str) -> dict[str, Any]:
+    return {
+        "product_codes_created": 0,
+        "charge_aliases_created": 0,
+        "created_product_codes": [],
+        "created_charge_aliases": [],
+        "reason": reason,
+    }
 
 
 def _count(actions: list[dict[str, Any]], action: str) -> int:

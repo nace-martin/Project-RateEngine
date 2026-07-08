@@ -564,3 +564,41 @@ Updated dry-run/apply readiness checklist:
 Recommendation for Phase 13.1H:
 
 Phase 13.1H may add guarded apply mode only after the dry-run plan constants are updated to the approved GL/GST values in this section. The apply command should keep dry-run as the default, require an explicit `--apply`, run in a transaction, create ProductCodes before dependent ChargeAliases, skip exact existing records, and abort on conflicts, placeholder GL codes, or any non-deferred blocked decision.
+
+## 16. Phase 13.1H guarded apply mode
+
+Phase 13.1H adds an explicit apply path to the existing Air Freight pilot seed-plan command. Dry-run remains the default.
+
+Usage:
+
+```bash
+python backend/manage.py air_freight_pilot_seed_plan --format json
+python backend/manage.py air_freight_pilot_seed_plan --format text
+python backend/manage.py air_freight_pilot_seed_plan --apply --format json
+python backend/manage.py air_freight_pilot_seed_plan --apply --format text
+```
+
+Approved ProductCode values encoded for apply:
+
+| ProductCode | GST applicable | GST rate | GST treatment | Revenue GL | Cost GL |
+| --- | --- | --- | --- | --- | --- |
+| `IMP-HANDLE-DEST` | Yes | `0.1000` | `STANDARD` | `4400` | `5400` |
+| `IMP-STORAGE-DEST` | Yes | `0.1000` | `STANDARD` | `4400` | `5400` |
+
+Apply safety rules:
+
+- `--apply` is required for writes; without it the command only reports the plan.
+- Apply uses one database transaction.
+- ProductCodes are created before dependent ChargeAliases.
+- Apply is additive only: it creates missing approved records and skips exact existing records.
+- Apply never deletes, overwrites, deactivates, resets, or updates existing ProductCodes or ChargeAliases.
+- Apply aborts before writing if conflicts, validation errors, placeholder GL codes, missing alias target ProductCodes, or in-scope blocked decisions are present.
+- Deferred decisions remain out of apply scope: `misc_recoveries`, broad `fsc ANY/ANY`, and generic `handling`.
+
+Expected Phase 13.1H apply scope:
+
+| Object type | Create scope |
+| --- | --- |
+| ProductCodes | `IMP-HANDLE-DEST`, `IMP-STORAGE-DEST` |
+| ChargeAliases | Approved scoped aliases only, including dependent `import handling` and `storage` after ProductCode creation |
+| Excluded | Customer data, supplier data, miscellaneous recoveries, broad `fsc`, generic `handling`, migrations, frontend changes |
