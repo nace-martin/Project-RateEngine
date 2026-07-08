@@ -526,3 +526,41 @@ Recommended Phase 13.1G scope:
 3. Apply ProductCodes before dependent ChargeAliases in one transaction.
 4. Refuse to apply if the current dry-run output has conflicts, blocked business decisions, placeholder GL codes, or validation errors.
 5. Preserve existing ProductCodes and ChargeAliases; use additive creates only and skip existing scoped aliases.
+
+## 15. Phase 13.1G apply-blocker decisions
+
+Phase 13.1G is a docs-only decision record. No seed data was written, no apply mode was added, no migrations were added, no frontend files were changed, and no production command behavior was changed.
+
+Final GL/GST decision table:
+
+| Planned ProductCode | Description | Domain | Category | Unit | GST applicable | GST rate | GST treatment | Revenue GL | Cost GL | Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `IMP-HANDLE-DEST` | Import Destination Handling | `IMPORT` | `HANDLING` | `SHIPMENT` | Yes | `0.1000` | `STANDARD` | `4400` | `5400` | Approved for guarded apply-mode planning. Use the existing handling/terminal GL pair. |
+| `IMP-STORAGE-DEST` | Import Destination Storage / Warehouse | `IMPORT` | `HANDLING` | `SHIPMENT` | Yes | `0.1000` | `STANDARD` | `4400` | `5400` | Approved for guarded apply-mode planning. Treat pilot storage as destination handling/warehouse recovery, not as a miscellaneous recovery. |
+
+Blocked business decision outcomes:
+
+| Blocked item | Final decision | Phase 13.1H implication |
+| --- | --- | --- |
+| `misc_recoveries` | Do not seed in the Air Freight pilot apply scope. Keep miscellaneous recoveries as manual-review-only until specific recoverable categories and accounting treatment are approved. | Phase 13.1H must not create a miscellaneous ProductCode or alias. The audit may continue to report this as intentionally deferred. |
+| `fsc ANY/ANY` | Do not create or update a broad `fsc` alias. Fuel surcharge aliases must remain direction and charge-scope specific because airline fuel, pickup fuel, cartage fuel, and domestic fuel are not interchangeable. | Phase 13.1H may apply only the scoped `fuel surcharge` mappings already approved by direction and scope. It must not add generic `fsc`. |
+| Generic `handling` | Do not create a generic `handling` alias. Generic handling labels remain ambiguous across export origin handling, import destination handling, terminal, warehouse, and agent handling. | Phase 13.1H may apply explicit `export handling` and `import handling` aliases only. It must leave generic `handling` for manual review. |
+
+Updated dry-run/apply readiness checklist:
+
+| Gate | Status | Notes |
+| --- | --- | --- |
+| Dry-run remains default behavior | Ready | The existing seed-plan command has no apply path. |
+| ProductCode create scope limited | Ready | Only `IMP-HANDLE-DEST` and `IMP-STORAGE-DEST` are approved create candidates. |
+| Placeholder GL blockers resolved | Ready for next implementation | Final values are documented above. Phase 13.1H must encode these values before adding any write path. |
+| GST treatment resolved | Ready for next implementation | Both planned ProductCodes use standard import GST treatment: `is_gst_applicable=True`, `gst_rate=0.1000`, `gst_treatment=STANDARD`. |
+| Miscellaneous recoveries | Deferred | Intentionally excluded from apply mode. |
+| Broad `fsc` alias | Deferred | Intentionally excluded from apply mode. |
+| Generic `handling` alias | Deferred | Intentionally excluded from apply mode. |
+| Conflict protection | Required for Phase 13.1H | Apply mode must refuse to run if ProductCode or ChargeAlias conflicts are present. |
+| Placeholder protection | Required for Phase 13.1H | Apply mode must refuse to run if any planned GL field still starts with `TBD`. |
+| Data mutation scope | Required for Phase 13.1H | Additive ProductCode and ChargeAlias creates only; no deletes, truncates, updates, resets, customer data, supplier data, migrations, or frontend changes. |
+
+Recommendation for Phase 13.1H:
+
+Phase 13.1H may add guarded apply mode only after the dry-run plan constants are updated to the approved GL/GST values in this section. The apply command should keep dry-run as the default, require an explicit `--apply`, run in a transaction, create ProductCodes before dependent ChargeAliases, skip exact existing records, and abort on conflicts, placeholder GL codes, or any non-deferred blocked decision.
