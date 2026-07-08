@@ -482,3 +482,47 @@ Recommended Phase 13.1E dry-run seed-plan scope:
 5. Do not overwrite existing aliases. Report existing scoped aliases as `skip_existing`.
 6. Report broad or ambiguous existing aliases, especially `fsc`, as `conflict_requires_review`.
 7. Keep apply mode out of Phase 13.1E unless a later phase explicitly approves writes.
+
+## 14. Phase 13.1F dry-run seed plan review
+
+Phase 13.1F reran the merged dry-run seed plan from latest `main`. The command remained read-only: no apply mode, no database writes, no migrations, no frontend changes, and no ProductCode or ChargeAlias creation.
+
+Commands run:
+
+```bash
+python backend/manage.py air_freight_pilot_seed_plan --format json
+python backend/manage.py air_freight_pilot_seed_plan --format text
+```
+
+Reviewed plan status:
+
+- Status: `blocked`
+- ProductCode actions: create `2`, reuse `0`, conflict `0`
+- ChargeAlias actions after hardening: create `14`, create after planned ProductCode `2`, skip `0`, blocked `0`, conflict `0`
+- Blocked business decisions: `3`
+- Warnings: `4`
+
+Safety findings:
+
+- The dry-run command is safe to keep as a prerequisite for future apply-mode work because it has no write path and no `--apply` flag.
+- The plan correctly limits ProductCode create candidates to `IMP-HANDLE-DEST` and `IMP-STORAGE-DEST`.
+- The plan does not create miscellaneous recoveries.
+- The plan does not create broad ambiguous aliases such as generic `fsc` or generic `handling`.
+- Phase 13.1F hardened alias planning so aliases targeting ProductCodes planned in the same dry-run are reported as `create_after_product_code`, not as false blocked items.
+- GL values remain placeholders: `TBD-REV` and `TBD-COS` for both ProductCode candidates.
+
+Remaining blockers before apply mode:
+
+1. Replace placeholder GL revenue and cost codes for `IMP-HANDLE-DEST`.
+2. Replace placeholder GL revenue and cost codes for `IMP-STORAGE-DEST`.
+3. Confirm GST treatment and GST applicability for both import destination handling and import destination storage.
+4. Keep `misc_recoveries` manual-review-only until specific commercial categories are approved.
+5. Keep broad `fsc ANY/ANY` and generic `handling` out of apply scope unless business signs off a deterministic scoped mapping.
+
+Recommended Phase 13.1G scope:
+
+1. Add an apply-mode command only after GL and GST values are approved.
+2. Keep dry-run as the default behavior and require an explicit `--apply` flag for writes.
+3. Apply ProductCodes before dependent ChargeAliases in one transaction.
+4. Refuse to apply if the current dry-run output has conflicts, blocked business decisions, placeholder GL codes, or validation errors.
+5. Preserve existing ProductCodes and ChargeAliases; use additive creates only and skip existing scoped aliases.

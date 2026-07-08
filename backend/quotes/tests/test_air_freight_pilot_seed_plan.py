@@ -61,11 +61,11 @@ class AirFreightPilotSeedPlanCommandTests(TestCase):
         self.assertEqual(action["action"], "conflict")
         self.assertIn("already belongs", action["reason"])
 
-    def test_alias_actions_block_until_target_product_code_exists(self):
+    def test_alias_actions_track_planned_product_code_dependency(self):
         payload = self.payload()
         action = self.alias_action(payload, "import handling", "IMPORT", "DESTINATION")
-        self.assertEqual(action["action"], "blocked")
-        self.assertIn("IMP-HANDLE-DEST", action["reason"])
+        self.assertEqual(action["action"], "create_after_product_code")
+        self.assertEqual(action["depends_on_product_code"], "IMP-HANDLE-DEST")
 
     def test_alias_actions_skip_existing_scoped_alias(self):
         product = self.product(1001, "EXP-FRT-AIR", ProductCode.DOMAIN_EXPORT)

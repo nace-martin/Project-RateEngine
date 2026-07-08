@@ -71,7 +71,12 @@ BLOCKED_DECISIONS = [
 
 def build_air_freight_pilot_seed_plan() -> dict[str, Any]:
     product_actions = [_product_code_action(row) for row in PRODUCT_CODE_CANDIDATES]
-    alias_actions = [_alias_action(*row) for row in ALIAS_CANDIDATES]
+    planned_product_codes = {
+        action["candidate"]["code"]
+        for action in product_actions
+        if action["action"] == "create"
+    }
+    alias_actions = [_alias_action(*row, planned_product_codes) for row in ALIAS_CANDIDATES]
     conflicts = [item for item in product_actions + alias_actions if item["action"] == "conflict"]
     warnings = _placeholder_warnings(product_actions)
     plan = {
@@ -81,6 +86,7 @@ def build_air_freight_pilot_seed_plan() -> dict[str, Any]:
             "product_code_reuse": _count(product_actions, "reuse"),
             "product_code_conflict": _count(product_actions, "conflict"),
             "charge_alias_create": _count(alias_actions, "create"),
+            "charge_alias_create_after_product_code": _count(alias_actions, "create_after_product_code"),
             "charge_alias_skip": _count(alias_actions, "skip_existing"),
             "charge_alias_blocked": _count(alias_actions, "blocked"),
             "charge_alias_conflict": _count(alias_actions, "conflict"),
@@ -106,7 +112,7 @@ def render_air_freight_pilot_seed_plan_text(plan: dict[str, Any]) -> str:
     lines = [
         f"Air Freight pilot seed plan: {plan['status']}",
         f"ProductCodes create/reuse/conflict: {summary['product_code_create']}/{summary['product_code_reuse']}/{summary['product_code_conflict']}",
-        f"ChargeAliases create/skip/blocked/conflict: {summary['charge_alias_create']}/{summary['charge_alias_skip']}/{summary['charge_alias_blocked']}/{summary['charge_alias_conflict']}",
+        f"ChargeAliases create/dependent/skip/blocked/conflict: {summary['charge_alias_create']}/{summary['charge_alias_create_after_product_code']}/{summary['charge_alias_skip']}/{summary['charge_alias_blocked']}/{summary['charge_alias_conflict']}",
         f"Blocked: {summary['blocked_count']}",
         f"Warnings: {summary['warning_count']}",
         "",
@@ -132,7 +138,13 @@ def _product_code_action(candidate: dict[str, Any]) -> dict[str, Any]:
     return {"action": "create", "candidate": candidate, "validation": validation}
 
 
-def _alias_action(alias_text: str, mode_scope: str, direction_scope: str, product_code_code: str) -> dict[str, Any]:
+def _alias_action(
+    alias_text: str,
+    mode_scope: str,
+    direction_scope: str,
+    product_code_code: str,
+    planned_product_codes: set[str],
+) -> dict[str, Any]:
     normalized = ChargeAlias.normalize_alias_text_value(alias_text)
     target = ProductCode.objects.filter(code=product_code_code).first()
     action = {
@@ -144,6 +156,12 @@ def _alias_action(alias_text: str, mode_scope: str, direction_scope: str, produc
         "product_code": product_code_code,
     }
     if not target:
+        if product_code_code in planned_product_codes:
+            return {
+                **action,
+                "action": "create_after_product_code",
+                "depends_on_product_code": product_code_code,
+            }
         return {**action, "action": "blocked", "reason": f"target ProductCode {product_code_code} does not exist yet"}
 
     exact = ChargeAlias.objects.filter(
