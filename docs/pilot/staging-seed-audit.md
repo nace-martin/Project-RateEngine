@@ -322,3 +322,67 @@ Interpretation:
 - `not_ready`: at least one required item is missing or at least one conflict needs human resolution.
 
 Use the JSON output for staging sign-off evidence. Use text output only for quick operator checks.
+
+## 12. Phase 13.1C actual audit result and remediation checklist
+
+Phase 13.1C ran the Phase 13.1B read-only audit command against the current environment. No seed writes, migrations, frontend changes, production code changes, or database mutations were performed.
+
+Commands run:
+
+```bash
+python backend/manage.py air_freight_pilot_seed_audit --format json
+python backend/manage.py air_freight_pilot_seed_audit --format text
+```
+
+Actual audit summary:
+
+- Status: `not_ready`
+- Missing items: `10`
+- Conflicts: `8`
+- Warnings: `0`
+- Hierarchy readiness: canonical organization, operating entities, branches, and departments are present.
+- Roles and membership readiness: required roles are present; active and primary memberships are complete in the audited environment.
+- Currency readiness: `PGK`, `USD`, `AUD`, `SGD`, and `EUR` are present.
+- Location readiness: `POM`, `LAE`, `BNE`, `SYD`, `SIN`, `HKG`, `NRT`, `LAX`, and `AKL` have matching location coverage.
+- Pilot/demo data: no obvious pilot/demo company records were reported; output contains counts only and no sensitive customer details.
+
+Issue classification:
+
+| Section | Item | Classification | Pilot impact | Remediation |
+| --- | --- | --- | --- | --- |
+| ProductCodes | `import_handling` | Missing canonical seed data | Blocker if import handling charges are in pilot supplier replies | Add or map a reviewed ProductCode using current ProductCode fields only. |
+| ProductCodes | `storage_warehouse` | Missing canonical seed data | Blocker if storage or warehouse recoveries are in pilot supplier replies | Add or map a reviewed ProductCode using current ProductCode fields only. |
+| ProductCodes | `misc_recoveries` | Missing canonical seed data | Blocker for unmatched recoveries that must be quoted rather than rejected | Add or map a reviewed miscellaneous recovery ProductCode. |
+| ChargeAlias | `freight` | Missing canonical seed data | Blocker for common supplier freight labels | Add a reviewed alias after ProductCode mapping is confirmed. |
+| ChargeAlias | `screening` | Missing canonical seed data | Blocker for security screening labels | Add a reviewed alias after ProductCode mapping is confirmed. |
+| ChargeAlias | `awb` | Missing canonical seed data | Blocker for AWB/document labels | Add a reviewed alias after ProductCode mapping is confirmed. |
+| ChargeAlias | `handling` | Missing canonical seed data | Blocker for generic handling labels | Add only with scoped direction/mode rules, or leave for manual review if ambiguous. |
+| ChargeAlias | `import handling` | Missing canonical seed data | Blocker for import handling labels | Add after `import_handling` ProductCode mapping exists. |
+| ChargeAlias | `export handling` | Missing canonical seed data | Blocker for export handling labels | Add a reviewed alias to the confirmed export handling ProductCode. |
+| ChargeAlias | `storage` | Missing canonical seed data | Blocker for storage labels | Add after `storage_warehouse` ProductCode mapping exists. |
+| ProductCodes | Air Freight has multiple possible ProductCodes | Duplicate/conflict | Blocker for automated mapping until direction/domain mapping is confirmed | Confirm canonical mapping for export, import, and domestic air freight. |
+| ProductCodes | Fuel surcharge has multiple possible ProductCodes | Duplicate/conflict | Blocker for automated mapping until charge scope is confirmed | Confirm whether pickup/cartage fuel codes are separate from main air freight fuel surcharge. |
+| ProductCodes | Security surcharge has multiple possible ProductCodes | Duplicate/conflict | Blocker for automated mapping until security vs screening semantics are confirmed | Confirm canonical security/screening ProductCode mapping by direction. |
+| ProductCodes | AWB / documentation has multiple possible ProductCodes | Duplicate/conflict | Blocker for automated mapping until AWB and documentation semantics are confirmed | Decide whether AWB and documentation remain separate codes or share aliases by scope. |
+| ProductCodes | Customs pass-through has multiple possible ProductCodes | Duplicate/conflict | Blocker where customs pass-through charges appear in pilot replies | Confirm export/import/origin/destination customs mapping. |
+| ChargeAlias | `air freight` maps to multiple ProductCodes | Duplicate/conflict | Blocker unless scoped aliases are intended and deterministic | Review existing scope fields before adding or changing aliases. |
+| ChargeAlias | `documentation fee` maps to multiple ProductCodes | Duplicate/conflict | Blocker unless scoped aliases are intended and deterministic | Review existing scope fields before adding or changing aliases. |
+| ChargeAlias | `terminal fee` maps to multiple ProductCodes | Duplicate/conflict | Blocker unless scoped aliases are intended and deterministic | Review existing scope fields before adding or changing aliases. |
+| Locations | `LAX` location exists without airport-backed match | Harmless warning | Non-blocking unless pilot validation requires an Airport row for LAX | Leave as-is for Phase 13.1C; review in Phase 13.1D only if airport-backed validation is required. |
+| Pilot data | No obvious pilot/demo company records | Harmless warning | Non-blocking for reference-data readiness | Keep anonymized pilot customer/supplier pack separate from reference-data seeding. |
+
+Blocker list before Air Freight pilot UAT:
+
+- ProductCode coverage is missing for `import_handling`, `storage_warehouse`, and `misc_recoveries`.
+- ChargeAlias coverage is missing for `freight`, `screening`, `awb`, `handling`, `import handling`, `export handling`, and `storage`.
+- ProductCode conflicts must be resolved for Air Freight, Fuel surcharge, Security surcharge, AWB / documentation, and Customs pass-through before any seed apply command is added.
+- ChargeAlias conflicts for `air freight`, `documentation fee`, and `terminal fee` must be reviewed against existing scope fields before new aliases are added.
+
+Recommended Phase 13.1D scope:
+
+1. Produce a reviewed canonical mapping table for each ambiguous ProductCode coverage bucket, including domain, direction, unit, and existing code reuse decision.
+2. Add a dry-run-only seed plan first for missing ProductCodes and ChargeAliases; do not add write mode until the plan output is reviewed.
+3. Use additive, idempotent logic only after approval. Never delete, truncate, overwrite, or reset staging/production-like data.
+4. Scope ChargeAliases by current model fields such as mode and direction where needed; avoid broad generic aliases for ambiguous labels.
+5. Keep pilot customers and suppliers in a separate anonymized data pack. Do not mix customer/supplier sample data with reference-data seeding.
+6. Treat the LAX airport-backed gap as optional unless the pilot workflow requires an Airport row instead of Location-only coverage.
