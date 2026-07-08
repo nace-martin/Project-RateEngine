@@ -6,6 +6,7 @@ from django.test import TestCase
 
 from accounts.models import Role, UserMembership
 from core.models import Airport, City, Country, Currency, Location
+from core.tests.helpers import create_location
 from parties.models import Branch, Company, Department, OperatingEntity, Organization
 from pricing_v4.models import ChargeAlias, ProductCode
 
@@ -90,7 +91,7 @@ class AirFreightPilotSeedAuditCommandTests(TestCase):
         country = Country.objects.create(code="PG", name="Papua New Guinea", currency=currency)
         city = City.objects.create(country=country, name="Port Moresby")
         airport = Airport.objects.create(iata_code="POM", name="Jacksons International", city=city)
-        Location.objects.create(code="POM", name="Port Moresby", kind=Location.Kind.AIRPORT, country=country, city=city, airport=airport)
+        create_location(code="POM", name="Port Moresby", kind=Location.Kind.AIRPORT, country=country, city=city, airport=airport)
         product = self.product(1001, "AIRFRT", "Air Freight")
         ChargeAlias.objects.create(
             alias_text="air freight",
