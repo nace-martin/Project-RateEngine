@@ -267,3 +267,58 @@ python backend/manage.py air_freight_pilot_seed_audit --format json
 ```
 
 Apply-mode commands must not be run in staging until the dry-run output has been reviewed and explicitly approved.
+
+## 11. Phase 13.1B read-only audit command
+
+Phase 13.1B adds a dedicated read-only management command:
+
+```bash
+python backend/manage.py air_freight_pilot_seed_audit --format json
+python backend/manage.py air_freight_pilot_seed_audit --format text
+```
+
+The command does not create, update, delete, truncate, or overwrite database records. It has no apply mode, no reset mode, and no seed mode.
+
+Sample JSON shape:
+
+```json
+{
+  "status": "not_ready",
+  "summary": {
+    "missing_count": 3,
+    "conflict_count": 1,
+    "warning_count": 0
+  },
+  "hierarchy": {},
+  "roles_memberships": {},
+  "product_codes": {},
+  "charge_aliases": {},
+  "locations": {},
+  "currencies": {},
+  "pilot_data": {},
+  "conflicts": [
+    {
+      "section": "product_codes",
+      "detail": "Air Freight has 2 possible ProductCodes; review mapping."
+    }
+  ],
+  "missing": [
+    {
+      "section": "charge_aliases",
+      "item": "fsc"
+    }
+  ],
+  "warnings": [],
+  "recommended_next_actions": [
+    "Review missing reference data before Air Freight UAT."
+  ]
+}
+```
+
+Interpretation:
+
+- `ready`: no missing required reference data, no conflicts, and no warnings.
+- `ready_with_warnings`: required reference data is present, but non-blocking membership/model warnings need review.
+- `not_ready`: at least one required item is missing or at least one conflict needs human resolution.
+
+Use the JSON output for staging sign-off evidence. Use text output only for quick operator checks.
