@@ -602,3 +602,80 @@ Expected Phase 13.1H apply scope:
 | ProductCodes | `IMP-HANDLE-DEST`, `IMP-STORAGE-DEST` |
 | ChargeAliases | Approved scoped aliases only, including dependent `import handling` and `storage` after ProductCode creation |
 | Excluded | Customer data, supplier data, miscellaneous recoveries, broad `fsc`, generic `handling`, migrations, frontend changes |
+
+## 17. Phase 13.1I apply and readiness verification
+
+Phase 13.1I was run from latest `main` after Phase 13.1H merged. No migrations, frontend changes, customer data, or supplier data were touched. The safe environment already contained the Phase 13.1H applied ProductCodes and ChargeAliases from prior guarded verification, so the Phase 13.1I apply run was idempotent.
+
+Pre-apply dry-run result:
+
+| Field | Count |
+| --- | ---: |
+| Status | `ready_for_apply` |
+| Apply blockers | 0 |
+| ProductCode create | 0 |
+| ProductCode reuse | 2 |
+| ProductCode conflict | 0 |
+| ChargeAlias create | 0 |
+| ChargeAlias create after ProductCode | 0 |
+| ChargeAlias skip existing | 16 |
+| ChargeAlias blocked | 0 |
+| ChargeAlias conflict | 0 |
+| Warnings | 0 |
+
+First Phase 13.1I apply result:
+
+| Field | Count |
+| --- | ---: |
+| Status | `applied` |
+| ProductCodes created | 0 |
+| ChargeAliases created | 0 |
+| Apply blockers | 0 |
+
+Post-apply dry-run result:
+
+| Field | Count |
+| --- | ---: |
+| Status | `ready_for_apply` |
+| ProductCode create | 0 |
+| ProductCode reuse | 2 |
+| ChargeAlias create | 0 |
+| ChargeAlias skip existing | 16 |
+| Apply blockers | 0 |
+
+Post-apply audit result:
+
+| Field | Count |
+| --- | ---: |
+| Status | `not_ready` |
+| Missing | 2 |
+| Conflicts | 14 |
+| Warnings | 0 |
+| ProductCode missing coverage | 1 |
+| ChargeAlias missing coverage | 1 |
+| Hierarchy missing coverage | 0 |
+| Currency missing coverage | 0 |
+| Location missing coverage | 0 |
+
+Idempotency result:
+
+| Field | Count |
+| --- | ---: |
+| Status | `applied` |
+| ProductCodes created | 0 |
+| ChargeAliases created | 0 |
+| ProductCode reuse | 2 |
+| ChargeAlias skip existing | 16 |
+
+Remaining blockers:
+
+| Section | Item | Notes |
+| --- | --- | --- |
+| ProductCodes | `misc_recoveries` | Intentionally deferred by Phase 13.1G; do not seed until specific recovery categories and accounting treatment are approved. |
+| ChargeAlias | `handling` | Intentionally deferred by Phase 13.1G; generic handling remains ambiguous and should stay manual-review-only. |
+| ProductCode conflicts | 6 multi-match coverage groups | Air Freight, Fuel surcharge, Security surcharge, AWB/documentation, Destination handling, and Customs pass-through each have multiple possible ProductCodes and still require scoped interpretation. |
+| ChargeAlias conflicts | 8 multi-map aliases | `air freight`, `freight`, `fuel surcharge`, `security surcharge`, `screening`, `awb`, `documentation fee`, and `terminal fee` map to multiple ProductCodes by scope. |
+
+Audit correctness note:
+
+Phase 13.1I also corrected the audit coverage terms so `IMP-HANDLE-DEST` / `Import Destination Handling` satisfies the `import_handling` coverage check. After that correction, import handling is no longer reported missing.

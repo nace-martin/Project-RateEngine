@@ -33,7 +33,7 @@ PRODUCT_COVERAGE = [
     {"key": "security_surcharge", "label": "Security surcharge", "terms": ["security"]},
     {"key": "screening", "label": "Screening", "terms": ["screening"]},
     {"key": "awb_docs", "label": "AWB / documentation", "terms": ["awb", "documentation", "docs"]},
-    {"key": "import_handling", "label": "Import handling", "terms": ["import handling"]},
+    {"key": "import_handling", "label": "Import handling", "terms": ["import handling", "import destination handling"]},
     {"key": "export_handling", "label": "Export handling", "terms": ["export handling"]},
     {"key": "origin_handling", "label": "Origin handling", "terms": ["origin handling"]},
     {"key": "destination_handling", "label": "Destination handling", "terms": ["destination handling"]},
