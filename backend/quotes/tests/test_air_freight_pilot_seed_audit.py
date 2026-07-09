@@ -51,6 +51,23 @@ class AirFreightPilotSeedAuditCommandTests(TestCase):
         self.assertIn({"section": "product_codes", "item": "fuel_surcharge"}, payload["missing"])
         self.assertGreater(payload["product_codes"]["missing_count"], 0)
 
+    def test_import_destination_handling_covers_import_handling(self):
+        ProductCode.objects.create(
+            id=2042,
+            code="IMP-HANDLE-DEST",
+            description="Import Destination Handling",
+            domain=ProductCode.DOMAIN_IMPORT,
+            category=ProductCode.CATEGORY_HANDLING,
+            is_gst_applicable=True,
+            gst_rate="0.1000",
+            gst_treatment=ProductCode.GST_TREATMENT_STANDARD,
+            gl_revenue_code="4400",
+            gl_cost_code="5400",
+            default_unit=ProductCode.UNIT_SHIPMENT,
+        )
+        payload = self.payload()
+        self.assertTrue(payload["product_codes"]["coverage"]["import_handling"]["exists"])
+
     def test_missing_aliases_are_reported(self):
         payload = self.payload()
         self.assertIn({"section": "charge_aliases", "item": "fsc"}, payload["missing"])
