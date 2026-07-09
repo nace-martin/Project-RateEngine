@@ -679,3 +679,53 @@ Remaining blockers:
 Audit correctness note:
 
 Phase 13.1I also corrected the audit coverage terms so `IMP-HANDLE-DEST` / `Import Destination Handling` satisfies the `import_handling` coverage check. After that correction, import handling is no longer reported missing.
+
+## 18. Phase 13.1J readiness decision gate
+
+Phase 13.1J reviews the Phase 13.1I post-apply audit result and classifies remaining issues for Air Freight pilot UAT. This phase is docs-only: no code, migrations, frontend changes, customer/supplier data, or seed writes.
+
+Decision table:
+
+| Issue | Classification | UAT decision | Rationale |
+| --- | --- | --- | --- |
+| Missing `product_codes.misc_recoveries` | Acceptable manual-review item | Not a pilot blocker | Phase 13.1G intentionally deferred broad miscellaneous recoveries. UAT can proceed if unmatched miscellaneous labels remain manual-review-only and are not auto-priced. |
+| Missing `charge_aliases.handling` | Acceptable manual-review item | Not a pilot blocker | Generic `handling` is ambiguous across origin, destination, terminal, warehouse, and agent handling. UAT can proceed because explicit `export handling` and `import handling` aliases exist. |
+| ProductCode conflict: Air Freight multi-match | Acceptable manual-review item | Not a pilot blocker | Export, import, and domestic freight ProductCodes are expected to coexist. Scoped alias mappings distinguish them. |
+| ProductCode conflict: Fuel surcharge multi-match | Acceptable manual-review item | Not a pilot blocker | Fuel surcharge differs by export airline, import pickup, import destination cartage, and domestic fuel. Scoped mappings exist; broad `fsc` remains manual-review-only. |
+| ProductCode conflict: Security surcharge multi-match | Acceptable manual-review item | Not a pilot blocker | Export, import, and domestic security charges are separate commercial truths. Scoped aliases exist for the pilot paths. |
+| ProductCode conflict: AWB/documentation multi-match | Acceptable manual-review item | Not a pilot blocker | AWB and documentation charges are direction/scope-specific. Existing ambiguity is acceptable if review output preserves scoped ProductCode selection. |
+| ProductCode conflict: Destination handling multi-match | Acceptable manual-review item | Not a pilot blocker | Import destination handling and domestic destination handling both exist. They are separated by shipment type. |
+| ProductCode conflict: Customs pass-through multi-match | Future enhancement | Not a pilot blocker | Customs pass-through remains outside this Air Freight seed apply scope unless UAT scenarios explicitly require automatic customs recovery mapping. |
+| ChargeAlias conflict: `air freight` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | Existing scoped aliases separate export, import, and domestic freight. The blocker would be an unscoped automatic match, not the scoped rows themselves. |
+| ChargeAlias conflict: `freight` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | Phase 13.1H applied scoped freight aliases. UAT can proceed with scoped matching only. |
+| ChargeAlias conflict: `fuel surcharge` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | Scoped fuel surcharge aliases are expected. Broad fuel labels remain manual-review if scope cannot be inferred. |
+| ChargeAlias conflict: `security surcharge` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | Scoped security aliases are expected across export/import/domestic. |
+| ChargeAlias conflict: `screening` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | Export and import screening/security mappings are scoped by direction and mode. |
+| ChargeAlias conflict: `awb` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | AWB aliases are scoped by shipment mode. |
+| ChargeAlias conflict: `documentation fee` maps to multiple ProductCodes | Acceptable manual-review item | Not a pilot blocker | Documentation charges vary by direction and destination/origin scope. Manual review is acceptable for unscoped labels. |
+| ChargeAlias conflict: `terminal fee` maps to multiple ProductCodes | Future enhancement | Not a pilot blocker | Terminal fee ambiguity is outside the Phase 13.1H apply scope and can be handled manually during UAT. |
+
+Pilot go/no-go recommendation:
+
+Air Freight pilot UAT may proceed as a controlled go, despite the audit status remaining `not_ready`, because the remaining missing items are intentionally deferred and the conflicts are scope-aware ambiguity warnings rather than missing canonical records. UAT must keep manual review enabled for generic, broad, or unscoped labels, especially `misc_recoveries`, generic `handling`, broad `fsc`, generic terminal/documentation labels, and customs pass-through recoveries.
+
+True pilot blocker condition:
+
+UAT should stop if the application attempts to auto-price an unscoped ambiguous label to a ProductCode without manual review. Scoped aliases created by Phase 13.1H are acceptable; broad fallback matching is not.
+
+Remaining risk register:
+
+| Risk | Severity | Mitigation |
+| --- | --- | --- |
+| Unscoped supplier labels could resolve to the wrong ProductCode if future matching ignores mode/direction scope. | High | Keep scoped alias matching mandatory and route unresolved or broad labels to manual review. |
+| Miscellaneous recoveries may appear in pilot supplier inputs. | Medium | Do not auto-seed a catch-all ProductCode; record manual review decisions for later Phase 13.1K/13.1L mapping. |
+| Customs pass-through labels may be present but not fully classified for pilot automation. | Medium | Treat customs pass-through as manual review unless a scoped pilot scenario explicitly requires it. |
+| The audit command reports expected scoped multi-maps as conflicts. | Low | Keep the report conservative, but interpret these as acceptable manual-review items for UAT. A later phase can separate true conflicts from expected scoped variants. |
+| Existing broad `fsc` alias remains in data. | Medium | Do not broaden Phase 13.1H apply logic. Verify runtime matching chooses scoped aliases or manual review before broad `ANY/ANY`. |
+
+Recommended Phase 13.1K scope:
+
+1. Run a UAT preflight using representative Air Freight supplier labels and confirm scoped alias resolution behavior.
+2. Produce a manual-review playbook for `misc_recoveries`, generic `handling`, broad `fsc`, customs pass-through, terminal, and documentation edge cases.
+3. Add audit classification improvements so expected scoped multi-maps are reported separately from true conflicts.
+4. Do not add new seed writes unless UAT evidence identifies a specific missing scoped ProductCode or alias.
