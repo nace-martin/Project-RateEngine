@@ -143,3 +143,112 @@ The post-UAT decision must include:
 ## 10. Recommended Phase 13.1L scope
 
 Phase 13.1L should summarize UAT execution evidence and produce a defect/remediation decision pack. It should not add seed writes unless UAT produces a specific approved ProductCode or scoped ChargeAlias requirement.
+
+## 11. Phase 13.1L evidence and defect decision pack
+
+Phase 13.1L captures UAT evidence, classifies findings, and decides what must be fixed before pilot launch versus what can be deferred. This section is a decision pack only: no code changes, seed writes, migrations, or frontend changes.
+
+### Evidence capture method
+
+For each scenario in Section 4, capture one evidence record after the tester completes the flow. Evidence should be stored with the UAT issue, ticket, or shared pilot folder, then summarized in the post-UAT decision gate.
+
+Evidence buckets:
+
+| Bucket | Evidence examples | Required reviewer |
+| --- | --- | --- |
+| System evidence | Seed plan output, seed audit output, quote/envelope IDs, ProductCodes, aliases, warnings, final status | Admin/support |
+| User evidence | Tester notes, user actions, screenshots, unexpected behavior, usability findings | Sales operator or manager |
+| Reviewer/finance evidence | GST/GL review, currency checks, ProductCode acceptance, manual-review acceptance or rejection | Finance reviewer |
+
+### Evidence record template
+
+| Field | Value |
+| --- | --- |
+| Tester |  |
+| Date |  |
+| Scenario |  |
+| Quote/envelope ID |  |
+| ProductCodes used |  |
+| Aliases used |  |
+| Manual-review items triggered |  |
+| Warnings shown |  |
+| User actions |  |
+| Final status |  |
+| Pass/fail outcome |  |
+| Severity |  |
+| Recommended action |  |
+| Evidence bucket | System / User / Reviewer-Finance |
+| Owner |  |
+| Target decision | Go / Fix / Defer |
+
+### Defect severity definitions
+
+| Severity | Definition | Required action |
+| --- | --- | --- |
+| Blocker | Unsafe pricing, wrong ProductCode, wrong totals, finalization/RBAC failure, or finance rejection affecting pilot correctness | Fix before pilot launch; do not proceed until retested |
+| Fix before pilot | Flow can be completed, but issue creates meaningful operator risk, repeated manual workaround, or support burden | Fix before broader pilot use unless manager accepts a written workaround |
+| Manual-review acceptable | Issue is already within Phase 13.1J accepted manual-review scope and does not corrupt quote output | Proceed with documented manual-review handling |
+| Future enhancement | Issue is outside pilot-critical path and does not affect correctness or controlled UAT operation | Defer to later phase |
+
+### Pass/fail classification rules
+
+| Result | Classification rule |
+| --- | --- |
+| Pass | Expected ProductCodes or manual-review outcomes occur, totals are explainable, permissions hold, and finance accepts GST/GL treatment. |
+| Fail - blocker | Any blocker rule below is triggered. |
+| Fail - fix before pilot | No blocker occurs, but user cannot complete the scenario without an unacceptable workaround. |
+| Pass with manual review | The scenario completes after accepted manual review for broad or ambiguous labels. |
+| Defer | Finding is outside pilot scope and has no effect on quote correctness or launch readiness. |
+
+Clear blocker rules:
+
+- Unsafe ambiguous auto-pricing.
+- Wrong ProductCode mapping.
+- Materially wrong totals.
+- Finalization bypasses blockers.
+- Permission/RBAC failure.
+- GST/GL finance rejection.
+
+### Go/fix/defer decision table
+
+| Finding type | Decision | Notes |
+| --- | --- | --- |
+| Blocker severity finding | Fix | Must be corrected and retested before pilot launch. |
+| Multiple blocker findings in one scenario | Fix | Pause launch decision until root cause is understood. |
+| Fix-before-pilot finding with accepted workaround | Conditional go | Requires manager and finance acknowledgement. |
+| Manual-review acceptable finding | Go | Capture label and action taken; no seed change required. |
+| Future enhancement | Defer | Add to backlog only if it has a clear owner and business value. |
+| Finance rejection of GST/GL treatment | Fix | Treat as blocker for affected ProductCode or charge type. |
+| Unscoped ambiguous label manually reviewed correctly | Go | Confirms Phase 13.1J control is working. |
+
+### Pilot launch decision gate
+
+Use this gate after all required UAT scenarios have evidence records.
+
+| Gate item | Launch requirement |
+| --- | --- |
+| Scenario coverage | All required scenarios have evidence records. |
+| Blockers | Zero unresolved blocker findings. |
+| Fix-before-pilot findings | Resolved, or explicitly accepted by manager and finance with workaround. |
+| Manual-review findings | All accepted manual-review findings have labels and selected actions recorded. |
+| Finance sign-off | Finance accepts ProductCodes, GST/GL treatment, currency handling, and manual-review controls. |
+| Manager sign-off | Manager accepts workflow, reopen/finalization behavior, and residual risks. |
+| Support readiness | Admin/support has command outputs and issue list attached to the launch decision. |
+
+Launch recommendation values:
+
+| Recommendation | Use when |
+| --- | --- |
+| Proceed to pilot launch | Gate items pass and no unresolved blocker remains. |
+| Fix blockers | Any blocker remains unresolved or finance rejects a charge treatment. |
+| Proceed to deployment readiness | UAT passes and remaining items are manual-review acceptable or future enhancements. |
+| Defer enhancements | Findings are outside pilot correctness and can be scheduled after launch. |
+
+### Recommended Phase 13.1M path
+
+| UAT result | Phase 13.1M should |
+| --- | --- |
+| Blockers found | Fix blockers first, retest affected scenarios, and update this evidence pack. |
+| UAT passes with no blockers | Proceed to deployment readiness and pilot launch checklist confirmation. |
+| Only manual-review or enhancement findings remain | Defer enhancements, keep manual-review controls, and document backlog items. |
+| Finance rejects GST/GL/ProductCode treatment | Pause launch for affected charge type and create a focused remediation phase. |
