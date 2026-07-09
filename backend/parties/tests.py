@@ -3853,7 +3853,26 @@ class BackendScopedAccessAPITests(APITestCase):
         self.role_sales = Role.objects.create(code="phase9d-sales", name="Sales", is_system=True)
 
         self.org_a = Organization.objects.create(name="Phase 9D Org A", slug="phase-9d-org-a")
-        self.branch_a = Branch.objects.create(organization=self.org_a, code="P9A", name="Phase 9D A")
+        self.operating_entity_a = OperatingEntity.objects.create(
+            organization=self.org_a,
+            code="P9PNG",
+            name="Phase 9D PNG",
+            slug="phase-9d-png",
+            country_code="PG",
+        )
+        self.operating_entity_b = OperatingEntity.objects.create(
+            organization=self.org_a,
+            code="P9AU",
+            name="Phase 9D Australia",
+            slug="phase-9d-australia",
+            country_code="AU",
+        )
+        self.branch_a = Branch.objects.create(
+            organization=self.org_a,
+            operating_entity=self.operating_entity_a,
+            code="P9A",
+            name="Phase 9D A",
+        )
         self.department_a = Department.objects.create(
             organization=self.org_a,
             branch=self.branch_a,
@@ -3866,12 +3885,29 @@ class BackendScopedAccessAPITests(APITestCase):
             code="SEA",
             name="Sea Freight",
         )
-        self.branch_a_other = Branch.objects.create(organization=self.org_a, code="P9A2", name="Phase 9D A2")
+        self.branch_a_other = Branch.objects.create(
+            organization=self.org_a,
+            operating_entity=self.operating_entity_a,
+            code="P9A2",
+            name="Phase 9D A2",
+        )
         self.department_a_other_branch = Department.objects.create(
             organization=self.org_a,
             branch=self.branch_a_other,
             code="CUS",
             name="Customs",
+        )
+        self.branch_a_other_operating_entity = Branch.objects.create(
+            organization=self.org_a,
+            operating_entity=self.operating_entity_b,
+            code="P9AU",
+            name="Phase 9D AU",
+        )
+        self.department_a_other_operating_entity = Department.objects.create(
+            organization=self.org_a,
+            branch=self.branch_a_other_operating_entity,
+            code="TRN",
+            name="Transport",
         )
         self.org_b = Organization.objects.create(name="Phase 9D Org B", slug="phase-9d-org-b")
         self.branch_b = Branch.objects.create(organization=self.org_b, code="P9B", name="Phase 9D B")
@@ -3899,6 +3935,12 @@ class BackendScopedAccessAPITests(APITestCase):
             self.branch_a_other,
             self.department_a_other_branch,
         )
+        self.company_a_other_operating_entity = self._company(
+            "Phase 9D Customer A Other Operating Entity",
+            self.org_a,
+            self.branch_a_other_operating_entity,
+            self.department_a_other_operating_entity,
+        )
         self.company_b = self._company("Phase 9D Customer B", self.org_b, self.branch_b, self.department_b)
         self.company_unscoped = Company.objects.create(
             name="Phase 9D Manual Review Customer",
@@ -3908,6 +3950,10 @@ class BackendScopedAccessAPITests(APITestCase):
         self.contact_a = self._contact(self.company_a, "a")
         self.contact_a_other_department = self._contact(self.company_a_other_department, "a-other-department")
         self.contact_a_other_branch = self._contact(self.company_a_other_branch, "a-other-branch")
+        self.contact_a_other_operating_entity = self._contact(
+            self.company_a_other_operating_entity,
+            "a-other-operating-entity",
+        )
         self.contact_b = self._contact(self.company_b, "b")
         self.company_a_other = self._company("Phase 9D Customer A Other", self.org_a, self.branch_a, self.department_a)
         self.contact_a_other = self._contact(self.company_a_other, "a-other")
@@ -3920,6 +3966,13 @@ class BackendScopedAccessAPITests(APITestCase):
             self.branch_a,
             self.department_a_other,
         )
+        self.opportunity_a_other_branch = self._opportunity(
+            "Phase 9D Opportunity A Other Branch",
+            self.company_a_other_branch,
+            self.org_a,
+            self.branch_a_other,
+            self.department_a_other_branch,
+        )
         self.opportunity_b = self._opportunity("Phase 9D Opportunity B", self.company_b, self.org_b, self.branch_b, self.department_b)
         self.interaction_a = self._interaction(self.company_a, self.org_a, self.branch_a, self.department_a)
         self.interaction_a_other_department = self._interaction(
@@ -3927,6 +3980,12 @@ class BackendScopedAccessAPITests(APITestCase):
             self.org_a,
             self.branch_a,
             self.department_a_other,
+        )
+        self.interaction_a_other_branch = self._interaction(
+            self.company_a_other_branch,
+            self.org_a,
+            self.branch_a_other,
+            self.department_a_other_branch,
         )
         self.interaction_b = self._interaction(self.company_b, self.org_b, self.branch_b, self.department_b)
         self.task_a = self._task("Phase 9D Task A", self.company_a, self.org_a, self.branch_a, self.department_a)
@@ -3936,6 +3995,13 @@ class BackendScopedAccessAPITests(APITestCase):
             self.org_a,
             self.branch_a,
             self.department_a_other,
+        )
+        self.task_a_other_branch = self._task(
+            "Phase 9D Task A Other Branch",
+            self.company_a_other_branch,
+            self.org_a,
+            self.branch_a_other,
+            self.department_a_other_branch,
         )
         self.task_b = self._task("Phase 9D Task B", self.company_b, self.org_b, self.branch_b, self.department_b)
 
@@ -4029,18 +4095,21 @@ class BackendScopedAccessAPITests(APITestCase):
         self.assertIn(str(self.company_a.id), returned_ids)
         self.assertIn(str(self.company_a_other_department.id), returned_ids)
         self.assertIn(str(self.company_a_other_branch.id), returned_ids)
+        self.assertIn(str(self.company_a_other_operating_entity.id), returned_ids)
         self.assertIn(str(self.company_b.id), returned_ids)
         self.assertIn(str(self.company_unscoped.id), returned_ids)
 
     def test_scoped_manager_can_access_in_scope_customer(self):
         self.client.force_authenticate(user=self.manager)
 
-        response = self.client.get(f"/api/v3/customers/{self.company_a.id}/")
+        response = self.client.get(f"/api/v3/customers/{self.company_a_other_branch.id}/")
+        other_operating_entity = self.client.get(f"/api/v3/customers/{self.company_a_other_operating_entity.id}/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["id"], str(self.company_a.id))
+        self.assertEqual(response.data["id"], str(self.company_a_other_branch.id))
+        self.assertEqual(other_operating_entity.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_scoped_user_list_excludes_out_of_scope_and_unscoped_customers(self):
+    def test_scoped_user_list_includes_same_operating_entity_and_excludes_out_of_scope_customers(self):
         self.client.force_authenticate(user=self.sales)
 
         response = self.client.get("/api/v3/customers/")
@@ -4049,7 +4118,8 @@ class BackendScopedAccessAPITests(APITestCase):
         returned_ids = self._ids(response)
         self.assertIn(str(self.company_a.id), returned_ids)
         self.assertIn(str(self.company_a_other_department.id), returned_ids)
-        self.assertNotIn(str(self.company_a_other_branch.id), returned_ids)
+        self.assertIn(str(self.company_a_other_branch.id), returned_ids)
+        self.assertNotIn(str(self.company_a_other_operating_entity.id), returned_ids)
         self.assertNotIn(str(self.company_b.id), returned_ids)
         self.assertNotIn(str(self.company_unscoped.id), returned_ids)
 
@@ -4060,23 +4130,25 @@ class BackendScopedAccessAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_scoped_user_can_retrieve_same_branch_customer_from_other_department(self):
+    def test_scoped_user_can_retrieve_same_operating_entity_customer_from_other_branch(self):
         self.client.force_authenticate(user=self.sales)
 
-        response = self.client.get(f"/api/v3/customers/{self.company_a_other_department.id}/")
+        response = self.client.get(f"/api/v3/customers/{self.company_a_other_branch.id}/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["id"], str(self.company_a_other_department.id))
+        self.assertEqual(response.data["id"], str(self.company_a_other_branch.id))
 
-    def test_customer_detail_uses_branch_visible_customer_scope(self):
+    def test_customer_detail_uses_operating_entity_visible_customer_scope(self):
         self.client.force_authenticate(user=self.sales)
 
-        response = self.client.get(f"/api/v3/customer-details/{self.company_a_other_department.id}/")
-        other_branch = self.client.get(f"/api/v3/customer-details/{self.company_a_other_branch.id}/")
+        response = self.client.get(f"/api/v3/customer-details/{self.company_a_other_branch.id}/")
+        other_operating_entity = self.client.get(
+            f"/api/v3/customer-details/{self.company_a_other_operating_entity.id}/"
+        )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["id"], str(self.company_a_other_department.id))
-        self.assertEqual(other_branch.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["id"], str(self.company_a_other_branch.id))
+        self.assertEqual(other_operating_entity.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_company_selector_filters_out_of_scope_companies(self):
         self.client.force_authenticate(user=self.sales)
@@ -4087,7 +4159,8 @@ class BackendScopedAccessAPITests(APITestCase):
         returned_ids = self._ids(response)
         self.assertIn(str(self.company_a.id), returned_ids)
         self.assertIn(str(self.company_a_other_department.id), returned_ids)
-        self.assertNotIn(str(self.company_a_other_branch.id), returned_ids)
+        self.assertIn(str(self.company_a_other_branch.id), returned_ids)
+        self.assertNotIn(str(self.company_a_other_operating_entity.id), returned_ids)
         self.assertNotIn(str(self.company_b.id), returned_ids)
 
     def test_contact_by_company_endpoint_checks_parent_company_scope(self):
@@ -4097,14 +4170,21 @@ class BackendScopedAccessAPITests(APITestCase):
         same_branch_other_department = self.client.get(
             f"/api/v3/parties/companies/{self.company_a_other_department.id}/contacts/"
         )
-        other_branch = self.client.get(f"/api/v3/parties/companies/{self.company_a_other_branch.id}/contacts/")
+        same_operating_entity_other_branch = self.client.get(
+            f"/api/v3/parties/companies/{self.company_a_other_branch.id}/contacts/"
+        )
+        other_operating_entity = self.client.get(
+            f"/api/v3/parties/companies/{self.company_a_other_operating_entity.id}/contacts/"
+        )
         out_of_scope = self.client.get(f"/api/v3/parties/companies/{self.company_b.id}/contacts/")
 
         self.assertEqual(in_scope.status_code, status.HTTP_200_OK)
         self.assertEqual(self._ids(in_scope), {str(self.contact_a.id)})
         self.assertEqual(same_branch_other_department.status_code, status.HTTP_200_OK)
         self.assertEqual(self._ids(same_branch_other_department), {str(self.contact_a_other_department.id)})
-        self.assertEqual(other_branch.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(same_operating_entity_other_branch.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._ids(same_operating_entity_other_branch), {str(self.contact_a_other_branch.id)})
+        self.assertEqual(other_operating_entity.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(out_of_scope.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_crm_viewsets_filter_and_deny_direct_out_of_scope_ids(self):
@@ -4119,12 +4199,15 @@ class BackendScopedAccessAPITests(APITestCase):
         self.assertEqual(task_list.status_code, status.HTTP_200_OK)
         self.assertIn(str(self.opportunity_a.id), self._ids(opportunity_list))
         self.assertNotIn(str(self.opportunity_a_other_department.id), self._ids(opportunity_list))
+        self.assertNotIn(str(self.opportunity_a_other_branch.id), self._ids(opportunity_list))
         self.assertNotIn(str(self.opportunity_b.id), self._ids(opportunity_list))
         self.assertIn(str(self.interaction_a.id), self._ids(interaction_list))
         self.assertNotIn(str(self.interaction_a_other_department.id), self._ids(interaction_list))
+        self.assertNotIn(str(self.interaction_a_other_branch.id), self._ids(interaction_list))
         self.assertNotIn(str(self.interaction_b.id), self._ids(interaction_list))
         self.assertIn(str(self.task_a.id), self._ids(task_list))
         self.assertNotIn(str(self.task_a_other_department.id), self._ids(task_list))
+        self.assertNotIn(str(self.task_a_other_branch.id), self._ids(task_list))
         self.assertNotIn(str(self.task_b.id), self._ids(task_list))
 
         self.assertEqual(
@@ -4132,11 +4215,23 @@ class BackendScopedAccessAPITests(APITestCase):
             status.HTTP_404_NOT_FOUND,
         )
         self.assertEqual(
+            self.client.get(f"/api/v3/crm/opportunities/{self.opportunity_a_other_branch.id}/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
             self.client.get(f"/api/v3/crm/interactions/{self.interaction_a_other_department.id}/").status_code,
             status.HTTP_404_NOT_FOUND,
         )
         self.assertEqual(
+            self.client.get(f"/api/v3/crm/interactions/{self.interaction_a_other_branch.id}/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
             self.client.get(f"/api/v3/crm/tasks/{self.task_a_other_department.id}/").status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/v3/crm/tasks/{self.task_a_other_branch.id}/").status_code,
             status.HTTP_404_NOT_FOUND,
         )
         self.assertEqual(
