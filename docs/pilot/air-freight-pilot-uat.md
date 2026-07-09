@@ -252,3 +252,58 @@ Launch recommendation values:
 | UAT passes with no blockers | Proceed to deployment readiness and pilot launch checklist confirmation. |
 | Only manual-review or enhancement findings remain | Defer enhancements, keep manual-review controls, and document backlog items. |
 | Finance rejects GST/GL/ProductCode treatment | Pause launch for affected charge type and create a focused remediation phase. |
+
+## 12. Phase 13.1M controlled UAT execution evidence
+
+Status: Pending live UAT execution.
+
+No real UAT records were provided for Phase 13.1M. The tables below are ready-to-fill evidence logs and must not be treated as passed evidence until tester, quote/envelope, system output, and reviewer fields are completed.
+
+### UAT execution results
+
+| Scenario ID | Scenario | Tester | Date | Quote/envelope ID | Expected result | Actual result | ProductCodes used | Aliases used | Manual-review items triggered | Warnings shown | Final status | Outcome | Severity | Recommended action |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AF-UAT-01 | Export airport-to-airport freight | Pending | Pending | Pending | Export Air Freight quote resolves scoped freight, fuel, screening, and AWB/documentation charges; totals are explainable; finalization guardrails remain active. | Pending live UAT execution | Pending; expected export Air Freight, fuel surcharge, screening, AWB/docs ProductCodes as applicable | Pending; expected freight, fuel surcharge, screening, awb as applicable | Pending; broad or conflicting labels must require manual review | Pending | Pending | Pending | Pending | Execute scenario and attach system, user, and reviewer evidence. |
+| AF-UAT-02 | Import airport-to-door destination handling | Pending | Pending | Pending | Import Air Freight quote resolves destination handling and storage where present; destination handling does not map to an origin/export code. | Pending live UAT execution | Pending; expected import handling and storage/warehouse ProductCodes as applicable | Pending; expected import handling and storage as applicable | Pending; uncertain destination labels must require manual review | Pending | Pending | Pending | Pending | Execute scenario and confirm ProductCode mapping before launch decision. |
+| AF-UAT-03 | Fuel surcharge ambiguity | Pending | Pending | Pending | Scoped fuel surcharge labels resolve only when unambiguous; broad `fsc` or mixed-scope labels require manual review. | Pending live UAT execution | Pending; expected scoped fuel surcharge ProductCode only when direction/scope is clear | Pending; expected fuel surcharge or manually reviewed broad label | Pending; broad `fsc` must not auto-price | Pending | Pending | Pending | Pending | Execute ambiguity test and verify no unsafe broad-label auto-pricing. |
+| AF-UAT-04 | Generic handling ambiguity | Pending | Pending | Pending | Generic handling labels do not auto-price without direction/scope; reviewer selects the correct handling treatment manually. | Pending live UAT execution | Pending; no automatic ProductCode expected for generic handling | Pending; expected handling | Pending; generic handling must require manual review | Pending | Pending | Pending | Pending | Execute scenario and record selected manual-review action. |
+| AF-UAT-05 | Miscellaneous recovery | Pending | Pending | Pending | Miscellaneous recovery remains outside automatic seed scope and is routed to manual review or paused charge handling. | Pending live UAT execution | Pending; no automatic miscellaneous recoveries ProductCode expected | Pending | Pending; miscellaneous recovery must require manual review | Pending | Pending | Pending | Pending | Execute scenario and decide whether to proceed with manual review or pause the charge type. |
+| AF-UAT-06 | Customs pass-through edge | Pending | Pending | Pending | Customs-related pass-through is not auto-priced unless a scoped, approved ProductCode is selected; uncertain charges require manual review. | Pending live UAT execution | Pending; expected manually selected customs pass-through ProductCode only if approved | Pending | Pending; customs edge cases must require manual review | Pending | Pending | Pending | Pending | Execute scenario and capture finance acceptance or rejection. |
+| AF-UAT-07 | Documentation/AWB ambiguity | Pending | Pending | Pending | AWB/documentation labels resolve only when scope is clear; terminal or documentation conflicts are held for manual review. | Pending live UAT execution | Pending; expected scoped AWB/docs ProductCode where clear | Pending; expected awb, documentation fee, terminal fee as applicable | Pending; documentation or terminal conflicts must require manual review | Pending | Pending | Pending | Pending | Execute scenario and confirm conflict handling. |
+| AF-UAT-08 | Review finalization guardrails | Pending | Pending | Pending | Finalization is blocked when required blockers remain and succeeds only after allowed review outcomes are complete. | Pending live UAT execution | Not applicable | Not applicable | Pending; unresolved blockers must prevent finalization | Pending | Pending | Pending | Pending | Execute finalization attempts before and after reviewer decisions. |
+| AF-UAT-09 | Manager reopen | Pending | Pending | Pending | Manager can reopen an eligible finalized/reviewed item; unauthorized or out-of-scope users cannot bypass RBAC. | Pending live UAT execution | Not applicable | Not applicable | Pending | Pending | Pending | Pending | Pending | Execute manager and non-manager reopen paths and capture status codes/results. |
+| AF-UAT-10 | Finance review | Pending | Pending | Pending | Finance accepts ProductCodes, GST/GL treatment, currency handling, totals, and manual-review controls for pilot scope. | Pending live UAT execution | Pending; record all ProductCodes used in reviewed quote | Pending; record aliases used in reviewed quote | Pending; finance-rejected items are blockers or paused charge types | Pending | Pending | Pending | Pending | Execute finance review and record sign-off or rejection. |
+
+### Defect and remediation decisions
+
+| Issue | Severity | Affected scenario | Business risk | Recommended decision | Current status |
+| --- | --- | --- | --- | --- | --- |
+| Unsafe ambiguous auto-pricing | Blocker | AF-UAT-03, AF-UAT-04, AF-UAT-05, AF-UAT-07 | Wrong charge mapping or incorrect quote total can reach the customer. | Fix before pilot | Pending evidence |
+| Wrong ProductCode mapping | Blocker | AF-UAT-01, AF-UAT-02, AF-UAT-06, AF-UAT-07, AF-UAT-10 | Revenue, cost, GST, GL, or operational reporting may be incorrect. | Fix before pilot | Pending evidence |
+| Materially wrong totals | Blocker | AF-UAT-01, AF-UAT-02, AF-UAT-06, AF-UAT-10 | Pilot quote cannot be trusted for customer or finance review. | Fix before pilot | Pending evidence |
+| Finalization bypasses blockers | Blocker | AF-UAT-08 | Unreviewed or unsafe quote state can be locked as final. | Fix before pilot | Pending evidence |
+| Permission or RBAC failure | Blocker | AF-UAT-09 | Unauthorized user can reopen or act outside scope. | Fix before pilot | Pending evidence |
+| GST or GL finance rejection | Blocker | AF-UAT-10 | Finance cannot accept the ProductCode or charge treatment. | Pause affected charge type | Pending evidence |
+| Accepted broad-label manual review | Manual-review acceptable | AF-UAT-03, AF-UAT-04, AF-UAT-05, AF-UAT-06, AF-UAT-07 | Operator workload increases but quote correctness is preserved. | Proceed with manual review | Pending evidence |
+| Non-critical usability enhancement | Future enhancement | Any scenario | Efficiency or clarity issue only; no quote correctness impact. | Defer | Pending evidence |
+
+### Pilot decision
+
+| Decision | Use when | Current Phase 13.1M status |
+| --- | --- | --- |
+| GO | All required scenarios have evidence, zero unresolved blockers remain, finance signs off, and manager accepts residual risks. | Not available; evidence pending |
+| GO WITH CONDITIONS | No unresolved blockers remain, and remaining issues are documented manual-review items or accepted workarounds with owner and reviewer acknowledgement. | Not available; evidence pending |
+| NO-GO | Any blocker remains unresolved, quote correctness cannot be verified, or finance rejects GST/GL/ProductCode treatment for pilot scope. | Not available; evidence pending |
+
+Current Phase 13.1M decision: no launch decision yet. Live UAT evidence must be captured before choosing GO, GO WITH CONDITIONS, or NO-GO.
+
+### Recommended Phase 13.1N scope
+
+Because Phase 13.1M is pending live UAT execution, Phase 13.1N should collect completed evidence records for all required scenarios and then apply the decision framework above:
+
+| Phase 13.1M result | Recommended Phase 13.1N path |
+| --- | --- |
+| Any blocker is confirmed | Open a blocker remediation phase and retest affected scenarios before launch. |
+| No blockers and all scenarios pass | Move to the Air Freight pilot deployment readiness checklist. |
+| Only manual-review items or enhancements remain | Defer enhancements, keep manual-review controls, and proceed to deployment readiness. |
+| Finance rejects an affected charge type | Pause that charge type and create a focused GST/GL/ProductCode remediation phase. |
