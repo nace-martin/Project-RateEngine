@@ -101,6 +101,7 @@ class RBACBackendEnforcementAPITest(APITestCase):
         UserMembership.objects.create(
             user=user,
             organization=self.org,
+            operating_entity=branch.operating_entity,
             branch=branch,
             department=department,
             role=role,
@@ -113,6 +114,7 @@ class RBACBackendEnforcementAPITest(APITestCase):
             name=name,
             is_customer=True,
             organization=self.org,
+            operating_entity=branch.operating_entity,
             branch=branch,
             department=department,
         )

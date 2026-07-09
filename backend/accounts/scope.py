@@ -199,17 +199,17 @@ def customer_register_queryset_for_user(queryset, user, *, prefix: str = ""):
         return queryset.none()
 
     field_prefix = f"{prefix}__" if prefix else ""
-    filters = {
-        f"{field_prefix}organization_id": membership.organization_id,
-    }
     operating_entity_id = membership_operating_entity_id(membership)
-    if operating_entity_id and _model_has_field(queryset.model, f"{field_prefix}branch__operating_entity"):
-        filters[f"{field_prefix}branch__operating_entity_id"] = operating_entity_id
-    else:
-        # Company has no direct operating_entity field yet; fall back to branch
-        # until every customer branch is linked to an operating entity.
-        filters[f"{field_prefix}branch_id"] = membership.branch_id
-    return queryset.filter(**filters)
+    if not operating_entity_id:
+        if getattr(settings, "RBAC_ALLOW_LEGACY_SCOPE_FALLBACK_FOR_TESTS", False):
+            return queryset
+        return queryset.none()
+    return queryset.filter(
+        **{
+            f"{field_prefix}organization_id": membership.organization_id,
+            f"{field_prefix}operating_entity_id": operating_entity_id,
+        }
+    )
 
 
 def scoped_q_for_user(user, *, prefix: str = "") -> Q:

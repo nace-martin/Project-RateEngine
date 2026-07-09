@@ -332,6 +332,58 @@ class CustomerSeedCommandTests(TestCase):
         self.assertIn("missing_organization_or_email", reasons)
 
 
+class CustomerOperatingEntityScopeBackfillCommandTests(TestCase):
+    def setUp(self):
+        self.organization = Organization.objects.create(name="Express Freight Management", slug="efm")
+        self.operating_entity = OperatingEntity.objects.create(
+            organization=self.organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+
+    def _call(self, *args):
+        output = StringIO()
+        call_command(
+            "backfill_customer_operating_entity_scope",
+            "--organization",
+            "Express Freight Management",
+            "--operating-entity",
+            "EFM PNG",
+            *args,
+            stdout=output,
+        )
+        return output.getvalue()
+
+    def test_dry_run_reports_candidates_without_writing(self):
+        customer = Company.objects.create(name="Dry Run Customer", is_customer=True, company_type="CUSTOMER")
+
+        output = self._call()
+        customer.refresh_from_db()
+
+        self.assertIn("[DRY RUN]", output)
+        self.assertIn("Dry Run Customer", output)
+        self.assertIsNone(customer.organization)
+        self.assertIsNone(customer.operating_entity)
+
+    def test_apply_backfills_customer_master_scope_only(self):
+        customer = Company.objects.create(name="Apply Customer", is_customer=True, company_type="CUSTOMER")
+        supplier = Company.objects.create(name="Apply Supplier", is_customer=False, company_type="SUPPLIER")
+
+        output = self._call("--apply")
+        customer.refresh_from_db()
+        supplier.refresh_from_db()
+
+        self.assertIn("[APPLIED]", output)
+        self.assertEqual(customer.organization, self.organization)
+        self.assertEqual(customer.operating_entity, self.operating_entity)
+        self.assertIsNone(customer.branch)
+        self.assertIsNone(customer.department)
+        self.assertIsNone(supplier.organization)
+        self.assertIsNone(supplier.operating_entity)
+
+
 class CustomerContactRBACReportTests(TestCase):
     def _call_report(self, *args):
         stdout = StringIO()
@@ -3841,6 +3893,7 @@ class CustomerListAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         company = Company.objects.get(name="Scoped API Customer")
         self.assertEqual(company.organization, organization)
+        self.assertIsNone(company.operating_entity)
         self.assertEqual(company.branch, branch)
         self.assertEqual(company.department, department)
 
@@ -3910,7 +3963,19 @@ class BackendScopedAccessAPITests(APITestCase):
             name="Transport",
         )
         self.org_b = Organization.objects.create(name="Phase 9D Org B", slug="phase-9d-org-b")
-        self.branch_b = Branch.objects.create(organization=self.org_b, code="P9B", name="Phase 9D B")
+        self.operating_entity_org_b = OperatingEntity.objects.create(
+            organization=self.org_b,
+            code="P9BPNG",
+            name="Phase 9D Org B PNG",
+            slug="phase-9d-org-b-png",
+            country_code="PG",
+        )
+        self.branch_b = Branch.objects.create(
+            organization=self.org_b,
+            operating_entity=self.operating_entity_org_b,
+            code="P9B",
+            name="Phase 9D B",
+        )
         self.department_b = Department.objects.create(
             organization=self.org_b,
             branch=self.branch_b,
@@ -3922,26 +3987,35 @@ class BackendScopedAccessAPITests(APITestCase):
         self.manager = self._user("phase9d-manager-user", CustomUser.ROLE_MANAGER, self.org_a, self.branch_a, self.department_a, self.role_manager)
         self.sales = self._user("phase9d-sales-user", CustomUser.ROLE_SALES, self.org_a, self.branch_a, self.department_a, self.role_sales)
 
-        self.company_a = self._company("Phase 9D Customer A", self.org_a, self.branch_a, self.department_a)
+        self.company_a = self._company("Phase 9D Customer A", self.org_a, self.operating_entity_a)
         self.company_a_other_department = self._company(
             "Phase 9D Customer A Same Branch Other Department",
             self.org_a,
+            self.operating_entity_a,
             self.branch_a,
             self.department_a_other,
         )
         self.company_a_other_branch = self._company(
             "Phase 9D Customer A Other Branch",
             self.org_a,
+            self.operating_entity_a,
             self.branch_a_other,
             self.department_a_other_branch,
         )
         self.company_a_other_operating_entity = self._company(
             "Phase 9D Customer A Other Operating Entity",
             self.org_a,
+            self.operating_entity_b,
             self.branch_a_other_operating_entity,
             self.department_a_other_operating_entity,
         )
-        self.company_b = self._company("Phase 9D Customer B", self.org_b, self.branch_b, self.department_b)
+        self.company_b = self._company(
+            "Phase 9D Customer B",
+            self.org_b,
+            self.operating_entity_org_b,
+            self.branch_b,
+            self.department_b,
+        )
         self.company_unscoped = Company.objects.create(
             name="Phase 9D Manual Review Customer",
             is_customer=True,
@@ -3955,7 +4029,13 @@ class BackendScopedAccessAPITests(APITestCase):
             "a-other-operating-entity",
         )
         self.contact_b = self._contact(self.company_b, "b")
-        self.company_a_other = self._company("Phase 9D Customer A Other", self.org_a, self.branch_a, self.department_a)
+        self.company_a_other = self._company(
+            "Phase 9D Customer A Other",
+            self.org_a,
+            self.operating_entity_a,
+            self.branch_a,
+            self.department_a,
+        )
         self.contact_a_other = self._contact(self.company_a_other, "a-other")
 
         self.opportunity_a = self._opportunity("Phase 9D Opportunity A", self.company_a, self.org_a, self.branch_a, self.department_a)
@@ -4010,18 +4090,20 @@ class BackendScopedAccessAPITests(APITestCase):
         UserMembership.objects.create(
             user=user,
             organization=organization,
+            operating_entity=branch.operating_entity,
             branch=branch,
             department=department,
             role=membership_role,
         )
         return user
 
-    def _company(self, name, organization, branch, department):
+    def _company(self, name, organization, operating_entity, branch=None, department=None):
         return Company.objects.create(
             name=name,
             is_customer=True,
             company_type="CUSTOMER",
             organization=organization,
+            operating_entity=operating_entity,
             branch=branch,
             department=department,
         )
@@ -4102,11 +4184,11 @@ class BackendScopedAccessAPITests(APITestCase):
     def test_scoped_manager_can_access_in_scope_customer(self):
         self.client.force_authenticate(user=self.manager)
 
-        response = self.client.get(f"/api/v3/customers/{self.company_a_other_branch.id}/")
+        response = self.client.get(f"/api/v3/customers/{self.company_a.id}/")
         other_operating_entity = self.client.get(f"/api/v3/customers/{self.company_a_other_operating_entity.id}/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["id"], str(self.company_a_other_branch.id))
+        self.assertEqual(response.data["id"], str(self.company_a.id))
         self.assertEqual(other_operating_entity.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_scoped_user_list_includes_same_operating_entity_and_excludes_out_of_scope_customers(self):
@@ -4301,7 +4383,7 @@ class BackendScopedAccessAPITests(APITestCase):
         response = self.client.post(
             f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
             {
-                "customer_id": str(self.company_a.id),
+                "customer_id": str(self.company_a_other.id),
                 "contact_id": str(self.contact_b.id),
             },
             format="json",
@@ -4317,8 +4399,8 @@ class BackendScopedAccessAPITests(APITestCase):
         response = self.client.post(
             f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
             {
-                "customer_id": str(self.company_a.id),
-                "contact_id": str(self.contact_a_other.id),
+                "customer_id": str(self.company_a_other.id),
+                "contact_id": str(self.contact_a_other_department.id),
             },
             format="json",
         )
@@ -4332,7 +4414,7 @@ class BackendScopedAccessAPITests(APITestCase):
 
         response = self.client.post(
             f"/api/v3/spot/envelopes/{envelope.id}/create-quote/",
-            {"customer_id": str(self.company_a.id)},
+            {"customer_id": str(self.company_a_other.id)},
             format="json",
         )
 
@@ -4494,8 +4576,32 @@ class CustomerDetailAPITests(APITestCase):
         # Create organizations
         self.org_a = Organization.objects.create(name="Org A", slug="org-a", is_active=True)
         self.org_b = Organization.objects.create(name="Org B", slug="org-b", is_active=True)
-        self.branch_a = Branch.objects.create(organization=self.org_a, code="OA", name="Org A Branch")
-        self.branch_b = Branch.objects.create(organization=self.org_b, code="OB", name="Org B Branch")
+        self.operating_entity_a = OperatingEntity.objects.create(
+            organization=self.org_a,
+            code="OEA",
+            name="Org A Entity",
+            slug="org-a-entity",
+            country_code="PG",
+        )
+        self.operating_entity_b = OperatingEntity.objects.create(
+            organization=self.org_b,
+            code="OEB",
+            name="Org B Entity",
+            slug="org-b-entity",
+            country_code="AU",
+        )
+        self.branch_a = Branch.objects.create(
+            organization=self.org_a,
+            operating_entity=self.operating_entity_a,
+            code="OA",
+            name="Org A Branch",
+        )
+        self.branch_b = Branch.objects.create(
+            organization=self.org_b,
+            operating_entity=self.operating_entity_b,
+            code="OB",
+            name="Org B Branch",
+        )
         self.department_a = Department.objects.create(
             organization=self.org_a,
             branch=self.branch_a,
@@ -4523,6 +4629,7 @@ class CustomerDetailAPITests(APITestCase):
         UserMembership.objects.create(
             user=self.user_org_a,
             organization=self.org_a,
+            operating_entity=self.operating_entity_a,
             branch=self.branch_a,
             department=self.department_a,
             role=self.sales_role,
@@ -4530,6 +4637,7 @@ class CustomerDetailAPITests(APITestCase):
         UserMembership.objects.create(
             user=self.user_org_b,
             organization=self.org_b,
+            operating_entity=self.operating_entity_b,
             branch=self.branch_b,
             department=self.department_b,
             role=self.sales_role,
@@ -4542,6 +4650,7 @@ class CustomerDetailAPITests(APITestCase):
             company_type="CUSTOMER",
             account_owner=self.user_org_a,
             organization=self.org_a,
+            operating_entity=self.operating_entity_a,
             branch=self.branch_a,
             department=self.department_a,
         )

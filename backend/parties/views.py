@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from accounts.scope import customer_register_queryset_for_user, populate_missing_scope_values
+from accounts.scope import customer_register_queryset_for_user, membership_operating_entity, populate_missing_scope_values
 from .models import Address, Company, Contact, Organization, OrganizationBranding
 from .serializers import (
     CompanySearchV3Serializer,
@@ -116,6 +116,11 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         scope_values = populate_missing_scope_values({}, user=self.request.user)
+        if "operating_entity" not in scope_values:
+            membership = getattr(self.request.user, "memberships", None)
+            active_memberships = list(membership.filter(is_active=True)) if membership is not None else []
+            if len(active_memberships) == 1:
+                scope_values["operating_entity"] = membership_operating_entity(active_memberships[0])
         serializer.save(is_customer=True, **scope_values)
 
     def perform_update(self, serializer):
