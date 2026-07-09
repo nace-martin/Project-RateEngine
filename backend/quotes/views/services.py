@@ -15,7 +15,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 
 from parties.models import Address, Company, Contact, CustomerCommercialProfile
-from accounts.scope import scoped_queryset_for_user
+from accounts.scope import customer_register_queryset_for_user
 from core.models import Airport, City, Country, Currency
 from core.security import validate_csv_upload
 from ratecards.models import PartnerRateCard
@@ -137,7 +137,7 @@ class CustomerDetailAPIView(APIView):
     def _get_company(self, company_id):
         base_filter = Q(is_customer=True) | Q(company_type='CUSTOMER')
         queryset = Company.objects.filter(base_filter)
-        queryset = scoped_queryset_for_user(queryset, self.request.user)
+        queryset = customer_register_queryset_for_user(queryset, self.request.user)
         queryset = queryset.select_related(
             'commercial_profile__preferred_quote_currency'
         ).prefetch_related('contacts', 'addresses__city__country')

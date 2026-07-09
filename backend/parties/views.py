@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny, BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from accounts.scope import populate_missing_scope_values, scoped_queryset_for_user
+from accounts.scope import customer_register_queryset_for_user, populate_missing_scope_values
 from .models import Address, Company, Contact, Organization, OrganizationBranding
 from .serializers import (
     CompanySearchV3Serializer,
@@ -85,7 +85,7 @@ class CustomerV3ViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         customer_filter = Q(is_customer=True) | Q(company_type="CUSTOMER")
         queryset = Company.objects.filter(customer_filter, is_active=True)
-        queryset = scoped_queryset_for_user(queryset, self.request.user)
+        queryset = customer_register_queryset_for_user(queryset, self.request.user)
         return (
             queryset
             .order_by("name")
@@ -136,7 +136,7 @@ class CompanyV3SearchView(generics.ListAPIView):
             return Company.objects.none()
         queryset = Company.objects.filter(name__icontains=query, is_active=True)
         queryset = queryset.filter(Q(is_customer=True) | Q(company_type="CUSTOMER"))
-        queryset = scoped_queryset_for_user(queryset, self.request.user)
+        queryset = customer_register_queryset_for_user(queryset, self.request.user)
         return queryset.order_by("name")[:20]
 
 
@@ -150,7 +150,7 @@ class CompanyContactListV3View(generics.ListAPIView):
 
     def get_queryset(self):
         company_id = self.kwargs.get("company_id")
-        company_queryset = scoped_queryset_for_user(Company.objects.all(), self.request.user)
+        company_queryset = customer_register_queryset_for_user(Company.objects.all(), self.request.user)
         company = get_object_or_404(company_queryset, pk=company_id)
         return company.contacts.filter(is_active=True).order_by("last_name", "first_name")
 
