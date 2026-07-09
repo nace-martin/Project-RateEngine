@@ -51,6 +51,14 @@ class Company(models.Model):
         related_name="companies",
         help_text="Future RBAC organization scope. Nullable until backfilled and enforced.",
     )
+    operating_entity = models.ForeignKey(
+        "OperatingEntity",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="companies",
+        help_text="RBAC operating-entity scope for customer master visibility. Nullable until backfilled.",
+    )
     branch = models.ForeignKey(
         "Branch",
         on_delete=models.SET_NULL,
