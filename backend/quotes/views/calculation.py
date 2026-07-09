@@ -13,7 +13,7 @@ from quotes.models import Quote, QuoteVersion, QuoteLine, QuoteTotal
 from quotes.serializers import QuoteComputeRequestSerializer, QuoteModelSerializerV3
 from quotes.schemas import QuoteComputeRequest
 from accounts.permissions import QuoteAccessPermission
-from accounts.scope import scoped_queryset_for_user
+from accounts.scope import customer_register_queryset_for_user, resolve_create_scope_for_user
 from quotes.selectors import get_quote_for_user
 from quotes.state_machine import (
     QuoteImmutableError,
@@ -58,6 +58,9 @@ from core.dataclasses import (
 logger = logging.getLogger(__name__)
 
 from core.business_rules import classify_png_shipment
+
+CUSTOMER_NOT_VISIBLE_MESSAGE = "Customer is not visible to your operating entity or does not exist."
+CONTACT_NOT_VISIBLE_MESSAGE = "Selected contact is not available for this customer/user."
 
 def _classify_shipment_type(mode: str, origin_location: Location, destination_location: Location) -> str:
     if not origin_location or not destination_location:
@@ -150,9 +153,11 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        customer_queryset = scoped_queryset_for_user(Company.objects.all(), request.user)
-        customer = get_object_or_404(customer_queryset, id=payload.customer_id)
-        get_object_or_404(Contact.objects.filter(company=customer), id=payload.contact_id)
+        customer = self._get_visible_customer(request.user, payload.customer_id)
+        if customer is None:
+            return Response({"detail": CUSTOMER_NOT_VISIBLE_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
+        if not Contact.objects.filter(company=customer, id=payload.contact_id).exists():
+            return Response({"detail": CONTACT_NOT_VISIBLE_MESSAGE}, status=status.HTTP_404_NOT_FOUND)
 
         derived_output_currency = self._derive_output_currency(
             shipment_type,
@@ -368,6 +373,9 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             spot_rates=data.spot_rates or {}
         )
 
+    def _get_visible_customer(self, user, customer_id):
+        return customer_register_queryset_for_user(Company.objects.all(), user).filter(id=customer_id).first()
+
     def _location_to_ref(self, location: Location):
         country_code = location.country.code if location.country else None
         currency_code = None
@@ -482,11 +490,12 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
         Helper to save the quote, version, lines, and totals to the database.
         When an existing quote is provided, we append a new version instead of creating a duplicate quote.
         """
-        customer = get_object_or_404(
-            scoped_queryset_for_user(Company.objects.all(), request.user),
-            id=validated_data.customer_id,
-        )
-        contact = get_object_or_404(Contact.objects.filter(company=customer), id=validated_data.contact_id)
+        customer = self._get_visible_customer(request.user, validated_data.customer_id)
+        if customer is None:
+            raise Http404(CUSTOMER_NOT_VISIBLE_MESSAGE)
+        contact = Contact.objects.filter(company=customer, id=validated_data.contact_id).first()
+        if contact is None:
+            raise Http404(CONTACT_NOT_VISIBLE_MESSAGE)
 
         request_payload = validated_data.model_dump(mode='json')
         if resolved_dimensions is not None:
@@ -522,6 +531,7 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             )
 
         if is_new_quote:
+            create_scope = resolve_create_scope_for_user(request.user)
             # --- Create the Quote object ---
             quote = Quote.objects.create(
                 customer=customer,
@@ -542,7 +552,10 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 status=initial_status,
                 request_details_json=request_payload,
                 created_by=request.user,
-                organization=getattr(request.user, 'organization', None),
+                owner=create_scope.owner,
+                organization=create_scope.organization,
+                branch=create_scope.branch,
+                department=create_scope.department,
             )
             version_number = 1
         else:
@@ -564,8 +577,15 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
             quote.is_dangerous_goods = validated_data.is_dangerous_goods
             quote.status = initial_status
             quote.request_details_json = request_payload
-            if quote.organization_id is None and getattr(request.user, 'organization_id', None):
-                quote.organization = request.user.organization
+            create_scope = resolve_create_scope_for_user(request.user)
+            if quote.organization_id is None and create_scope.organization is not None:
+                quote.organization = create_scope.organization
+            if quote.branch_id is None and create_scope.branch is not None:
+                quote.branch = create_scope.branch
+            if quote.department_id is None and create_scope.department is not None:
+                quote.department = create_scope.department
+            if quote.owner_id is None and create_scope.owner is not None:
+                quote.owner = create_scope.owner
             quote.save(update_fields=[
                 'customer',
                 'contact',
@@ -585,6 +605,9 @@ class QuoteComputeV3APIView(generics.CreateAPIView):
                 'status',
                 'request_details_json',
                 'organization',
+                'branch',
+                'department',
+                'owner',
             ])
 
             latest_version = quote.versions.order_by('-version_number').first()
