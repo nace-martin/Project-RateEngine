@@ -7,9 +7,10 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from accounts.models import Role, UserMembership
 from core.models import Country, Currency
 from core.tests.helpers import create_location
-from parties.models import Company, Contact
+from parties.models import Branch, Company, Contact, Department, OperatingEntity, Organization
 from pricing_v4.models import (
     Agent,
     Carrier,
@@ -37,6 +38,11 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
             password="testpass123",
             role="manager",
         )
+        self.sales_user = User.objects.create_user(
+            username="quote-rbac-sales",
+            password="testpass123",
+            role="sales",
+        )
         self.client.force_authenticate(self.user)
 
         # 1. Currencies & Countries
@@ -57,7 +63,57 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
         self.sin = create_location(code="SIN", name="Singapore", country=self.sg, is_active=True)
 
         # 3. Parties
-        self.customer = Company.objects.create(name="Regression Customer", company_type="CUSTOMER", is_customer=True)
+        self.organization = Organization.objects.create(name="Express Freight Management", slug="efm")
+        self.operating_entity = OperatingEntity.objects.create(
+            organization=self.organization,
+            code="PNG",
+            name="EFM PNG",
+            slug="efm-png",
+            country_code="PG",
+        )
+        self.other_operating_entity = OperatingEntity.objects.create(
+            organization=self.organization,
+            code="AU",
+            name="EFM Australia",
+            slug="efm-australia",
+            country_code="AU",
+        )
+        self.branch = Branch.objects.create(
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+            code="POM",
+            name="Port Moresby",
+        )
+        self.department = Department.objects.create(
+            organization=self.organization,
+            branch=self.branch,
+            code="AIR",
+            name="Air Freight",
+        )
+        self.sales_role = Role.objects.create(code="quote-rbac-sales", name="Sales")
+        UserMembership.objects.create(
+            user=self.sales_user,
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+            branch=self.branch,
+            department=self.department,
+            role=self.sales_role,
+        )
+        UserMembership.objects.create(
+            user=self.user,
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+            branch=self.branch,
+            department=self.department,
+            role=self.sales_role,
+        )
+        self.customer = Company.objects.create(
+            name="Regression Customer",
+            company_type="CUSTOMER",
+            is_customer=True,
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+        )
         self.contact = Contact.objects.create(
             company=self.customer,
             first_name="Reg",
@@ -183,6 +239,38 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
         self.valid_from = date.today() - timedelta(days=1)
         self.valid_until = date.today() + timedelta(days=30)
 
+    def _seed_import_collect_complete_rates(self):
+        ImportCOGS.objects.create(
+            product_code=self.imp_freight_pc, origin_airport="BNE", destination_airport="POM",
+            agent=self.agent_bne, currency="AUD", rate_per_kg=Decimal("4.50"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        ImportSellRate.objects.create(
+            product_code=self.imp_freight_pc, origin_airport="BNE", destination_airport="POM",
+            currency="PGK", rate_per_kg=Decimal("12.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalCOGSRate.objects.create(
+            product_code=self.imp_origin_pc, location="BNE", direction="IMPORT",
+            agent=self.agent_bne, currency="AUD", rate_type="FIXED", amount=Decimal("50.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.imp_origin_pc, location="BNE", direction="IMPORT",
+            payment_term="COLLECT", currency="PGK", rate_type="FIXED", amount=Decimal("150.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalCOGSRate.objects.create(
+            product_code=self.imp_dest_pc, location="POM", direction="IMPORT",
+            agent=self.agent_pom, currency="PGK", rate_type="FIXED", amount=Decimal("70.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+        LocalSellRate.objects.create(
+            product_code=self.imp_dest_pc, location="POM", direction="IMPORT",
+            payment_term="COLLECT", currency="PGK", rate_type="FIXED", amount=Decimal("200.00"),
+            valid_from=self.valid_from, valid_until=self.valid_until
+        )
+
     def _payload(self, origin, destination, scope, payment_term, incoterm, **overrides):
         payload = {
             "customer_id": str(self.customer.id),
@@ -207,6 +295,135 @@ class CoreQuoteStabilisationRegressionTests(APITestCase):
         }
         payload.update(overrides)
         return payload
+
+    def test_sales_user_can_quote_operating_entity_customer_without_customer_branch_scope(self):
+        self.client.force_authenticate(self.sales_user)
+        self._seed_import_collect_complete_rates()
+
+        payload = self._payload(self.bne, self.pom, "D2D", "COLLECT", "EXW", agent_id=self.agent_bne.id, buy_currency="AUD")
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        quote = Quote.objects.get(id=response.data["id"])
+        self.assertEqual(quote.customer, self.customer)
+        self.assertIsNone(self.customer.branch_id)
+        self.assertIsNone(self.customer.department_id)
+        self.assertEqual(quote.organization, self.organization)
+        self.assertEqual(quote.branch, self.branch)
+        self.assertEqual(quote.department, self.department)
+        self.assertEqual(quote.owner, self.sales_user)
+
+    def test_sales_user_cannot_quote_customer_from_other_operating_entity(self):
+        self.client.force_authenticate(self.sales_user)
+        other_customer = Company.objects.create(
+            name="Other OE Customer",
+            company_type="CUSTOMER",
+            is_customer=True,
+            organization=self.organization,
+            operating_entity=self.other_operating_entity,
+        )
+        other_contact = Contact.objects.create(
+            company=other_customer,
+            first_name="Other",
+            last_name="Contact",
+            email="other-oe@example.com",
+        )
+
+        payload = self._payload(
+            self.bne,
+            self.pom,
+            "D2D",
+            "COLLECT",
+            "EXW",
+            customer_id=str(other_customer.id),
+            contact_id=str(other_contact.id),
+        )
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["detail"], "Customer is not visible to your operating entity or does not exist.")
+
+    def test_quote_compute_rejects_contact_from_different_customer(self):
+        self.client.force_authenticate(self.sales_user)
+        other_customer = Company.objects.create(
+            name="Same OE Other Customer",
+            company_type="CUSTOMER",
+            is_customer=True,
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+        )
+        other_contact = Contact.objects.create(
+            company=other_customer,
+            first_name="Wrong",
+            last_name="Contact",
+            email="wrong-contact@example.com",
+        )
+
+        payload = self._payload(
+            self.bne,
+            self.pom,
+            "D2D",
+            "COLLECT",
+            "EXW",
+            contact_id=str(other_contact.id),
+        )
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.data["detail"], "Selected contact is not available for this customer/user.")
+
+    def test_quote_recalculation_keeps_strict_quote_id_scope(self):
+        self.client.force_authenticate(self.sales_user)
+        User = get_user_model()
+        other_sales_user = User.objects.create_user(
+            username="quote-rbac-other-sales",
+            password="testpass123",
+            role="sales",
+        )
+        other_branch = Branch.objects.create(
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+            code="LAE",
+            name="Lae",
+        )
+        other_department = Department.objects.create(
+            organization=self.organization,
+            branch=other_branch,
+            code="SEA",
+            name="Sea Freight",
+        )
+        UserMembership.objects.create(
+            user=other_sales_user,
+            organization=self.organization,
+            operating_entity=self.operating_entity,
+            branch=other_branch,
+            department=other_department,
+            role=self.sales_role,
+        )
+        other_quote = Quote.objects.create(
+            customer=self.customer,
+            contact=self.contact,
+            organization=self.organization,
+            branch=other_branch,
+            department=other_department,
+            owner=other_sales_user,
+            created_by=other_sales_user,
+            mode="AIR",
+        )
+
+        payload = self._payload(
+            self.bne,
+            self.pom,
+            "D2D",
+            "COLLECT",
+            "EXW",
+            quote_id=str(other_quote.id),
+            agent_id=self.agent_bne.id,
+            buy_currency="AUD",
+        )
+        response = self.client.post("/api/v3/quotes/compute/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     # =========================================================================
     # Scenario 1: Import COLLECT BNE → POM D2D with complete rates
