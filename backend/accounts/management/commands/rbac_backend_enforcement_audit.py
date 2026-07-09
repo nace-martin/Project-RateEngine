@@ -197,6 +197,7 @@ class Command(BaseCommand):
                 source = inspect.getsource(view_class)
             return any(token in source for token in (
                 'scoped_queryset_for_user',
+                'customer_register_queryset_for_user',
                 'get_quotes_for_user',
                 'get_spes_for_user',
             ))
