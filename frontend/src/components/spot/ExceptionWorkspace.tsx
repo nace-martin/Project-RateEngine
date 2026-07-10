@@ -298,8 +298,25 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
         setSelectedActionType(null);
     };
 
-    const handleAcceptSuggestedMapping = (chargeId: string, displayLabel: string, suggestedCode: string) => {
+    const handleAcceptSuggestedMapping = async (chargeId: string, displayLabel: string, suggestedCode: string) => {
         if (isReviewLocked) return;
+        try {
+            await submitLiveDecision({
+                decision_id: `dec-${Date.now()}`,
+                type: "accept_suggestion",
+                target_id: chargeId,
+                details: {},
+                audit_metadata: {
+                    user_id: 1,
+                    timestamp: new Date().toISOString()
+                }
+            });
+        } catch (err) {
+            console.error("Failed to submit accept suggestion decision:", err);
+            const errMsg = err instanceof Error ? err.message : String(err);
+            setActionMessage(`API error accepting suggested mapping: ${errMsg}`);
+            return;
+        }
         captureSnapshot(chargeId, "accept", `Accepted code ${suggestedCode} for ${displayLabel}`);
         setSuggestedCharges(prev =>
             prev.map(c => (c.id === chargeId ? { ...c, status: "accepted_by_user" as DraftChargeStatus } : c))
@@ -462,6 +479,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
 
     const canFinishReview = checklistIssuesResolved && checklistNoUnknown && checklistProductCodesVerified;
     const isReviewLocked = reviewSession.status === "finalized";
+    const canUsePrototypeOverride = !isLive && prototypeOverride;
 
     // Direct Next-Step instructions guidance
     let nextStepGuidance = "Review the remaining commercial term before finishing.";
@@ -1162,7 +1180,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                         </div>
                     </div>
 
-                    {!canFinishReview && !prototypeOverride && (
+                    {!canFinishReview && !canUsePrototypeOverride && (
                         <div className="w-full bg-red-950/20 border border-red-900/60 rounded-xl p-4 text-xs text-red-200">
                             <span className="font-bold block mb-1">Finish Review unavailable</span>
                             <span>Resolve all pending issues and verify ProductCode mappings to complete review.</span>
@@ -1184,7 +1202,7 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                         </div>
 
                         <button
-                            disabled={isReviewLocked || (!canFinishReview && !prototypeOverride)}
+                            disabled={isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)}
                             onClick={handleFinalizeReview}
                             className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
                         >

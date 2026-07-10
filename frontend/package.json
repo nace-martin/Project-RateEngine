@@ -18,6 +18,7 @@
     "test:domestic-service-scope": "node scripts/domestic-service-scope.test.mjs",
     "test:spot-finalization": "node scripts/spot-finalization.test.mjs",
     "test:spot-workspace-helpers": "node scripts/spot-workspace-helpers.test.mjs",
+    "test:exception-workspace-routing": "node scripts/exception-workspace-routing.test.mjs",
     "test:draft-quote-contract": "node --experimental-strip-types scripts/draft-quote-contract.test.mjs",
     "test:quote-financial-helpers": "node scripts/quote-financial-helpers.test.mjs",
     "test:e2e": "playwright test",

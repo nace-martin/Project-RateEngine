@@ -1001,13 +1001,26 @@ export default function SpotRateEntryPage() {
                             </p>
                         )}
                     </div>
-                    <PageCancelButton
-                        href="/quotes"
-                        isDirty={hasPendingUnsavedWork}
-                        confirmMessage="Discard quote changes?"
-                        label="Cancel Quote"
-                        className="shrink-0"
-                    />
+                    <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                        {!isNew && speId ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                    if (!confirmLeave()) return;
+                                    router.push(`/quotes/spot/${speId}/exception-workspace`);
+                                }}
+                            >
+                                Review in Exception Workspace
+                            </Button>
+                        ) : null}
+                        <PageCancelButton
+                            href="/quotes"
+                            isDirty={hasPendingUnsavedWork}
+                            confirmMessage="Discard quote changes?"
+                            label="Cancel Quote"
+                        />
+                    </div>
                 </div>
             </div>
 
