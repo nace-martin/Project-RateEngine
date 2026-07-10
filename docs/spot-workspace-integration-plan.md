@@ -250,5 +250,22 @@ To preserve accountability and feed the learning model for AI parsing:
 
 ---
 
+## Current Implementation Status
+
+Phase 13.1N confirms the live path is implemented as:
+
+- Real SPOT envelope page: `/quotes/spot/<envelope_id>`
+- Live Exception Workspace route: `/quotes/spot/<envelope_id>/exception-workspace`
+- Demo-only workspace route: `/quotes/spot/exception-workspace-demo`
+- Live read API: `GET /api/v3/spot/envelopes/<uuid:envelope_id>/draft-quote/`
+- Live decision API: `POST /api/v3/spot/envelopes/<uuid:envelope_id>/draft-quote/resolve/`
+- Live finalization API: `POST /api/v3/spot/envelopes/<uuid:envelope_id>/draft-quote/finalize/`
+
+The SPOT envelope page now exposes a **Review in Exception Workspace** action for existing envelopes. The live route passes the envelope ID to the workspace, loads the backend Draft Quote payload, and keeps the mock/demo route separate for non-UAT testing.
+
+Decision persistence currently routes accept suggestion, ignore, map ProductCode, request ProductCode, and use approved ProductCode actions through the Draft Quote resolve API in live mode. Refresh/reload evidence should be captured during Air Freight UAT by reopening the live route and confirming persisted decision state remains in the payload.
+
+---
+
 ## TODO Checklist
 - [ ] Review RateEngine/EFM brand style guide and align Exception Workspace styling with the rest of the app later.

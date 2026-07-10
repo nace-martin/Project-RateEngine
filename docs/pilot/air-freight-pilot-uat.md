@@ -44,6 +44,21 @@ Non-negotiable UAT rule: unscoped ambiguous labels must not be auto-priced witho
 7. Classify defects as blocker, fix-before-pilot, manual-review acceptable, or future enhancement.
 8. Decide proceed, fix, or rollback at the post-UAT decision gate.
 
+### Live Exception Workspace path
+
+Use the live workspace route for pilot evidence. The mock demo route remains available for development checks only and is not valid UAT evidence.
+
+1. Create or open the real Air Freight SPOT envelope from the quote workflow.
+2. On the SPOT quote page, select **Review in Exception Workspace**.
+3. Confirm the browser route is `/quotes/spot/<envelope_id>/exception-workspace`.
+4. Record the SPOT envelope ID from the route and, if a quote already exists, the related quote ID from the source quote page.
+5. Confirm the workspace displays live draft data and decision persistence messaging, not the demo-only prototype state.
+6. Perform the scenario action: accept a suggestion, ignore a non-commercial line, map an existing ProductCode, request a ProductCode, or consume an approved ProductCode.
+7. Refresh the workspace and confirm the decision remains visible in the Draft Quote payload.
+8. Capture evidence before and after finalization attempts, including any blocker message and final review status.
+
+Evidence must include the route, envelope ID, tested supplier label, action taken, resulting ProductCode or manual-review status, and whether refresh/reload preserved the decision.
+
 ## 4. Required UAT scenarios
 
 | ID | Scenario | Test data shape | Expected pass outcome | Fail outcome |
