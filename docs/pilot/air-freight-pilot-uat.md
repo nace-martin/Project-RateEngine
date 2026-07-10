@@ -323,3 +323,44 @@ Because Phase 13.1O captured partial staged live evidence only, the next phase s
 | No blockers and all scenarios pass | Move to the Air Freight pilot deployment readiness checklist. |
 | Only manual-review items or enhancements remain | Defer enhancements, keep manual-review controls, and proceed to deployment readiness. |
 | Finance rejects an affected charge type | Pause that charge type and create a focused GST/GL/ProductCode remediation phase. |
+
+## 13. Phase 13.1P finance sign-off and UAT closure
+
+Status: Finance sign-off checklist prepared; launch remains NO-GO pending human finance review and customer-ready quote evidence.
+
+Phase 13.1P reviewed the remaining NO-GO items from Phase 13.1O. No finance reviewer approval, customer-ready quote output, or additional live pilot quote evidence was available in this phase, so this section does not claim finance sign-off or pilot launch readiness. The live route remains `/quotes/spot/<envelope_id>/exception-workspace`; the demo route is not valid evidence.
+
+### Finance sign-off checklist
+
+| Review item | Current system evidence | Finance decision | Required evidence before GO |
+| --- | --- | --- | --- |
+| `IMP-HANDLE-DEST` | ProductCode `Import Destination Handling`; domain `IMPORT`; category `HANDLING`; GST applicable `True`; revenue GL `4400`; cost GL `5400`; default unit `SHIPMENT`. Phase 13.1O accepted `import handling` to this ProductCode and reload preserved the decision. | Pending finance reviewer | Finance accepts GST, revenue GL, cost GL, unit, and import destination handling usage. |
+| `IMP-STORAGE-DEST` | ProductCode `Import Destination Storage / Warehouse`; domain `IMPORT`; category `HANDLING`; GST applicable `True`; revenue GL `4400`; cost GL `5400`; default unit `SHIPMENT`. Phase 13.1O accepted `storage` to this ProductCode and reload preserved the decision. | Pending finance reviewer | Finance accepts GST, revenue GL, cost GL, unit, and storage/warehouse usage. |
+| Import fuel/FSC treatment | Broad `FSC` did not auto-price in Phase 13.1O and required manual review/ProductCode request. Manual map to `IMP-FSC-CARTAGE-DEST` was used only to complete guardrail testing; ProductCode has GST `True`, revenue GL `4000`, cost GL `5000`, default unit `PERCENT`. | Pending finance reviewer | Finance either approves `IMP-FSC-CARTAGE-DEST` for the tested import FSC treatment or rejects it as a blocker/paused charge type for focused remediation. |
+| Misc recovery exclusion/manual-review policy | `misc recovery` was not auto-priced in Phase 13.1O. It was explicitly ignored/excluded from totals and persisted after reload. | Pending finance reviewer | Finance accepts exclusion/manual-review policy or rejects misc recovery treatment as a blocker/paused charge type. |
+| Generic handling manual-review control | Generic `handling` did not auto-price in Phase 13.1O and required manual mapping to `IMP-HANDLE-DEST`. | Pending finance reviewer | Finance accepts manual-review control and manager review requirement for generic handling. |
+| Mixed-currency warning/control | Phase 13.1O staged envelope surfaced mixed-currency warning while decisions remained auditable. | Pending finance reviewer | Finance accepts warning/control and confirms any customer-ready quote has explainable currency handling. |
+| GST treatment | ProductCode GST flags are visible for reviewed codes; finance has not signed off. | Pending finance reviewer | Finance confirms GST flags for all ProductCodes used in pilot-scope quote. |
+| Revenue GL | Revenue GL codes are visible for reviewed ProductCodes; finance has not signed off. | Pending finance reviewer | Finance confirms revenue GL treatment for all ProductCodes used in pilot-scope quote. |
+| Cost GL | Cost GL codes are visible for reviewed ProductCodes; finance has not signed off. | Pending finance reviewer | Finance confirms cost GL treatment for all ProductCodes used in pilot-scope quote. |
+| Quote totals/customer-output acceptance | Phase 13.1O did not include customer-ready quote totals or public quote output review. | Pending finance reviewer | Finance and manager review customer-ready quote totals/output generated from a real pilot quote and accept or reject the result. |
+
+### Remaining UAT closure status
+
+| Scenario ID | Closure status | Evidence route/envelope | Outcome | Severity | Required next action |
+| --- | --- | --- | --- | --- | --- |
+| AF-UAT-01 | Explicitly deferred | No export A2A live SPOT envelope was provided or created in this phase. | Deferred | Needs test | Execute export A2A envelope through `/quotes/spot/<envelope_id>/exception-workspace`; capture ProductCodes, totals, finalization, and customer-output evidence. |
+| AF-UAT-06 | Explicitly deferred unless customs is in pilot scope | Staging seed audit classifies customs pass-through as outside Air Freight seed apply scope unless UAT explicitly requires it. Existing possible customs ProductCodes include `EXP-CLEAR`, `IMP-CUS-CLR-ORIGIN`, and `IMP-CLEAR`. | Deferred / out of pilot automation unless present in pilot replies | Manual-review acceptable if out of scope; blocker if customs appears and cannot be reviewed safely | If customs appears in pilot replies, keep manual review and obtain finance approval for the scoped customs ProductCode before GO. |
+| AF-UAT-07 | Explicitly deferred | No documentation/AWB ambiguity live SPOT envelope was provided or created in this phase. | Deferred | Needs test | Execute docs/AWB ambiguity envelope through live route; confirm scoped labels map only when clear and ambiguous labels remain manual review. |
+| AF-UAT-10 | Explicitly deferred | Finance checklist prepared from current ProductCode/system evidence; no human finance reviewer sign-off captured. | Deferred | Needs reviewer | Finance reviewer must approve or reject each checklist row. Any rejection becomes blocker or paused charge type. |
+| Customer-ready quote totals/output review | Explicitly deferred | No related quote ID or customer-ready quote output exists for the Phase 13.1O staged envelope. | Deferred | Blocker for launch | Generate/review a real pilot quote with customer-ready totals/output before launch decision. |
+
+### Phase 13.1P launch recommendation
+
+| Recommendation | Status | Reason |
+| --- | --- | --- |
+| GO | Not approved | Finance sign-off, export A2A evidence, documentation/AWB evidence, and customer-ready quote output review are missing. |
+| GO WITH CONDITIONS | Not approved yet | Possible only if finance accepts current manual-review controls, customs remains out of pilot scope or is manually approved, and customer-ready quote output is accepted. |
+| NO-GO | Current recommendation | Required finance/commercial evidence is still missing. No code remediation is recommended until finance rejects a specific ProductCode, GST, GL, mixed-currency, or totals/output treatment. |
+
+Phase 13.1P decision: keep Air Freight pilot launch at NO-GO. The next useful action is human finance review using the checklist above plus execution of export A2A, documentation/AWB, and customer-ready quote output evidence through the live Exception Workspace route.
