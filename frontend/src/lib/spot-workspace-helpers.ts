@@ -247,3 +247,36 @@ export const formatListWithAnd = (items: string[]): string => {
     if (items.length === 2) return `${items[0]} and ${items[1]}`;
     return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 };
+
+// Helper to convert rate specs into human-friendly text
+export function humanizeRate(rate: number | null, unit: string | null, label: string): string {
+    if (label.includes("Min") && rate) {
+        return `Minimum USD 230.00 or USD ${rate.toFixed(2)} per ${unit || "kg"}`;
+    }
+    if (label.includes("Fuel") && rate) {
+        return `USD ${rate.toFixed(2)} per ${unit || "kg"}`;
+    }
+    if (label.includes("Security") && rate) {
+        return `USD ${rate.toFixed(2)} per ${unit || "kg"}`;
+    }
+    if (label.includes("Handling") && rate) {
+        return `SGD ${rate.toFixed(2)} per set`;
+    }
+    if (rate) {
+        return `${rate.toFixed(2)} per ${unit || "unit"}`;
+    }
+    return "Flat fee";
+}
+
+export function friendlyStatus(status: string): string {
+    switch (status) {
+        case "accepted_by_user": return "Accepted";
+        case "suggested": return "Suggested";
+        case "ignored": return "Ignored";
+        case "pending_product_code": return "Pending Product Code";
+        case "needs_review": return "Needs Attention";
+        case "unclassified":
+        case "unclassified_item": return "Unknown Charge";
+        default: return status;
+    }
+}

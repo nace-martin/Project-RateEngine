@@ -47,8 +47,19 @@ assert.match(
 
 assert.match(
   demoPage,
-  /<ExceptionWorkspace \/>/,
-  "demo route must remain mock-only and not pass live mode props",
+  /import\s+\{\s*hardCaseAirImportData\s*\}\s+from\s+["'].*hardCaseAirImport["']/,
+  "demo route must import hardCaseAirImportData"
+);
+
+assert.match(
+  demoPage,
+  /initialData=\{hardCaseAirImportData\}/,
+  "demo route must pass initialData={hardCaseAirImportData} explicitly"
+);
+
+assert.ok(
+  !demoPage.includes("isLive={true}"),
+  "demo route must not pass isLive={true}"
 );
 
 assert.match(
@@ -61,6 +72,24 @@ assert.match(
   workspace,
   /const canUsePrototypeOverride = !isLive && prototypeOverride;/,
   "prototype finalization override must be disabled in live workspace mode",
+);
+
+assert.match(
+  workspace,
+  /\{!isLive\s*&&\s*\(\s*<div className="flex items-center gap-2 text-xs">/,
+  "prototype override checkbox must be wrapped in !isLive"
+);
+
+assert.match(
+  workspace,
+  /\{!isLive\s*&&\s*\(\s*<div className="text-center text-xs text-slate-500 mt-2">/,
+  "prototype warning footer must be wrapped in !isLive"
+);
+
+assert.match(
+  workspace,
+  /disabled=\{isReviewLocked\s*\|\|\s*\(!canFinishReview\s*&&\s*!canUsePrototypeOverride\)\}/,
+  "demo override behaviour must remain integrated with finalization button state"
 );
 
 console.log("exception workspace routing checks passed");
