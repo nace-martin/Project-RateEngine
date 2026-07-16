@@ -2,7 +2,7 @@
 
 Status: Accounting mapping assumptions documented. Current launch recommendation is **NO-GO** because real pilot evidence is still missing.
 
-This pack is for a human reviewer to confirm, reject, or pause the accounting mapping assumptions and pilot readiness controls for the remaining Air Freight pilot launch items. It summarizes the live Exception Workspace evidence already captured and lists the exact decisions still required before launch.
+This pack is an optional advisory accounting/commercial review record for the remaining Air Freight pilot readiness items. It summarizes the live Exception Workspace evidence already captured and provides a place to log mapping observations or evidenced correctness concerns. Review feedback is not a launch approval gate; only management-verified correctness concerns can trigger focused remediation or a paused charge type.
 
 The chart of accounts provides broad/general GL accounts, not exact GL accounts for every ProductCode or charge line. RateEngine GL values in this pack are internal broad mapping assumptions used for reporting and operational classification. Exact GL-per-charge mapping is not a launch blocker. GST follows existing company policy.
 
@@ -67,4 +67,3 @@ The launch decision is a management function based on operational and correctnes
 | Observed correctness concerns, if any |  |
 | Remediation recommendations |  |
 | Evidence reviewed |  |
-
