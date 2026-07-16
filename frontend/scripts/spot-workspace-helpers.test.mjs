@@ -59,6 +59,8 @@ const {
   getSourceSummarySubtitle,
   formatMissingComponents,
   formatListWithAnd,
+  humanizeRate,
+  friendlyStatus,
 } = await loadModules();
 
 // 1. humanizeEnum
@@ -159,6 +161,29 @@ const {
   assert.equal(formatListWithAnd(["One"]), "One");
   assert.equal(formatListWithAnd(["One", "Two"]), "One and Two");
   assert.equal(formatListWithAnd(["One", "Two", "Three"]), "One, Two, and Three");
+}
+
+// 10. humanizeRate
+{
+  assert.equal(humanizeRate(230, "kg", "...Min..."), "Minimum USD 230.00 or USD 230.00 per kg");
+  assert.equal(humanizeRate(0, "kg", "Fuel"), "Flat fee");
+  assert.equal(humanizeRate(null, null, "..."), "Flat fee");
+  assert.equal(humanizeRate(1.23, "set", "Handling"), "SGD 1.23 per set");
+  assert.equal(humanizeRate(1.5, "kg", "Fuel"), "USD 1.50 per kg");
+  assert.equal(humanizeRate(0.85, "kg", "Security"), "USD 0.85 per kg");
+  assert.equal(humanizeRate(5.00, "unit", "Freight"), "5.00 per unit");
+}
+
+// 11. friendlyStatus
+{
+  assert.equal(friendlyStatus("accepted_by_user"), "Accepted");
+  assert.equal(friendlyStatus("suggested"), "Suggested");
+  assert.equal(friendlyStatus("ignored"), "Ignored");
+  assert.equal(friendlyStatus("pending_product_code"), "Pending Product Code");
+  assert.equal(friendlyStatus("needs_review"), "Needs Attention");
+  assert.equal(friendlyStatus("unclassified"), "Unknown Charge");
+  assert.equal(friendlyStatus("unclassified_item"), "Unknown Charge");
+  assert.equal(friendlyStatus("unknown_status"), "unknown_status");
 }
 
 console.log("spot workspace helpers checks passed");

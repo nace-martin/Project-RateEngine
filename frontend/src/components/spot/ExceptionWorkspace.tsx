@@ -2,41 +2,8 @@
 
 import React, { useState } from "react";
 import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
-import { hardCaseAirImportData } from "../../data/hardCaseAirImport";
 import { DraftCharge, DraftChargeStatus, Evidence, DraftQuote } from "../../lib/draft-quote-types";
-
-// Helper to convert rate specs into human-friendly text
-function humanizeRate(rate: number | null, unit: string | null, label: string): string {
-    if (label.includes("Min") && rate) {
-        return `Minimum USD 230.00 or USD ${rate.toFixed(2)} per ${unit || "kg"}`;
-    }
-    if (label.includes("Fuel") && rate) {
-        return `USD ${rate.toFixed(2)} per ${unit || "kg"}`;
-    }
-    if (label.includes("Security") && rate) {
-        return `USD ${rate.toFixed(2)} per ${unit || "kg"}`;
-    }
-    if (label.includes("Handling") && rate) {
-        return `SGD ${rate.toFixed(2)} per set`;
-    }
-    if (rate) {
-        return `${rate.toFixed(2)} per ${unit || "unit"}`;
-    }
-    return "Flat fee";
-}
-
-function friendlyStatus(status: string): string {
-    switch (status) {
-        case "accepted_by_user": return "Accepted";
-        case "suggested": return "Suggested";
-        case "ignored": return "Ignored";
-        case "pending_product_code": return "Pending Product Code";
-        case "needs_review": return "Needs Attention";
-        case "unclassified":
-        case "unclassified_item": return "Unknown Charge";
-        default: return status;
-    }
-}
+import { humanizeRate, friendlyStatus } from "@/lib/spot-workspace-helpers";
 
 // Stateful Decision type for Reopen/Undo logging
 interface Decision {
@@ -51,7 +18,7 @@ interface Decision {
     };
 }
 
-export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive = false, envelopeId }: { initialData?: DraftQuote; isLive?: boolean; envelopeId?: string }) {
+export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: { initialData: DraftQuote; isLive?: boolean; envelopeId?: string }) {
     // Single state containers for mock database updates
     const [draftQuote] = useState(initialData);
     const [explainTotals, setExplainTotals] = useState(false);
@@ -1188,18 +1155,21 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                     )}
 
                     <div className="w-full flex flex-col sm:flex-row justify-between items-center gap-4">
-                        <div className="flex items-center gap-2 text-xs">
-                            <input 
-                                type="checkbox" 
-                                id="proto-override" 
-                                checked={prototypeOverride}
-                                onChange={() => setPrototypeOverride(!prototypeOverride)}
-                                className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500 w-4.5 h-4.5"
-                            />
-                            <label htmlFor="proto-override" className="text-slate-400 cursor-pointer font-medium select-none">
-                                Prototype override only — not available for production.
-                            </label>
-                        </div>
+                        {!isLive && (
+                            <div className="flex items-center gap-2 text-xs">
+                                <input
+                                    type="checkbox"
+                                    id="proto-override"
+                                    checked={prototypeOverride}
+                                    onChange={() => setPrototypeOverride(!prototypeOverride)}
+                                    className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500 w-4.5 h-4.5"
+                                />
+                                <label htmlFor="proto-override" className="text-slate-400 cursor-pointer font-medium select-none">
+                                    Prototype override only — not available for production.
+                                </label>
+                            </div>
+                        )}
+                        {isLive && <div />} {/* spacer to maintain justify-between layout alignment when checkbox is hidden */}
 
                         <button
                             disabled={isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)}
@@ -1210,9 +1180,11 @@ export function ExceptionWorkspace({ initialData = hardCaseAirImportData, isLive
                         </button>
                     </div>
                     
-                    <div className="text-center text-xs text-slate-500 mt-2">
-                        Prototype only — Changes made will not be permanently saved.
-                    </div>
+                    {!isLive && (
+                        <div className="text-center text-xs text-slate-500 mt-2">
+                            Prototype only — Changes made will not be permanently saved.
+                        </div>
+                    )}
                 </div>
 
             </div>
