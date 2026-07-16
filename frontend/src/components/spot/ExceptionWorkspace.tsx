@@ -2,465 +2,52 @@
 
 import React, { useState } from "react";
 import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
-import { DraftCharge, DraftChargeStatus, Evidence, DraftQuote } from "../../lib/draft-quote-types";
+import { DraftQuote } from "../../lib/draft-quote-types";
 import { humanizeRate, friendlyStatus } from "@/lib/spot-workspace-helpers";
 import { MapExistingForm } from "./workspace/MapExistingForm";
 import { RequestProductCodeForm } from "./workspace/RequestProductCodeForm";
 import { AddChargeForm } from "./workspace/AddChargeForm";
-
-// Stateful Decision type for Reopen/Undo logging
-interface Decision {
-    id: string; // charge id or item id
-    type: "map" | "request" | "ignore" | "accept" | "add";
-    description: string;
-    originalState: {
-        suggestedCharges: DraftCharge[];
-        reviewQueue: Array<{ id: string; type: string; message: string }>;
-        unclassifiedItems: Array<{ id: string; raw_text: string; evidence: Evidence | null; review_reason: string }>;
-        ignoredItems: Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>;
-    };
-}
+import { useSpotResolutionWorkflow } from "./workspace/useSpotResolutionWorkflow";
 
 export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: { initialData: DraftQuote; isLive?: boolean; envelopeId?: string }) {
-    // Single state containers for mock database updates
     const [draftQuote] = useState(initialData);
     const [explainTotals, setExplainTotals] = useState(false);
-    const [suggestedCharges, setSuggestedCharges] = useState(initialData.suggested_charges);
-    const [reviewQueue, setReviewQueue] = useState(initialData.review_queue);
-    const [unclassifiedItems, setUnclassifiedItems] = useState(initialData.unclassified_items);
-    const [ignoredItems, setIgnoredItems] = useState<Array<{ id: string; raw_text: string; ignored_reason: string; evidence: Evidence | null }>>(initialData.ignored_items || []);
-    const [decisions, setDecisions] = useState<Decision[]>([]);
-    const [reviewSession, setReviewSession] = useState(initialData.review_session || {
-        status: "draft" as const,
-        finalized_by: null,
-        finalized_at: null,
-        remaining_blockers: initialData.review_queue.length,
-        available_actions: [] as string[]
-    });
 
-    // Guided resolving workflow states
-    const [activeIssueId, setActiveIssueId] = useState<string | null>(initialData.review_queue?.[0]?.id || null);
-    const [selectedActionType, setSelectedActionType] = useState<string | null>(null);
-    const [showHelpText, setShowHelpText] = useState(false);
-
-    // Accordions
+    // Accordions local UI state
     const [showSuggested, setShowSuggested] = useState(false);
     const [showTerms, setShowTerms] = useState(false);
     const [showTotalsPanel, setShowTotalsPanel] = useState(false);
 
-    // Request new ProductCode fields
-    const [reqLabel, setReqLabel] = useState("");
-    const [reqSource, setReqSource] = useState("");
-    const [reqCurrency, setReqCurrency] = useState("");
-    const [reqAmount, setReqAmount] = useState("");
+    // Consume the custom workflow hook
+    const { state, derived, actions } = useSpotResolutionWorkflow({
+        initialData,
+        isLive,
+        envelopeId
+    });
 
-    // Add Unknown Charge wizard fields
-    const [unknownStep, setUnknownStep] = useState(1);
-    const [unknownClassification, setUnknownClassification] = useState<string | null>(null);
-    const [addName, setAddName] = useState("");
-    const [addBucket, setAddBucket] = useState("origin_charges");
-    const [addCurrency, setAddCurrency] = useState("SGD");
-    const [addAmount, setAddAmount] = useState("");
-    const [addUnit, setAddUnit] = useState("set");
-    const [addProductCode, setAddProductCode] = useState("");
+    const {
+        suggestedCharges,
+        ignoredItems,
+        decisions,
+        reviewSession,
+        selectedActionType,
+        actionMessage,
+        prototypeOverride
+    } = state;
 
-    // Action message alert banner
-    const [actionMessage, setActionMessage] = useState<string | null>(null);
-    
-    // Prototype override
-    const [prototypeOverride, setPrototypeOverride] = useState(false);
-
-    // Save snapshot state helper for Undos
-    const captureSnapshot = (id: string, type: "map" | "request" | "ignore" | "accept" | "add", desc: string) => {
-        const snapshot: Decision = {
-            id,
-            type,
-            description: desc,
-            originalState: {
-                suggestedCharges: JSON.parse(JSON.stringify(suggestedCharges)),
-                reviewQueue: JSON.parse(JSON.stringify(reviewQueue)),
-                unclassifiedItems: JSON.parse(JSON.stringify(unclassifiedItems)),
-                ignoredItems: JSON.parse(JSON.stringify(ignoredItems))
-            }
-        };
-        setDecisions(prev => [...prev.filter(d => d.id !== id), snapshot]);
-    };
-
-    // Undo action decision helper
-    const handleUndoDecision = (id: string) => {
-        const targetDecision = decisions.find(d => d.id === id);
-        if (targetDecision) {
-            setSuggestedCharges(targetDecision.originalState.suggestedCharges);
-            setReviewQueue(targetDecision.originalState.reviewQueue);
-            setUnclassifiedItems(targetDecision.originalState.unclassifiedItems);
-            setIgnoredItems(targetDecision.originalState.ignoredItems);
-            setDecisions(prev => prev.filter(d => d.id !== id));
-            setActionMessage(`Undone decision for ${targetDecision.description}.`);
-            setActiveIssueId(id);
-            setSelectedActionType(null);
-            setUnknownStep(1);
-        }
-    };
-
-    const submitLiveDecision = async (decisionItem: {
-        decision_id: string;
-        type: string;
-        target_id: string;
-        details: Record<string, unknown>;
-        audit_metadata: { user_id: number; timestamp: string };
-    }) => {
-        if (reviewSession.status === "finalized") {
-            throw new Error("Draft Quote review is finalized and locked.");
-        }
-        if (!isLive || !envelopeId) {
-            return;
-        }
-        const { resolveDraftQuoteDecisions } = await import("../../lib/api");
-        await resolveDraftQuoteDecisions(envelopeId, {
-            idempotency_key: crypto.randomUUID ? crypto.randomUUID() : "3b128522-a89e-4055-bf51-199eecc5628b",
-            decisions: [decisionItem]
-        });
-    };
-
-    const handleFinalizeReview = async () => {
-        if (!canFinishReview || reviewSession.status === "finalized") {
-            return;
-        }
-        if (isLive && envelopeId) {
-            try {
-                const { finalizeDraftQuoteReview } = await import("../../lib/api");
-                const result = await finalizeDraftQuoteReview(envelopeId, crypto.randomUUID ? crypto.randomUUID() : "47c7fa2d-8a4f-4cdb-9fbf-a396ed7f7f88");
-                setReviewSession(prev => ({
-                    ...prev,
-                    status: result.review_status,
-                    finalized_by: result.finalized_by ?? null,
-                    finalized_at: result.finalized_at ?? null,
-                    remaining_blockers: result.remaining_blockers,
-                    available_actions: ["reopen"]
-                }));
-            } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err);
-                setActionMessage(`API error finalizing review: ${errMsg}`);
-                return;
-            }
-        } else {
-            setReviewSession(prev => ({
-                ...prev,
-                status: "finalized",
-                finalized_at: new Date().toISOString(),
-                remaining_blockers: 0,
-                available_actions: ["reopen"]
-            }));
-        }
-        setActionMessage("Draft Quote review finalized and locked.");
-    };
-
-    const handleUseApprovedProductCode = async (chargeId: string, charge: DraftCharge) => {
-        const reqId = charge.product_code_request_id;
-        const pcId = charge.approved_product_code_id;
-        const code = charge.approved_product_code || charge.suggested_product_code || "";
-
-        if (!reqId || !pcId) {
-            setActionMessage("Missing approved ProductCode request metadata.");
-            return;
-        }
-
-        const decisionId = `dec-${Date.now()}`;
-        const newDecisionItem = {
-            decision_id: decisionId,
-            type: "use_approved_product_code",
-            target_id: chargeId,
-            details: {
-                product_code_request_id: Number(reqId),
-                product_code_id: Number(pcId)
-            },
-            audit_metadata: {
-                user_id: 1,
-                timestamp: new Date().toISOString()
-            }
-        };
-
-        try {
-            await submitLiveDecision(newDecisionItem);
-        } catch (err) {
-            console.error("Failed to submit resolve decision:", err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            setActionMessage(`API error resolving mapping: ${errMsg}`);
-            return;
-        }
-
-        // Apply locally
-        captureSnapshot(chargeId, "map", `Used approved billing code ${code} for ${charge.display_label}`);
-        setSuggestedCharges(prev =>
-            prev.map(c => (c.id === chargeId ? { ...c, suggested_product_code: code, status: "accepted_by_user" as DraftChargeStatus } : c))
-        );
-        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
-        setActionMessage(`Approved billing code ${code} applied successfully to ${charge.display_label}.`);
-        setSelectedActionType(null);
-    };
-
-    // Action execution helpers
-    const handleMapProductCode = async (chargeId: string, productCode: string, displayLabel: string) => {
-        try {
-            await submitLiveDecision({
-                decision_id: `dec-${Date.now()}`,
-                type: "map_to_product_code",
-                target_id: chargeId,
-                details: { product_code: productCode },
-                audit_metadata: {
-                    user_id: 1,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } catch (err) {
-            console.error("Failed to submit resolve decision:", err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            setActionMessage(`API error resolving mapping: ${errMsg}`);
-            return;
-        }
-        captureSnapshot(chargeId, "map", `Mapped ${displayLabel} to billing code ${productCode}`);
-        setSuggestedCharges(prev =>
-            prev.map(c => (c.id === chargeId ? { ...c, suggested_product_code: productCode, status: "accepted_by_user" as DraftChargeStatus } : c))
-        );
-        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
-        setActionMessage(`${displayLabel} mapped to billing code ${productCode}. Resolved and included in draft.`);
-        setSelectedActionType(null);
-    };
-
-    const handleOpenRequestProductCode = (charge: DraftCharge) => {
-        setReqLabel(charge.display_label);
-        setReqSource(charge.evidence?.source_text || charge.raw_label);
-        setReqCurrency(charge.currency);
-        setReqAmount(String(charge.amount));
-        setSelectedActionType("request_product_code");
-    };
-
-    const handleSubmitProductCodeRequest = async (chargeId: string) => {
-        try {
-            await submitLiveDecision({
-                decision_id: `dec-${Date.now()}`,
-                type: "request_product_code",
-                target_id: chargeId,
-                details: {
-                    proposed_code: reqLabel,
-                    description: reqSource || reqLabel,
-                    category: "destination_charges",
-                    domain: "IMPORT",
-                    reason: "Operator edited and resubmitted ProductCode request"
-                },
-                audit_metadata: {
-                    user_id: 1,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } catch (err) {
-            console.error("Failed to submit ProductCode request:", err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            setActionMessage(`API error submitting ProductCode request: ${errMsg}`);
-            return;
-        }
-        captureSnapshot(chargeId, "request", `Requested new billing code for ${reqLabel}`);
-        setSuggestedCharges(prev =>
-            prev.map(c => (c.id === chargeId ? { ...c, status: "pending_product_code" as DraftChargeStatus } : c))
-        );
-        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
-        setActionMessage(`New ProductCode request created for ${reqLabel}. Resolved locally and pending approval.`);
-        setSelectedActionType(null);
-    };
-
-    const handleAcceptSuggestedMapping = async (chargeId: string, displayLabel: string, suggestedCode: string) => {
-        if (isReviewLocked) return;
-        try {
-            await submitLiveDecision({
-                decision_id: `dec-${Date.now()}`,
-                type: "accept_suggestion",
-                target_id: chargeId,
-                details: {},
-                audit_metadata: {
-                    user_id: 1,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } catch (err) {
-            console.error("Failed to submit accept suggestion decision:", err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            setActionMessage(`API error accepting suggested mapping: ${errMsg}`);
-            return;
-        }
-        captureSnapshot(chargeId, "accept", `Accepted code ${suggestedCode} for ${displayLabel}`);
-        setSuggestedCharges(prev =>
-            prev.map(c => (c.id === chargeId ? { ...c, status: "accepted_by_user" as DraftChargeStatus } : c))
-        );
-        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
-        setActionMessage(`Accepted suggested mapping ${suggestedCode} for ${displayLabel}.`);
-        setSelectedActionType(null);
-    };
-
-    const handleIgnoreCharge = async (chargeId: string, charge: DraftCharge) => {
-        try {
-            await submitLiveDecision({
-                decision_id: `dec-${Date.now()}`,
-                type: "ignore",
-                target_id: chargeId,
-                details: { reason: "Operator ignored rejected ProductCode blocker as non-commercial" },
-                audit_metadata: {
-                    user_id: 1,
-                    timestamp: new Date().toISOString()
-                }
-            });
-        } catch (err) {
-            console.error("Failed to submit ignore decision:", err);
-            const errMsg = err instanceof Error ? err.message : String(err);
-            setActionMessage(`API error ignoring charge: ${errMsg}`);
-            return;
-        }
-        captureSnapshot(chargeId, "ignore", `Ignored ${charge.display_label}`);
-        setSuggestedCharges(prev =>
-            prev.map(c => (c.id === chargeId ? { ...c, status: "ignored" as DraftChargeStatus, include_in_totals: false } : c))
-        );
-        setIgnoredItems(prev => [
-            ...prev,
-            {
-                id: chargeId,
-                raw_text: charge.raw_label,
-                ignored_reason: "Ignored by operator during quote review",
-                evidence: charge.evidence
-            }
-        ]);
-        setReviewQueue(prev => prev.filter(q => q.id !== chargeId));
-        setActionMessage(`${charge.display_label} ignored and excluded from totals.`);
-        setSelectedActionType(null);
-    };
-
-    const handleIgnoreUnknownCharge = (itemId: string, rawText: string) => {
-        if (isReviewLocked) return;
-        captureSnapshot(itemId, "ignore", "Ignored unknown text block");
-        setIgnoredItems(prev => [
-            ...prev,
-            {
-                id: itemId,
-                raw_text: rawText,
-                ignored_reason: "Operator ignored text block as non-commercial text",
-                evidence: unclassifiedItems.find(i => i.id === itemId)?.evidence || null
-            }
-        ]);
-        setUnclassifiedItems(prev => prev.filter(i => i.id !== itemId));
-        setActionMessage(`Ignored unknown text block. Excluded from draft.`);
-        setSelectedActionType(null);
-        setUnknownStep(1);
-    };
-
-    const handleAddUnknownAsCharge = (itemId: string) => {
-        if (isReviewLocked) return;
-        const newChargeId = `chg-new-${Date.now()}`;
-        const newCharge: DraftCharge = {
-            id: newChargeId,
-            status: (addProductCode ? "accepted_by_user" : "suggested") as DraftChargeStatus,
-            display_label: addName,
-            raw_label: addName,
-            suggested_product_code: addProductCode || null,
-            product_code_conflict: !addProductCode,
-            bucket: addBucket,
-            currency: addCurrency,
-            amount: Number(addAmount) || 0,
-            rate: null,
-            unit: addUnit,
-            calculation_basis: null,
-            minimum_charge: null,
-            percentage_base: null,
-            quantity: 1,
-            include_in_totals: true,
-            conditions: [],
-            warnings: [],
-            review_reason: null,
-            evidence: unclassifiedItems.find(i => i.id === itemId)?.evidence || null,
-            similarity_group_id: null,
-            correction_actions: []
-        };
-
-        captureSnapshot(itemId, "add", `Added unknown block as charge ${addName}`);
-        setSuggestedCharges(prev => [...prev, newCharge]);
-        setUnclassifiedItems(prev => prev.filter(i => i.id !== itemId));
-        
-        if (!addProductCode) {
-            setReviewQueue(prev => [
-                ...prev,
-                {
-                    id: newChargeId,
-                    type: "charge_needs_review",
-                    message: "Newly added charge line requires a valid ProductCode mapping."
-                }
-            ]);
-        }
-
-        setActionMessage(`Unknown block added as draft charge line: "${addName}".`);
-        setSelectedActionType(null);
-        setUnknownStep(1);
-    };
-
-    const toggleIncludeInTotals = (chargeId: string) => {
-        if (isReviewLocked) return;
-        setSuggestedCharges(prev =>
-            prev.map(c => (c.id === chargeId ? { ...c, include_in_totals: !c.include_in_totals } : c))
-        );
-    };
-
-    // Calculate dynamic lists matching live decisions
-    const combinedUnresolved = [
-        ...reviewQueue.map(item => {
-            const charge = suggestedCharges.find(c => c.id === item.id);
-            return {
-                id: item.id,
-                type: "review_item",
-                title: charge?.display_label || "Needs Review",
-                problem: charge?.review_reason || item.message || "Requires validation.",
-                evidence: charge?.evidence,
-                charge
-            };
-        }),
-        ...unclassifiedItems.map(item => ({
-            id: item.id,
-            type: "unknown_charge",
-            title: "Unknown Charge Block",
-            problem: "Commercial text block extracted from quote document could not be safely mapped to a standard charge line.",
-            evidence: item.evidence,
-            itemDetails: item
-        }))
-    ];
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const currentIssue = (combinedUnresolved.find(i => i.id === activeIssueId) || combinedUnresolved[0] || null) as any;
-
-    // Calculate totals split by currency
-    const activeCharges = suggestedCharges.filter(c => c.include_in_totals && c.status !== "ignored");
-    const uniqueCurrencies = Array.from(new Set(activeCharges.map(c => c.currency)));
-    const subtotals = uniqueCurrencies.reduce((acc, curr) => {
-        acc[curr] = activeCharges.filter(c => c.currency === curr).reduce((sum, c) => sum + c.amount, 0);
-        return acc;
-    }, {} as Record<string, number>);
-
-    // Checklist validators
-    const checklistIssuesResolved = combinedUnresolved.length === 0;
-    const checklistNoUnknown = unclassifiedItems.length === 0;
-    const checklistProductCodesVerified = suggestedCharges
-        .filter(c => c.include_in_totals && c.status !== "ignored")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .every(c => c.suggested_product_code !== null && c.status !== ("pending_product_code" as any));
-
-    const canFinishReview = checklistIssuesResolved && checklistNoUnknown && checklistProductCodesVerified;
-    const isReviewLocked = reviewSession.status === "finalized";
-    const canUsePrototypeOverride = !isLive && prototypeOverride;
-
-    // Direct Next-Step instructions guidance
-    let nextStepGuidance = "Review the remaining commercial term before finishing.";
-    if (combinedUnresolved.length > 0) {
-        const first = combinedUnresolved[0];
-        if (first.type === "review_item") {
-            nextStepGuidance = `Next step: Choose a ProductCode for ${first.title}.`;
-        } else {
-            nextStepGuidance = `Next step: Decide whether this unknown text is a real charge.`;
-        }
-    }
+    const {
+        combinedUnresolved,
+        currentIssue,
+        uniqueCurrencies,
+        subtotals,
+        checklistIssuesResolved,
+        checklistNoUnknown,
+        checklistProductCodesVerified,
+        canFinishReview,
+        isReviewLocked,
+        canUsePrototypeOverride,
+        nextStepGuidance
+    } = derived;
 
     return (
         <div className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
@@ -506,7 +93,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                 {actionMessage && (
                     <div className="bg-emerald-950/40 border border-emerald-900/60 text-emerald-300 p-4 rounded-xl text-xs flex justify-between items-center">
                         <span>{actionMessage}</span>
-                        <button onClick={() => setActionMessage(null)} className="text-emerald-500 hover:text-emerald-300 font-bold">Dismiss</button>
+                        <button onClick={actions.dismissActionMessage} className="text-emerald-500 hover:text-emerald-300 font-bold">Dismiss</button>
                     </div>
                 )}
 
@@ -528,12 +115,12 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                         {/* Collapsible Guidance Drawer */}
                         <div className="mb-4">
                             <button 
-                                onClick={() => setShowHelpText(!showHelpText)} 
+                                onClick={actions.toggleHelpText}
                                 className="text-xs text-indigo-400 font-semibold hover:underline flex items-center gap-1"
                             >
-                                {showHelpText ? "Hide explanation" : "Why am I seeing this?"}
+                                {state.showHelpText ? "Hide explanation" : "Why am I seeing this?"}
                             </button>
-                            {showHelpText && (
+                            {state.showHelpText && (
                                 <div className="mt-2 bg-slate-950 border border-slate-850 rounded-xl p-3.5 text-xs text-slate-300 leading-relaxed">
                                     {currentIssue.type === "review_item" ? (
                                         "RateEngine extracted this charge from the supplier quote, but it could not safely match a billing code. Choosing the correct billing code ensures accurate reporting, margins, and customer invoicing."
@@ -582,19 +169,19 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                                 </div>
                                                 <div className="mt-2 flex flex-wrap gap-2">
                                                     <button
-                                                        onClick={() => setSelectedActionType("map_existing")}
+                                                        onClick={actions.openMapExisting}
                                                         className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold transition text-xs"
                                                     >
                                                         Map to existing ProductCode
                                                     </button>
                                                     <button
-                                                        onClick={() => handleOpenRequestProductCode(currentIssue.charge!)}
+                                                        onClick={() => actions.openRequestProductCode(currentIssue.charge!)}
                                                         className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg font-semibold transition text-xs"
                                                     >
                                                         Edit and resubmit request
                                                     </button>
                                                     <button
-                                                        onClick={() => handleIgnoreCharge(currentIssue.id, currentIssue.charge!)}
+                                                        onClick={() => actions.ignoreCharge(currentIssue.id, currentIssue.charge!)}
                                                         className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-300 rounded-lg font-semibold transition text-xs"
                                                     >
                                                         Ignore / exclude
@@ -616,7 +203,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                                 </div>
                                                 <div className="mt-2">
                                                     <button
-                                                        onClick={() => handleUseApprovedProductCode(currentIssue.id, currentIssue.charge!)}
+                                                        onClick={() => actions.useApprovedProductCode(currentIssue.id, currentIssue.charge!)}
                                                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold transition text-xs"
                                                     >
                                                         Use Approved ProductCode ({currentIssue.charge.approved_product_code})
@@ -627,97 +214,87 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
 
                                         <div className="flex flex-wrap gap-2">
                                             <button
-                                                onClick={() => setSelectedActionType("map_existing")}
+                                                onClick={actions.openMapExisting}
                                                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
                                             >
                                                 Map to Existing ProductCode
                                             </button>
                                             <button
-                                                onClick={() => handleOpenRequestProductCode(currentIssue.charge!)}
+                                                onClick={() => actions.openRequestProductCode(currentIssue.charge!)}
                                                 className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-200 rounded-lg text-xs font-semibold transition"
                                             >
                                                 Request New ProductCode
                                             </button>
                                             {currentIssue.charge.suggested_product_code && !currentIssue.charge.correction_actions?.includes("APPROVED_PRODUCTCODE_AVAILABLE") && (
                                                 <button
-                                                    onClick={() => handleAcceptSuggestedMapping(currentIssue.id, currentIssue.title, currentIssue.charge!.suggested_product_code!)}
+                                                    onClick={() => actions.acceptSuggestedMapping(currentIssue.id, currentIssue.title, currentIssue.charge!.suggested_product_code!)}
                                                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
                                                 >
                                                     Accept Suggested Mapping ({currentIssue.charge.suggested_product_code})
                                                 </button>
                                             )}
                                             <button
-                                                onClick={() => handleIgnoreCharge(currentIssue.id, currentIssue.charge!)}
+                                                onClick={() => actions.ignoreCharge(currentIssue.id, currentIssue.charge!)}
                                                 className="px-4 py-2 bg-slate-950 hover:bg-slate-900 border border-slate-800 text-red-400 rounded-lg text-xs font-semibold transition"
                                             >
                                                 Ignore as Non-Commercial
                                             </button>
                                         </div>
                                     </div>
-                                ) : currentIssue.itemDetails ? (
+                                ) : currentIssue.type === "unknown_charge" ? (
                                     /* Unknown Charge Guided flow wizard */
                                     <div className="flex flex-col gap-4">
-                                        {unknownStep === 1 ? (
+                                        {state.unknownWizard.step === 1 ? (
                                             <div className="flex flex-col gap-2.5">
                                                 <div className="text-xs font-semibold text-slate-300">Step 1: What is this text block?</div>
                                                 <div className="flex flex-col sm:flex-row gap-2">
                                                     <button
-                                                        onClick={() => { setUnknownClassification("charge"); setUnknownStep(2); }}
+                                                        onClick={() => actions.classifyUnknown("charge")}
                                                         className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs font-semibold text-slate-200 text-left grow"
                                                     >
                                                         A real charge line
                                                     </button>
                                                     <button
-                                                        onClick={() => { setUnknownClassification("note"); setUnknownStep(2); }}
+                                                        onClick={() => actions.classifyUnknown("note")}
                                                         className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs font-semibold text-slate-200 text-left grow"
                                                     >
                                                         A notes annotation or cargo condition
                                                     </button>
                                                     <button
-                                                        onClick={() => handleIgnoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
+                                                        onClick={() => actions.ignoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
                                                         className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-red-900 hover:text-red-400 rounded-lg text-xs font-semibold text-red-400 text-left grow"
                                                     >
                                                         Not relevant (Ignore)
                                                     </button>
                                                 </div>
                                             </div>
-                                        ) : unknownStep === 2 ? (
+                                        ) : state.unknownWizard.step === 2 ? (
                                             <div className="flex flex-col gap-3">
                                                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                                                    <button onClick={() => setUnknownStep(1)} className="hover:underline flex items-center gap-0.5 text-indigo-400 font-semibold">
+                                                    <button onClick={actions.returnToUnknownClassification} className="hover:underline flex items-center gap-0.5 text-indigo-400 font-semibold">
                                                         <ArrowLeft className="h-3.5 w-3.5" /> Back
                                                     </button>
-                                                    <span>| Classification: {unknownClassification}</span>
+                                                    <span>| Classification: {state.unknownWizard.classification}</span>
                                                 </div>
                                                 
-                                                {unknownClassification === "charge" ? (
+                                                {state.unknownWizard.classification === "charge" ? (
                                                     <div className="flex flex-col gap-2.5">
                                                         <div className="text-xs font-semibold text-slate-300">Step 2: How should it be mapped?</div>
                                                         <div className="flex flex-col sm:flex-row gap-2">
                                                             <button
-                                                                onClick={() => { setSelectedActionType("map_existing"); }}
+                                                                onClick={actions.openMapExisting}
                                                                 className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
                                                             >
                                                                 Map to an existing billing code
                                                             </button>
                                                             <button
-                                                                onClick={() => {
-                                                                    setReqLabel("Unknown Charge Item");
-                                                                    setReqSource(currentIssue.itemDetails!.raw_text);
-                                                                    setReqCurrency("SGD");
-                                                                    setReqAmount("0");
-                                                                    setSelectedActionType("request_product_code");
-                                                                }}
+                                                                onClick={() => actions.openUnknownProductCodeRequest(currentIssue.itemDetails!.raw_text)}
                                                                 className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
                                                             >
                                                                 Request new billing code
                                                             </button>
                                                             <button
-                                                                onClick={() => {
-                                                                    setAddName("New Charge");
-                                                                    setAddAmount("0");
-                                                                    setSelectedActionType("add_charge");
-                                                                }}
+                                                                onClick={() => actions.openAddUnknownCharge("New Charge", "0")}
                                                                 className="px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-600 rounded-lg text-xs text-left grow text-slate-200"
                                                             >
                                                                 Add manually as draft charge line
@@ -730,18 +307,13 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                                         <p className="text-xs text-slate-400">Notes can be ignored in quote calculations but are preserved in commercial terms logs.</p>
                                                         <div className="flex gap-2">
                                                             <button
-                                                                onClick={() => {
-                                                                    captureSnapshot(currentIssue.id, "accept", `Accepted condition note: ${currentIssue.itemDetails!.raw_text}`);
-                                                                    setUnclassifiedItems(prev => prev.filter(i => i.id !== currentIssue.id));
-                                                                    setActionMessage("Note resolved and archived in quote details.");
-                                                                    setUnknownStep(1);
-                                                                }}
+                                                                onClick={() => actions.approveUnknownNote(currentIssue.id, currentIssue.itemDetails!.raw_text)}
                                                                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded text-xs text-white font-semibold"
                                                             >
                                                                 Approve & File Note
                                                             </button>
                                                             <button
-                                                                onClick={() => handleIgnoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
+                                                                onClick={() => actions.ignoreUnknownCharge(currentIssue.id, currentIssue.itemDetails!.raw_text)}
                                                                 className="px-4 py-2 bg-slate-950 border border-slate-850 hover:border-slate-700 rounded text-xs text-slate-400"
                                                             >
                                                                 Ignore Note
@@ -757,47 +329,47 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                         ) : selectedActionType === "map_existing" ? (
                             <MapExistingForm
                                 onMap={(productCode) =>
-                                    handleMapProductCode(
+                                    actions.mapProductCode(
                                         currentIssue.id,
                                         productCode,
                                         currentIssue.title
                                     )
                                 }
-                                onCancel={() => setSelectedActionType(null)}
+                                onCancel={actions.cancelAction}
                             />
                         ) : selectedActionType === "request_product_code" ? (
                             <RequestProductCodeForm
-                                reqLabel={reqLabel}
-                                onReqLabelChange={setReqLabel}
-                                reqSource={reqSource}
-                                onReqSourceChange={setReqSource}
-                                reqCurrency={reqCurrency}
-                                onReqCurrencyChange={setReqCurrency}
-                                reqAmount={reqAmount}
-                                onReqAmountChange={setReqAmount}
+                                reqLabel={state.requestForm.label}
+                                onReqLabelChange={(val) => actions.updateRequestForm({ label: val })}
+                                reqSource={state.requestForm.source}
+                                onReqSourceChange={(val) => actions.updateRequestForm({ source: val })}
+                                reqCurrency={state.requestForm.currency}
+                                onReqCurrencyChange={(val) => actions.updateRequestForm({ currency: val })}
+                                reqAmount={state.requestForm.amount}
+                                onReqAmountChange={(val) => actions.updateRequestForm({ amount: val })}
                                 onSubmit={() =>
-                                    handleSubmitProductCodeRequest(currentIssue.id)
+                                    actions.submitProductCodeRequest(currentIssue.id)
                                 }
-                                onCancel={() => setSelectedActionType(null)}
+                                onCancel={actions.cancelAction}
                             />
                         ) : selectedActionType === "add_charge" ? (
                             <AddChargeForm
-                                addName={addName}
-                                onAddNameChange={setAddName}
-                                addBucket={addBucket}
-                                onAddBucketChange={setAddBucket}
-                                addCurrency={addCurrency}
-                                onAddCurrencyChange={setAddCurrency}
-                                addAmount={addAmount}
-                                onAddAmountChange={setAddAmount}
-                                addUnit={addUnit}
-                                onAddUnitChange={setAddUnit}
-                                addProductCode={addProductCode}
-                                onAddProductCodeChange={setAddProductCode}
+                                addName={state.addChargeForm.name}
+                                onAddNameChange={(val) => actions.updateAddChargeForm({ name: val })}
+                                addBucket={state.addChargeForm.bucket}
+                                onAddBucketChange={(val) => actions.updateAddChargeForm({ bucket: val })}
+                                addCurrency={state.addChargeForm.currency}
+                                onAddCurrencyChange={(val) => actions.updateAddChargeForm({ currency: val })}
+                                addAmount={state.addChargeForm.amount}
+                                onAddAmountChange={(val) => actions.updateAddChargeForm({ amount: val })}
+                                addUnit={state.addChargeForm.unit}
+                                onAddUnitChange={(val) => actions.updateAddChargeForm({ unit: val })}
+                                addProductCode={state.addChargeForm.productCode}
+                                onAddProductCodeChange={(val) => actions.updateAddChargeForm({ productCode: val })}
                                 onAdd={() =>
-                                    handleAddUnknownAsCharge(currentIssue.id)
+                                    actions.addUnknownAsCharge(currentIssue.id)
                                 }
-                                onCancel={() => setSelectedActionType(null)}
+                                onCancel={actions.cancelAction}
                             />
                         ) : null}
 
@@ -824,11 +396,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                         <span className="text-slate-400 mt-0.5 block">{item.problem}</span>
                                     </div>
                                     <button
-                                        onClick={() => {
-                                            setActiveIssueId(item.id);
-                                            setSelectedActionType(null);
-                                            setUnknownStep(1);
-                                        }}
+                                        onClick={() => actions.selectIssue(item.id)}
                                         className="px-2.5 py-1.5 bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-900 text-indigo-300 hover:text-white rounded font-semibold transition"
                                     >
                                         Resolve Now
@@ -849,13 +417,13 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                     <span className="text-slate-300">✓ {d.description}</span>
                                     <div className="flex gap-2">
                                         <button
-                                            onClick={() => handleUndoDecision(d.id)}
+                                            onClick={() => actions.undoDecision(d.id)}
                                             className="text-xs text-indigo-400 font-semibold hover:underline"
                                         >
                                             {d.type === "map" ? "Edit Mapping" : d.type === "request" ? "Edit Request" : "Reopen"}
                                         </button>
                                         <button
-                                            onClick={() => handleUndoDecision(d.id)}
+                                            onClick={() => actions.undoDecision(d.id)}
                                             className="text-xs text-slate-500 font-semibold hover:underline"
                                         >
                                             Undo
@@ -889,7 +457,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                             <input
                                                 type="checkbox"
                                                 checked={charge.include_in_totals}
-                                                onChange={() => toggleIncludeInTotals(charge.id)}
+                                                onChange={() => actions.toggleIncludeInTotals(charge.id)}
                                                 disabled={isReviewLocked}
                                                 className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
                                             />
@@ -1029,13 +597,13 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                         <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">Ignored Items</h2>
                         <div className="flex flex-col gap-2.5">
                             {ignoredItems.map(item => (
-                                <div key={item.id} className="bg-slate-950 border border-slate-850 rounded-xl p-3 text-xs flex justify-between items-center">
+                                <div key={item.id} className="bg-slate-950 border border-slate-855 rounded-xl p-3 text-xs flex justify-between items-center">
                                     <div>
                                         <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Reason: {item.ignored_reason}</span>
                                         <p className="text-slate-400 italic font-mono mt-1">&quot;{item.raw_text}&quot;</p>
                                     </div>
                                     <button
-                                        onClick={() => handleUndoDecision(item.id)}
+                                        onClick={() => actions.undoDecision(item.id)}
                                         className="text-xs text-indigo-400 font-semibold hover:underline"
                                     >
                                         Reopen
@@ -1097,7 +665,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                     type="checkbox"
                                     id="proto-override"
                                     checked={prototypeOverride}
-                                    onChange={() => setPrototypeOverride(!prototypeOverride)}
+                                    onChange={actions.togglePrototypeOverride}
                                     className="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-indigo-500 w-4.5 h-4.5"
                                 />
                                 <label htmlFor="proto-override" className="text-slate-400 cursor-pointer font-medium select-none">
@@ -1109,7 +677,7 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
 
                         <button
                             disabled={isReviewLocked || (!canFinishReview && !canUsePrototypeOverride)}
-                            onClick={handleFinalizeReview}
+                            onClick={actions.finalizeReview}
                             className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-xl shadow-indigo-900/40 w-full sm:w-auto text-center transition"
                         >
                             {isReviewLocked ? "Review Finalized" : "Finalize Review"}
