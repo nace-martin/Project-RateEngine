@@ -81,7 +81,7 @@ Evidence must include the route, envelope ID, tested supplier label, action take
 | `misc_recoveries` or broad miscellaneous recovery wording | Manual review only. Do not auto-price. Capture exact label and proposed future mapping. |
 | Generic `handling` | Manual review only unless origin/destination/mode context is explicit. |
 | Broad `fsc` | Manual review only unless scoped context clearly selects airline, pickup, cartage, or domestic fuel. |
-| Customs pass-through | Manual review unless a scoped ProductCode is obvious and finance accepts the treatment. |
+| Customs pass-through | Manual review unless a scoped ProductCode is obvious. |
 | Terminal/documentation ambiguity | Manual review if the label lacks mode/direction context. |
 | Multiple ProductCode candidates | Operator must choose a scoped ProductCode; system must not silently choose an arbitrary candidate. |
 
@@ -252,7 +252,7 @@ Launch recommendation values:
 | Recommendation | Use when |
 | --- | --- |
 | Proceed to pilot launch | Gate items pass and no unresolved blocker remains. |
-| Fix blockers | Any blocker remains unresolved or finance rejects a charge treatment. |
+| Fix blockers | Any blocker remains unresolved. |
 | Proceed to deployment readiness | UAT passes and remaining items are manual-review acceptable or future enhancements. |
 | Defer enhancements | Findings are outside pilot correctness and can be scheduled after launch. |
 
@@ -263,7 +263,7 @@ Launch recommendation values:
 | Blockers found | Fix blockers first, retest affected scenarios, and update this evidence pack. |
 | UAT passes with no blockers | Proceed to deployment readiness and pilot launch checklist confirmation. |
 | Only manual-review or enhancement findings remain | Defer enhancements, keep manual-review controls, and document backlog items. |
-| Finance rejects GST/GL/ProductCode treatment | Pause launch for affected charge type and create a focused remediation phase. |
+| Correctness concerns verified by management | Pause launch for affected charge type and create a focused remediation phase. |
 
 ## 12. Phase 13.1O controlled UAT execution evidence
 
@@ -284,7 +284,7 @@ Phase 13.1O used the live Exception Workspace route, not the demo route. Evidenc
 | AF-UAT-07 | Documentation/AWB ambiguity | Pending | Pending | Pending | AWB/documentation labels resolve only when scope is clear; terminal or documentation conflicts are held for manual review. | Deferred; no AWB/documentation ambiguity staged envelope executed in Phase 13.1O. | Pending; expected scoped AWB/docs ProductCode where clear | Pending; expected awb, documentation fee, terminal fee as applicable | Pending; documentation or terminal conflicts must require manual review | Pending | Deferred | Deferred | Needs test | Execute docs/AWB ambiguity scenario before pilot sign-off if those labels are in pilot scope. |
 | AF-UAT-08 | Review finalization guardrails | Codex local UAT | 2026-07-10 | Envelope `81fe3173-13ca-464f-bb3d-8b15657ac505`; quote ID none; route `/quotes/spot/81fe3173-13ca-464f-bb3d-8b15657ac505/exception-workspace` | Finalization is blocked when required blockers remain and succeeds only after allowed review outcomes are complete. | Passed: finalize returned `400` with one `charge_needs_review` blocker for broad `FSC`; after ProductCode request and manual map, read showed `remaining_blockers=0` and `available_actions=['finalize']`; finalize returned `200`; post-finalize resolve returned `409 DRAFT_QUOTE_FINALIZED`. | Not applicable | Not applicable | Broad `FSC` blocker prevented finalization until reviewer action. | Mixed-currency warning present. | Passed | Pass | None | Keep blocker/finalization guardrail as pilot control. |
 | AF-UAT-09 | Manager reopen | Codex local UAT | 2026-07-10 | Envelope `81fe3173-13ca-464f-bb3d-8b15657ac505`; quote ID none; route `/quotes/spot/81fe3173-13ca-464f-bb3d-8b15657ac505/exception-workspace` | Manager can reopen an eligible finalized/reviewed item; unauthorized or out-of-scope users cannot bypass RBAC. | Passed scoped check: finance reopen returned `403 Manager or Admin access required`; manager reopen returned `200` and review status returned to `in_review` with `available_actions=['finalize']`. | Not applicable | Not applicable | Not applicable | None specific to reopen. | Passed | Pass | None | Keep manager/admin-only reopen control. |
-| AF-UAT-10 | Accounting/commercial review | Pending | Pending | Pending | Reviewer confirms ProductCodes, GST policy application, broad internal GL assumptions, currency handling, totals, and manual-review controls for pilot scope. | Deferred; Phase 13.1O did not include accounting/commercial reviewer confirmation. | Pending; record all ProductCodes used in reviewed quote | Pending; record aliases used in reviewed quote | Pending; rejected items are blockers or paused charge types | Pending | Deferred | Deferred | Needs reviewer | Reviewer must confirm or pause `IMP-HANDLE-DEST`, `IMP-STORAGE-DEST`, import fuel treatment, misc recovery exclusion, and mixed-currency treatment before GO. |
+| AF-UAT-10 | Accounting/commercial review | Pending | Pending | Pending | Reviewer checks ProductCodes, GST policy application, broad internal GL assumptions, currency handling, totals, and manual-review controls for pilot scope. | Deferred; Phase 13.1O did not include accounting/commercial reviewer feedback. | Pending; record all ProductCodes used in reviewed quote | Pending; record aliases used in reviewed quote | Pending; record manual-review observations | Pending | Deferred | Deferred | Needs reviewer | Reviewer logs advisory notes for `IMP-HANDLE-DEST`, `IMP-STORAGE-DEST`, import fuel treatment, misc recovery exclusion, and mixed-currency treatment before GO. |
 
 ### Defect and remediation decisions
 
@@ -295,7 +295,6 @@ Phase 13.1O used the live Exception Workspace route, not the demo route. Evidenc
 | Materially wrong totals | Blocker | AF-UAT-01, AF-UAT-02, AF-UAT-06, AF-UAT-10 | Pilot quote cannot be trusted for customer or finance review. | Fix before pilot | Not verified; Phase 13.1O did not execute full quote-total/customer-output review. |
 | Finalization bypasses blockers | Blocker | AF-UAT-08 | Unreviewed or unsafe quote state can be locked as final. | Fix before pilot if observed | Passed: `400` while blocker remained, `200` after blocker resolution, `409 DRAFT_QUOTE_FINALIZED` for post-finalize resolve. |
 | Permission or RBAC failure | Blocker | AF-UAT-09 | Unauthorized user can reopen or act outside scope. | Fix before pilot if observed | Passed scoped check: finance reopen `403`, manager reopen `200`. |
-| GST or GL finance rejection | Blocker | AF-UAT-10 | Finance cannot accept the ProductCode or charge treatment. | Pause affected charge type | Pending finance review. |
 | Accepted broad-label manual review | Manual-review acceptable | AF-UAT-03, AF-UAT-04, AF-UAT-05, AF-UAT-06, AF-UAT-07 | Operator workload increases but quote correctness is preserved. | Proceed with manual review | Confirmed for broad `FSC`, generic `handling`, and `misc recovery` in staged UAT. |
 | ProductCode request contract completeness | Fix-before-pilot documentation/training | AF-UAT-03, AF-UAT-10 | Operator requests fail validation if required request fields are missing. | Document required UI/API fields; fix UI only if it omits required fields. | Observed: request without `description` and `domain` returned `400`; request with `proposed_code`, `description`, `domain`, `category`, and `reason` returned `200` and created pending request ID `4`. |
 | Non-critical usability enhancement | Future enhancement | Any scenario | Efficiency or clarity issue only; no quote correctness impact. | Defer | No usability-only defects logged in Phase 13.1O. |
