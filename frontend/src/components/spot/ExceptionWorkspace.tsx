@@ -4,6 +4,9 @@ import React, { useState } from "react";
 import { AlertCircle, CheckCircle, ChevronDown, ChevronUp, Info, ShieldAlert, FileText, ArrowLeft } from "lucide-react";
 import { DraftCharge, DraftChargeStatus, Evidence, DraftQuote } from "../../lib/draft-quote-types";
 import { humanizeRate, friendlyStatus } from "@/lib/spot-workspace-helpers";
+import { MapExistingForm } from "./workspace/MapExistingForm";
+import { RequestProductCodeForm } from "./workspace/RequestProductCodeForm";
+import { AddChargeForm } from "./workspace/AddChargeForm";
 
 // Stateful Decision type for Reopen/Undo logging
 interface Decision {
@@ -752,117 +755,50 @@ export function ExceptionWorkspace({ initialData, isLive = false, envelopeId }: 
                                 ) : null}
                             </div>
                         ) : selectedActionType === "map_existing" ? (
-                            <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
-                                <h3 className="text-xs uppercase font-bold text-indigo-400">Map to Existing ProductCode</h3>
-                                <p className="text-xs text-slate-400">Choose this if the billing code already exists in EFM RateEngine catalog.</p>
-                                <div className="flex gap-2">
-                                    <select
-                                        onChange={e => {
-                                            if (e.target.value) {
-                                                handleMapProductCode(currentIssue.id, e.target.value, currentIssue.title);
-                                            }
-                                        }}
-                                        className="text-xs bg-slate-900 border border-slate-800 rounded p-2 text-slate-200 grow"
-                                    >
-                                        <option value="">-- Choose Billing Code --</option>
-                                        <option value="AF-FREIGHT">AF-FREIGHT (Air Freight Linehaul)</option>
-                                        <option value="AF-FUEL">AF-FUEL (Fuel Surcharge)</option>
-                                        <option value="AF-SEC">AF-SEC (Security Charge)</option>
-                                        <option value="AF-HC">AF-HC (Handling Charge)</option>
-                                    </select>
-                                    <button
-                                        onClick={() => setSelectedActionType(null)}
-                                        className="px-3 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-400"
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
+                            <MapExistingForm
+                                onMap={(productCode) =>
+                                    handleMapProductCode(
+                                        currentIssue.id,
+                                        productCode,
+                                        currentIssue.title
+                                    )
+                                }
+                                onCancel={() => setSelectedActionType(null)}
+                            />
                         ) : selectedActionType === "request_product_code" ? (
-                            <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
-                                <h3 className="text-xs uppercase font-bold text-indigo-400">Request New ProductCode</h3>
-                                <p className="text-xs text-slate-400">Choose this if the charge is legitimate but the code is missing from the master EFM database.</p>
-                                <div className="grid grid-cols-2 gap-3 text-xs">
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Charge Name</label>
-                                        <input type="text" value={reqLabel} onChange={e => setReqLabel(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Quote Extracted Text</label>
-                                        <input type="text" value={reqSource} onChange={e => setReqSource(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Currency</label>
-                                        <input type="text" value={reqCurrency} onChange={e => setReqCurrency(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Amount</label>
-                                        <input type="text" value={reqAmount} onChange={e => setReqAmount(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                </div>
-                                <div className="flex gap-2 justify-end mt-2">
-                                    <button
-                                        onClick={() => handleSubmitProductCodeRequest(currentIssue.id)}
-                                        className="px-4 py-2 bg-indigo-600 text-white rounded text-xs font-semibold"
-                                    >
-                                        Submit Request
-                                    </button>
-                                    <button
-                                        onClick={() => setSelectedActionType(null)}
-                                        className="px-4 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-400"
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
+                            <RequestProductCodeForm
+                                reqLabel={reqLabel}
+                                onReqLabelChange={setReqLabel}
+                                reqSource={reqSource}
+                                onReqSourceChange={setReqSource}
+                                reqCurrency={reqCurrency}
+                                onReqCurrencyChange={setReqCurrency}
+                                reqAmount={reqAmount}
+                                onReqAmountChange={setReqAmount}
+                                onSubmit={() =>
+                                    handleSubmitProductCodeRequest(currentIssue.id)
+                                }
+                                onCancel={() => setSelectedActionType(null)}
+                            />
                         ) : selectedActionType === "add_charge" ? (
-                            <div className="bg-slate-950 border border-slate-850 p-4 rounded-xl flex flex-col gap-3">
-                                <h3 className="text-xs uppercase font-bold text-indigo-400">Add manually as draft charge line</h3>
-                                <div className="grid grid-cols-2 gap-3 text-xs">
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Charge Name</label>
-                                        <input type="text" value={addName} onChange={e => setAddName(e.target.value)} placeholder="e.g. Handling Fee" className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Section Bucket</label>
-                                        <select value={addBucket} onChange={e => setAddBucket(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5">
-                                            <option value="origin_charges">Origin Charges</option>
-                                            <option value="destination_charges">Destination Charges</option>
-                                            <option value="airfreight">Air Freight Linehaul</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Currency</label>
-                                        <input type="text" value={addCurrency} onChange={e => setAddCurrency(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Amount</label>
-                                        <input type="text" value={addAmount} onChange={e => setAddAmount(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Unit Spec</label>
-                                        <input type="text" value={addUnit} onChange={e => setAddUnit(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                    <div>
-                                        <label className="text-slate-500 block mb-1">Mapping Code (Optional)</label>
-                                        <input type="text" value={addProductCode} onChange={e => setAddProductCode(e.target.value)} placeholder="Approved ProductCode" className="w-full bg-slate-900 border border-slate-800 rounded p-1.5" />
-                                    </div>
-                                </div>
-                                <div className="flex gap-2 justify-end mt-2">
-                                    <button
-                                        onClick={() => handleAddUnknownAsCharge(currentIssue.id)}
-                                        className="px-4 py-2 bg-indigo-600 text-white rounded text-xs font-semibold"
-                                    >
-                                        Confirm and Add
-                                    </button>
-                                    <button
-                                        onClick={() => setSelectedActionType(null)}
-                                        className="px-4 py-2 bg-slate-900 border border-slate-800 rounded text-xs text-slate-400"
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
+                            <AddChargeForm
+                                addName={addName}
+                                onAddNameChange={setAddName}
+                                addBucket={addBucket}
+                                onAddBucketChange={setAddBucket}
+                                addCurrency={addCurrency}
+                                onAddCurrencyChange={setAddCurrency}
+                                addAmount={addAmount}
+                                onAddAmountChange={setAddAmount}
+                                addUnit={addUnit}
+                                onAddUnitChange={setAddUnit}
+                                addProductCode={addProductCode}
+                                onAddProductCodeChange={setAddProductCode}
+                                onAdd={() =>
+                                    handleAddUnknownAsCharge(currentIssue.id)
+                                }
+                                onCancel={() => setSelectedActionType(null)}
+                            />
                         ) : null}
 
                     </div>
