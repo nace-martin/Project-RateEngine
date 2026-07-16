@@ -234,8 +234,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 ),
                 reviewQueue: state.reviewQueue.filter(q => q.id !== chargeId),
                 actionMessage: `${displayLabel} mapped to billing code ${productCode}. Resolved and included in draft.`,
-                selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                selectedActionType: null
             };
         }
 
@@ -250,8 +249,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 ),
                 reviewQueue: state.reviewQueue.filter(q => q.id !== chargeId),
                 actionMessage: `New ProductCode request created for ${proposedCode}. Resolved locally and pending approval.`,
-                selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                selectedActionType: null
             };
         }
 
@@ -266,8 +264,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 ),
                 reviewQueue: state.reviewQueue.filter(q => q.id !== chargeId),
                 actionMessage: `Approved billing code ${code} applied successfully to ${displayLabel}.`,
-                selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                selectedActionType: null
             };
         }
 
@@ -282,8 +279,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 ),
                 reviewQueue: state.reviewQueue.filter(q => q.id !== chargeId),
                 actionMessage: `Accepted suggested mapping ${suggestedCode} for ${displayLabel}.`,
-                selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                selectedActionType: null
             };
         }
 
@@ -307,8 +303,7 @@ export function spotResolutionReducer(state: SpotResolutionState, action: SpotRe
                 ],
                 reviewQueue: state.reviewQueue.filter(q => q.id !== chargeId),
                 actionMessage: `${displayLabel} ignored and excluded from totals.`,
-                selectedActionType: null,
-                unknownWizard: { step: 1, classification: null }
+                selectedActionType: null
             };
         }
 

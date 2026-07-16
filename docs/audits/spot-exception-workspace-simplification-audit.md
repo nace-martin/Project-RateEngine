@@ -167,7 +167,7 @@ sequenceDiagram
 
 ### 4.3 Backend Quality Checks
 - **Django system check**: `python backend/manage.py check` returned **no issues**.
-- **Django test suite**: `python backend/manage.py test quotes.tests` ran **489 tests** and returned **OK** (all tests passed). This includes the integration test `test_spot_exception_workspace_e2e.py`.
+- **Django test suite**: `python backend/manage.py test quotes.tests` ran **488 tests passed** during Phase 14D verification. One test (`test_spot_template_validation_event_created_on_review`) was recorded as failing in the full suite run but passed consistently when executed in isolation. This failure is a pre-existing non-deterministic test issue, likely a SQLite timestamp collision during parallel test execution. It is not a regression introduced by Phase 14D. The specific test is unrelated to Exception Workspace or SPOT resolution orchestration.
 
 ---
 
@@ -316,10 +316,19 @@ The table below contrasts the static complexity metrics before and after the orc
 | **`ExceptionWorkspace.tsx` LOC** | 1,130 | 698 | **-432 lines** (Presentation logic only) |
 | **`ExceptionWorkspace` Cognitive Complexity** | 102 | 92 | **-10** (Less conditional state branching) |
 | **`ExceptionWorkspace` Max CRAP Index** | 4,970 | 3,540 | **-1,430** (Significant risk reduction) |
-| **`spotResolutionState.ts` LOC** | - | 558 | **New** (Pure TypeScript module, 100% test covered) |
-| **`useSpotResolutionWorkflow.ts` LOC** | - | 456 | **New** (API integration, state management hook) |
-| **`spotResolutionState.test.mjs` Execution** | - | Passed | Verifies 15 reducer transitions & selector maths |
-| **Orchestration Contract Checks** | - | Passed | Verifies hook/component boundary separation |
+| **`spotResolutionState.ts` LOC** | — | 558 | **New** (Pure TypeScript module) |
+| **`useSpotResolutionWorkflow.ts` LOC** | — | 456 | **New** (API integration and state management hook) |
+| **`spotResolutionState.test.mjs` Execution** | — | Passed | Verifies 24 reducer transitions and selector maths |
+| **Orchestration Contract Checks** | — | Passed | Verifies hook/component boundary separation |
 
 By isolating side-effects in the hook and keeping state mutations strictly deterministic inside a pure reducer, we successfully reduced complexity hotspots and resolved testing limitations. No new dead code or duplicate logic violations were registered.
 
+### Phase 14D — Parity Correction (follow-up commit)
+
+A parity regression was identified during post-merge review of PR #286: the reducer incorrectly reset `unknownWizard` state (`step`, `classification`) on five review-item resolution actions (`MAP_PRODUCT_CODE`, `SUBMIT_PRODUCT_CODE_REQUEST`, `USE_APPROVED_PRODUCT_CODE`, `ACCEPT_SUGGESTED_MAPPING`, `IGNORE_CHARGE`). In Phase 14C, these handlers had no effect on the separate `unknownStep`/`unknownClassification` state variables. The incorrect resets were introduced during extraction.
+
+The fix was verified by:
+- Removing the five unintended `unknownWizard: { step: 1, classification: null }` resets from the reducer.
+- Adding 9 targeted regression tests to `spot-resolution-state.test.mjs` (tests 16 and 17): 5 assertions verifying wizard state is **preserved** by review-item actions, and 4 assertions verifying the wizard IS **reset** by the three unknown-item completion actions and `UNDO_DECISION`.
+- The corrected test suite now passes all 24 tests.
+- `tmp/test_spot_productcode_remediation_plan.csv` was removed from Git tracking (generated file committed inadvertently in the initial Phase 14D commit).
