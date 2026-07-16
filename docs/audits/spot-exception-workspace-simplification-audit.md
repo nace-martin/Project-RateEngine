@@ -7,10 +7,10 @@ This audit evaluates the current implementation of the SPOT Exception Workspace,
 Our primary findings indicate that the Exception Workspace is a high-complexity module:
 - The main frontend component `ExceptionWorkspace.tsx` spans **1,222 lines of code** and exhibits a **cognitive complexity of 99** (the highest in the frontend codebase).
 - It mixes multiple distinct responsibilities: state management, inline resolution forms, wizards for unclassified blocks, math mismatch displays, and final review checklists.
-- Prototype residue (e.g., prototype override checkboxes, hardcoded mock data, and mock banners) is still present in the production layout.
-- There is significant functional and layout duplication between the inline forms in `ExceptionWorkspace.tsx` and the side sheet in `SpotChargeLineManualReviewSheet.tsx`.
+- Prototype residue (e.g., prototype override checkboxes and demo instructions) is displayed unnecessarily in the live layout.
+- There is functional and layout duplication between the inline forms in `ExceptionWorkspace.tsx` and the side sheet in `SpotChargeLineManualReviewSheet.tsx`.
 
-This document maps out a low-risk strategy for **Phase 14B** to clean up dead code, extract nested components, and simplify the user interface without altering the API contracts, V4 pricing engine, or RBAC controls.
+This document maps out a low-risk strategy to clean up demo clutter, relocate helper functions, and extract nested components without altering the API contracts, V4 pricing engine, or RBAC controls.
 
 ---
 
@@ -18,19 +18,19 @@ This document maps out a low-risk strategy for **Phase 14B** to clean up dead co
 
 ### 2.1 File Inventory and Line Counts
 
-| Layer | File Path | Line Count | Primary Responsibility |
+| Layer | File Path (Repository-Relative) | Line Count | Primary Responsibility |
 | --- | --- | --- | --- |
-| **Frontend Page** | [page.tsx (Live)](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/src/app/quotes/spot/[speId]/exception-workspace/page.tsx) | 131 | Loads live draft quote data via `speId` and mounts `ExceptionWorkspace`. |
-| **Frontend Page** | [page.tsx (Demo)](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/src/app/quotes/spot/exception-workspace-demo/page.tsx) | 16 | Mounts `ExceptionWorkspace` with default mock data for design preview. |
-| **Frontend UI** | [ExceptionWorkspace.tsx](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/src/components/spot/ExceptionWorkspace.tsx) | 1222 | Unified workspace component managing state and workflows. |
-| **Frontend UI** | [SpotChargeLineManualReviewSheet.tsx](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/src/components/spot/SpotChargeLineManualReviewSheet.tsx) | 532 | Slide-over sheet for manual ProductCode mapping on the main envelope page. |
-| **Frontend Types** | [draft-quote-types.ts](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/src/lib/draft-quote-types.ts) | 182 | TypeScript interfaces representing the backend `DraftQuoteSchema` contract. |
-| **Frontend Client** | [api.ts](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/src/lib/api.ts#L790-L856) | 67 (scoped) | API client wrappers (`getDraftQuote`, `resolveDraftQuoteDecisions`, `finalizeDraftQuoteReview`). |
-| **Backend Views** | [spot_views.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/spot_views.py#L3284-L3604) | 320 (scoped) | Django REST Framework API views for draft quote retrieval, resolution, finalization, and reopening. |
-| **Backend Contract** | [draft_quote_contract.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/contracts/draft_quote_contract.py) | 329 | Pydantic schemas validating client payloads and API responses. |
-| **Backend Service** | [draft_quote_adapter.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/services/draft_quote_adapter.py) | 455 | Adapter service mapping `SpotPricingEnvelopeDB` and related models to `DraftQuoteSchema`. |
-| **Backend Service** | [draft_quote_resolve_service.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/services/draft_quote_resolve_service.py) | 358 | Transaction-safe processor applying operator resolutions to database records. |
-| **Backend Service** | [draft_quote_review_service.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/services/draft_quote_review_service.py) | 78 | State machine manager validating blockers during finalization and handling reopen requests. |
+| **Frontend Page** | `frontend/src/app/quotes/spot/[speId]/exception-workspace/page.tsx` | 131 | Loads live draft quote data via `speId` and mounts `ExceptionWorkspace`. |
+| **Frontend Page** | `frontend/src/app/quotes/spot/exception-workspace-demo/page.tsx` | 16 | Mounts `ExceptionWorkspace` for prototype preview. |
+| **Frontend UI** | `frontend/src/components/spot/ExceptionWorkspace.tsx` | 1222 | Unified workspace component managing state and workflows. |
+| **Frontend UI** | `frontend/src/components/spot/SpotChargeLineManualReviewSheet.tsx` | 532 | Slide-over sheet for manual ProductCode mapping on the main envelope page. |
+| **Frontend Types** | `frontend/src/lib/draft-quote-types.ts` | 182 | TypeScript interfaces representing the backend `DraftQuoteSchema` contract. |
+| **Frontend Client** | `frontend/src/lib/api.ts` | 67 (scoped) | API client wrappers (`getDraftQuote`, `resolveDraftQuoteDecisions`, `finalizeDraftQuoteReview`). |
+| **Backend Views** | `backend/quotes/spot_views.py` | 320 (scoped) | Django REST Framework API views for draft quote retrieval, resolution, finalization, and reopening. |
+| **Backend Contract** | `backend/quotes/contracts/draft_quote_contract.py` | 329 | Pydantic schemas validating client payloads and API responses. |
+| **Backend Service** | `backend/quotes/services/draft_quote_adapter.py` | 455 | Adapter service mapping `SpotPricingEnvelopeDB` and related models to `DraftQuoteSchema`. |
+| **Backend Service** | `backend/quotes/services/draft_quote_resolve_service.py` | 358 | Transaction-safe processor applying operator resolutions to database records. |
+| **Backend Service** | `backend/quotes/services/draft_quote_review_service.py` | 78 | State machine manager validating blockers during finalization and handling reopen requests. |
 
 ### 2.2 Component State Groups (ExceptionWorkspace.tsx)
 
@@ -127,16 +127,16 @@ sequenceDiagram
         UI-->>Operator: Locks workspace UI as read-only
     end
 
-    Note over Manager, DB: 4. Manager Reopen
-    Manager->>UI: Navigates to workspace and clicks "Reopen Review"
-    UI->>BE: POST /api/v3/spot/envelopes/<speId>/draft-quote/reopen/
+    Note over Manager, DB: 4. Manager Reopen (API Only)
+    Note over UI: The UI does not provide a Reopen action client method.
+    Note over UI: Manager Reopen is currently restricted to backend administrative triggers.
+    Manager->>BE: POST /api/v3/spot/envelopes/<speId>/draft-quote/reopen/
     BE->>BE: Validate User isManagerOrAdmin
     alt Authorization Fails
-        BE-->>UI: Return 403 Forbidden
+        BE-->>Manager: Return 403 Forbidden
     else Authorized
         BE->>DB: Reset SpotPricingEnvelopeDB status = in_review
-        BE-->>UI: Return 200 OK (editable state)
-        UI-->>Manager: Restores edit controls in UI
+        BE-->>Manager: Return 200 OK (restores editable status in database)
     end
 ```
 
@@ -183,7 +183,7 @@ The cognitive complexity of 99 in `ExceptionWorkspace.tsx` is driven by:
 
 ## 6. Duplication Findings
 
-We identified clear functional duplication between `ExceptionWorkspace.tsx` and `SpotChargeLineManualReviewSheet.tsx`:
+We identified functional duplication between `ExceptionWorkspace.tsx` and `SpotChargeLineManualReviewSheet.tsx`:
 - **ProductCode Requests**: Both components implement a ProductCode request form. `SpotChargeLineManualReviewSheet` includes a detailed form containing `suggested_name`, `suggested_bucket` (bucket options mapping), `suggested_basis` (unit basis mapping), and `suggested_reason`. `ExceptionWorkspace.tsx` contains a simplified inline form (lines 815–850) that requests `proposed_code` and `reason`.
 - **Canonical ProductCode Search**: Both components search and map existing ProductCodes. `SpotChargeLineManualReviewSheet` uses a custom autocomplete `Combobox` element. `ExceptionWorkspace` uses a primitive HTML `<select>` list containing only four hardcoded codes (lines 801–804: `AF-FREIGHT`, `AF-FUEL`, `AF-SEC`, `AF-HC`).
 
@@ -192,9 +192,9 @@ We identified clear functional duplication between `ExceptionWorkspace.tsx` and 
 ## 7. Dead, Legacy, and Prototype Candidates
 
 The following symbols and UI structures are legacy leftovers from the early prototypes and are safe to decommission:
-- **Mock Data Import**: `hardCaseAirImportData` is imported on line 5 and used as the fallback `initialData` property. It should be removed once live UAT is mandatory.
-- **Prototype Override Checkbox**: The checkbox UI `Prototype override only — not available for production.` (lines 101, 1192–1202) and its status banner (line 1213) bypass all checklist blockers. In a live environment under UAT, this override is a security and correctness risk.
-- **Inline Helpers**: Helper functions like `humanizeRate` (lines 8–26) contain hardcoded strings and should be extracted to a shared utility file.
+- **Demo-Only Banners**: The checkbox UI `Prototype override only — not available for production.` (lines 101, 1192–1202) and its status banner (line 1213) bypass checklist blockers when enabled. This is **not** a live security bypass because the code explicitly restricts it to non-live mode with `!isLive && prototypeOverride`, while the real workspace passes `isLive={true}`. It is a demo-only behaviour displayed unnecessarily in the live layout and should be hidden/removed.
+- **Mock Data Fallback**: The component relies on `hardCaseAirImportData` as its default `initialData` property (line 54). Deleting this import directly from the codebase would break the demo page (`frontend/src/app/quotes/spot/exception-workspace-demo/page.tsx`), which renders `<ExceptionWorkspace />` without supplying props. Phase 14B must preserve this by moving the mock import directly into the demo page and passing it explicitly (`<ExceptionWorkspace initialData={hardCaseAirImportData} />`), allowing the prop default to be cleaned up safely in `ExceptionWorkspace.tsx`.
+- **Inline Helpers**: Helper functions like `humanizeRate` (lines 8–26) and `friendlyStatus` (lines 28–39) contain hardcoded strings and should be extracted to a shared utility file.
 
 ---
 
@@ -218,7 +218,7 @@ Every section in the current live Exception Workspace can be categorized under t
 
 [Duplicated / Legacy Information (Cleanup Candidate)]
   ├── Extracted Terms list (unrelated cargo terms clog the layout)
-  └── Prototype Banners & Blockers Override UI (clutters the final review block)
+  └── Demo-only Banners & Blockers Override UI (clutters the final review block)
 ```
 
 ---
@@ -229,39 +229,37 @@ Any cleanup, refactoring, or extraction must preserve the following business rul
 
 | Protected Behaviour | Backend Safeguard | Frontend Test Coverage |
 | --- | --- | --- |
-| **Live Draft Quote Loading** | `SpotEnvelopeDraftQuoteAPIView` | [exception-workspace-routing.test.mjs](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/scripts/exception-workspace-routing.test.mjs) |
-| **Decision Persistence** | `apply_draft_quote_decisions` (Transactions) | [draft-quote-contract.test.mjs](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/scripts/draft-quote-contract.test.mjs) |
-| **ProductCode Request Flow** | `ProductCodeCreationRequestViewSet` (Deduplication) | [test_spot_productcode_close_loop_launch_gate.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/tests/test_spot_productcode_close_loop_launch_gate.py) |
-| **Finalization Blockers** | `finalize_review` (Restricts lock if blockers > 0) | [spot-finalization.test.mjs](file:///c:/Users/commercial.manager/dev/Project-RateEngine/frontend/scripts/spot-finalization.test.mjs) |
-| **Finalized Workspace Lock** | `is_finalized` (Returns 409 Conflict on resolve attempt) | [test_spot_exception_workspace_e2e.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/tests/test_spot_exception_workspace_e2e.py) |
-| **Manager/Admin Reopen** | `reopen_review` (Restricts reopen to managers/admins) | [test_spot_exception_workspace_e2e.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/tests/test_spot_exception_workspace_e2e.py) |
-| **Manual-Review Safety** | Unscoped ambiguous labels must remain unresolved | [test_spot_template_validation_review.py](file:///c:/Users/commercial.manager/dev/Project-RateEngine/backend/quotes/tests/test_spot_template_validation_review.py) |
+| **Live Draft Quote Loading** | `SpotEnvelopeDraftQuoteAPIView` | `frontend/scripts/exception-workspace-routing.test.mjs` |
+| **Decision Persistence** | `apply_draft_quote_decisions` (Transactions) | `frontend/scripts/draft-quote-contract.test.mjs` |
+| **ProductCode Request Flow** | `ProductCodeCreationRequestViewSet` (Deduplication) | `backend/quotes/tests/test_spot_productcode_close_loop_launch_gate.py` |
+| **Finalization Blockers** | `finalize_review` (Restricts lock if blockers > 0) | `frontend/scripts/spot-finalization.test.mjs` |
+| **Finalized Workspace Lock** | `is_finalized` (Returns 409 Conflict on resolve attempt) | `backend/quotes/tests/test_spot_exception_workspace_e2e.py` |
+| **Manager/Admin Reopen** | `reopen_review` (Restricts reopen to managers/admins) | `backend/quotes/tests/test_spot_exception_workspace_e2e.py` |
+| **Manual-Review Safety** | Unscoped ambiguous labels must remain unresolved | `backend/quotes/tests/test_spot_template_validation_review.py` |
 
 ---
 
 ## 10. Safe Cleanup Candidates
 
 We recommend performing the following low-risk extractions and removals in **Phase 14B**:
-1. **Decommission the Prototype Override Checkbox**: Completely remove the `proto-override` checkbox, state, and footer text. Bypassing blocker checks is not permitted in UAT or production.
-2. **Remove Default Mock Data**: Delete the import of `hardCaseAirImportData` and set `initialData` as a required prop.
-3. **Extract Sub-Components**:
-   - Extract the active resolution sub-forms (`MapExistingForm`, `RequestProductCodeForm`, `AddChargeForm`) to a new subdirectory `frontend/src/components/spot/workspace/`.
-   - Extract the warnings and totals displays (`TotalsBreakdownPanel`).
-4. **Extract Helper Utilities**: Move `humanizeRate` and `friendlyStatus` to `frontend/src/lib/spot-workspace-helpers.ts` where similar helpers reside.
+1. **Clean Demo Clutter from Live View**: Hide or remove the `proto-override` checkbox, state, and footer text in live mode (`isLive === true`). Bypassing blocker checks is not permitted in UAT or production.
+2. **Standardize Mock Data Ingestion**: Relocate the `hardCaseAirImportData` fallback out of the component defaults. Explicitly import and supply the mock data from the demo page component (`frontend/src/app/quotes/spot/exception-workspace-demo/page.tsx`).
+3. **Extract Helper Utilities**: Move `humanizeRate` and `friendlyStatus` to `frontend/src/lib/spot-workspace-helpers.ts` where similar helpers reside.
 
 ---
 
 ## 11. Risky or Deferred Candidates
 
-The following changes present regression risks and should be deferred:
+The following changes present regression risks and should be deferred to a later phase (e.g. Phase 14C):
 - **Consolidating forms with SpotChargeLineManualReviewSheet**: While structurally similar, the side sheet uses a different routing/context paradigm (it interacts with the full `SPEChargeLine` schema directly, whereas the Exception Workspace interacts with `DraftCharge` contracts). Merging these during refactoring introduces a high risk of breaking layout state and API resolutions. Keep them separate.
+- **Component Extractions**: Extracting the active resolution sub-forms (`MapExistingForm`, `RequestProductCodeForm`, `AddChargeForm`) or warnings panels is deferred to Phase 14C. Separating layout states during initial cleanup increases regression risks.
 - **Altering API Contracts**: Do not modify `DraftQuoteSchema` or backend serializer definitions. Any change to the validation schemas will break integration checks.
 
 ---
 
 ## 12. Separation of UI Simplification from Code Cleanup
 
-To maintain regression safety, Phase 14B must separate UI alterations from code reorganization:
+To maintain regression safety, initial phases must separate UI alterations from code reorganization:
 - **UI Simplification**: Consists of removing the prototype override controls, standardizing style padding, and hiding raw document evidence behind an expandable progressive disclosure toggle. These changes alter visual representation and must be verified by visual checks.
 - **Code Cleanup**: Consists of extracting complex conditional render blocks into nested stateless React components. These changes must not alter the DOM footprint or state update cycles and must keep all regression tests passing.
 
@@ -270,16 +268,15 @@ To maintain regression safety, Phase 14B must separate UI alterations from code 
 ## 13. Recommended Implementation Sequence
 
 ```
-Step 1: Dead-Code & Prototype Removal
-  ├── Remove prototype override checkbox and footer
-  └── Remove hardCaseAirImportData fallback
-Step 2: Component Extraction
-  ├── Extract MapExistingForm, RequestProductCodeForm, AddChargeForm
-  └── Extract TotalsBreakdownPanel
-Step 3: Helper Relocation
-  └── Move humanizeRate and friendlyStatus to helpers.ts
-Step 4: Verification
-  └── Run npm run build & full test suites
+Step 1: Demo prop & data relocation (Phase 14B)
+  ├── Move hardCaseAirImportData to demo page.tsx
+  └── Pass initialData={hardCaseAirImportData} explicitly to component
+Step 2: Demo override and banners cleanup (Phase 14B)
+  └── Hide/remove proto-override checkbox & banners in live mode
+Step 3: Helper relocation (Phase 14B)
+  └── Move humanizeRate and friendlyStatus to spot-workspace-helpers.ts
+Step 4: Component extraction (Phase 14C - Deferred)
+  └── Extract sub-forms and totals panels
 ```
 
 ---
@@ -288,24 +285,20 @@ Step 4: Verification
 
 The exact scope for Phase 14B is restricted to the following checklist:
 
-### A. Dead Code and Banners Cleanup
-- [ ] Remove `prototypeOverride` state and related handlers in `ExceptionWorkspace.tsx`.
-- [ ] Delete `hardCaseAirImportData` import and default parameter assignment.
-- [ ] Remove the checkbox element `<input type="checkbox" id="proto-override"...>` and the label block.
-- [ ] Remove the helper text "Prototype only — Changes made will not be permanently saved." from the footer.
+### A. Demo Data Relocation
+- [ ] Move the `hardCaseAirImportData` import to `frontend/src/app/quotes/spot/exception-workspace-demo/page.tsx`.
+- [ ] Update `ExceptionWorkspaceDemoPage` to pass `initialData={hardCaseAirImportData}` explicitly.
+- [ ] Remove the fallback default parameter `initialData = hardCaseAirImportData` in `ExceptionWorkspace.tsx`.
 
-### B. Helper Extraction
-- [ ] Move `humanizeRate` and `friendlyStatus` to `frontend/src/lib/spot-workspace-helpers.ts`.
-- [ ] Export these helpers and reference them in `ExceptionWorkspace.tsx`.
+### B. Demo Layout Cleanup
+- [ ] Hide the `proto-override` checkbox, state, and footer text in `ExceptionWorkspace.tsx` when `isLive` is true.
+- [ ] Hide the banner "Prototype only — Changes made will not be permanently saved." in `ExceptionWorkspace.tsx` when `isLive` is true.
 
-### C. UI Component Extraction
-- [ ] Create `frontend/src/components/spot/workspace/MapExistingForm.tsx` (stateless UI for selecting and mapping a ProductCode).
-- [ ] Create `frontend/src/components/spot/workspace/RequestProductCodeForm.tsx` (UI for creating a ProductCode request).
-- [ ] Create `frontend/src/components/spot/workspace/AddChargeForm.tsx` (UI for manual charge additions).
-- [ ] Create `frontend/src/components/spot/workspace/TotalsBreakdownPanel.tsx` (UI displaying mathematical summaries and currency alerts).
-- [ ] Reference these sub-components in `ExceptionWorkspace.tsx` to reduce cognitive complexity below 40.
+### C. Helper Extraction
+- [ ] Move `humanizeRate` and `friendlyStatus` from `ExceptionWorkspace.tsx` to `frontend/src/lib/spot-workspace-helpers.ts`.
+- [ ] Reference these helpers in `ExceptionWorkspace.tsx`.
 
-### D. Regression Testing
+### D. Verification
 - [ ] Verify that `npm run lint` and `npm run typecheck` run clean.
 - [ ] Ensure that `npm run test:spot-finalization` and related scripts pass successfully.
 - [ ] Ensure Django backend test suites pass with no failures.
