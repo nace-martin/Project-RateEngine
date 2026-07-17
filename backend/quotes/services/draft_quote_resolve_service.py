@@ -36,6 +36,31 @@ EDITABLE_CHARGE_FIELDS = {
     "notes": "note",
 }
 NUMERIC_CHARGE_FIELDS = {"amount", "rate", "minimum_charge"}
+PRODUCT_CODE_DOMAINS = {
+    ProductCode.DOMAIN_IMPORT,
+    ProductCode.DOMAIN_EXPORT,
+    ProductCode.DOMAIN_DOMESTIC,
+}
+
+
+def _normalize_product_code_domain(value):
+    domain = str(value or "").strip().upper()
+    return domain if domain in PRODUCT_CODE_DOMAINS else None
+
+
+def _expected_product_code_domain(envelope):
+    shipment_context = envelope.shipment_context_json if isinstance(envelope.shipment_context_json, dict) else {}
+    origin_country = shipment_context.get("origin_country", "")
+    destination_country = shipment_context.get("destination_country", "")
+
+    if not origin_country or not destination_country:
+        return None
+
+    try:
+        from quotes.spot_services import classify_png_shipment
+        return _normalize_product_code_domain(classify_png_shipment(origin_country, destination_country))
+    except Exception:
+        return None
 
 
 def _valid_choice_values(choices):
@@ -302,8 +327,18 @@ def apply_draft_quote_decisions(
                     message_val = "ProductCode was not found."
                     error_code_val = "PRODUCT_CODE_NOT_FOUND"
                 else:
-                    _apply_product_code(charge_line, product_code, user, dec_item, payload)
-                    message_val = "ProductCode mapping applied successfully."
+                    expected_domain = _expected_product_code_domain(envelope)
+                    if not expected_domain:
+                        status_val = "rejected"
+                        message_val = "Shipment direction could not be determined from trusted route evidence. ProductCode mapping was not applied."
+                        error_code_val = "PRODUCT_CODE_DIRECTION_UNAVAILABLE"
+                    elif product_code.domain != expected_domain:
+                        status_val = "rejected"
+                        message_val = f"ProductCode domain {product_code.domain} does not match shipment direction {expected_domain}."
+                        error_code_val = "PRODUCT_CODE_DOMAIN_MISMATCH"
+                    else:
+                        _apply_product_code(charge_line, product_code, user, dec_item, payload)
+                        message_val = "ProductCode mapping applied successfully."
             elif decision_type == "edit_charge":
                 status_val, message_val, error_code_val = _apply_edit_charge(charge_line, dec_item, payload, user)
             elif decision_type == "classify_unclassified":

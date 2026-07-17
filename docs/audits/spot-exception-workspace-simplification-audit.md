@@ -335,3 +335,20 @@ The fix was verified by:
 - Adding targeted regression assertions to `spot-resolution-state.test.mjs`: six Step-1 transitions preserve `classification`, five review-item actions preserve the full wizard state, and reopening Add Charge updates only `name` and `amount`.
 - The corrected test suite now passes locally.
 - `tmp/test_spot_productcode_remediation_plan.csv` was removed from Git tracking (generated file committed inadvertently in the initial Phase 14D commit).
+
+---
+
+## 16. Phase 14F ProductCode Selector Safety Update
+
+Phase 14F replaces the Exception Workspace's hardcoded Map Existing ProductCode list with a direction-scoped selector. The child form remains presentation-only and API-free; ProductCode loading is owned by the workspace orchestration hook.
+
+Implemented safeguards:
+- Draft Quote payloads now include normalized `shipment_context.direction` (`IMPORT`, `EXPORT`, or `DOMESTIC`) only when `origin_country` and `destination_country` can be classified by `classify_png_shipment()`.
+- Origin/destination country pairs are authoritative; a raw JSON `direction` value is not trusted, cannot override route-derived direction, and is not accepted as a fallback when countries are missing or unsupported.
+- `useSpotResolutionWorkflow` loads ProductCodes with `getProductCodes({ domain })` using the backend-emitted route-derived draft quote direction and exposes a retry action for failed loads.
+- `MapExistingForm` renders parent-supplied options through the shared `Combobox` instead of a fixed HTML select, with visible loading/error states and an explicit Retry action.
+- Backend `map_to_product_code` decisions fail closed when direction is unavailable and reject ProductCodes whose domain does not match the trusted shipment direction.
+
+Intentional non-changes:
+- No pricing, quote total, GST, finalization, ProductCode approval, or RBAC behavior changed.
+- ProductCode creation requests remain under the existing admin-review lifecycle.

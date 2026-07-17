@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { DraftCharge, DraftQuote } from "../../../lib/draft-quote-types";
 import {
     createSpotResolutionState,
@@ -18,6 +18,14 @@ import {
     SpotResolutionState
 } from "./spotResolutionState";
 
+interface ProductCodeSelectorOption {
+    code: string;
+    description: string;
+    domain: string;
+}
+
+const PRODUCT_CODE_DOMAINS = new Set(["IMPORT", "EXPORT", "DOMESTIC"]);
+
 interface UseSpotResolutionWorkflowProps {
     initialData: DraftQuote;
     isLive: boolean;
@@ -26,6 +34,53 @@ interface UseSpotResolutionWorkflowProps {
 
 export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: UseSpotResolutionWorkflowProps) {
     const [state, dispatch] = useReducer(spotResolutionReducer, initialData, createSpotResolutionState);
+    const [productCodes, setProductCodes] = useState<ProductCodeSelectorOption[]>([]);
+    const [isLoadingProductCodes, setIsLoadingProductCodes] = useState(false);
+    const [productCodeLoadError, setProductCodeLoadError] = useState<string | null>(null);
+    const [productCodeRetryNonce, setProductCodeRetryNonce] = useState(0);
+
+    const shipmentDirection = String(initialData.shipment_context.direction || "").toUpperCase();
+    const productCodeDomain = PRODUCT_CODE_DOMAINS.has(shipmentDirection) ? shipmentDirection : null;
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (!productCodeDomain) {
+            setProductCodes([]);
+            setProductCodeLoadError("Draft Quote shipment direction is missing; ProductCode selection is disabled.");
+            setIsLoadingProductCodes(false);
+            return;
+        }
+
+        setIsLoadingProductCodes(true);
+        setProductCodeLoadError(null);
+
+        import("../../../lib/api")
+            .then(({ getProductCodes }) => getProductCodes({ domain: productCodeDomain }))
+            .then((codes) => {
+                if (cancelled) return;
+                setProductCodes(codes.map((code) => ({
+                    code: code.code,
+                    description: code.description,
+                    domain: code.domain
+                })));
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                const message = error instanceof Error ? error.message : "Failed to fetch ProductCodes";
+                setProductCodes([]);
+                setProductCodeLoadError(message);
+            })
+            .finally(() => {
+                if (!cancelled) {
+                    setIsLoadingProductCodes(false);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [productCodeDomain, productCodeRetryNonce]);
 
     // API submission helper
     const submitLiveDecision = async (decisionItem: {
@@ -60,6 +115,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
 
     const openMapExisting = () => {
         dispatch({ type: "OPEN_MAP_EXISTING" });
+    };
+
+    const retryProductCodeLoad = () => {
+        setProductCodeRetryNonce((value) => value + 1);
     };
 
     const openRequestProductCode = (charge: DraftCharge) => {
@@ -410,7 +469,10 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
             addChargeForm: state.addChargeForm,
             actionMessage: state.actionMessage,
             prototypeOverride: state.prototypeOverride,
-            showHelpText: state.showHelpText
+            showHelpText: state.showHelpText,
+            productCodes,
+            isLoadingProductCodes,
+            productCodeLoadError
         },
         derived: {
             combinedUnresolved,
@@ -429,6 +491,7 @@ export function useSpotResolutionWorkflow({ initialData, isLive, envelopeId }: U
         actions: {
             selectIssue,
             openMapExisting,
+            retryProductCodeLoad,
             openRequestProductCode,
             openUnknownProductCodeRequest,
             openAddUnknownCharge,

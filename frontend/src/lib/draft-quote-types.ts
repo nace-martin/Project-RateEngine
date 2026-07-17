@@ -78,6 +78,8 @@ export interface TotalsValidation {
     warnings: string[];
 }
 
+export type ShipmentDirection = 'IMPORT' | 'EXPORT' | 'DOMESTIC';
+
 export interface DraftQuote {
     contract_version: string;
     quote_summary: string;
@@ -90,6 +92,7 @@ export interface DraftQuote {
         volumetric_weight_kg: number;
         chargeable_weight_kg: number;
         commodity: string;
+        direction?: ShipmentDirection;
         [key: string]: unknown;
     };
     supplier_context: {
