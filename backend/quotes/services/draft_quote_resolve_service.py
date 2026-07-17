@@ -53,14 +53,14 @@ def _expected_product_code_domain(envelope):
     origin_country = shipment_context.get("origin_country", "")
     destination_country = shipment_context.get("destination_country", "")
 
-    if origin_country and destination_country:
-        try:
-            from quotes.spot_services import classify_png_shipment
-            return _normalize_product_code_domain(classify_png_shipment(origin_country, destination_country))
-        except Exception:
-            return None
+    if not origin_country or not destination_country:
+        return None
 
-    return _normalize_product_code_domain(shipment_context.get("direction"))
+    try:
+        from quotes.spot_services import classify_png_shipment
+        return _normalize_product_code_domain(classify_png_shipment(origin_country, destination_country))
+    except Exception:
+        return None
 
 
 def _valid_choice_values(choices):

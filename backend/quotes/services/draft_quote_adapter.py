@@ -32,8 +32,7 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
     supplier_name = supplier_name or "Unknown Carrier"
 
     # Classify shipment direction (IMPORT vs EXPORT vs DOMESTIC).
-    # Origin/destination countries are authoritative when present; raw JSON
-    # direction is used only when the country pair is unavailable.
+    # Origin/destination countries are the only trusted direction source.
     origin_country = shipment_ctx.get('origin_country', '')
     destination_country = shipment_ctx.get('destination_country', '')
     direction = None
@@ -43,8 +42,6 @@ def build_draft_quote_payload(spe_db: SpotPricingEnvelopeDB) -> Dict[str, Any]:
             direction = _normalize_shipment_direction(classify_png_shipment(origin_country, destination_country))
         except Exception:
             direction = None
-    else:
-        direction = _normalize_shipment_direction(shipment_ctx.get('direction'))
 
     quote_summary = f"Draft Quote Suggestion for {mode} Freight {direction or 'UNKNOWN'} - {origin} to {destination} via {supplier_name}"
 
